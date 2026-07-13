@@ -1966,10 +1966,10 @@ function bindChatAppEvents() {
 
           if (targetMsg && targetMsg.senderType === 'char' && targetMsg.sessionId === activeSessionId) {
             await db.messages.update(targetMsg.id, { isRecalled: 1 });
-            rawReply = rawReply.replace(recallRegex, "").trim();
+            rawReply = rawReply.replace(recallRegex, "").trim(); // 修正为驼峰命名 rawReply [1]
             await renderDialogMessages();
           } else {
-            rawReply = rawReply.replace(recallRegex, "").trim();
+            rawReply = rawReply.replace(recallRegex, "").trim(); // 修正为驼峰命名 rawReply [1]
             alert(`系统提示：对方（${originalTitle}）试图撤回一则消息（ID: ${targetId || '最新'}），但由于消息ID无效，撤回失败！`);
           }
         }
