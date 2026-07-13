@@ -1974,6 +1974,23 @@ function bindChatAppEvents() {
           }
         }
 
+        // === Char (AI) 自动驱使本地音乐播放指令解析 ===
+        const playMusicRegex = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
+        const playMusicMatch = rawReply.match(playMusicRegex);
+        if (playMusicMatch) {
+          try {
+            const parsed = JSON.parse(playMusicMatch[2]);
+            const targetIndex = parseInt(parsed.index);
+            if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
+              window.mcpSystem.playTrackByIndex(targetIndex);
+            }
+          } catch(e) {
+            console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
+          }
+          // 擦除放歌指令，避免污染对话气泡呈现
+          rawReply = rawReply.replace(playMusicRegex, "").trim();
+        }
+
         // === Char (AI) 表情反应处理 ===
         const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
         const reactMatch = rawReply.match(reactRegex);
