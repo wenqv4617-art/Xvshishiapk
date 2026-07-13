@@ -163,25 +163,43 @@ async function buildGlobalSystemPrompt(sessionId) {
     content: PROMPT_TEMPLATES.DISCLAIMER
   });
 
-  // === Char (AI) 自动驱使本地音乐播放指令解析 ===
-        const playMusicRegex = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
-        const playMusicMatch = rawReply.match(playMusicRegex);
-        if (playMusicMatch) {
-          try {
-            const parsed = JSON.parse(playMusicMatch[2]);
-            const targetIndex = parseInt(parsed.index);
-            if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
-              window.mcpSystem.playTrackByIndex(targetIndex);
-            }
-          } catch(e) {
-            console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
-          }
-          // 擦除放歌指令，避免污染对话气泡呈现
-          rawReply = rawReply.replace(playMusicRegex, "").trim();
-        }
+  // Model Context Protocol (MCP) 设备环境与本地歌单传感器数据注入（绑定总开关） [1.3]
+  const isMcpPromptEnabled = localStorage.getItem("settings-mcp-prompt-enabled") === "true";
+  if (isMcpPromptEnabled) {
+    let mcpPrompt = `【Model Context Protocol (MCP) 设备传感器数据已建立】：你当前已与用户的真机建立了神经传感器通道，以下是同步到的真实环境和状态参数：\n`;
+    
+    const mcpData = localStorage.getItem("mcp_loc_weather");
+    if (mcpData) {
+      try {
+        const data = JSON.parse(mcpData);
+        mcpPrompt += `- 物理坐标/城市范围: ${data.city}\n- 外部实时气温: ${data.temp}°C\n- 外部实时天气: ${data.weather}\n`;
+      } catch(e) {}
+    }
 
-        // === Char (AI) 表情反应处理 ===
-        const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
+    // 将用户导入的本地 MP3/WAV 音乐列表同步喂给大模型！
+    const mcpSongs = localStorage.getItem("mcp_playlist_titles");
+    if (mcpSongs) {
+      try {
+        const songs = JSON.parse(mcpSongs);
+        if (songs.length > 0) {
+          mcpPrompt += `- 当前用户手机内导入的设备本地歌单（共 ${songs.length} 首）：\n`;
+          songs.forEach((s, idx) => {
+            mcpPrompt += `  * [歌曲索引: ${idx}] - "${s}"\n`;
+          });
+          mcpPrompt += `\n【核心交互指令】：在聊天中，如果你觉得气氛合适，或者在探讨音乐、深夜闲聊等特定语境下，你可以主动挑选上述歌单里的任意一首歌播放给用户听。
+若你想控制用户手机自动播放歌单中的某一首音乐，请在你的回复文本最末尾追加以下格式的播放指令（必须单独占一行）：
+[PLAY_MUSIC]{"index": 歌曲索引}\n`;
+        }
+      } catch(e) {}
+    }
+
+    mcpPrompt += `\n请你在后续的对白或动作白描中，极其自然地融入当前的天气气温或所处地理特征，或根据歌单里的歌名展开讨论，在对白中进行合乎人设的引导！`;
+
+    segments.push({
+      depth: -490,
+      content: mcpPrompt
+    });
+  }
 
   // 1.2 身份控制防 OOC 隔离墙：深度 -800
   const identityWall = `【你是谁 · 严格遵守】
