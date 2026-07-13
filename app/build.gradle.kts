@@ -11,8 +11,8 @@ android {
         applicationId = "com.story.phone"
         minSdk = 26 // 安卓 8.0，保障完美兼容通知监听、硬件马达与无障碍接口
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 2
+        versionName = "1.1.0"
     }
 
     buildTypes {
