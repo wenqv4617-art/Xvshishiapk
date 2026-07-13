@@ -17,7 +17,6 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.story.phone.R // 核心导入：确保 layout 与 id 的物理索引完美编译通过
 
 class MainActivity : AppCompatActivity() {
 
@@ -47,7 +46,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 核心修复：重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
+        // 重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
         webView.webChromeClient = object : WebChromeClient() {
             // 支持 HTML5 Geolocation 定位授权
             override fun onGeolocationPermissionsShowPrompt(
@@ -57,7 +56,7 @@ class MainActivity : AppCompatActivity() {
                 callback?.invoke(origin, true, false)
             }
 
-            // 核心修复：支持 HTML5 <input type="file"> 文件选择器（解决导入/导出、图片上传无响应）
+            // 支持 HTML5 <input type="file"> 文件选择器（解决导入/导出、图片上传无响应）
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
