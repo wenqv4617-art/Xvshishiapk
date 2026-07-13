@@ -46,7 +46,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
+        // 核心修复：重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
         webView.webChromeClient = object : WebChromeClient() {
             // 支持 HTML5 Geolocation 定位授权
             override fun onGeolocationPermissionsShowPrompt(
@@ -56,7 +56,7 @@ class MainActivity : AppCompatActivity() {
                 callback?.invoke(origin, true, false)
             }
 
-            // 支持 HTML5 <input type="file"> 文件选择器（解决导入/导出、图片上传无响应）
+            // 核心修复：支持 HTML5 <input type="file"> 文件选择器（解决导入/导出、图片上传无响应）
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -66,7 +66,8 @@ class MainActivity : AppCompatActivity() {
                 (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
 
-                val intent = fileChooserParams?.createIntent()
+                // 核心修复：通过 Elvis 操作符，在 intent 为空时提前阻断返回，使编译器能够确定其为 100% 非空的 Intent 类型！ [1]
+                val intent = fileChooserParams?.createIntent() ?: return false
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE)
                 } catch (e: ActivityNotFoundException) {
@@ -85,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        // 【已修复】删除了不存在的 settings.geolocationEnabled = true
+        settings.geolocationEnabled = true // 允许定位
 
         // 注入 window.AndroidMCP 原生接口
         webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
@@ -97,13 +98,17 @@ class MainActivity : AppCompatActivity() {
         requestAppPermissions()
     }
 
-    // 处理文件选择器弹窗的回调 (通过安全类型转换绕过严格空指针拦截) [1]
+    // 处理文件选择器弹窗的回调
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
             if (fileUploadCallback == null) return
-            // 【已修复】加上了 ?: null，防止 data 为空导致崩溃
-            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data ?: null)
+            
+            // 核心修复：同样对 data 进行安全非空隔离，规避 parseResult 在严格 Kotlin 编译环境下的报错 [1]
+            var results: Array<Uri>? = null
+            if (resultCode == RESULT_OK && data != null) {
+                results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+            }
             
             @Suppress("UNCHECKED_CAST")
             (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(results)
