@@ -1966,10 +1966,10 @@ function bindChatAppEvents() {
 
           if (targetMsg && targetMsg.senderType === 'char' && targetMsg.sessionId === activeSessionId) {
             await db.messages.update(targetMsg.id, { isRecalled: 1 });
-            rawReply = rawReply.replace(recallRegex, "").trim(); // 修正为驼峰命名 rawReply [1]
+            rawReply = rawReply.replace(recallRegex, "").trim();
             await renderDialogMessages();
           } else {
-            rawReply = rawReply.replace(recallRegex, "").trim(); // 修正为驼峰命名 rawReply [1]
+            rawReply = rawReply.replace(recallRegex, "").trim();
             alert(`系统提示：对方（${originalTitle}）试图撤回一则消息（ID: ${targetId || '最新'}），但由于消息ID无效，撤回失败！`);
           }
         }
@@ -1983,6 +1983,8 @@ function bindChatAppEvents() {
             const targetIndex = parseInt(parsed.index);
             if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
               window.mcpSystem.playTrackByIndex(targetIndex);
+            } else if (parsed.title && window.mcpSystem && typeof window.mcpSystem.playTrackByTitle === 'function') {
+              window.mcpSystem.playTrackByTitle(parsed.title);
             }
           } catch(e) {
             console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
