@@ -86,7 +86,6 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.geolocationEnabled = true // 允许定位
 
         // 核心修复：禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动点播放歌的特权！ [1]
         settings.mediaPlaybackRequiresUserGesture = false
