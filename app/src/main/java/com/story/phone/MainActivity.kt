@@ -85,7 +85,7 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.geolocationEnabled = true // 允许定位
+        // 【已修复】删除了不存在的 settings.geolocationEnabled = true
 
         // 注入 window.AndroidMCP 原生接口
         webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
@@ -102,7 +102,8 @@ class MainActivity : AppCompatActivity() {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
             if (fileUploadCallback == null) return
-            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+            // 【已修复】加上了 ?: null，防止 data 为空导致崩溃
+            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data ?: null)
             
             @Suppress("UNCHECKED_CAST")
             (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(results)
