@@ -163,17 +163,25 @@ async function buildGlobalSystemPrompt(sessionId) {
     content: PROMPT_TEMPLATES.DISCLAIMER
   });
 
-  // Model Context Protocol (MCP) 硬件传感器及天气上下文深度注入 [1.3]
-  const mcpData = localStorage.getItem("mcp_loc_weather");
-  if (mcpData) {
-    try {
-      const data = JSON.parse(mcpData);
-      segments.push({
-        depth: -490,
-        content: `【Model Context Protocol (MCP) 设备环境参数（极高优先级）】：当前用户所处的设备真实物理定位及气象信息：\n- 物理位置/GPS坐标范围: ${data.city}\n- 外部实时气温: ${data.temp}°C\n- 外部实时气象: ${data.weather}\n请你在后续打字聊天、开展对话或书写场景白描时，极其自然、合理且不露痕迹地融入这些外部环境信息（例如当前气温太低提醒加衣，或者外面下雨提醒其注意路滑），这能大幅加强你们活在同一个物理时空的真实感！`
-      });
-    } catch(e) {}
-  }
+  // === Char (AI) 自动驱使本地音乐播放指令解析 ===
+        const playMusicRegex = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
+        const playMusicMatch = rawReply.match(playMusicRegex);
+        if (playMusicMatch) {
+          try {
+            const parsed = JSON.parse(playMusicMatch[2]);
+            const targetIndex = parseInt(parsed.index);
+            if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
+              window.mcpSystem.playTrackByIndex(targetIndex);
+            }
+          } catch(e) {
+            console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
+          }
+          // 擦除放歌指令，避免污染对话气泡呈现
+          rawReply = rawReply.replace(playMusicRegex, "").trim();
+        }
+
+        // === Char (AI) 表情反应处理 ===
+        const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
 
   // 1.2 身份控制防 OOC 隔离墙：深度 -800
   const identityWall = `【你是谁 · 严格遵守】
