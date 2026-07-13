@@ -1186,6 +1186,17 @@
                   <div class="win-body" style="padding: 16px; overflow-y: auto; background: #fafbfc;">
                     <div style="display:flex; flex-direction:column; gap:12px;">
                       
+                      <!-- 新增：MCP 提示词注入总开关 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between;">
+                        <label style="margin-bottom:0; font-weight:700; font-size:13px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                          🧠 融入 AI 提示词 (MCP 协议)
+                        </label>
+                        <label class="switch">
+                          <input type="checkbox" id="settings-mcp-prompt-toggle" onchange="mcpSystem.togglePrompt(this)">
+                          <span class="slider"></span>
+                        </label>
+                      </div>
+
                       <!-- 硬件定位与天气卡片 -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
                         <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
@@ -1218,15 +1229,19 @@
                         <button class="btn btn-danger-outline" onclick="mcpSystem.triggerVibration()" style="width:100%; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer; color:#ef4444; border-color:#fca5a5; background:none;">测试设备物理马达震动反馈</button>
                       </div>
 
-                      <!-- 音乐播放器卡片 (MediaSession 锁屏控制) -->
+                      <!-- 核心重构：音乐播放器卡片 (支持多选导入安卓本地音频文件 + AI 调配播放) -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
                         <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
-                          🎵 神经音频流播放器
+                          🎵 本地神经歌单播放器
                         </h4>
-                        <div style="font-size:13px; font-weight:700; color:var(--text-primary);" id="mcp-music-title">音频状态：就绪</div>
-                        <div style="display:flex; gap:8px; margin-top:10px;">
-                          <button class="btn btn-primary" onclick="mcpSystem.playMusic()" style="flex:1; font-size:11px; padding:8px; background:#6366f1; border:none; color:white; border-radius:8px; font-weight:600; cursor:pointer;">播放疗愈钢琴曲</button>
-                          <button class="btn btn-outline" onclick="mcpSystem.stopMusic()" style="flex:1; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">暂停播放</button>
+                        <div style="font-size:13px; font-weight: 700; color: var(--text-primary);" id="mcp-music-title">歌单状态：尚未导入歌曲</div>
+                        <div style="display:flex; gap:8px; margin-top: 10px;">
+                          <button class="btn btn-outline" onclick="document.getElementById('mcp-music-selector').click()" style="flex:1; font-size: 11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">导入本地歌单</button>
+                          <input type="file" id="mcp-music-selector" multiple accept="audio/*" style="display:none;" onchange="mcpSystem.handleMusicSelect(this)">
+                          <button class="btn btn-outline" onclick="mcpSystem.stopMusic()" style="flex:1; font-size: 11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">暂停</button>
+                        </div>
+                        <div id="mcp-playlist-list" style="margin-top:10px; max-height:100px; overflow-y:auto; border-top:1px dashed var(--border); padding-top:8px; font-size:11px; color:var(--text-secondary); display:flex; flex-direction:column; gap:4px; line-height:1.4;">
+                          歌单为空，请点击导入本地音乐。
                         </div>
                       </div>
 
