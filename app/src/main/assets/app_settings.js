@@ -16,6 +16,7 @@ function initSettingsApp() {
   loadWidgetPresets();
   loadBeautifyForm();
   loadDeeptalkPresetsList(); // 初始化载入深谈预设
+  initVConsoleSetting();     // 初始化调试控制台开关状态
 
   // 绑定：二级面板中深谈预设设置的保存、删除与表单反馈
   document.getElementById("btn-save-deeptalk-preset").onclick = saveDeeptalkPreset;
@@ -1388,4 +1389,43 @@ async function importBackup(e) {
     }
   };
   reader.readAsText(file);
+}
+
+// === 新增：自适应 PWA/APK 移动端调试控制台 (vConsole) 动态开关管理 ===
+window.vConsoleInstance = null;
+
+function initVConsoleSetting() {
+  const toggle = document.getElementById("settings-vconsole-toggle");
+  if (!toggle) return;
+
+  const isEnabled = localStorage.getItem("settings-vconsole-enabled") === "true";
+  toggle.checked = isEnabled;
+
+  // 首次冷启动加载：静默启动（不弹 Toast 提示干扰用户）
+  applyVConsoleState(isEnabled, true);
+
+  toggle.onchange = (e) => {
+    const enabled = e.target.checked;
+    localStorage.setItem("settings-vconsole-enabled", enabled ? "true" : "false");
+    applyVConsoleState(enabled, false);
+  };
+}
+
+function applyVConsoleState(enabled, isFirstLoad) {
+  if (enabled) {
+    if (typeof VConsole !== 'undefined' && !window.vConsoleInstance) {
+      window.vConsoleInstance = new VConsole();
+      if (!isFirstLoad) showToast("调试控制台已开启 (绿色标签已就绪)");
+    } else if (typeof VConsole === 'undefined') {
+      if (!isFirstLoad) showToast("未检测到 vConsole 脚本，请确保 index.html 头部已引入");
+    }
+  } else {
+    if (window.vConsoleInstance) {
+      try {
+        window.vConsoleInstance.destroy();
+      } catch(e) {}
+      window.vConsoleInstance = null;
+      if (!isFirstLoad) showToast("调试控制台已关闭");
+    }
+  }
 }
