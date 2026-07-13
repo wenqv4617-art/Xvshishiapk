@@ -17,7 +17,7 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import com.story.phone.R // 核心导入：确保 layout 与 id 的物理索引完美编译通过
+import com.story.phone.R
 
 class MainActivity : AppCompatActivity() {
 
@@ -36,18 +36,18 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             @Suppress("DEPRECATION")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                return false // 确保旧版 API 下 WebView 内部跳转
+                return false 
             }
 
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: android.webkit.WebResourceRequest?
             ): Boolean {
-                return false // 确保新版 API 下 WebView 内部跳转
+                return false 
             }
         }
 
-        // 核心修复：重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
+        // 重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
         webView.webChromeClient = object : WebChromeClient() {
             // 支持 HTML5 Geolocation 定位授权
             override fun onGeolocationPermissionsShowPrompt(
@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
                 callback?.invoke(origin, true, false)
             }
 
-            // 核心修复：支持 HTML5 <input type="file"> 文件选择器（解决导入/导出、图片上传无响应）
+            // 支持 HTML5 <input type="file"> 文件选择器
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -67,7 +67,9 @@ class MainActivity : AppCompatActivity() {
                 (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
 
-                val intent = fileChooserParams?.createIntent()
+                // 【修复点】：如果 createIntent 返回 null，直接 return false，彻底解决报错！
+                val intent = fileChooserParams?.createIntent() ?: return false
+                
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE)
                 } catch (e: ActivityNotFoundException) {
@@ -80,14 +82,14 @@ class MainActivity : AppCompatActivity() {
 
         val settings: WebSettings = webView.settings
         settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true // 启用 LocalStorage
-        settings.allowFileAccess = true   // 允许访问 assets 内的本地文件
+        settings.domStorageEnabled = true 
+        settings.allowFileAccess = true   
         settings.allowContentAccess = true
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-
-        // 核心修复：禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动点播放歌的特权！ [1]
+        
+        // 解锁 AI 在后台静默自动点播放歌
         settings.mediaPlaybackRequiresUserGesture = false
 
         // 注入 window.AndroidMCP 原生接口
@@ -100,7 +102,7 @@ class MainActivity : AppCompatActivity() {
         requestAppPermissions()
     }
 
-    // 处理文件选择器弹窗的回调 (通过安全类型转换绕过严格空指针拦截) [1]
+    // 处理文件选择器弹窗的回调 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
@@ -138,7 +140,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
         if (webView.canGoBack()) {
-            webView.goBack() // 返回键优先控制 WebView 回退
+            webView.goBack() 
         } else {
             super.onBackPressed()
         }
