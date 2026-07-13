@@ -121,8 +121,15 @@ class MainActivity : AppCompatActivity() {
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
+        // 动态合并追加存储与媒体音频权限，兼容 Android 13+ 与旧版系统
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            @Suppress("DEPRECATION")
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            @Suppress("DEPRECATION")
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
 
         val listToRequest = permissions.filter {
