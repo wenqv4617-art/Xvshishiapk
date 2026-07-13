@@ -1,13 +1,11 @@
 /**
- * app_chat_mcp.js - Model Context Protocol & Mobile Control Panel 神经联动中枢 (歌单多选读取版)
+ * app_chat_mcp.js - Model Context Protocol & Mobile Control Panel 物理扫歌与原生播放联动中枢 [1]
  */
 
 (function() {
-  let audioInstance = null;
-
   const mcpSystem = {
-    // 内存歌单缓存（保存 File 实例以供播放）
-    playlist: [],
+    // 自动扫描出的物理歌曲列表 (存放歌曲的真实文件名，如 "song.mp3") [1]
+    localPlaylist: [],
 
     // 开启中枢控制面板
     openPanel: function() {
@@ -17,7 +15,9 @@
       }
       document.getElementById("chat-mcp-panel").classList.add("active");
       this.refreshScreentimeDisplay();
-      this.loadMcpSettings();
+      
+      // 开启面板时自动扫描本地物理歌单并加载设置 [1]
+      this.scanAndSyncLocalMusic();
     },
 
     // 关闭控制面板
@@ -25,36 +25,30 @@
       document.getElementById("chat-mcp-panel").classList.remove("active");
     },
 
-    // 载入 MCP 本地配置
+    // 载入并同步 MCP 本地配置
     loadMcpSettings: function() {
       const isMcpEnabled = localStorage.getItem("settings-mcp-prompt-enabled") === "true";
       const toggle = document.getElementById("settings-mcp-prompt-toggle");
       if (toggle) toggle.checked = isMcpEnabled;
 
-      // 回显本地歌单列表
-      const songTitles = localStorage.getItem("mcp_playlist_titles");
+      // 回显本地扫描出的物理歌单 [1]
       const listEl = document.getElementById("mcp-playlist-list");
       if (listEl) {
-        if (songTitles) {
-          try {
-            const songs = JSON.parse(songTitles);
-            if (songs.length > 0) {
-              listEl.innerHTML = songs.map((s, idx) => `<div style="padding: 2px 4px; border-radius:4px; background:rgba(0,0,0,0.03); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">#${idx} - ${s}</div>`).join("");
-              return;
-            }
-          } catch(e) {}
+        if (this.localPlaylist.length > 0) {
+          listEl.innerHTML = this.localPlaylist.map((s, idx) => `<div style="padding: 4px 6px; margin-bottom: 2px; border-radius:4px; background:rgba(0,0,0,0.03); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="mcpSystem.playTrackByIndex(${idx})">#${idx} - ${s}</div>`).join("");
+          return;
         }
-        listEl.innerHTML = "歌单为空，请先点击导入本地音乐。";
+        listEl.innerHTML = "歌单为空。请用手机文件管理器将 MP3/WAV 歌曲放入本地存储的 /Music/Storypoem/ 目录下，然后重新打开此页面即可自动刷新！";
       }
     },
 
     // MCP 神经注入开关切换
     togglePrompt: function(toggleEl) {
       localStorage.setItem("settings-mcp-prompt-enabled", toggleEl.checked ? "true" : "false");
-      showToast(toggleEl.checked ? "已成功建立神经感知！当前环境与歌单已融入 AI 意识。" : "已断开神经通道。");
+      showToast(toggleEl.checked ? "已成功建立神经感知！物理传感器与歌单已同步至 AI。" : "已切断神经数据通道。");
     },
 
-    // 1. 同步地理位置与实时天气 (调用 Open-Meteo 免费开源气象协议)
+    // 1. 同步地理位置与天气
     syncLocation: function() {
       const geoStatus = document.getElementById("mcp-geo-status");
       const weatherStatus = document.getElementById("mcp-weather-status");
@@ -81,7 +75,6 @@
             const temp = data.current_weather.temperature;
             const code = data.current_weather.weathercode;
             
-            // 气象代码转换字典
             const weatherMap = {
               0: "晴朗 (Clear Sky)",
               1: "大部分晴朗", 2: "多云", 3: "阴天",
@@ -100,7 +93,6 @@
               weather: weatherDesc
             };
 
-            // 写入本地，大模型提示词编译器会动态感知
             localStorage.setItem("mcp_loc_weather", JSON.stringify(weatherObj));
             weatherStatus.innerText = `实时室外温度: ${temp}°C | 当前天气: ${weatherDesc}`;
             showToast("环境传感器数据已注入！AI 已同步您的时空认知。");
@@ -117,25 +109,22 @@
       }, { enableHighAccuracy: true, timeout: 8000 });
     },
 
-    // 2. 物理马达震动测试
+    // 2. 物理马达震动
     triggerVibration: function() {
-      // 优先调用安卓原生高特权通道，绕过任何潜在沙箱！ [2]
       if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
-        window.AndroidMCP.triggerHardwareVibrator(400); // 震动 400ms
-        showToast("原生震动信号已发送至安卓硬件马达");
+        window.AndroidMCP.triggerHardwareVibrator(400); // 原生震动
+        showToast("震动信号已发送至 Android 硬件马达");
         return;
       }
-
-      // H5 降级兼容
       if (navigator.vibrate) {
-        navigator.vibrate([200, 100, 200, 100, 300]);
+        navigator.vibrate([200, 100, 200]);
         showToast("H5 震动信号已发送");
       } else {
         showToast("您的设备不支持物理震动 API");
       }
     },
 
-    // 3. 神经闹钟计时器 (结合安卓原生系统时钟高特权直写)
+    // 3. 原生物理时钟直写闹钟 [1]
     setAlarm: function() {
       const input = document.getElementById("mcp-timer-input");
       const seconds = parseInt(input.value);
@@ -148,21 +137,21 @@
       const hour = targetDate.getHours();
       const minute = targetDate.getMinutes();
 
-      // 优先调用原生 Android 时钟高特权直写通道，静默写入真机系统闹钟！ [2]
+      // 物理级直写：绕过沙箱，直接写入手机系统的原生时钟闹钟！ [1]
       if (window.AndroidMCP && typeof window.AndroidMCP.setAndroidSystemAlarm === 'function') {
-        window.AndroidMCP.setAndroidSystemAlarm(hour, minute, "叙事诗小手机：MCP 神经倒计时");
-        showToast(`已成功将物理闹钟静默设定至：${hour}:${String(minute).padStart(2, '0')}`);
+        window.AndroidMCP.setAndroidSystemAlarm(hour, minute, "叙事诗小手机：神经倒计时闹铃");
+        showToast(`已成功写入系统时钟！物理闹钟已设定在 ${hour}:${String(minute).padStart(2, '0')}`);
         this.closePanel();
         return;
       }
 
-      // H5 降级倒计时模拟器
-      showToast(`神经闹钟已设定，将在 ${seconds} 秒后提醒`);
+      // 降级模拟
+      showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒`);
       this.closePanel();
 
       setTimeout(() => {
         if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
-          window.AndroidMCP.triggerHardwareVibrator(600); // 震动 600ms
+          window.AndroidMCP.triggerHardwareVibrator(600);
         } else if (navigator.vibrate) {
           navigator.vibrate([400, 100, 400, 100, 600]);
         }
@@ -170,82 +159,79 @@
       }, seconds * 1000);
     },
 
-    // 4. 读取多选本地音频文件歌单并存入内存与 localStorage [1]
-    handleMusicSelect: function(input) {
-      if (input.files.length === 0) return;
-      
-      this.playlist = Array.from(input.files);
-      const titles = this.playlist.map(file => file.name);
+    // 4.1 静默扫描真机 /Music/Storypoem 物理目录并载入 [1]
+    scanAndSyncLocalMusic: function() {
+      if (window.AndroidMCP && typeof window.AndroidMCP.scanLocalMusicFolder === 'function') {
+        try {
+          const jsonStr = window.AndroidMCP.scanLocalMusicFolder();
+          this.localPlaylist = JSON.parse(jsonStr);
 
-      // 将歌单的文件名称写到存储中，以便大模型感知
-      localStorage.setItem("mcp_playlist_titles", JSON.stringify(titles));
-      
-      const titleEl = document.getElementById("mcp-music-title");
-      if (titleEl) titleEl.innerText = `已导入本地歌曲：${this.playlist.length} 首`;
+          // 同步歌单名称给 LocalStorage，供大模型提示词读取感知 [1]
+          localStorage.setItem("mcp_playlist_titles", jsonStr);
 
-      this.loadMcpSettings();
-      showToast(`成功导入 ${this.playlist.length} 首本地歌曲！`);
-    },
-
-    // 按索引播放内存中的本地音频
-    playTrackByIndex: function(index) {
-      if (this.playlist.length === 0) {
-        showToast("本地歌单为空，请先在 MCP 面板中导入音乐！");
-        return;
-      }
-      if (index < 0 || index >= this.playlist.length) {
-        showToast("指令播放的歌单索引超出界限");
-        return;
-      }
-
-      const file = this.playlist[index];
-      this.playAudioFile(file);
-    },
-
-    // 真正的音乐播放控制逻辑 (MediaSession 完美继承锁屏控制)
-    playAudioFile: function(file) {
-      try {
-        if (audioInstance) {
-          audioInstance.pause();
-          // 核心修复：释放旧的内存 URL，防止多次加载产生内存溢出或解码器锁死 [1]
-          if (audioInstance.src && audioInstance.src.startsWith("blob:")) {
-            URL.revokeObjectURL(audioInstance.src);
+          const titleEl = document.getElementById("mcp-music-title");
+          if (titleEl) {
+            titleEl.innerText = this.localPlaylist.length > 0 
+              ? `已自动装载本地歌曲：${this.localPlaylist.length} 首` 
+              : "歌单就绪：尚未在手机 /Music/Storypoem 下放置歌曲";
           }
+        } catch(e) {
+          console.error("扫描本地物理歌单失败:", e);
         }
-        
-        const url = URL.createObjectURL(file);
-        audioInstance = new Audio(url);
-        
-        audioInstance.play().then(() => {
-          document.getElementById("mcp-music-title").innerText = `正在播放：${file.name}`;
-          
-          if ('mediaSession' in navigator) {
-            navigator.mediaSession.metadata = new MediaMetadata({
-              title: file.name.replace(/\.[^/.]+$/, ""), // 自动裁剪去掉 mp3/wav 后缀
-              artist: '叙事诗小手机 (Story Phone)',
-              album: '设备本地神经歌单'
-            });
-            
-            navigator.mediaSession.setActionHandler('play', () => audioInstance.play());
-            navigator.mediaSession.setActionHandler('pause', () => audioInstance.pause());
-          }
-          showToast(`已成功唤醒真机播放器，正在播放：《${file.name}》`);
-        }).catch(err => {
-          // 核心修复：在 vConsole 中以 ERROR 级别强输出真实的播放报错信息，方便精准排错 [1]
-          console.error("[MCP Audio Error] 真机播放失败，具体原因:", err);
-          showToast("真机播放失败：" + (err.message || "解码异常"));
-        });
-      } catch(e) {
-        console.error("[MCP Audio Catch] 遭遇严重故障:", e);
-        showToast("播放音频流遇到严重故障");
+      } else {
+        // H5 降级提示
+        const titles = localStorage.getItem("mcp_playlist_titles");
+        if (titles) {
+          try { this.localPlaylist = JSON.parse(titles); } catch(e) {}
+        }
+      }
+      this.loadMcpSettings();
+    },
+
+    // 4.2 通过原生 MediaPlayer 进行物理音频后台/锁屏播放 (彻底击穿 Origin 拦截) [1]
+    playTrackByIndex: function(index) {
+      if (this.localPlaylist.length === 0) {
+        showToast("本地歌单为空！请先将 MP3 歌曲丢入手机 /Music/Storypoem 目录下");
+        return;
+      }
+      if (index < 0 || index >= this.localPlaylist.length) {
+        showToast("指令点播的音乐索引超出界限");
+        return;
+      }
+
+      const songName = this.localPlaylist[index];
+      
+      // 核心直连：调用原生 APK 的 Kotlin 媒体引擎，实现完美的后台放歌与锁屏驻留 [1]
+      if (window.AndroidMCP && typeof window.AndroidMCP.playNativeMusic === 'function') {
+        const success = window.AndroidMCP.playNativeMusic(songName);
+        if (success) {
+          document.getElementById("mcp-music-title").innerText = `正在物理播放：${songName}`;
+          showToast(`已成功唤醒原生播放器后台播放：《${songName}》`);
+        } else {
+          showToast("真机原生播放音频流失败");
+        }
+        return;
+      }
+
+      showToast("当前环境暂不支持原生物理音频流后台播放，请在 APK 壳中运行。");
+    },
+
+    // 按歌名进行模糊匹配播放
+    playTrackByTitle: function(title) {
+      if (this.localPlaylist.length === 0) return;
+      const index = this.localPlaylist.findIndex(s => s.toLowerCase().includes(title.toLowerCase()));
+      if (index !== -1) {
+        this.playTrackByIndex(index);
+      } else {
+        showToast(`歌单中未找到包含 "${title}" 的歌曲`);
       }
     },
 
     stopMusic: function() {
-      if (audioInstance) {
-        audioInstance.pause();
-        document.getElementById("mcp-music-title").innerText = "音频状态：已暂停";
-        showToast("音频流播放已暂停");
+      if (window.AndroidMCP && typeof window.AndroidMCP.stopNativeMusic === 'function') {
+        window.AndroidMCP.stopNativeMusic();
+        document.getElementById("mcp-music-title").innerText = "音乐播放已暂停";
+        showToast("音频播放已暂停");
       }
     },
 
