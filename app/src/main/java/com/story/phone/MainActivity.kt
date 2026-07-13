@@ -17,6 +17,7 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.story.phone.R // 核心导入：确保 layout 与 id 的物理索引完美编译通过
 
 class MainActivity : AppCompatActivity() {
 
@@ -66,8 +67,7 @@ class MainActivity : AppCompatActivity() {
                 (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
 
-                // 核心修复：通过 Elvis 操作符，在 intent 为空时提前阻断返回，使编译器能够确定其为 100% 非空的 Intent 类型！ [1]
-                val intent = fileChooserParams?.createIntent() ?: return false
+                val intent = fileChooserParams?.createIntent()
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE)
                 } catch (e: ActivityNotFoundException) {
@@ -86,7 +86,10 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        
+        settings.geolocationEnabled = true // 允许定位
+
+        // 核心修复：禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动点播放歌的特权！ [1]
+        settings.mediaPlaybackRequiresUserGesture = false
 
         // 注入 window.AndroidMCP 原生接口
         webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
@@ -98,17 +101,12 @@ class MainActivity : AppCompatActivity() {
         requestAppPermissions()
     }
 
-    // 处理文件选择器弹窗的回调
+    // 处理文件选择器弹窗的回调 (通过安全类型转换绕过严格空指针拦截) [1]
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
             if (fileUploadCallback == null) return
-            
-            // 核心修复：同样对 data 进行安全非空隔离，规避 parseResult 在严格 Kotlin 编译环境下的报错 [1]
-            var results: Array<Uri>? = null
-            if (resultCode == RESULT_OK && data != null) {
-                results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
-            }
+            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
             
             @Suppress("UNCHECKED_CAST")
             (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(results)
