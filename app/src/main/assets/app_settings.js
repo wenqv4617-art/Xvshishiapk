@@ -928,7 +928,7 @@ async function clearAllAppData() {
   }
 }
 
-// 导出美化包
+// 导出美化包 (适配真机物理直写 /Download/Storypoem/) [1]
 function exportBeautifyPack() {
   try {
     const pack = {
@@ -942,17 +942,32 @@ function exportBeautifyPack() {
       dockOpacity: localStorage.getItem("beautify-dock-opacity")
     };
     
-    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+    const jsonStr = JSON.stringify(pack, null, 2);
+    const fileName = `desktop_beautify_pack_${Date.now()}.json`;
+
+    // 优先执行真机物理直写 [2]
+    if (window.AndroidMCP && typeof window.AndroidMCP.saveBackupFile === 'function') {
+      const success = window.AndroidMCP.saveBackupFile(jsonStr, fileName);
+      if (success) {
+        showToast(`美化包成功物理导出至手机：/Download/Storypoem/${fileName}`);
+      } else {
+        showToast("物理导出美化包失败，请检查手机存储空间。");
+      }
+      return;
+    }
+
+    // PWA 降级下载
+    const blob = new Blob([jsonStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `desktop_beautify_pack_${Date.now()}.json`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch(e) {
-    alert("导出美化包失败: " + e.message);
+    showToast("导出美化包失败: " + e.message);
   }
 }
 
@@ -984,7 +999,7 @@ function importBeautifyPack(e) {
   reader.readAsText(file);
 }
 
-// 导出人设与聊天记录
+// 导出人设与聊天记录 (适配真机物理直写 /Download/Storypoem/) [1]
 async function exportChatAndPersonas() {
   try {
     const rawBackup = {
@@ -999,17 +1014,32 @@ async function exportChatAndPersonas() {
       }
     };
     const backup = await serializeRecord(rawBackup);
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const jsonStr = JSON.stringify(backup, null, 2);
+    const fileName = `personas_chat_backup_${Date.now()}.json`;
+
+    // 优先执行真机物理直写 [2]
+    if (window.AndroidMCP && typeof window.AndroidMCP.saveBackupFile === 'function') {
+      const success = window.AndroidMCP.saveBackupFile(jsonStr, fileName);
+      if (success) {
+        showToast(`人设与聊天记录成功导出至：/Download/Storypoem/${fileName}`);
+      } else {
+        showToast("物理导出失败，请检查存储读写权限。");
+      }
+      return;
+    }
+
+    // PWA 降级下载
+    const blob = new Blob([jsonStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `personas_chat_backup_${Date.now()}.json`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch(e) {
-    alert("导出聊天人设记录失败: " + e.message);
+    showToast("导出聊天人设记录失败: " + e.message);
   }
 }
 
@@ -1195,7 +1225,7 @@ function deserializeRecord(obj) {
   return obj;
 }
 
-// 备份数据导出逻辑
+// 备份数据导出逻辑 (支持 PWA 与真机物理直写 /Download/Storypoem/) [1]
 async function exportBackup() {
   try {
     const rawBackup = {
@@ -1237,18 +1267,33 @@ async function exportBackup() {
     };
     
     const backup = await serializeRecord(rawBackup);
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const jsonStr = JSON.stringify(backup, null, 2);
+    const fileName = `story_phone_all_backup_${Date.now()}.json`;
+
+    // 优先执行真机物理直写 [2]
+    if (window.AndroidMCP && typeof window.AndroidMCP.saveBackupFile === 'function') {
+      const success = window.AndroidMCP.saveBackupFile(jsonStr, fileName);
+      if (success) {
+        showToast(`全量数据成功物理备份至：/Download/Storypoem/${fileName}`);
+      } else {
+        showToast("物理备份失败，请检查存储读写权限。");
+      }
+      return;
+    }
+
+    // PWA 降级下载
+    const blob = new Blob([jsonStr], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `story_phone_all_backup_${Date.now()}.json`;
+    a.download = fileName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (error) {
     console.error(error);
-    alert("完整数据备份失败: " + error.message);
+    showToast("完整数据备份失败: " + error.message);
   }
 }
 
