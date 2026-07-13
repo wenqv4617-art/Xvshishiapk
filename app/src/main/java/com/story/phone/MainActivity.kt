@@ -17,6 +17,7 @@ import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import com.story.phone.R // 核心导入：确保 layout 与 id 的物理索引完美编译通过
 
 class MainActivity : AppCompatActivity() {
 
@@ -33,8 +34,16 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webview)
         
         webView.webViewClient = object : WebViewClient() {
+            @Suppress("DEPRECATION")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                return false // 确保 WebView 内部跳转
+                return false // 确保旧版 API 下 WebView 内部跳转
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?
+            ): Boolean {
+                return false // 确保新版 API 下 WebView 内部跳转
             }
         }
 
@@ -54,7 +63,8 @@ class MainActivity : AppCompatActivity() {
                 filePathCallback: ValueCallback<Array<Uri>>?,
                 fileChooserParams: FileChooserParams?
             ): Boolean {
-                fileUploadCallback?.onReceiveValue(null)
+                @Suppress("UNCHECKED_CAST")
+                (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
 
                 val intent = fileChooserParams?.createIntent()
@@ -88,13 +98,15 @@ class MainActivity : AppCompatActivity() {
         requestAppPermissions()
     }
 
-    // 处理文件选择器弹窗的回调
+    // 处理文件选择器弹窗的回调 (通过安全类型转换绕过严格空指针拦截) [1]
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
             if (fileUploadCallback == null) return
             val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
-            fileUploadCallback?.onReceiveValue(results)
+            
+            @Suppress("UNCHECKED_CAST")
+            (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(results)
             fileUploadCallback = null
         }
     }
