@@ -53,4 +53,21 @@ class AndroidMcp(private val context: Context) {
             e.printStackTrace()
         }
     }
+     // 4. 原生写入真机物理闹钟 (无需 Termux，APK 拥有高特权 Intent 直写)
+    @JavascriptInterface
+    fun setAndroidSystemAlarm(hour: Int, minute: Int, message: String) {
+        try {
+            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+                putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, message)
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true) // 不弹系统界面，后台静默写入
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
 }
