@@ -1,1431 +1,2133 @@
-/**
- * app_settings.js - 系统设置、桌面美化、组件工坊、数据分区隔离管理中心 (内置 Prompt 复制版)
- */
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" id="theme-color-meta" content="#f4f6fa">
+  <title>叙事诗小手机</title>
+  <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="app.css">
+  <link rel="stylesheet" href="chat.css">
+  <link rel="stylesheet" href="status.css">
+  <link rel="stylesheet" href="sticker.css">
+  <link rel="stylesheet" href="deeptalk.css">
+  <link rel="stylesheet" href="chat_html.css">
+  <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
+  <style>
+    /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
+    .expand-panel {
+      display: none;
+      margin-top: 10px;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+      position: relative;
+    }
+    .expand-panel.active {
+      display: block;
+    }
+    .expand-slider {
+      display: flex;
+      overflow-x: auto;
+      scroll-snap-type: x mandatory;
+      scrollbar-width: none; /* Firefox */
+      -ms-overflow-style: none; /* IE/Edge */
+      width: 100%;
+    }
+    .expand-slider::-webkit-scrollbar {
+      display: none; /* Chrome/Safari */
+    }
+    .expand-page {
+      flex: 0 0 100%;
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px 12px;
+      scroll-snap-align: start;
+      padding: 4px 12px 8px 12px;
+      box-sizing: border-box;
+    }
+    .expand-dots {
+      display: flex;
+      justify-content: center;
+      gap: 6px;
+      margin-top: 4px;
+      padding-bottom: 4px;
+    }
+    .expand-dots .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background-color: #d1d5db;
+      transition: background-color 0.2s ease;
+    }
+    .expand-dots .dot.active {
+      background-color: #9ca3af;
+    }
+  </style>
+</head>
+<body>
+  <div id="phone-container">
+    <!-- 桌面网格 -->
+    <main id="desktop">
+      <div class="app-grid" id="desktop-grid">
+        <!-- 由 JS 渲染桌面图标 -->
+      </div>
+    </main>
 
-let isSettingsInitialized = false;
-
-// 专属临时存储自定义图标和壁纸的 Blob 二进制指针
-let tempBgBlob = null;
-
-function initSettingsApp() {
-  if (isSettingsInitialized) return;
-  isSettingsInitialized = true;
-
-  loadPresetsList();
-  loadCustomCssPresets();
-  loadWidgetPresets();
-  loadBeautifyForm();
-  loadDeeptalkPresetsList(); // 初始化载入深谈预设
-  initVConsoleSetting();     // 初始化调试控制台开关状态
-
-  // 绑定：二级面板中深谈预设设置的保存、删除与表单反馈
-  document.getElementById("btn-save-deeptalk-preset").onclick = saveDeeptalkPreset;
-  document.getElementById("btn-delete-deeptalk-preset").onclick = deleteDeeptalkPreset;
-  document.getElementById("settings-deeptalk-presets-select").onchange = loadDeeptalkPresetToForm;
-
-  // 1. 桌面壁纸美化上传
-  const btnBgUpload = document.getElementById("btn-beautify-bg-upload");
-  const fileBg = document.getElementById("file-beautify-bg");
-  if (btnBgUpload && fileBg) {
-    btnBgUpload.onclick = () => fileBg.click();
-    fileBg.onchange = (e) => {
-      if (e.target.files.length > 0) {
-        tempBgBlob = e.target.files[0];
-        document.getElementById("beautify-bg-url").value = "[本地上传背景]";
-        
-        // 实时触发壁纸的图像预览
-        const reader = new FileReader();
-        reader.onload = function(evt) {
-          const preview = document.getElementById("beautify-bg-preview");
-          if (preview) preview.innerHTML = `<img src="${evt.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
-        };
-        reader.readAsDataURL(tempBgBlob);
-      }
-    };
-  }
-
-  // 2. 监听4个应用图标的本地上传触发
-  let activeCustomizingAppId = null;
-  document.querySelectorAll(".btn-icon-upload-trigger").forEach(btn => {
-    btn.onclick = (e) => {
-      e.preventDefault();
-      activeCustomizingAppId = btn.getAttribute("data-app");
-      document.getElementById("file-beautify-icon-global").click();
-    };
-  });
-
-  // 绑定全局图标选择变更并即时显示预览
-  const fileIconGlobal = document.getElementById("file-beautify-icon-global");
-  if (fileIconGlobal) {
-    fileIconGlobal.onchange = async (e) => {
-      if (e.target.files.length > 0 && activeCustomizingAppId) {
-        const file = e.target.files[0];
-        const dataURL = await blobToDataURL(file);
-        
-        // 写入本地该应用输入框，并更新即时预览
-        const urlInput = document.getElementById(`beautify-icon-url-${activeCustomizingAppId}`);
-        if (urlInput) urlInput.value = "[本地上传图标]";
-        
-        const previewBox = document.getElementById(`beautify-preview-${activeCustomizingAppId}`);
-        if (previewBox) {
-          previewBox.innerHTML = `<img src="${dataURL}" style="width:100%; height:100%; object-fit:cover;">`;
-          previewBox.setAttribute("data-pending-base64", dataURL);
-        }
-        
-        fileIconGlobal.value = "";
-      }
-    };
-  }
-
-  // 监听恢复单个应用图标为默认
-  document.querySelectorAll(".btn-icon-reset-trigger").forEach(btn => {
-    btn.onclick = (e) => {
-      e.preventDefault();
-      const appId = btn.getAttribute("data-app");
+    <!-- 各类应用窗口 -->
+    <div id="app-window-container">
       
-      let customIcons = {};
-      try { customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {}; } catch(err) {}
-      delete customIcons[appId];
-      localStorage.setItem("beautify-custom-icons", JSON.stringify(customIcons));
+<!-- === 设置应用 === -->
+      <div id="win-settings" class="app-window">
+        <header class="win-header">
+          <button class="btn-icon" id="btn-settings-back" onclick="handleSettingsBack()">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="settings-title">系统设置</h3>
+          <div style="width:40px;"></div>
+        </header>
+        <div class="win-body">
+          <!-- 一级主菜单 -->
+          <div id="settings-lv1">
+            <div class="menu-item" onclick="openSettingsLv2('api')">
+              <span>API 协议设置</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div class="menu-item" onclick="openSettingsLv2('beautify')">
+              <span>桌面美化设置</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div class="menu-item" onclick="openSettingsLv2('css')">
+              <span>全局 CSS 注入</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div class="menu-item" onclick="openSettingsLv2('widget')">
+              <span>组件工坊</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div class="menu-item" onclick="openSettingsLv2('deeptalk')">
+              <span>深谈预设设置</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div class="menu-item" onclick="openSettingsLv2('data')">
+              <span>数据管理</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div class="menu-item" onclick="openSettingsLv2('force-update')">
+              <span>系统强更新</span>
+              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <!-- 新增：控制台一级开关，无二级菜单 -->
+            <div class="menu-item" style="display:flex; align-items:center; justify-content:space-between; cursor:default;" onclick="event.stopPropagation();">
+              <span>调试控制台</span>
+              <label class="switch">
+                <input type="checkbox" id="settings-vconsole-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
 
-      const urlInput = document.getElementById(`beautify-icon-url-${appId}`);
-      if (urlInput) urlInput.value = "";
+          <!-- 二级：API 设置 -->
+          <div id="settings-lv2-api" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group">
+              <label>配置预设</label>
+              <div class="preset-row">
+                <select id="api-presets-select"><option value="">-- 选择已有预设 --</option></select>
+                <button id="btn-delete-preset" class="btn btn-danger-outline">删除</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>预设名称</label>
+              <input type="text" id="api-preset-name" placeholder="预设名称">
+            </div>
+            <div class="form-group">
+              <label>选择协议</label>
+              <select id="api-protocol">
+                <option value="openai">OpenAI</option>
+                <option value="openai-compatible">兼容 OpenAI</option>
+                <option value="gemini">Gemini 官方</option>
+                <option value="deepseek">DeepSeek 官方</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>API 终结点 (URL)</label>
+              <input type="text" id="api-url" placeholder="https://api.openai.com/v1">
+            </div>
+            <div class="form-group">
+              <label>API Key</label>
+              <input type="password" id="api-key" placeholder="API Key">
+            </div>
+            <div class="form-group">
+              <label>模型选择</label>
+              <div class="model-row">
+                <select id="api-model-select"><option value="">请先拉取模型</option></select>
+                <button id="btn-fetch-models" class="btn">拉取</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>模型温度 (Temperature: <span id="temp-val">0.7</span>)</label>
+              <input type="range" id="api-temp" min="0" max="2" step="0.1" value="0.7">
+            </div>
+            <div class="form-actions">
+              <button id="btn-test-api" class="btn btn-outline">测试连接</button>
+              <button id="btn-save-preset" class="btn">保存预设</button>
+              <button id="btn-apply-global" class="btn btn-primary">应用到全局</button>
+            </div>
+          </div>
 
-      const previewBox = document.getElementById(`beautify-preview-${appId}`);
-      if (previewBox) {
-        previewBox.removeAttribute("data-pending-base64");
-        const info = DESKTOP_APPS_CONFIG[appId];
-        previewBox.innerHTML = info ? info.svg : "";
-      }
-      
-      let appName = "";
-      if (appId === "settings") appName = "设置";
-      else if (appId === "archive") appName = "档案库";
-      else if (appId === "world_book") appName = "世界书";
-      else if (appId === "chat") appName = "聊天";
-      else if (appId === "deeptalk") appName = "深谈";
+<!-- 二级：桌面美化设置 -->
+          <div id="settings-lv2-beautify" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group">
+              <label>设置桌面背景图 (壁纸)</label>
+              <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 8px;">
+                <div id="beautify-bg-preview" style="width: 50px; height: 50px; border-radius: 8px; border: 1.5px dashed var(--border); overflow: hidden; display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0;">
+                  <span style="font-size: 9px; color: var(--text-secondary); text-align: center;">无预览</span>
+                </div>
+                <div style="flex: 1;">
+                  <input type="text" id="beautify-bg-url" placeholder="输入壁纸图片 URL" style="width: 100%; margin-bottom: 4px;">
+                  <button class="btn btn-outline" id="btn-beautify-bg-upload" style="padding: 8px 12px; font-size: 11px; width: 100%;">本地上传壁纸</button>
+                  <input type="file" id="file-beautify-bg" accept="image/*" style="display:none;">
+                </div>
+              </div>
+            </div>
+            
+            <!-- 新增：底部 Dock 栏自由不透明度设置 -->
+            <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label>底部 Dock 栏不透明度 (0 - 100%: <span id="beautify-dock-opacity-val">70</span>%)</label>
+              <input type="range" id="beautify-dock-opacity" min="0" max="100" value="70">
+            </div>
 
-      alert(`应用「${appName}」图标已重置为系统默认。`);
-      if (window.loadDesktopLayout) window.loadDesktopLayout();
-    };
-  });
+            <!-- 新增：回车上屏开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label style="margin-bottom:0; font-weight:700;">回车上屏 (按 Enter 发送线上消息)</label>
+              <label class="switch">
+                <input type="checkbox" id="settings-enter-send-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
 
-  // 绑定：Dock 不透明度数值即时变动
-  const opacityInput = document.getElementById("beautify-dock-opacity");
-  const opacityValText = document.getElementById("beautify-dock-opacity-val");
-  if (opacityInput && opacityValText) {
-    opacityInput.oninput = (e) => {
-      opacityValText.innerText = e.target.value;
-    };
-  }
+            <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label style="margin-bottom:10px; display:block;">自定义应用图标</label>
+              <div id="beautify-icons-list" style="display: flex; flex-direction: column; gap: 12px;">
+                <!-- 设置 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-settings" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">设置</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-settings" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="settings" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="settings" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 档案库 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-archive" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">档案库</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-archive" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="archive" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="archive" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 世界书 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-world_book" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">世界书</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-world_book" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="world_book" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="world_book" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 聊天 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-chat" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">聊天</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-chat" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="chat" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="chat" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 深谈 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-deeptalk" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">深谈</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-deeptalk" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="deeptalk" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="deeptalk" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- 全局单通道图标上传文件input -->
+              <input type="file" id="file-beautify-icon-global" accept="image/*" style="display:none;">
+            </div>
+            <div class="form-actions" style="margin-top:24px;">
+              <button id="btn-save-beautify" class="btn btn-primary" style="width:100%;">保存并应用美化</button>
+              <button id="btn-reset-beautify" class="btn btn-danger-outline" style="width:100%; margin-top:10px;">恢复默认壁纸与全部图标</button>
+            </div>
+          </div>
 
-  document.getElementById("btn-save-beautify").onclick = saveBeautifyConfig;
-  document.getElementById("btn-reset-beautify").onclick = resetBeautifyConfig;
+          <!-- 二级：全局 CSS 注入 -->
+          <div id="settings-lv2-css" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group">
+              <label>选择已有 CSS 预设</label>
+              <div class="preset-row" style="display:flex; gap:8px;">
+                <select id="css-presets-select" style="flex:1;"><option value="">-- 新建预设 --</option></select>
+                <button id="btn-delete-css-preset" class="btn btn-danger-outline">删除</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>预设名称</label>
+              <input type="text" id="css-preset-name" placeholder="请输入预设名称（用于保存）">
+            </div>
+            <div class="form-group">
+              <label>自定义 CSS 代码</label>
+              <textarea id="css-code-editor" rows="8" placeholder="/* 在此处输入您的自定义 CSS 代码... */" style="font-family:monospace; font-size:11px;"></textarea>
+            </div>
+            <div class="form-actions">
+              <button id="btn-save-css-preset" class="btn" style="width:100%; margin-bottom:10px;">保存预设</button>
+              <button id="btn-apply-css" class="btn btn-primary" style="width:100%; margin-bottom:10px;">编译并应用到全局</button>
+              <button id="btn-reset-css" class="btn btn-danger-outline" style="width:100%;">清空并恢复默认</button>
+            </div>
+          </div>
 
-  // 绑定：全局 CSS 相关
-  document.getElementById("btn-save-css-preset").onclick = saveCssPreset;
-  document.getElementById("btn-apply-css").onclick = applyCssPreset;
-  document.getElementById("btn-reset-css").onclick = resetCssPreset;
-  document.getElementById("btn-delete-css-preset").onclick = deleteCssPreset;
-  document.getElementById("css-presets-select").onchange = loadCssPresetToForm;
+          <!-- 二级：组件工坊 -->
+          <div id="settings-lv2-widget" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group">
+              <label>选择已有组件进行编辑</label>
+              <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <select id="widget-presets-select" style="flex:1;"><option value="">-- 新建组件 --</option></select>
+                <button id="btn-delete-widget" class="btn btn-danger-outline">删除组件</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>组件名称</label>
+              <input type="text" id="widget-name-input" placeholder="请输入组件名称">
+            </div>
+            <!-- 组件占用槽位长宽自适应设置 -->
+            <div class="form-group" style="display:flex; gap:10px;">
+              <div style="flex:1;">
+                <label>占用槽位列宽 (1-4)</label>
+                <input type="number" id="widget-width-span" value="1" min="1" max="4" style="text-align:center;">
+              </div>
+              <div style="flex:1;">
+                <label>占用槽位行高 (1-5)</label>
+                <input type="number" id="widget-height-span" value="1" min="1" max="5" style="text-align:center;">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>HTML/CSS/JS 代码</label>
+              <textarea id="widget-code-editor" rows="6" placeholder="&lt;div style='color:red;font-weight:bold;'&gt;组件卡片&lt;/div&gt;&#10;&lt;script&gt;console.log('组件载入');&lt;/script&gt;" style="font-family:monospace; font-size:11px;"></textarea>
+            </div>
+            <div class="form-group">
+              <label>组件实时预览</label>
+              <div id="widget-workshop-preview" style="width:100%; height:84px; border:1px dashed var(--border); border-radius:12px; display:flex; justify-content:center; align-items:center; background:#f8fafc; overflow:hidden;">
+                <span style="font-size:11px; color:var(--text-secondary);">暂无预览</span>
+              </div>
+            </div>
+            <div class="form-actions">
+  <!-- 新增的一键复制 Prompt 模板按钮 -->
+  <button id="btn-copy-widget-prompt" class="btn btn-outline" style="width:100%; margin-bottom:10px; border-color: #ec4899; color: #ec4899; display: flex; align-items: center; justify-content: center; gap: 6px;">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+    复制 AI 提示词模板 (让 AI 帮写组件代码)
+  </button>
+  <button id="btn-compile-widget" class="btn btn-outline" style="width:100%; margin-bottom:10px;">测试编译组件</button>
+  <button id="btn-save-widget" class="btn btn-primary" style="width:100%;">编译并保存组件</button>
+</div>
+          </div>
 
-  // 绑定：组件工坊相关
-  document.getElementById("btn-compile-widget").onclick = compileAndPreviewWidget;
-  document.getElementById("btn-save-widget").onclick = saveWidgetPreset;
-  document.getElementById("btn-delete-widget").onclick = deleteWidgetPreset;
-  document.getElementById("widget-presets-select").onchange = loadWidgetToForm;
-  
-  // === 【绑定大模型组件 Prompt 复制事件】 ===
-  const btnCopyPrompt = document.getElementById("btn-copy-widget-prompt");
-  if (btnCopyPrompt) {
-    btnCopyPrompt.onclick = copyWidgetPromptToClipboard;
-  }
+          <!-- 二级：深谈预设设置 -->
+          <div id="settings-lv2-deeptalk" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group">
+              <label>选择已有深谈预设进行编辑</label>
+              <div style="display:flex; gap:8px; margin-bottom:8px;">
+                <select id="settings-deeptalk-presets-select" style="flex:1;"><option value="">-- 新建预设 --</option></select>
+                <button id="btn-delete-deeptalk-preset" class="btn btn-danger-outline">删除预设</button>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>预设名称</label>
+              <input type="text" id="settings-deeptalk-preset-name" placeholder="例如：自省人格、梦境独白">
+            </div>
+            <div class="form-group">
+              <label>附加 Prompt 深度提示语</label>
+              <textarea id="settings-deeptalk-preset-prompt" rows="8" placeholder="在此处输入该预设专用的心理状态、行为隐瞒逻辑等..."></textarea>
+            </div>
+            <div class="form-actions">
+              <button id="btn-save-deeptalk-preset" class="btn btn-primary" style="width:100%;">保存当前深谈预设</button>
+            </div>
+          </div>
 
-  // 绑定：数据管理 (7块隔离导出/导入功能)
-  document.getElementById("btn-export-beautify").onclick = exportBeautifyPack;
-  document.getElementById("btn-import-beautify").onclick = () => document.getElementById("file-import-beautify").click();
-  document.getElementById("file-import-beautify").onchange = importBeautifyPack;
+          <!-- 二级：数据管理 -->
+          <div id="settings-lv2-data" class="settings-lv2-panel" style="display:none;">
+            <div class="data-status-card">
+              <h4>本地存储状态</h4>
+              <p>总记录数: <span id="db-total-records">0</span></p>
+              <p>所有资源空间: <span id="db-total-bytes">0 KB</span></p>
+              <p>图片所占空间: <span id="db-image-bytes">0 KB</span></p>
+            </div>
+            <div class="data-actions" style="display:flex; flex-direction:column; gap:8px;">
+              <button id="btn-export-beautify" class="btn" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z" transform="rotate(180 12 12)"/></svg>
+                导出桌面美化包 (壁纸、图标与组件)
+              </button>
+              <button id="btn-import-beautify" class="btn btn-outline" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+                导入桌面美化包
+              </button>
+              <input type="file" id="file-import-beautify" accept=".json" style="display:none;">
+              
+              <button id="btn-export-chat-personas" class="btn" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z" transform="rotate(180 12 12)"/></svg>
+                导出人设与聊天记录 (无美化)
+              </button>
+              <button id="btn-import-chat-personas" class="btn btn-outline" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+                导入人设与聊天记录
+              </button>
+              <input type="file" id="file-import-chat-personas" accept=".json" style="display:none;">
 
-  document.getElementById("btn-export-chat-personas").onclick = exportChatAndPersonas;
-  document.getElementById("btn-import-chat-personas").onclick = () => document.getElementById("file-import-chat-personas").click();
-  document.getElementById("file-import-chat-personas").onchange = importChatAndPersonas;
+              <button id="btn-export-all-data" class="btn" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z" transform="rotate(180 12 12)"/></svg>
+                导出完整数据 (全备份)
+              </button>
+              <button id="btn-import-all-data" class="btn btn-outline" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+                导入完整数据
+              </button>
+              <input type="file" id="file-import-all" accept=".json" style="display:none;">
 
-  document.getElementById("btn-export-all-data").onclick = exportBackup;
-  document.getElementById("btn-import-all-data").onclick = () => document.getElementById("file-import-all").click();
-  document.getElementById("file-import-all").onchange = importBackup;
+              <button id="btn-clear-all-data" class="btn" style="width:100%; background-color:#ef4444; color:white; border:none; margin-top:8px; display:flex; align-items:center; justify-content:center; gap:4px;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
+                彻底清除所有数据 (全格式化)
+              </button>
+            </div>
+          </div>
 
-  document.getElementById("btn-clear-all-data").onclick = clearAllAppData;
+          <!-- 二级：系统强更新 -->
+          <div id="settings-lv2-force-update" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0;">
+              <label style="margin-bottom:0; font-weight:700;">系统强更新 (绕过 CDN 并清除缓存)</label>
+              <label class="switch">
+                <input type="checkbox" id="force-update-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); line-height:1.5; margin-bottom:20px;">
+              开启此开关后，系统在冷启动时会自动断开 Service Worker 的离线缓存读取，强行向 origin 服务器追加时间戳。这可以彻底避开 CDN 边缘节点强缓存，保障您拉取到程序最新的升级代码！
+            </div>
+            <button id="btn-update-resources" class="btn btn-outline" style="width:100%;">立即重构资源并热更新系统</button>
+          </div>
+        </div>
+      </div>
 
-  // 绑定：强更新开关状态维护
-  const forceToggle = document.getElementById("force-update-toggle");
-  if (forceToggle) {
-    forceToggle.checked = localStorage.getItem("system-force-update") === "true";
-    forceToggle.onchange = (e) => {
-      localStorage.setItem("system-force-update", e.target.checked ? "true" : "false");
-    };
-  }
+      <!-- === 档案库应用 === -->
+      <div id="win-archive" class="app-window">
+        <header class="win-header">
+          <button class="btn-icon" onclick="closeApp('archive')">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="archive-title">档案库 - 角色</h3>
+          <button class="btn-icon" id="btn-add-archive">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
+        </header>
+        <div class="win-body">
+          <div id="archive-list-container" class="archive-main"></div>
+          <!-- 档案表单弹层 -->
+          <div id="archive-form-overlay" class="modal-overlay">
+            <div class="modal">
+              <header class="modal-header">
+                <h4 id="form-title">添加新角色</h4>
+                <button class="btn-icon" id="btn-close-form">
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+              </header>
+              <form id="archive-form" onsubmit="return false;">
+                <input type="hidden" id="archive-id">
+                <div class="avatar-uploader-container">
+                  <div id="avatar-dropzone" class="avatar-preview-circle">
+                    <svg viewBox="0 0 24 24" id="placeholder-avatar"><path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4v6zm-4 2h14v2H5v-2z"/></svg>
+                    <img id="avatar-preview-img" style="display:none;" />
+                  </div>
+                  <span class="upload-tip">点击、拖拽或粘贴截图导入头像</span>
+                  <input type="file" id="archive-avatar-file" accept="image/*" style="display:none;">
+                </div>
+                <div class="form-group" id="form-avatar-url-group">
+                  <label>或直接输入头像 URL</label>
+                  <input type="text" id="archive-avatar-url" placeholder="https://example.com/avatar.png">
+                </div>
+                <div class="form-group" id="form-npc-parent-group" style="display: none;">
+                  <label>归属角色/用户</label>
+                  <select id="archive-parent-id"></select>
+                </div>
+                <div id="form-relation-fields" style="display: none;">
+                  <div class="form-group"><label>源端角色/用户 (From)</label><select id="relation-from"></select></div>
+                  <div class="form-group"><label>终端角色/用户 (To)</label><select id="relation-to"></select></div>
+                  <div class="form-group"><label>关系描述</label><input type="text" id="relation-desc" placeholder="关系名称 (例如: 挚友、宿敌)"></div>
+                </div>
+                <div id="form-general-fields">
+                  <div class="form-group"><label>姓名</label><input type="text" id="archive-name" required placeholder="姓名"></div>
+                  <div class="form-group"><label>备注 (不发给 AI)</label><input type="text" id="archive-remark" placeholder="仅自己可见"></div>
+                  <div class="form-group"><label>分组</label><input type="text" id="archive-group" placeholder="如：主角团、反派"></div>
+                  <div class="form-group"><label>人设</label><textarea id="archive-persona" rows="3" placeholder="System Prompt 人设底料"></textarea></div>
+                </div>
+                <div class="form-actions">
+                  <button type="button" class="btn btn-outline" id="btn-cancel-form">取消</button>
+                  <button type="submit" class="btn btn-primary" id="btn-save-archive">保存</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+        <footer class="win-footer archive-tabs">
+          <button class="tab-item active" data-tab="character">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            <span>角色</span>
+          </button>
+          <button class="tab-item" data-tab="user">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/></svg>
+            <span>用户</span>
+          </button>
+          <button class="tab-item" data-tab="npc">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 11.55C9.64 9.35 6.48 8 3 8v11c3.48 0 6.64 1.35 9 3.55 2.36-2.2 5.52-3.55 9-3.55V8c-3.48 0-6.64 1.35-9 3.55zM12 4c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/></svg>
+            <span>NPC</span>
+          </button>
+          <button class="tab-item" data-tab="relation">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg>
+            <span>关系网</span>
+          </button>
+        </footer>
+      </div>
 
-  // 检测并升级静态资源
-  document.getElementById("btn-update-resources").onclick = async () => {
-    if (confirm("确定要立即重构并升级本地静态资源吗？您保存的本地聊天、人设、美化等数据将 100% 安全保留。")) {
-      try {
-        if ('serviceWorker' in navigator) {
-          const registrations = await navigator.serviceWorker.getRegistrations();
-          for (let reg of registrations) {
-            await reg.unregister();
-          }
-        }
-        if ('caches' in window) {
-          const cacheKeys = await caches.keys();
-          for (let key of cacheKeys) {
-            await caches.delete(key);
-          }
-        }
-        alert("离线服务线程与本地强缓存已卸载成功！即将强制刷新以加载最新代码。");
-        window.location.replace(window.location.origin + window.location.pathname + '?v=' + Date.now());
-      } catch (err) {
-        console.error("更新静态资源失败:", err);
-        alert(`升级失败，详细原因: ${err.message}`);
-      }
-    }
-  };
-}
+      <!-- === 世界书应用 === -->
+      <div id="win-world_book" class="app-window">
+        <header class="win-header">
+          <button class="btn-icon" onclick="closeApp('world_book')">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="world_book-title">世界书</h3>
+          <button class="btn-icon" id="btn-add-world_book">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
+        </header>
+        <div class="win-body">
+          <div id="world_book-list-container"></div>
+          
+          <!-- 世界书条目弹层 -->
+          <div id="world_book-form-overlay" class="modal-overlay">
+            <div class="modal">
+              <header class="modal-header">
+                <h4 id="wb-form-title">添加世界书条目</h4>
+                <button class="btn-icon" id="btn-close-wb-form">
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+              </header>
+              <form id="world_book-form" onsubmit="return false;">
+                <input type="hidden" id="wb-entry-id">
+                <div class="form-group">
+                  <label>分组</label>
+                  <input type="text" id="wb-entry-group" required placeholder="留空或输入：常驻、地理、神话（常驻分组拥有全局开关按钮）">
+                </div>
+                <div class="form-group">
+                  <label>条目标题 (关键词)</label>
+                  <input type="text" id="wb-entry-title" required placeholder="标题名称">
+                </div>
+                <div class="form-group">
+                  <label>注入深度 (设定排序，深度越低，越优先注入 Prompt)</label>
+                  <input type="number" id="wb-entry-depth" required value="10" placeholder="例如：10">
+                </div>
+                <div class="form-group">
+                  <label>具体内容</label>
+                  <textarea id="wb-entry-content" rows="5" required placeholder="输入具体的设定描述..."></textarea>
+                </div>
+                <div class="form-actions">
+                  <button type="button" class="btn btn-outline" id="btn-cancel-wb-form">取消</button>
+                  <button type="submit" class="btn btn-primary" id="btn-save-wb">保存</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      </div>
 
-function openSettingsLv2(subTab) {
-  document.getElementById("settings-lv1").style.display = "none";
-  document.querySelectorAll(".settings-lv2-panel").forEach(p => p.style.display = "none");
-  document.getElementById(`settings-lv2-${subTab}`).style.display = "block";
-  
-  const titles = {
-    api: 'API 协议设置',
-    beautify: '桌面美化设置',
-    css: '全局 CSS 注入',
-    widget: '组件工坊',
-    deeptalk: '深谈预设设置', 
-    data: '数据分区管理',
-    'force-update': '系统强更新'
-  };
-  document.getElementById("settings-title").innerText = titles[subTab] || '系统设置';
-  
-  if (subTab === 'data') computeStorageUsage();
-}
+<!-- === 聊天/社交应用 === -->
+      <div id="win-chat" class="app-window">
+        <header class="win-header" id="chat-app-main-header">
+          <button class="btn-icon" onclick="closeApp('chat')">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="chat-main-title">聊天</h3>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <!-- 朋友圈专属发布动态 SVG 按钮 (无 Emoji) -->
+            <button class="btn-icon" id="btn-moments-post" style="display: none;" title="发布朋友圈">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+            </button>
+            <!-- 朋友圈配置 SVG 按钮 (无 Emoji) -->
+            <button class="btn-icon" id="btn-moments-settings" style="display: none;" title="朋友圈设置">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </button>
+            <button class="btn-icon" id="btn-new-chat">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+          </div>
+        </header>
 
-// === 深谈全局预设配置管理 ===
-async function loadDeeptalkPresetsList() {
-  const select = document.getElementById("settings-deeptalk-presets-select");
-  if (!select) return;
-  const presets = await db.deeptalk_presets.toArray();
-  select.innerHTML = '<option value="">-- 新建预设 --</option>';
-  presets.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.innerText = p.name;
-    select.appendChild(opt);
-  });
-}
+        <!-- 对话选择模态窗 -->
+        <div id="new-chat-overlay" class="modal-overlay">
+          <div class="modal">
+            <header class="modal-header">
+              <h4>发起单聊 - 选择角色</h4>
+              <button class="btn-icon" id="btn-close-new-chat">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" id="new-chat-list"></div>
+          </div>
+        </div>
 
-async function loadDeeptalkPresetToForm() {
-  const select = document.getElementById("settings-deeptalk-presets-select");
-  const idVal = select.value;
-  if (!idVal) {
-    document.getElementById("settings-deeptalk-preset-name").value = "";
-    document.getElementById("settings-deeptalk-preset-prompt").value = "";
-    return;
-  }
+        <div class="win-body chat-app-body" style="padding:0;">
+          <section id="chat-tab-sessions" class="chat-tab-panel active">
+            <div class="session-list" id="session-list-container"></div>
+          </section>
 
-  const preset = await db.deeptalk_presets.get(Number(idVal));
-  if (preset) {
-    document.getElementById("settings-deeptalk-preset-name").value = preset.name;
-    document.getElementById("settings-deeptalk-preset-prompt").value = preset.prompt;
-  }
-}
+          <section id="chat-tab-moments" class="chat-tab-panel">
+            <div class="moments-feed">
+              <div class="moment-cover">
+                <div class="moment-user-info">
+                  <span id="moment-user-name">未选择我的人设</span>
+                  <img id="moment-user-avatar" class="avatar-sm" src="data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%23e8f0fe'/></svg>" />
+                </div>
+              </div>
+              <div class="moment-list">
+                <p style="text-align: center; color: var(--text-secondary); margin-top:40px; font-size:13px;">暂无朋友圈动态</p>
+              </div>
+            </div>
+          </section>
 
-async function saveDeeptalkPreset() {
-  const select = document.getElementById("settings-deeptalk-presets-select");
-  const idVal = select.value;
-  const name = document.getElementById("settings-deeptalk-preset-name").value.trim();
-  const promptText = document.getElementById("settings-deeptalk-preset-prompt").value.trim();
+          <section id="chat-tab-me" class="chat-tab-panel">
+            <div class="me-header" style="background-color: var(--surface); padding: 16px; border-bottom: 1px solid var(--border);">
+              <!-- 当前选中的人设卡片 -->
+              <div id="me-active-card" class="me-active-card" style="display: none; background: #ffffff; border: 1.5px solid var(--border); border-radius: 12px; padding: 12px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s;">
+                <img id="me-active-avatar" src="" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;">
+                <div style="flex: 1; text-align: left;">
+                  <div style="font-size: 10px; color: var(--text-secondary); font-weight: 500;" id="me-active-group"></div>
+                  <div style="font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 2px 0;" id="me-active-name"></div>
+                  <div style="font-size: 12px; color: var(--text-secondary);" id="me-active-remark"></div>
+                </div>
+                <div style="font-size: 12px; color: var(--primary); font-weight: 600; padding: 4px 8px; background: var(--bg-main); border-radius: 6px;">切换</div>
+              </div>
 
-  if (!name || !promptText) {
-    alert("请完整填写预设名称与附加 Prompt！");
-    return;
-  }
+              <!-- 切换人设的选择器面板 -->
+              <div id="me-selector-container" class="me-selector-container" style="margin-top: 10px; display: block;">
+                <label style="display: block; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; font-weight: 700; text-align: left;">切换我的人设(全局跟随)</label>
+                <div id="me-candidate-cards" style="display: flex; flex-direction: column; gap: 10px; max-height: 220px; overflow-y: auto; padding: 4px 2px;">
+                  <!-- 由 JS 动态渲染候选人设卡片 -->
+                </div>
+              </div>
+            </div>
+            <div class="me-menu">
+              <div class="menu-item" onclick="document.getElementById('sticker-manager-overlay').classList.add('active');stickerSystem.init()">
+                <span>我的表情包</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openMeSub('collection')">
+                <span>我的收藏室</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openMeSub('wallet')">
+                <span>钱包</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+            </div>
+          </section>
+        </div>
 
-  const presetData = { name, prompt: promptText };
+        <footer class="win-footer chat-tabs">
+          <button class="tab-item active" data-chat-tab="sessions">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>
+            <span>聊天</span>
+          </button>
+          <button class="tab-item" data-chat-tab="moments">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>
+            <span>朋友圈</span>
+          </button>
+          <button class="tab-item" data-chat-tab="me">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            <span>我的</span>
+          </button>
+        </footer>
 
-  if (idVal) {
-    await db.deeptalk_presets.update(Number(idVal), presetData);
-    alert("深谈预设已更新！");
-  } else {
-    await db.deeptalk_presets.add(presetData);
-    alert("新深谈预设已成功添加！");
-  }
+        <div id="me-sub-panel" class="me-sub-overlay">
+          <div class="me-sub-container">
+            <header class="win-header">
+              <button class="btn-icon" onclick="closeMeSub()">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+              </button>
+              <h3 id="me-sub-title">子页面</h3>
+              <button class="btn-icon" id="btn-me-sub-add" style="display:none;">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" id="me-sub-body"></div>
+          </div>
+        </div>
 
-  document.getElementById("settings-deeptalk-preset-name").value = "";
-  document.getElementById("settings-deeptalk-preset-prompt").value = "";
-  await loadDeeptalkPresetsList();
-}
+        <!-- === 微信仿真对话层 === -->
+        <div id="chat-dialog-panel" class="chat-dialog-overlay">
+          <header class="win-header">
+            <button class="btn-icon" onclick="closeChatDialog()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3 id="dialog-header-title">对话名</h3>
+            <div style="display: flex; gap: 4px; align-items: center; z-index: 10;">
+              <!-- 在对话的页头(角色名旁边)加一个粉色心声状态按钮 -->
+              <button class="btn-icon btn-status-pink" id="btn-char-status" title="当前状态及心声">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+              </button>
+              <button class="btn-icon" id="btn-dialog-details">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+              </button>
+            </div>
+          </header>
+          
+          <div class="dialog-messages" id="dialog-messages-container"></div>
+          
+          <div class="dialog-input-container">
+            <div class="input-main-row" id="normal-input-row">
+              <button class="btn-icon" id="btn-chat-expand-toggle">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+              </button>
+              <textarea id="dialog-input-text" rows="1" placeholder="发送消息..."></textarea>
+              
+              <button class="chat-send-btn" id="btn-dialog-send" title="发送消息">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+              </button>
+              <button class="chat-send-btn reply" id="btn-dialog-reply" title="生成回复">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>
+              </button>
+            </div>
 
-async function deleteDeeptalkPreset() {
-  const select = document.getElementById("settings-deeptalk-presets-select");
-  const idVal = select.value;
-  if (!idVal) {
-    alert("请选择要删除的深谈预设！");
-    return;
-  }
+            <div class="multi-select-action-bar" id="multi-select-bar" style="display: none;">
+              <button id="btn-multi-delete" class="btn btn-danger-outline" style="flex:1;">删除选中 (<span id="selected-count">0</span>)</button>
+              <button id="btn-multi-cancel" class="btn" style="flex:1;">退出多选</button>
+            </div>
+            
+            <!-- === 核心重构：支持左右横向滚动分页滑动的扩展面板 === -->
+            <div id="chat-expand-panel" class="expand-panel">
+              <div class="expand-slider">
+                <!-- 第一页：常用社交与交易互动 (前 8 项) -->
+                <div class="expand-page">
+                  <div class="expand-item" id="btn-chat-sticker">
+                    <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg></div>
+                    <span>表情包</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-photo">
+                    <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 5H5l3.5-4.5z"/></svg></div>
+                    <span>图片</span>
+                    <input type="file" id="chat-photo-file" accept="image/*" style="display:none;">
+                  </div>
+                  <!-- 原生语音按钮，完美穿插在图片与语音通话之间 -->
+                  <div class="expand-item" id="btn-chat-voice-trigger">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                        <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                        <line x1="12" y1="19" x2="12" y2="23"/>
+                        <line x1="8" y1="23" x2="16" y2="23"/>
+                      </svg>
+                    </div>
+                    <span>语音</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-call">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
+                      </svg>
+                    </div>
+                    <span>语音通话</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-transfer">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="2" y="5" width="20" height="14" rx="2" ry="2"/>
+                        <line x1="2" y1="10" x2="22" y2="10"/>
+                        <line x1="7" y1="15" x2="7.01" y2="15"/>
+                        <line x1="11" y1="15" x2="13" y2="15"/>
+                      </svg>
+                    </div>
+                    <span>转账</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-redenvelope">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M12 2v2"/>
+                        <path d="M12 20v2"/>
+                      </svg>
+                    </div>
+                    <span>红包</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-focus">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                      </svg>
+                    </div>
+                    <span>专注</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-offline">
+                    <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
+                    <span>线下</span>
+                  </div>
+                </div>
+                <!-- 第二页：剧场、辅助功能与记忆回写、总结 (绑定特定事件触发通道) -->
+                <div class="expand-page">
+                  <div class="expand-item">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+                        <line x1="12" y1="18" x2="12.01" y2="18"/>
+                      </svg>
+                    </div>
+                    <span>查手机</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-memory" style="cursor: pointer;">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.168.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                      </svg>
+                    </div>
+                    <span>记忆</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-summary" style="cursor: pointer;">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="8" y1="6" x2="21" y2="6"/>
+                        <line x1="8" y1="12" x2="21" y2="12"/>
+                        <line x1="8" y1="18" x2="21" y2="18"/>
+                        <line x1="3" y1="6" x2="3.01" y2="6"/>
+                        <line x1="3" y1="12" x2="3.01" y2="12"/>
+                        <line x1="3" y1="18" x2="3.01" y2="18"/>
+                      </svg>
+                    </div>
+                    <span>总结</span>
+                  </div>
+                  <!-- 新增：HTML 卡片触发按钮 -->
+                  <div class="expand-item" id="btn-chat-html-widget" style="cursor: pointer;">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 18 22 12 16 6" />
+                        <polyline points="8 6 2 12 8 18" />
+                      </svg>
+                    </div>
+                    <span>HTML</span>
+                  </div>
+                  <!-- 新增：剧情引擎触发按钮 -->
+                  <div class="expand-item" id="btn-chat-plot-engine" style="cursor: pointer;">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                        <polyline points="2 17 12 22 22 17" />
+                        <polyline points="2 12 12 17 22 12" />
+                      </svg>
+                    </div>
+                    <span>剧情引擎</span>
+                  </div>
+                  <!-- 新增：MCP 中枢按钮 (符合加号底栏排版) -->
+                  <div class="expand-item" id="btn-chat-mcp" style="cursor: pointer;">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                        <line x1="12" y1="22.08" x2="12" y2="12"></line>
+                      </svg>
+                    </div>
+                    <span>MCP中枢</span>
+                  </div>
+                </div>
+              </div>
+              <div class="expand-dots">
+                <span class="dot active"></span>
+                <span class="dot"></span>
+              </div>
+            </div>
+          </div>
+        </div>
 
-  if (confirm("确定要删除此深谈预设吗？")) {
-    await db.deeptalk_presets.delete(Number(idVal));
-    alert("该预设已彻底删除。");
-    document.getElementById("settings-deeptalk-preset-name").value = "";
-    document.getElementById("settings-deeptalk-preset-prompt").value = "";
-    await loadDeeptalkPresetsList();
-  }
-}
+        <div id="chat-details-panel" class="chat-details-overlay">
+          <header class="win-header">
+            <button class="btn-icon" onclick="closeChatDetails()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3>单聊专属设置</h3>
+            <div style="width:40px;"></div>
+          </header>
+          <div class="win-body">
+            <div class="form-group">
+              <label>自定义对方 (Char) 姓名</label>
+              <input type="text" id="details-char-name">
+            </div>
+            
+            <div class="form-group">
+              <label>自定义对方 (Char) 头像</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="details-char-avatar" placeholder="输入头像 URL / 本地文件路径" style="flex: 1;">
+                <button class="btn btn-outline" type="button" id="btn-upload-details-char" style="padding: 11px 14px; flex-shrink: 0; font-size:12px;">上传图片</button>
+                <input type="file" id="file-details-char" accept="image/*" style="display: none;">
+              </div>
+            </div>
 
-function closeSettingsLv2() {
-  document.getElementById("settings-lv1").style.display = "block";
-  document.querySelectorAll(".settings-lv2-panel").forEach(p => p.style.display = "none");
-  document.getElementById("settings-title").innerText = '系统设置';
-}
+            <div class="form-group">
+              <label>自定义对方人设 (AI 提示词)</label>
+              <textarea id="details-char-persona" rows="3" placeholder="自定义对方角色的 System Prompt"></textarea>
+            </div>
+            <div class="form-group">
+              <label>自定义我方 (User) 姓名</label>
+              <input type="text" id="details-user-name">
+            </div>
 
-function handleSettingsBack() {
-  const lv1 = document.getElementById("settings-lv1");
-  if (lv1.style.display === "none") {
-    closeSettingsLv2();
-  } else {
-    closeApp('settings');
-  }
-}
+            <div class="form-group">
+              <label>自定义我方 (User) 头像</label>
+              <div style="display: flex; gap: 8px;">
+                <input type="text" id="details-user-avatar" placeholder="输入头像 URL / 本地文件路径" style="flex: 1;">
+                <button class="btn btn-outline" type="button" id="btn-upload-details-user" style="padding: 11px 14px; flex-shrink: 0; font-size:12px;">上传图片</button>
+                <input type="file" id="file-details-user" accept="image/*" style="display: none;">
+              </div>
+            </div>
 
-// ==========================================
-// 1. API 协议设置加载
-// ==========================================
-async function loadPresetsList() {
-  const select = document.getElementById("api-presets-select");
-  const presets = await db.api_presets.toArray();
-  select.innerHTML = '<option value="">-- 选择已有预设 --</option>';
-  presets.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.innerText = p.name;
-    select.appendChild(opt);
-  });
-  
-  const activeId = localStorage.getItem("global_api_preset_id");
-  if (activeId) {
-    select.value = activeId;
-    loadPresetToForm(Number(activeId));
-  }
-}
+            <div class="form-group">
+              <label>自定义我方人设 (对话专属背景)</label>
+              <textarea id="details-user-persona" rows="3" placeholder="自定义我的角色的 System Prompt 背景"></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label>挂载世界书背景设定条目 (在移动端轻触或多选添加)</label>
+              <select id="details-wb-mounted" multiple style="height: 120px;"></select>
+            </div>
 
-async function loadPresetToForm(id) {
-  const preset = await db.api_presets.get(id);
-  if (!preset) return;
-  document.getElementById("api-preset-name").value = preset.name || "";
-  document.getElementById("api-protocol").value = preset.protocol || "openai";
-  document.getElementById("api-url").value = preset.url || "";
-  document.getElementById("api-key").value = preset.key || "";
-  document.getElementById("api-temp").value = preset.temperature ?? 0.7;
-  document.getElementById("temp-val").innerText = preset.temperature ?? 0.7;
-  
-  const modelSelect = document.getElementById("api-model-select");
-  modelSelect.innerHTML = `<option value="${preset.model || ""}">${preset.model || "默认模型"}</option>`;
-}
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <circle cx="12" cy="12" r="8"/>
+                  <line x1="12" y1="2" x2="12" y2="4"/>
+                  <line x1="12" y1="20" x2="12" y2="22"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg> 心声随动生产
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-status-auto">
+                <span class="slider"></span>
+              </label>
+            </div>
 
-document.getElementById("api-presets-select").onchange = (e) => {
-  if (e.target.value) {
-    loadPresetToForm(Number(e.target.value));
-  } else {
-    document.getElementById("api-preset-name").value = "";
-    document.getElementById("api-url").value = "";
-    document.getElementById("api-key").value = "";
-    document.getElementById("api-temp").value = 0.7;
-    document.getElementById("temp-val").innerText = "0.7";
-    document.getElementById("api-model-select").innerHTML = '<option value="">请先拉取模型</option>';
-  }
-};
+            <!-- 新增：允许AI发送语音与图片开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                  <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+                  <line x1="12" y1="19" x2="12" y2="23"/>
+                  <line x1="8" y1="23" x2="16" y2="23"/>
+                </svg>
+                允许对方发送语音与图片
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-multimedia-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
 
-document.getElementById("api-temp").oninput = (e) => {
-  document.getElementById("temp-val").innerText = e.target.value;
-};
+            <!-- 新增：时间感知开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+                时间感知 (当前系统时间)
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-time-toggle" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
 
-document.getElementById("btn-save-preset").onclick = async () => {
-  const select = document.getElementById("api-presets-select");
-  const idVal = select.value;
-  const name = document.getElementById("api-preset-name").value.trim();
-  const protocol = document.getElementById("api-protocol").value;
-  const url = document.getElementById("api-url").value.trim();
-  const key = document.getElementById("api-key").value.trim();
-  const model = document.getElementById("api-model-select").value;
-  const temperature = parseFloat(document.getElementById("api-temp").value);
-  
-  if (!name) {
-    alert("请输入预设名称");
-    return;
-  }
-  
-  const presetData = { name, protocol, url, key, model, temperature };
-  
-  if (idVal) {
-    await db.api_presets.update(Number(idVal), presetData);
-    alert("预设更新成功");
-  } else {
-    const newId = await db.api_presets.add(presetData);
-    alert("新预设添加成功");
-    localStorage.setItem("global_api_preset_id", newId);
-  }
-  loadPresetsList();
-};
+           <!-- 新增：允许对方撤回消息开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M2.5 13a9 9 0 0 1 9-9h9M21.5 4l-4 4M21.5 4l-4-4"/>
+                </svg>
+                允许对方撤回消息 (2分钟内)
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-allow-recall-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
 
-document.getElementById("btn-apply-global").onclick = async () => {
-  const select = document.getElementById("api-presets-select");
-  const idVal = select.value;
-  if (!idVal) {
-    alert("请先保存或选择一个预设进行应用");
-    return;
-  }
-  localStorage.setItem("global_api_preset_id", idVal);
-  alert("当前 API 预设已成功设定为全局应用！");
-};
+            <!-- 新增：允许对方对你的消息做出表情反应开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                </svg>
+                允许对方对你的消息做出表情反应
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-allow-reaction-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
 
-document.getElementById("btn-delete-preset").onclick = async () => {
-  const select = document.getElementById("api-presets-select");
-  const idVal = select.value;
-  if (!idVal) {
-    alert("请先选择一个预设进行删除");
-    return;
-  }
-  if (confirm("确定要删除此 API 预设吗？")) {
-    await db.api_presets.delete(Number(idVal));
-    if (localStorage.getItem("global_api_preset_id") === idVal) {
-      localStorage.removeItem("global_api_preset_id");
-    }
-    alert("预设已删除");
-    loadPresetsList();
-  }
-};
+            <!-- 新增：自定义模拟时间设定卡片 -->
+            <div class="form-group" id="details-custom-time-container" style="display:none; padding: 10px; background: #f8fafc; border-radius: 8px; border: 1.5px solid var(--border); margin-top: -6px; margin-bottom: 12px;">
+              <label style="margin-bottom: 8px; font-weight: 700; font-size:11px;">设置虚拟场景模拟时间</label>
+              <div style="display:grid; grid-template-columns: repeat(5, 1fr); gap:6px;">
+                <div>
+                  <label style="font-size:9px; text-align:center; margin-bottom:2px; display:block;">年</label>
+                  <input type="number" id="details-time-year" value="2026" style="padding:6px; font-size:11px; text-align:center; border-radius:6px; border:1.5px solid var(--border);">
+                </div>
+                <div>
+                  <label style="font-size:9px; text-align:center; margin-bottom:2px; display:block;">月</label>
+                  <input type="number" id="details-time-month" value="1" min="1" max="12" style="padding:6px; font-size:11px; text-align:center; border-radius:6px; border:1.5px solid var(--border);">
+                </div>
+                <div>
+                  <label style="font-size:9px; text-align:center; margin-bottom:2px; display:block;">日</label>
+                  <input type="number" id="details-time-day" value="1" min="1" max="31" style="padding:6px; font-size:11px; text-align:center; border-radius:6px; border:1.5px solid var(--border);">
+                </div>
+                <div>
+                  <label style="font-size:9px; text-align:center; margin-bottom:2px; display:block;">时</label>
+                  <input type="number" id="details-time-hour" value="12" min="0" max="23" style="padding:6px; font-size:11px; text-align:center; border-radius:6px; border:1.5px solid var(--border);">
+                </div>
+                <div>
+                  <label style="font-size:9px; text-align:center; margin-bottom:2px; display:block;">分</label>
+                  <input type="number" id="details-time-minute" value="0" min="0" max="59" style="padding:6px; font-size:11px; text-align:center; border-radius:6px; border:1.5px solid var(--border);">
+                </div>
+              </div>
+            </div>
 
-document.getElementById("btn-fetch-models").onclick = async () => {
-  const url = document.getElementById("api-url").value.trim();
-  const key = document.getElementById("api-key").value.trim();
-  const protocol = document.getElementById("api-protocol").value;
-  
-  if (!url) {
-    alert("请先填写 API 终结点 URL");
-    return;
-  }
-  
-  const btn = document.getElementById("btn-fetch-models");
-  btn.innerText = "拉动中...";
-  btn.disabled = true;
-  
-  try {
-    let models = [];
-    if (protocol === 'openai' || protocol === 'openai-compatible' || protocol === 'deepseek') {
-      const response = await fetch(`${url}/models`, {
-        headers: { "Authorization": `Bearer ${key}` }
-      });
-      const data = await response.json();
-      if (data && data.data) {
-        models = data.data.map(m => m.id);
-      }
-    } else if (protocol === 'gemini') {
-      models = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-2.0-flash-exp"];
-    }
+            <div class="form-group" style="display:none;">
+              <label>自动总结触发阈值 (条数)</label>
+              <input type="number" id="details-auto-summary" value="50">
+            </div>
+            <div class="form-group">
+              <label style="margin-bottom:8px;display:flex;align-items:center;gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="9" cy="9" r="1.5"/><circle cx="15" cy="9" r="1.5"/><path d="M8 14a5 5 0 0 0 8 0"/></svg>
+                挂载表情包分组
+              </label>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <div id="details-mounted-stickers" style="flex:1;font-size:12px;color:var(--text-secondary);padding:6px 10px;background:var(--surface);border-radius:8px;border:1.5px solid var(--border);min-height:18px;">暂无挂载</div>
+                <button id="btn-details-sticker-mount" class="btn btn-outline" type="button" style="padding:8px 12px;flex-shrink:0;font-size:12px;">选择</button>
+              </div>
+            </div>
+            <div class="form-actions" style="margin-top: 24px;">
+                      <button id="btn-save-details" class="btn btn-primary" style="width:100%;">保存当前会话配置</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 注入：会话总结面板 (完全收纳在 win-chat 内部，防止全局绝对定位与指针层级污染) -->
+                <div id="chat-summary-panel" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="document.getElementById('chat-summary-panel').classList.remove('active')">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>会话总结设置</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px;">
+                    <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-bottom: 1px solid var(--border);">
+                      <label style="margin-bottom:0; font-weight:700;">自动总结开启</label>
+                      <label class="switch">
+                        <input type="checkbox" id="summary-auto-toggle">
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+                    <div class="form-group">
+                      <label>每多少轮自动总结一次 (一轮 = user + char 发言)</label>
+                      <input type="number" id="summary-auto-interval" value="10">
+                    </div>
+                    <div class="form-group">
+                      <label>缓冲轮数 (最近几轮不总结，AI保留读取上下文)</label>
+                      <input type="number" id="summary-buffer-rounds" value="5">
+                    </div>
+                    <div class="form-group" style="padding: 10px; background: #f8fafc; border-radius: 8px; border: 1.5px solid var(--border); margin-top: 10px;">
+                      <h4 style="font-size: 11px; color: var(--text-secondary); margin-bottom: 6px;">对话轮次统计</h4>
+                      <p style="font-size: 13px; margin: 4px 0;">已总结到：<span id="summary-stat-summarized">0</span> 轮</p>
+                      <p style="font-size: 13px; margin: 4px 0;">当前总对话：<span id="summary-stat-total">0</span> 轮</p>
+                    </div>
+                    
+                    <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+                      <label style="font-weight:700;">手动执行总结区间</label>
+                      <div style="display:flex; gap:10px; align-items:center;">
+                        <input type="number" id="summary-manual-start" placeholder="起始轮" style="width:70px; text-align:center;">
+                        <span>至</span>
+                        <input type="number" id="summary-manual-end" placeholder="结束轮" style="width:70px; text-align:center;">
+                        <button id="btn-summary-manual-trigger" class="btn btn-outline" style="padding:10px; font-size:12px; flex:1;">手动总结</button>
+                      </div>
+                    </div>
+                    
+                    <div class="form-group">
+                      <label>总结系统提示词 (Prompt)</label>
+                      <textarea id="summary-system-prompt" rows="3" placeholder="以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。"></textarea>
+                    </div>
+                    <div class="form-actions" style="margin-top: 24px;">
+                      <button id="btn-save-summary-settings" class="btn btn-primary" style="width:100%;">保存并应用总结配置</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 注入：核心长久记忆面板 (完全收纳在 win-chat 内部，防止全局绝对定位与指针层级污染) -->
+                <div id="chat-memory-panel" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="document.getElementById('chat-memory-panel').classList.remove('active')">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>角色长久记忆库</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px; overflow-y: auto;">
+                    <div class="form-group" style="background:#fffcf0; padding:12px; border-radius:12px; border:1px solid #fef08a; margin-bottom:16px;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h4 style="margin:0; font-size:14px; color:#a16207; font-weight:700;">🧠 角色核心记忆 (Core Memory)</h4>
+                        <button id="btn-generate-core-memory" class="btn btn-outline" style="padding:4px 8px; font-size:10px; border-color:#ca8a04; color:#ca8a04; border-radius:6px;">AI提炼核心记忆</button>
+                      </div>
+                      
+                      <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的现状</label>
+                          <textarea id="memory-core-status" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我的性格现状、处境或当前生存状态..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的目的</label>
+                          <textarea id="memory-core-purpose" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我的行为目的、对未来的渴望与核心愿景..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的变化</label>
+                          <textarea id="memory-core-changes" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="从认识用户至今，我的深层态度与内心情感变化..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色对用户认知] 我们的关系</label>
+                          <textarea id="memory-core-relationship" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我所界定的双方关系社交、利益 or 情感羁绊..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色对用户认知] 在学眼里的用户</label>
+                          <textarea id="memory-core-userineyes" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="用户在我心里最客观最真实的看法与秘密印象..."></textarea>
+                        </div>
+                      </div>
+                      <button id="btn-save-core-memory" class="btn btn-primary" style="width:100%; margin-top:10px; font-size:12px; background-color:#ca8a04; border:none; border-radius:8px;">保存核心记忆库</button>
+                    </div>
+
+                    <div class="form-group">
+                      <label style="font-weight:700; color:var(--text-primary); margin-bottom:10px; display:block;">📜 历史已生成事件总结</label>
+                      <div id="memory-summaries-list" style="display:flex; flex-direction:column; gap:12px;">
+                        <!-- 动态载入列表 -->
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 注入：HTML 互动卡片生成面板 (完全隔离收纳在 win-chat 内部) -->
+                <div id="chat-html-panel" class="chat-details-overlay html-panel">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="chatHtmlWidgetSystem.closePanel()" style="color: #00f0ff;">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>HTML 互动舱</h3>
+                    <button class="btn-icon" onclick="chatHtmlWidgetSystem.openGenerateModal()" style="color: #00f0ff;" title="构建交互卡片">
+                      <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    </button>
+                  </header>
+                  <div class="win-body" id="html-cards-container" style="padding: 16px; overflow-y: auto;">
+                    <!-- 动态载入卡片列表 -->
+                  </div>
+                </div>
+
+                <!-- 生成 HTML 互动卡片输入模态窗 -->
+                <div id="html-generate-overlay" class="modal-overlay" style="z-index: 1500;">
+                  <div class="modal cyber-modal" style="max-width: 320px; border-radius: 16px;">
+                    <header class="modal-header" style="border-bottom: none; padding: 16px 16px 8px 16px;">
+                      <h4>构建新型组件卡片</h4>
+                      <button class="btn-icon" onclick="chatHtmlWidgetSystem.closeGenerateModal()" style="color: #00f0ff;">
+                        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                      </button>
+                    </header>
+                    <div class="win-body" style="padding: 0 16px 16px 16px;">
+                      <div class="form-group" style="margin-bottom: 20px;">
+                        <label style="font-size: 11px; color: #8f9cae; font-weight:700; margin-bottom: 8px; display: block;">描述卡片功能及视觉交互要求（例如：心率雷达图、极简打砖块游戏）</label>
+                        <textarea id="html-generate-prompt" class="cyber-input" rows="4" placeholder="在此处输入卡片设想要求..." style="width: 100%; resize:none; box-sizing: border-box;"></textarea>
+                      </div>
+                      <div class="form-actions" style="display: flex; gap: 10px;">
+                        <button type="button" class="btn btn-outline" onclick="chatHtmlWidgetSystem.closeGenerateModal()" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px; color: #00f0ff; border-color: #00f0ff; background: transparent;">取消</button>
+                        <button type="button" class="btn btn-cyber" onclick="chatHtmlWidgetSystem.submitGeneration()" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px;">编译发射</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- MCP 控制中枢面板弹窗 (完全隔离收纳在 win-chat 内部，满足套袋原则) -->
+                <div id="chat-mcp-panel" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="mcpSystem.closePanel()">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>MCP 神经控制中枢</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px; overflow-y: auto; background: #fafbfc;">
+                    <div style="display:flex; flex-direction:column; gap:12px;">
+                      
+                      <!-- 新增：MCP 提示词注入总开关 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between;">
+                        <label style="margin-bottom:0; font-weight:700; font-size:13px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                          🧠 融入 AI 提示词 (MCP 协议)
+                        </label>
+                        <label class="switch">
+                          <input type="checkbox" id="settings-mcp-prompt-toggle" onchange="mcpSystem.togglePrompt(this)">
+                          <span class="slider"></span>
+                        </label>
+                      </div>
+
+                      <!-- 硬件定位与天气卡片 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
+                        <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
+                          🛰️ GPS 定位 & 实时气象
+                        </h4>
+                        <div id="mcp-geo-status" style="font-size:13px; font-weight:700; color:var(--text-primary);">尚未同步设备定位</div>
+                        <div id="mcp-weather-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;">实时天气信息将在此展现</div>
+                        <button class="btn btn-outline" onclick="mcpSystem.syncLocation()" style="width:100%; margin-top:10px; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">读取手机 GPS 并同步给 AI 伙伴</button>
+                      </div>
+
+                      <!-- 屏幕使用时长卡片 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
+                        <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
+                          📊 今日屏幕扮演时间
+                        </h4>
+                        <div style="font-size:13px; font-weight:700; color:var(--text-primary);">您在此世界驻留了：<span id="mcp-screentime-val">0 分钟 0 秒</span></div>
+                        <div style="font-size:11px; color:var(--text-secondary); margin-top:4px; line-height:1.4;">* 由于安卓安全沙箱限制，应用仅统计您在本 PWA 中的处于可见活跃状态的时间。</div>
+                      </div>
+
+                      <!-- 神经闹钟与马达震动卡片 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
+                        <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
+                          ⏰ 倒计时神经闹钟
+                        </h4>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                          <input type="number" id="mcp-timer-input" placeholder="输入秒数" style="width:80px; padding:8px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:13px; font-weight:700;">
+                          <span style="font-size:12px; color:var(--text-primary); font-weight:600;">秒后震动闹铃</span>
+                          <button class="btn btn-outline" onclick="mcpSystem.setAlarm()" style="flex:1; padding:8px; font-size:11px; border-radius:8px; font-weight:600; cursor:pointer;">设定闹钟</button>
+                        </div>
+                        <button class="btn btn-danger-outline" onclick="mcpSystem.triggerVibration()" style="width:100%; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer; color:#ef4444; border-color:#fca5a5; background:none;">测试设备物理马达震动反馈</button>
+                      </div>
+
+                      <!-- 核心重构：音乐播放器卡片 (支持多选导入安卓本地音频文件 + AI 调配播放) -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
+                        <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
+                          🎵 本地神经歌单播放器
+                        </h4>
+                        <div style="font-size:13px; font-weight: 700; color: var(--text-primary);" id="mcp-music-title">歌单状态：尚未导入歌曲</div>
+                        <div style="display:flex; gap:8px; margin-top: 10px;">
+                          <button class="btn btn-outline" onclick="document.getElementById('mcp-music-selector').click()" style="flex:1; font-size: 11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">导入本地歌单</button>
+                          <input type="file" id="mcp-music-selector" multiple accept="audio/*" style="display:none;" onchange="mcpSystem.handleMusicSelect(this)">
+                          <button class="btn btn-outline" onclick="mcpSystem.stopMusic()" style="flex:1; font-size: 11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">暂停</button>
+                        </div>
+                        <div id="mcp-playlist-list" style="margin-top:10px; max-height:100px; overflow-y:auto; border-top:1px dashed var(--border); padding-top:8px; font-size:11px; color:var(--text-secondary); display:flex; flex-direction:column; gap:4px; line-height:1.4;">
+                          歌单为空，请点击导入本地音乐。
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 剧情引擎配置模态窗 (新增：现代简约浅色卡片) -->
+                <div id="plot-engine-overlay" class="modal-overlay" style="z-index: 1500;">
+                  <div class="modal" style="max-width: 320px; border-radius: 16px; background: #ffffff; border: 1px solid var(--border); box-shadow: 0 10px 25px rgba(0,0,0,0.08);">
+                    <header class="modal-header" style="border-bottom: none; padding: 16px 16px 8px 16px;">
+                      <h4 style="display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 700; color: var(--text-primary); margin: 0;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);">
+                          <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                          <polyline points="2 17 12 22 22 17" />
+                          <polyline points="2 12 12 17 22 12" />
+                        </svg>
+                        主线剧情中枢
+                      </h4>
+                      <button class="btn-icon" onclick="plotEngineSystem.closeModal()">
+                        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                      </button>
+                    </header>
+                    <div class="win-body" style="padding: 0 16px 16px 16px;">
+                      <div class="form-group" style="margin-bottom: 20px;">
+                        <label style="font-size: 11px; color: var(--text-secondary); font-weight: 700; margin-bottom: 8px; display: block; line-height: 1.4;">设置当前剧情走向与环境约束（例如：我们刚刚在雨中大吵了一架，此时都在气头上，气氛降至冰点）</label>
+                        <textarea id="plot-engine-requirement" rows="4" placeholder="在此输入场景走向限制（留空则不启用剧情约束，恢复自由模式）..." style="width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px; font-size: 13px; outline: none; resize: none; box-sizing: border-box; font-family: inherit; line-height:1.4; background:#fbfcfd;"></textarea>
+                      </div>
+                      <div class="form-actions" style="display: flex; gap: 10px;">
+                        <button type="button" class="btn btn-outline" onclick="plotEngineSystem.closeModal()" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px; font-weight: 600;">取消</button>
+                        <button type="button" class="btn btn-primary" onclick="plotEngineSystem.saveRequirement()" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px; background-color: var(--primary); border: none; font-weight: 600;">载入走向</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div id="bubble-context-menu" class="bubble-menu-overlay" style="display: none;">
+                  <div class="bubble-menu-content">
+                    <button id="btn-menu-edit">编辑消息</button>
+                    <button id="btn-menu-reroll">回溯重回 (Reroll)</button>
+                    <button id="btn-menu-favorite">收藏消息</button>
+                    <button id="btn-menu-multi">多选消息</button>
+                    <button id="btn-menu-delete-single">删除此条</button>
+                    <button id="btn-menu-recall">撤回消息</button>
+                    <button id="btn-menu-cancel" class="cancel-btn">取消</button>
+                  </div>
+                </div>
+
+                <!-- === 朋友圈设置子面板 === -->
+                <div id="moments-settings-overlay" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="document.getElementById('moments-settings-overlay').classList.remove('active')">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>朋友圈设置</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px;">
+                    <div class="form-group">
+                      <label>朋友圈背景图</label>
+                      <div style="display: flex; gap: 8px; align-items: center;">
+                        <div id="moments-bg-preview" style="width: 50px; height: 50px; border: 1.5px dashed var(--border); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0;"></div>
+                        <input type="text" id="moments-bg-url" placeholder="背景图片 URL" style="flex: 1;">
+                        <button class="btn btn-outline" onclick="document.getElementById('moments-bg-file').click()" style="padding: 8px 12px; font-size:11px;">本地上传</button>
+                        <input type="file" id="moments-bg-file" accept="image/*" style="display: none;">
+                      </div>
+                    </div>
+                    
+                    <div class="form-group" style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
+                      <label>激活活跃角色（卡片多选）</label>
+                      <div id="moments-char-cards-container" style="display: flex; flex-direction: column; gap: 10px; max-height: 180px; overflow-y: auto; padding: 4px 2px;"></div>
+                    </div>
+
+                    <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-top: 1px solid var(--border);">
+                      <label style="margin-bottom:0; font-weight:700;">启动定时发动态</label>
+                      <label class="switch">
+                        <input type="checkbox" id="moments-timer-toggle">
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+
+                    <div class="form-group" id="moments-interval-group">
+                      <label>发动态间隔时间（分钟）</label>
+                      <input type="number" id="moments-timer-interval" value="30" min="1">
+                    </div>
+
+                    <div class="form-actions" style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
+                      <button id="btn-moments-instant-post" class="btn btn-outline" style="width:100%; font-weight: 700;">使选中角色立即随机发一条动态 (AI)</button>
+                      <button id="btn-save-moments-settings" class="btn btn-primary" style="width:100%;">保存配置</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- === 发布朋友圈动态子面板 === -->
+                <div id="moments-post-overlay" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="document.getElementById('moments-post-overlay').classList.remove('active')">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>发送朋友圈</h3>
+                    <button class="btn btn-primary" id="btn-moments-submit" style="padding: 6px 16px; background-color: #07c160; border: none; font-size: 13px; font-weight: 700; border-radius: 6px; color:#fff;">发送</button>
+                  </header>
+                  <div class="win-body" style="padding: 16px;">
+                    <div class="form-group">
+                      <textarea id="moments-post-text" placeholder="这一刻的想法..." rows="4" style="width:100%; border:none; resize:none; font-size:14px; padding:0; outline:none; background:transparent;"></textarea>
+                    </div>
+
+                    <!-- 微信格栅 9 图设计 -->
+                    <div class="form-group" style="margin-top: 14px;">
+                      <label style="margin-bottom: 8px; display: block;">图片描述 / 上传图片 (最多九张)</label>
+                      <div id="moments-post-image-grid" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;">
+                        <!-- 动态渲染出 9 张格栅占位卡片 -->
+                      </div>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 14px; border-top: 1px solid var(--border); padding-top: 14px;">
+                      <label style="margin-bottom: 8px; display:block;">谁可以看（按分组多选）</label>
+                      <div id="moments-visibility-groups-container" style="display: flex; flex-direction: column; gap: 8px; max-height: 120px; overflow-y: auto;">
+                        <!-- 由 JS 自动追加 -->
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- === 朋友圈格栅图片上传方式选择面板 === -->
+                <div id="moments-image-method-overlay" class="modal-overlay" style="z-index: 1200;">
+                  <div class="modal" style="max-width: 280px; padding: 16px; border-radius: 12px; background: #ffffff;">
+                    <h4 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; text-align: center; color: var(--text-primary);">选择添加方式</h4>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                      <button class="btn btn-primary" onclick="momentSystem.triggerLocalGridUpload()" style="width: 100%; padding: 10px; font-size: 13px;">上传本地图片</button>
+                      <button class="btn btn-outline" onclick="momentSystem.triggerTextGridDescription()" style="width: 100%; padding: 10px; font-size: 13px;">输入画面白描描述</button>
+                      <button class="btn btn-danger-outline" onclick="document.getElementById('moments-image-method-overlay').classList.remove('active')" style="width: 100%; padding: 10px; font-size: 13px;">取消</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- === 朋友圈格栅图片描述输入面板 === -->
+                <div id="moments-text-desc-overlay" class="modal-overlay" style="z-index: 1300;">
+                  <div class="modal" style="max-width: 300px; padding: 16px; border-radius: 12px; background: #ffffff;">
+                    <h4 style="margin: 0 0 12px 0; font-size: 13px; font-weight: 700; color: var(--text-primary);">输入画面白描描述</h4>
+                    <textarea id="moments-grid-text-input" placeholder="例如：一张我靠在TA肩膀上的自拍合照，背景是微弱的夕阳..." rows="3" style="width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px; font-size: 13px; outline: none; resize: none; margin-bottom: 12px; box-sizing: border-box;"></textarea>
+                    <div style="display: flex; gap: 8px;">
+                      <button class="btn btn-outline" onclick="document.getElementById('moments-text-desc-overlay').classList.remove('active')" style="flex: 1; padding: 8px; font-size: 12px;">取消</button>
+                      <button class="btn btn-primary" onclick="momentSystem.submitGridTextDescription()" style="flex: 1; padding: 8px; font-size: 12px;">确认</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- === 朋友圈发表评论/回复面板 === -->
+<div id="moments-comment-dialog-overlay" class="modal-overlay" style="z-index: 1200; align-items: center !important; justify-content: center !important;">
+  <div class="modal" style="max-width: 300px; padding: 16px; border-radius: 12px; background: #ffffff; position: relative; bottom: auto; transform: none; margin: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+    <h4 id="moments-comment-title" style="margin: 0 0 12px 0; font-size: 13px; font-weight: 700; color: var(--text-primary);">发表评论</h4>
+    <input type="hidden" id="moments-comment-moment-id">
+    <input type="hidden" id="moments-comment-reply-id">
+    <textarea id="moments-comment-text-input" placeholder="发表你的看法..." rows="3" style="width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px; font-size: 13px; outline: none; resize: none; margin-bottom: 12px; box-sizing: border-box;"></textarea>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-outline" onclick="document.getElementById('moments-comment-dialog-overlay').classList.remove('active')" style="flex: 1; padding: 8px; font-size: 12px; border: 1.5px solid var(--border); background: none; border-radius: 8px; cursor: pointer;">取消</button>
+      <button class="btn-primary" onclick="momentSystem.submitCommentDialog()" style="flex: 1; padding: 8px; font-size: 12px; background-color: #07c160; border: none; color:#fff; border-radius: 8px; cursor: pointer;">发送</button>
+    </div>
+  </div>
+</div>
+<!-- === 朋友圈转发评论输入面板 === -->
+<div id="moments-forward-dialog-overlay" class="modal-overlay" style="z-index: 1200; align-items: center !important; justify-content: center !important;">
+  <div class="modal" style="max-width: 300px; padding: 16px; border-radius: 12px; background: #ffffff; position: relative; bottom: auto; transform: none; margin: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+    <h4 style="margin: 0 0 12px 0; font-size: 13px; font-weight: 700; color: var(--text-primary); text-align: center;">转发朋友圈</h4>
+    <input type="hidden" id="moments-forward-moment-id">
     
-    const modelSelect = document.getElementById("api-model-select");
-    modelSelect.innerHTML = "";
-    if (models.length > 0) {
-      models.forEach(m => {
-        const opt = document.createElement("option");
-        opt.value = m;
-        opt.innerText = m;
-        modelSelect.appendChild(opt);
-      });
-      alert(`成功拉取到 ${models.length} 个模型`);
-    } else {
-      throw new Error("未获取到模型列表");
-    }
-  } catch (err) {
-    console.error(err);
-    const modelSelect = document.getElementById("api-model-select");
-    const mName = prompt("拉取失败，请输入模型名称（例如: gpt-4o）:") || "";
-    if (mName) {
-      modelSelect.innerHTML = `<option value="${mName}">${mName}</option>`;
-    }
-  } finally {
-    btn.innerText = "拉取";
-    btn.disabled = false;
-  }
-};
-
-document.getElementById("btn-test-api").onclick = async () => {
-  const url = document.getElementById("api-url").value.trim();
-  const key = document.getElementById("api-key").value.trim();
-  const model = document.getElementById("api-model-select").value || "gpt-3.5-turbo";
-  
-  if (!url) {
-    alert("请先填写 API 终结点 URL");
-    return;
-  }
-  
-  const btn = document.getElementById("btn-test-api");
-  btn.innerText = "测试中...";
-  btn.disabled = true;
-  
-  try {
-    const response = await fetch(`${url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${key}` },
-      body: JSON.stringify({
-        model: model,
-        messages: [{ role: "user", content: "ping" }],
-        max_tokens: 5
-      })
-    });
+    <!-- 新增：转发目标的角色选择器（同设置页） -->
+    <div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; text-align: left;">选择转发到哪个会话：</div>
+    <div id="moments-forward-char-container" style="display: flex; flex-direction: column; gap: 6px; max-height: 140px; overflow-y: auto; margin-bottom: 12px; border: 1.5px solid var(--border); padding: 6px; border-radius: 8px; width: 100%; box-sizing: border-box; background: #fbfcfd;"></div>
     
-    if (response.ok) {
-      alert("连接测试成功！API 响应正常。");
-    } else {
-      const errText = await response.text();
-      throw new Error(`HTTP ${response.status}: ${errText}`);
-    }
-  } catch (err) {
-    console.error(err);
-    alert("连接测试失败: " + err.message);
-  } finally {
-    btn.innerText = "测试连接";
-    btn.disabled = false;
-  }
-};
+    <textarea id="moments-forward-text-input" placeholder="说点什么... (可留空)" rows="3" style="width: 100%; border: 1.5px solid var(--border); border-radius: 8px; padding: 10px; font-size: 13px; outline: none; resize: none; margin-bottom: 12px; box-sizing: border-box;"></textarea>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-outline" onclick="document.getElementById('moments-forward-dialog-overlay').classList.remove('active')" style="flex: 1; padding: 8px; font-size: 12px; border: 1.5px solid var(--border); background: none; border-radius: 8px; cursor: pointer;">取消</button>
+      <button class="btn-primary" onclick="momentSystem.submitForwardDialog()" style="flex: 1; padding: 8px; font-size: 12px; background-color: #576b95; border: none; color:#fff; border-radius: 8px; cursor: pointer;">转发</button>
+    </div>
+  </div>
+</div>              </div> <!-- 聊天应用(win-chat)结束 -->
 
-// ==========================================
-// 2. 桌面美化设置逻辑 (支持平铺配置、即时预览与不透明度保存)
-// ==========================================
-function loadBeautifyForm() {
-  const bgUrl = localStorage.getItem("beautify-wallpaper") || "";
-  document.getElementById("beautify-bg-url").value = bgUrl.startsWith("data:") ? "[本地上传背景]" : bgUrl;
-  
-  // 渲染壁纸预览
-  const bgPreview = document.getElementById("beautify-bg-preview");
-  if (bgPreview) {
-    if (bgUrl) {
-      bgPreview.innerHTML = `<img src="${bgUrl}" style="width:100%; height:100%; object-fit:cover;">`;
-    } else {
-      bgPreview.innerHTML = '<span style="font-size: 9px; color: var(--text-secondary); text-align: center;">无预览</span>';
-    }
-  }
+      <!-- === 4.5 独立深谈应用 (win-deeptalk) === -->
+      <div id="win-deeptalk" class="app-window" style="background-color: #fafbfc;">
+        <header class="win-header" style="background-color: #ffffff; border-bottom: 1px solid var(--border);">
+          <button class="btn-icon" onclick="closeApp('deeptalk')">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="deeptalk-main-title">深谈</h3>
+          <button class="btn-icon" id="btn-new-deeptalk" style="display: none;">
+            <!-- 占位避让 -->
+          </button>
+        </header>
 
-  // 渲染不透明度数据
-  const opacity = localStorage.getItem("beautify-dock-opacity") || "70";
-  document.getElementById("beautify-dock-opacity").value = opacity;
-  document.getElementById("beautify-dock-opacity-val").innerText = opacity;
+        <div class="win-body" style="padding: 0; position: relative;">
+          <!-- 择选子签 -->
+          <section id="deeptalk-tab-select" class="chat-tab-panel active" style="overflow-y:auto; height: 100%;">
+            <!-- 动态载入 -->
+          </section>
+          <!-- 小宇宙子签 -->
+          <section id="deeptalk-tab-microcosm" class="chat-tab-panel" style="overflow-y:auto; height: 100%; padding:16px;">
+            <!-- 动态载入 -->
+          </section>
+        </div>
 
-  // 渲染回车上屏开关状态
-  const enterSend = localStorage.getItem("settings-enter-send") === "true";
-  const enterSendInput = document.getElementById("settings-enter-send-toggle");
-  if (enterSendInput) enterSendInput.checked = enterSend;
+        <footer class="win-footer chat-tabs" style="background-color: #ffffff; border-top: 1px solid var(--border);">
+          <button class="tab-item active" data-tab="select">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/></svg>
+            <span>择选</span>
+          </button>
+          <button class="tab-item" data-tab="microcosm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+            <span>小宇宙</span>
+          </button>
+        </footer>
 
-  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk"];
-  let customIcons = {};
-  try {
-    customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
-  } catch(e) {}
+        <!-- 新建深谈表单 overlay (无 Emoji 极简风) -->
+        <div id="deeptalk-create-overlay" class="modal-overlay">
+          <div class="modal">
+            <header class="modal-header">
+              <h4>新建深谈</h4>
+              <button class="btn-icon" onclick="closeNewDeeptalkForm()">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <form id="deeptalk-create-form" onsubmit="return false;">
+              <input type="hidden" id="deeptalk-form-session-id">
+              <input type="hidden" id="deeptalk-form-char-id">
+              <div class="win-body" style="padding:16px;">
+                <div class="form-group">
+                  <label>深谈主题 (15字以内)</label>
+                  <input type="text" id="deeptalk-form-topic" maxlength="15" placeholder="例如：面具内侧的质询" required>
+                </div>
+                <div class="form-group">
+                  <label>详细切分 (本深谈专用的隐秘剖析场景/对立执念)</label>
+                  <textarea id="deeptalk-form-details" rows="5" placeholder="例如：我想质问你关于当时对我的冷落，在这次谈话中你不准用完美的谎言来敷衍我。" required></textarea>
+                </div>
+              </div>
+              <div class="form-actions" style="padding: 0 16px 16px 16px;">
+                <button type="button" class="btn btn-outline" onclick="closeNewDeeptalkForm()">取消</button>
+                <button type="submit" class="btn btn-primary" style="background:#64748b; border:none;">立即开始深谈</button>
+              </div>
+            </form>
+          </div>
+        </div>
 
-  apps.forEach(appId => {
-    const previewBox = document.getElementById(`beautify-preview-${appId}`);
-    const urlInput = document.getElementById(`beautify-icon-url-${appId}`);
-    if (urlInput) {
-      const savedIcon = customIcons[appId] || "";
-      urlInput.value = savedIcon.startsWith("data:") ? "[本地上传图标]" : savedIcon;
-      
-      if (previewBox) {
-        if (savedIcon) {
-          previewBox.innerHTML = `<img src="${savedIcon}" style="width:100%; height:100%; object-fit:cover;">`;
-        } else {
-          const info = DESKTOP_APPS_CONFIG[appId];
-          previewBox.innerHTML = info ? info.svg : "";
-        }
-      }
-    }
-  });
-}
+        <!-- 5. 专属深谈对话空间室 (滑入定位区) -->
+        <div id="win-deeptalk-room" class="deeptalk-room-overlay">
+          <header class="win-header" style="background-color: #ffffff; border-bottom: 1px solid var(--border);">
+            <button class="btn-icon" onclick="closeDeeptalkRoom()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3 id="deeptalk-room-title">主题</h3>
+            <button class="btn-icon" onclick="openDeeptalkDetails()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="M4.93 4.93l1.41 1.41"/><path d="M17.66 17.66l1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="M6.34 17.66l-1.41 1.41"/><path d="M19.07 4.93l-1.41 1.41"/></svg>
+            </button>
+          </header>
 
-async function saveBeautifyConfig() {
-  const bgInput = document.getElementById("beautify-bg-url").value.trim();
-  const opacityVal = document.getElementById("beautify-dock-opacity").value;
+          <div class="deeptalk-cards-slider" id="deeptalk-cards-flow">
+            <!-- 对话卡片左右滑动渲染 -->
+          </div>
 
-  // 保存背景
-  if (bgInput === "[本地上传背景]") {
-    if (tempBgBlob) {
-      const dataURL = await blobToDataURL(tempBgBlob);
-      localStorage.setItem("beautify-wallpaper", dataURL);
-    }
-  } else if (bgInput) {
-    localStorage.setItem("beautify-wallpaper", bgInput);
-  } else {
-    localStorage.removeItem("beautify-wallpaper");
-  }
+          <div class="deeptalk-indicator-bar" id="deeptalk-dots-bar">
+            <!-- 滚动圆点 -->
+          </div>
 
-  // 保存不透明度
-  localStorage.setItem("beautify-dock-opacity", opacityVal);
+          <div class="dialog-input-container" style="background-color: #ffffff; border-top: 1px solid var(--border);">
+            <div class="input-main-row">
+              <textarea id="deeptalk-room-input" rows="1" placeholder="请对角色说点什么来进行灵魂质询..."></textarea>
+              <button class="chat-send-btn" id="btn-deeptalk-send" style="background-color: #64748b;" title="上屏">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
 
-  // 保存回车上屏开关状态
-  const enterSendInput = document.getElementById("settings-enter-send-toggle");
-  if (enterSendInput) {
-    localStorage.setItem("settings-enter-send", enterSendInput.checked ? "true" : "false");
-  }
+        <!-- 6. 专属深谈详情页 (携带控制、结束及删除按钮) - 设定 z-index: 700 覆盖对话空间 (z-index: 600) -->
+        <div id="win-deeptalk-details" class="chat-details-overlay" style="z-index: 700;">
+          <header class="win-header">
+            <button class="btn-icon" onclick="closeDeeptalkDetails()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3>深谈详情管理</h3>
+            <div style="width:40px;"></div>
+          </header>
+          <div class="win-body" style="padding:16px;">
+            <div class="form-group">
+              <label>附加深谈预设</label>
+              <select id="deeptalk-details-preset">
+                <!-- 动态载入 -->
+              </select>
+            </div>
+            
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0;">携带线上主聊天记忆与关系网</label>
+              <label class="switch">
+                <input type="checkbox" id="deeptalk-details-carry-memory" checked>
+                <span class="slider"></span>
+              </label>
+            </div>
 
-  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk"];
-  let customIcons = {};
-  try {
-    customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
-  } catch(e) {}
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); margin-bottom: 24px;">
+              <label style="margin-bottom:0;">携带主聊天最临近的 10 条上下文</label>
+              <label class="switch">
+                <input type="checkbox" id="deeptalk-details-carry-context">
+                <span class="slider"></span>
+              </label>
+            </div>
 
-  apps.forEach(appId => {
-    const urlInput = document.getElementById(`beautify-icon-url-${appId}`);
-    if (urlInput) {
-      const val = urlInput.value.trim();
-      if (val === "[本地上传图标]") {
-        const previewBox = document.getElementById(`beautify-preview-${appId}`);
-        const pendingBase64 = previewBox ? previewBox.getAttribute("data-pending-base64") : null;
-        if (pendingBase64) {
-          customIcons[appId] = pendingBase64;
-        }
-      } else if (val) {
-        customIcons[appId] = val;
-      } else {
-        delete customIcons[appId];
-      }
-    }
-  });
+            <div class="form-actions" style="display:flex; flex-direction:column; gap:12px;">
+              <button class="btn btn-primary" style="width:100%; background-color:#64748b; border:none;" onclick="saveDeeptalkDetails()">保存并更新此深谈配置</button>
+              <button class="btn btn-outline" style="width:100%; color:#0f766e; border-color:#99f6e4;" onclick="endDeeptalkSession()">结束深谈 (归档锁定并保持显示)</button>
+              <button class="btn btn-outline" style="width:100%; color:#b45309; border-color:#fde68a;" onclick="summarizeDeeptalkSession()">总结深谈 (同步提炼总结至主记忆空间)</button>
+              <button class="btn btn-danger-outline" style="width:100%;" onclick="deleteDeeptalkSession()">彻底粉碎此深谈对话记录</button>
+            </div>
+          </div>
+        </div>
 
-  localStorage.setItem("beautify-custom-icons", JSON.stringify(customIcons));
-  tempBgBlob = null;
+      </div> <!-- 深谈应用(win-deeptalk)结束 -->
 
-  alert("美化方案配置已应用并保存！桌面端即将即时重绘。");
-  if (window.applyGlobalSettingsOnLoad) applyGlobalSettingsOnLoad();
-  if (window.loadDesktopLayout) loadDesktopLayout();
-  loadBeautifyForm(); // 刷新预览状态
-}
+      <!-- ========================================== -->
+      <!--          表情包功能组件与弹窗                 -->
+      <!-- ========================================== -->
 
-function resetBeautifyConfig() {
-  if (confirm("确定要恢复默认壁纸与全部桌面图标吗？")) {
-    localStorage.removeItem("beautify-wallpaper");
-    localStorage.removeItem("beautify-custom-icons");
-    localStorage.removeItem("beautify-dock-opacity");
-    localStorage.removeItem("settings-enter-send");
-    document.getElementById("beautify-bg-url").value = "";
-    
-    const apps = ["settings", "archive", "world_book", "chat", "deeptalk"];
-    apps.forEach(appId => {
-      const input = document.getElementById(`beautify-icon-url-${appId}`);
-      if (input) input.value = "";
-    });
+      <!-- 表情包选择栏背景防误触遮罩 (点击可直接关闭表情包栏，防止底层被误触且卡位) -->
+      <div id="sticker-select-backdrop"></div>
 
-    alert("默认方案重置成功。");
-    if (window.applyGlobalSettingsOnLoad) applyGlobalSettingsOnLoad();
-    if (window.loadDesktopLayout) loadDesktopLayout();
-    loadBeautifyForm();
-  }
-}
+      <!-- 表情包选择栏（对话中输入框上方弹出） -->
+      <div id="sticker-select-overlay">
+        <div class="sticker-select-header">
+          <h4>表情包</h4>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button class="btn btn-outline" style="padding:6px 10px;font-size:11px;" onclick="stickerSystem.openStickerMountSettings(activeSessionId)">挂载设置</button>
+            <button class="btn-icon" onclick="stickerSystem.closeStickerSelector()">
+              <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="sticker-select-body"></div>
+      </div>
 
-// ==========================================
-// 3. 全局 CSS 注入逻辑
-// ==========================================
-function loadCustomCssPresets() {
-  const select = document.getElementById("css-presets-select");
-  let presets = {};
-  try {
-    presets = JSON.parse(localStorage.getItem("custom-css-presets")) || {};
-  } catch(e) {}
+      <!-- 挂载设置浮层 -->
+      <div id="sticker-mount-overlay" class="modal-overlay">
+        <div class="modal" style="max-width:340px;">
+          <div class="sticker-mount-content"></div>
+        </div>
+      </div>
 
-  select.innerHTML = '<option value="">-- 新建预设 --</option>';
-  Object.keys(presets).forEach(name => {
-    const opt = document.createElement("option");
-    opt.value = name;
-    opt.innerText = name;
-    select.appendChild(opt);
-  });
+      <!-- 表情包管理面板 (重构为微信式精美全屏独立子页面) -->
+      <div id="sticker-manager-overlay" class="sticker-manager-overlay me-sub-overlay">
+        <div class="sticker-manager-panel" style="width: 100%; height: 100%; display: flex; flex-direction: column; border-radius: 0; animation: none;">
+          <header class="win-header">
+            <button class="btn-icon" onclick="closeStickerManager()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3 style="position: absolute; left: 50%; transform: translateX(-50%); font-size: 16px; color: var(--text-primary); font-weight: 700; pointer-events: none;">表情包管理</h3>
+            <button class="btn-icon" id="btn-sticker-add" title="添加表情包" onclick="stickerSystem.showStickerAddModal()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" style="flex: 1; overflow-y: auto; padding: 16px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+              <button class="btn btn-outline" style="padding: 8px 14px; font-size: 12px; display: flex; align-items: center; gap: 4px; border-radius: 12px;" onclick="stickerSystem.showAddGroupDialog()">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" style="margin-right:2px;"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                新建分组
+              </button>
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-outline" style="padding: 6px 12px; font-size: 11px; border-radius: 10px;" onclick="stickerSystem.renameStickerGroup()">重命名</button>
+                <button class="btn btn-outline" style="padding: 6px 12px; font-size: 11px; color: #ef4444; border-color: #fca5a5; border-radius: 10px;" onclick="stickerSystem.deleteStickerGroup()">删除</button>
+              </div>
+            </div>
+            <div id="sticker-group-tabs" class="sticker-group-tabs" style="margin-bottom: 16px;"></div>
+            <div id="sticker-manager-grid" class="sticker-manager-grid"></div>
+          </div>
+        </div>
+      </div>
 
-  document.getElementById("css-code-editor").value = localStorage.getItem("beautify-active-css") || "";
-}
+      <!-- 添加表情包浮层 -->
+      <div id="sticker-add-overlay" class="sticker-add-overlay">
+        <div class="sticker-add-modal">
+          <h4>添加表情包</h4>
+          <div class="method-tabs">
+            <div class="method-tab active" id="sticker-method-upload" onclick="stickerSystem.switchStickerAddMethod('upload')">单张上传</div>
+            <div class="method-tab" id="sticker-method-batch" onclick="stickerSystem.switchStickerAddMethod('batch')">URL批量</div>
+          </div>
+          <!-- 方法1：单张上传 -->
+          <div id="sticker-upload-area">
+            <div class="form-group">
+              <label>选择图片</label>
+              <input type="file" id="sticker-file-input" accept="image/*">
+            </div>
+            <div id="sticker-upload-preview" style="margin:8px 0;min-height:60px;"></div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button onclick="document.getElementById('sticker-add-overlay').classList.remove('active')" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;cursor:pointer">取消</button>
+              <button onclick="stickerSystem.handleStickerUpload()" style="flex:1;padding:10px;border-radius:10px;border:none;background:#ec4899;color:#fff;font-size:13px;font-weight:600;cursor:pointer">上传并写释义</button>
+            </div>
+          </div>
+          <!-- 方法2：URL批量 -->
+          <div id="sticker-batch-area" style="display:none;">
+            <div class="form-group">
+              <label>批量输入（每行一个，格式： 释义:URL）</label>
+              <textarea id="sticker-batch-text" placeholder="开心:https://example.com/happy.png&#10;难过:https://example.com/sad.png&#10;加油:https://example.com/fight.png"></textarea>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:12px;">
+              <button onclick="document.getElementById('sticker-add-overlay').classList.remove('active')" style="flex:1;padding:10px;border-radius:10px;border:1.5px solid var(--border);background:var(--surface);font-size:13px;font-weight:600;cursor:pointer">取消</button>
+              <button onclick="stickerSystem.handleStickerBatchUpload()" style="flex:1;padding:10px;border-radius:10px;border:none;background:#ec4899;color:#fff;font-size:13px;font-weight:600;cursor:pointer">批量添加</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-function loadCssPresetToForm() {
-  const name = document.getElementById("css-presets-select").value;
-  if (!name) return;
-  let presets = {};
-  try {
-    presets = JSON.parse(localStorage.getItem("custom-css-presets")) || {};
-  } catch(e) {}
+      <!-- 编辑/删除表情包浮层 -->
+      <div id="sticker-edit-overlay" class="sticker-edit-overlay">
+        <div class="sticker-edit-modal">
+          <h4>编辑表情包</h4>
+          <img class="sticker-edit-image" src="" alt="表情包预览">
+          <div class="form-group">
+            <label>释义</label>
+            <input type="text" class="sticker-edit-caption" placeholder="输入文字释义" style="width:100%;padding:10px;border-radius:10px;border:1.5px solid var(--border);font-size:14px;">
+          </div>
+          <div class="edit-actions">
+            <button class="sticker-edit-delete" onclick="stickerSystem.deleteStickerEdit()" style="background:#fee2e2;color:#ef4444;">删除</button>
+            <button class="sticker-edit-save" onclick="stickerSystem.saveStickerEdit()" style="background:#ec4899;color:#fff;">保存修改</button>
+          </div>
+        </div>
+      </div>
 
-  document.getElementById("css-preset-name").value = name;
-  document.getElementById("css-code-editor").value = presets[name] || "";
-}
+      <!-- ========================================== -->
+      <!--          以下为线下功能新增的组件与弹窗       -->
+      <!-- ========================================== -->
 
-function saveCssPreset() {
-  const name = document.getElementById("css-preset-name").value.trim();
-  const code = document.getElementById("css-code-editor").value;
-  if (!name) {
-    alert("请输入要保存的预设名称");
-    return;
-  }
+      <!-- 1. 线下选择模式弹窗 -->
+      <div id="offline-select-overlay" class="modal-overlay">
+        <div class="modal" style="padding-bottom: 20px;">
+          <header class="modal-header">
+            <h4>请选择线下模式</h4>
+            <button class="btn-icon" onclick="closeOfflineSelect()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" style="display:flex; flex-direction:column; gap:12px; padding:20px;">
+            <button class="btn btn-primary" onclick="triggerTheaterMode()" style="padding:14px; font-size:15px; font-weight: 700;">独立剧场模式</button>
+            <button class="btn btn-outline" onclick="triggerAppointmentMode()" style="padding:14px; font-size:15px; font-weight: 700;">赴约模式</button>
+          </div>
+        </div>
+      </div>
 
-  let presets = {};
-  try {
-    presets = JSON.parse(localStorage.getItem("custom-css-presets")) || {};
-  } catch(e) {}
+      <!-- 2. 独立剧场过渡页 -->
+      <div id="win-theater-list" class="app-window">
+        <header class="win-header">
+          <button class="btn-icon" onclick="closeTheaterList()">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3>独立剧场</h3>
+          <button class="btn-icon" onclick="openNewTheaterForm()">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+          </button>
+        </header>
+        <div class="win-body" id="theater-list-container"></div>
+      </div>
 
-  presets[name] = code;
-  localStorage.setItem("custom-css-presets", JSON.stringify(presets));
-  alert("CSS 预设保存成功。");
-  loadCustomCssPresets();
-}
+      <!-- 3. 新建剧场弹层 -->
+      <div id="new-theater-overlay" class="modal-overlay">
+        <div class="modal">
+          <header class="modal-header">
+            <h4>新建独立剧场</h4>
+            <button class="btn-icon" onclick="closeNewTheaterForm()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <form id="theater-create-form" onsubmit="event.preventDefault(); saveNewTheater();">
+            <div class="win-body">
+              <div class="form-group">
+                <label>剧场名称</label>
+                <input type="text" id="theater-name" required placeholder="例如：林间夜话、午后旧馆">
+              </div>
+              <div class="form-group">
+                <label>情景设定 (注入到 System Prompt 之后)</label>
+                <textarea id="theater-scenario" rows="3" required placeholder="描述见面的背景、环境氛围、天气、此时此刻发生的事等。"></textarea>
+              </div>
+              <div class="form-group" style="display: flex; gap: 10px;">
+                <div style="flex: 1;">
+                  <label>对方 (Char) 叙事视角</label>
+                  <select id="theater-char-pov">
+                    <option value="第三人称" selected>第三人称 (他/她)</option>
+                    <option value="第一人称">第一人称 (我)</option>
+                  </select>
+                </div>
+                <div style="flex: 1;">
+                  <label>我方 (User) 被代称视角</label>
+                  <select id="theater-user-pov">
+                    <option value="第二人称" selected>第二人称 (你)</option>
+                    <option value="第一人称">第一人称 (我)</option>
+                    <option value="第三人称">第三人称 (姓名)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-group" style="display: flex; gap: 10px;">
+                <div style="flex: 1;">
+                  <label>每轮最小字数</label>
+                  <input type="number" id="theater-min-word" value="50" required>
+                </div>
+                <div style="flex: 1;">
+                  <label>每轮最大字数</label>
+                  <input type="number" id="theater-max-word" value="300" required>
+                </div>
+              </div>
+              <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0;">
+                <label style="margin-bottom:0;">携带线上主聊天记忆与人物关系快照</label>
+                <label class="switch">
+                  <input type="checkbox" id="theater-carry-memory" checked>
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div class="form-actions" style="padding:16px;">
+              <button type="button" class="btn btn-outline" onclick="closeNewTheaterForm()">取消</button>
+              <button type="submit" class="btn btn-primary">立即创建并进入</button>
+            </div>
+          </form>
+        </div>
+      </div>
 
-function applyCssPreset() {
-  const code = document.getElementById("css-code-editor").value;
-  localStorage.setItem("beautify-active-css", code);
-  alert("自定义 CSS 已编译并全局生效！");
-  if (window.applyGlobalSettingsOnLoad) applyGlobalSettingsOnLoad();
-}
+      <!-- 4. 线下对话主界面 -->
+      <div id="win-offline-chat" class="app-window" style="background-color: #f5f6f8;">
+        <header class="win-header" style="background-color: #ffffff; border-bottom:1px solid var(--border);">
+          <button class="btn-icon" onclick="exitOfflineChat()">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="offline-chat-title">线下见面</h3>
+          <div style="display: flex; gap: 4px; align-items: center; z-index: 10;">
+            <!-- 线下模式心声状态粉色按钮 -->
+            <button class="btn-icon btn-status-pink" id="btn-offline-char-status" title="当前状态及心声">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            </button>
+            <button class="btn-icon" onclick="openOfflineDetails()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 10c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm12 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm-6 0c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+            </button>
+          </div>
+        </header>
 
-function resetCssPreset() {
-  if (confirm("确定要清空全局 CSS 注入吗？")) {
-    localStorage.removeItem("beautify-active-css");
-    document.getElementById("css-code-editor").value = "";
-    document.getElementById("css-preset-name").value = "";
-    alert("已清空并恢复默认。");
-    if (window.applyGlobalSettingsOnLoad) applyGlobalSettingsOnLoad();
-  }
-}
+        <!-- 消息卡片流展示区 -->
+        <div class="offline-messages-container" id="offline-messages-flow"></div>
 
-function deleteCssPreset() {
-  const name = document.getElementById("css-presets-select").value;
-  if (!name) {
-    alert("请先选择要删除的 CSS 预设");
-    return;
-  }
-  if (confirm(`确定要彻底删除预设「${name}」吗？`)) {
-    let presets = {};
-    try {
-      presets = JSON.parse(localStorage.getItem("custom-css-presets")) || {};
-    } catch(e) {}
-    delete presets[name];
-    localStorage.setItem("custom-css-presets", JSON.stringify(presets));
-    alert("预设已成功删除。");
-    loadCustomCssPresets();
-  }
-}
+        <!-- 卡片输入控制栏 -->
+        <div class="dialog-input-container" style="background-color: #ffffff;">
+          <div class="input-main-row" id="offline-input-row">
+            <textarea id="offline-input-text" rows="1" placeholder="书写场景动作或说点什么..."></textarea>
+            
+            <button class="chat-send-btn" id="btn-offline-send">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+            <button class="chat-send-btn reply" id="btn-offline-reply" title="生成白描输出">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>
+            </button>
+          </div>
 
-// ==========================================
-// 4. 组件工坊逻辑（支持自定义列宽行高）
-// ==========================================
-function loadWidgetPresets() {
-  const select = document.getElementById("widget-presets-select");
-  let widgets = {};
-  try {
-    widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
-  } catch(e) {}
+          <!-- 线下多选 -->
+          <div class="multi-select-action-bar" id="offline-multi-select-bar" style="display: none; padding:0;">
+            <button id="btn-offline-multi-delete" class="btn btn-danger-outline" style="flex:1;">删除选中 (<span id="offline-selected-count">0</span>)</button>
+            <button id="btn-offline-multi-cancel" class="btn" style="flex:1;">退出多选</button>
+          </div>
+        </div>
 
-  select.innerHTML = '<option value="">-- 新建组件 --</option>';
-  Object.keys(widgets).forEach(id => {
-    const opt = document.createElement("option");
-    opt.value = id;
-    opt.innerText = widgets[id].name;
-    select.appendChild(opt);
-  });
-}
+        <div id="offline-bubble-context-menu" class="bubble-menu-overlay" style="display: none;">
+          <div class="bubble-menu-content">
+            <button id="btn-offline-menu-edit">编辑消息</button>
+            <button id="btn-offline-menu-reroll">回溯重回 (Reroll)</button>
+            <button id="btn-offline-menu-favorite">收藏消息</button>
+            <button id="btn-offline-menu-multi">多选消息</button>
+            <button id="btn-offline-menu-delete-single">删除此条</button>
+            <button id="btn-offline-menu-cancel" class="cancel-btn">取消</button>
+          </div>
+        </div>
+      </div>
 
-function loadWidgetToForm() {
-  const id = document.getElementById("widget-presets-select").value;
-  if (!id) {
-    document.getElementById("widget-name-input").value = "";
-    document.getElementById("widget-code-editor").value = "";
-    document.getElementById("widget-width-span").value = "1";
-    document.getElementById("widget-height-span").value = "1";
-    document.getElementById("widget-workshop-preview").innerHTML = '<span style="font-size:11px; color:var(--text-secondary);">暂无预览</span>';
-    return;
-  }
+      <!-- 5. 线下专属详情设置 -->
+      <div id="win-offline-details" class="app-window">
+        <header class="win-header">
+          <button class="btn-icon" onclick="closeOfflineDetails()">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3>线下专属设定</h3>
+          <div style="width:40px;"></div>
+        </header>
+        <div class="win-body">
+          <div class="form-group" style="display: flex; gap: 10px;">
+            <div style="flex: 1;">
+              <label>对方 (Char) 叙事视角</label>
+              <select id="offline-detail-char-pov">
+                <option value="第三人称">第三人称 (他/她)</option>
+                <option value="第一人称">第一人称 (我)</option>
+              </select>
+            </div>
+            <div style="flex: 1;">
+              <label>我方 (User) 被代称视角</label>
+              <select id="offline-detail-user-pov">
+                <option value="第二人称">第二人称 (你)</option>
+                <option value="第一人称">第一人称 (我)</option>
+                <option value="第三人称">第三人称 (姓名)</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-group" style="display: flex; gap: 10px;">
+            <div style="flex: 1;">
+              <label>每轮最小字数</label>
+              <input type="number" id="offline-detail-min-word" value="50">
+            </div>
+            <div style="flex: 1;">
+              <label>每轮最大字数</label>
+              <input type="number" id="offline-detail-max-word" value="200">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>自定义挂载世界书 (非强制，默认继承线上)</label>
+            <select id="offline-details-wb-mounted" multiple style="height: 120px;"></select>
+          </div>
+          <div class="form-group">
+            <label>自动总结轮数</label>
+            <input type="number" id="offline-detail-auto-summary" value="10">
+          </div>
+          <div class="form-actions" style="margin-top: 30px; display:flex; flex-direction:column; gap:12px;">
+            <button id="btn-save-offline-details" class="btn btn-primary" style="width:100%;">保存线下配置</button>
+            <button id="btn-end-appointment" class="btn btn-danger-outline" style="width:100%; display:none;">结束赴约 (并将经历记忆回写线上人设)</button>
+          </div>
+        </div>
+      </div>
 
-  let widgets = {};
-  try {
-    widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
-  } catch(e) {}
+      <!-- 自定义消息编辑弹层 -->
+      <div id="custom-edit-overlay" class="modal-overlay">
+        <div class="modal animate-slide" style="max-width: 400px; border-radius: var(--radius); border: 1px solid #e2e8f0;">
+          <header class="modal-header">
+            <h4>编辑发言内容</h4>
+            <button class="btn-icon" id="btn-close-edit-modal">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body">
+            <div class="form-group" style="margin-bottom:0;">
+              <textarea id="custom-edit-textarea" rows="6" style="width:100%; font-size:14px; padding:12px; border-radius:12px; border:1px solid var(--border); resize:none;" placeholder="在此处修改气泡中的文字内容..."></textarea>
+            </div>
+            <div class="form-actions" style="margin-top:20px; display:flex; gap:12px;">
+              <button id="btn-cancel-edit-modal" class="btn btn-outline" style="flex:1; border-radius:12px;">取消</button>
+              <button id="btn-save-edit-modal" class="btn btn-primary" style="flex:1; border-radius:12px;">保存修改</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  const w = widgets[id];
-  if (w) {
-    document.getElementById("widget-name-input").value = w.name;
-    document.getElementById("widget-code-editor").value = w.html;
-    document.getElementById("widget-width-span").value = w.widthSpan || 1;
-    document.getElementById("widget-height-span").value = w.heightSpan || 1;
-    compileAndPreviewWidget();
-  }
-}
+      <!-- 角色状态与内心深处卡片模态窗 (全面去 Emoji 升级为 SVG) -->
+      <div id="status-card-overlay" class="modal-overlay">
+        <div class="modal status-card-modal">
+          <header class="modal-header">
+            <h4 id="status-modal-title" style="font-weight:700;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                <circle cx="12" cy="12" r="8"/>
+                <line x1="12" y1="2" x2="12" y2="4"/>
+                <line x1="12" y1="20" x2="12" y2="22"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg> 同心脑电波心声</h4>
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <button class="btn btn-outline" id="btn-status-history" style="font-size: 11px; padding: 6px 12px; border-radius:12px; font-weight:700;">
+                历史记录
+              </button>
+              <button class="btn-icon" id="btn-close-status-card">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+          </header>
+          <div class="win-body" id="status-card-body" style="background: linear-gradient(135deg, #fff5f7 0%, #fff 100%);">
+            <!-- 加载中 -->
+            <div id="status-card-loading" class="status-loading-box" style="display: none;">
+              <div class="spinner"></div>
+              <p>正在连接同步器、读取并拼装其隐秘内心...</p>
+            </div>
+            <!-- 状态卡片具体属性 -->
+            <div id="status-card-content" class="status-content-area">
+              <div class="status-attribute-row">
+                <div class="attr-label">👚 当前穿着</div>
+                <div class="attr-value" id="status-attire">点击深度同频以同步</div>
+              </div>
+              <div class="status-attribute-row">
+                <div class="attr-label">❤️ 当前好感</div>
+                <div class="attr-value" id="status-affection">点击深度同频以同步</div>
+              </div>
+              <div class="status-attribute-row">
+                <div class="attr-label">⚡ 兴奋度/紧绷感</div>
+                <div class="attr-value" id="status-excitement">点击深度同频以同步</div>
+              </div>
+              <div class="status-attribute-row long-text">
+                <div class="attr-label">💭 内心想法 (此刻真实倾诉)</div>
+                <div class="attr-value" id="status-thoughts">点击深度同频以窥视此时此刻真实想法</div>
+              </div>
+              <div class="status-attribute-row long-text shadow-box">
+                <div class="attr-label">🕯️ 隐秘角落 (心底绝对禁区)</div>
+                <div class="attr-value" id="status-hidden-corners">在此探查深不见底、绝对自私且偏执的反差心声</div>
+              </div>
+            </div>
+          </div>
+          <div class="form-actions" style="padding: 16px; background: #fff; border-top: 1px solid var(--border);">
+            <button id="btn-refresh-status" class="btn btn-primary" style="width: 100%; border-radius:16px; background-color: #ec4899; box-shadow: 0 4px 12px rgba(236,72,153,0.35); font-weight:700;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                <polyline points="23 4 23 10 17 10"/>
+                <polyline points="1 20 1 14 7 14"/>
+                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+              </svg> 深度同频同步状态 (API)
+            </button>
+          </div>
+        </div>
+      </div>
 
-function compileAndPreviewWidget() {
-  const code = document.getElementById("widget-code-editor").value;
-  const preview = document.getElementById("widget-workshop-preview");
-  if (!preview) return;
+      <!-- 历史状态卡片模态窗 -->
+      <div id="status-history-overlay" class="modal-overlay">
+        <div class="modal" style="max-height: 90%;">
+          <header class="modal-header">
+            <h4 style="font-weight:700;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:4px;">
+                <circle cx="12" cy="12" r="10"/>
+                <polyline points="12 6 12 12 16 14"/>
+              </svg> 状态变化历史记录</h4>
+            <button class="btn-icon" id="btn-close-status-history">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" id="status-history-list" style="background-color: var(--bg-main);">
+            <!-- 动态插入历史记录 -->
+          </div>
+        </div>
+      </div>
 
-  preview.innerHTML = code;
-  // 核心：强制执行组件中的 script
-  const scripts = preview.querySelectorAll("script");
-  scripts.forEach(oldScript => {
-    const newScript = document.createElement("script");
-    newScript.text = oldScript.innerHTML;
-    oldScript.parentNode.replaceChild(newScript, oldScript);
-  });
-}
+      <!-- 微信红包/转账专属自定义输入小卡片模态窗 (全面去 Emoji 升级) -->
+      <div id="wallet-tx-overlay" class="modal-overlay">
+        <div class="modal" style="max-width: 320px; border-radius: 16px; border: 1px solid var(--border); background:#ffffff;">
+          <header class="modal-header" style="border-bottom: none; padding: 16px 16px 8px 16px;">
+            <h4 id="wallet-tx-title" style="font-size: 16px; font-weight: 700; color: #1e293b;">发送红包</h4>
+            <button class="btn-icon" onclick="walletSystem.closeTxModal()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" style="padding: 0 16px 16px 16px;">
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">金额 (元)</label>
+              <div style="position: relative; display: flex; align-items: center;">
+                <span style="position: absolute; left: 12px; font-size: 18px; font-weight: 700; color: #1e293b;">¥</span>
+                <input type="number" id="wallet-tx-amount" step="0.01" min="0.01" placeholder="0.00" style="padding-left: 28px; font-size: 18px; font-weight: 700; border-radius: 10px; height: 44px; width: 100%;">
+              </div>
+            </div>
+            <div class="form-group" id="wallet-tx-remark-group" style="margin-bottom: 20px;">
+              <label id="wallet-tx-remark-label" style="font-size: 11px; color: var(--text-secondary); font-weight:700;">备注</label>
+              <input type="text" id="wallet-tx-remark" placeholder="恭喜发财，大吉大利" style="border-radius: 10px; height: 40px; font-size: 13px;">
+            </div>
+            <div class="form-actions" style="display: flex; gap: 10px; margin-top: 10px;">
+              <button type="button" class="btn btn-outline" onclick="walletSystem.closeTxModal()" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px;">取消</button>
+              <button type="button" class="btn btn-primary" id="btn-wallet-tx-submit" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px; background-color: #ec4899; border: none;">发送</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-function saveWidgetPreset() {
-  const name = document.getElementById("widget-name-input").value.trim();
-  const code = document.getElementById("widget-code-editor").value;
-  const widthSpan = parseInt(document.getElementById("widget-width-span").value) || 1;
-  const heightSpan = parseInt(document.getElementById("widget-height-span").value) || 1;
+      <!-- === 新增：微信语音专属自定义输入模态窗 === -->
+      <div id="voice-input-overlay" class="modal-overlay">
+        <div class="modal" style="max-width: 320px; border-radius: 16px; border: 1px solid var(--border); background:#ffffff;">
+          <header class="modal-header" style="border-bottom: none; padding: 16px 16px 8px 16px;">
+            <h4 style="font-size: 16px; font-weight: 700; color: #1e293b; display:flex; align-items:center; gap:6px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                <path d="M19 10v1a7 7 0 0 1-14 0v-1"/>
+              </svg>
+              录制语音消息
+            </h4>
+            <button class="btn-icon" onclick="document.getElementById('voice-input-overlay').classList.remove('active')">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" style="padding: 0 16px 16px 16px;">
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">语音时长 (秒: <span id="voice-duration-val">5</span>")</label>
+              <input type="range" id="voice-duration-slider" min="1" max="60" value="5" oninput="document.getElementById('voice-duration-val').innerText = this.value">
+            </div>
+            <div class="form-group" style="margin-bottom: 20px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">语音转文字内容 (不发音，仅备录)</label>
+              <textarea id="voice-input-text" rows="3" placeholder="例如：你今天过得怎么样？" style="border-radius: 10px; font-size: 13px; resize:none;"></textarea>
+            </div>
+            <div class="form-actions" style="display: flex; gap: 10px;">
+              <button type="button" class="btn btn-outline" onclick="document.getElementById('voice-input-overlay').classList.remove('active')" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px;">取消</button>
+              <button type="button" class="btn btn-primary" id="btn-voice-submit" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px; background-color: #07c160; border: none;">发送语音</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  if (!name) {
-    alert("请输入组件名称");
-    return;
-  }
+      <!-- === 新增：微信图片专属自定义说明模态窗 === -->
+      <div id="image-input-overlay" class="modal-overlay">
+        <div class="modal" style="max-width: 320px; border-radius: 16px; border: 1px solid var(--border); background:#ffffff;">
+          <header class="modal-header" style="border-bottom: none; padding: 16px 16px 8px 16px;">
+            <h4 style="font-size: 16px; font-weight: 700; color: #1e293b; display:flex; align-items:center; gap:6px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+              </svg>
+              发送图片与说明
+            </h4>
+            <button class="btn-icon" onclick="document.getElementById('image-input-overlay').classList.remove('active')">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" style="padding: 0 16px 16px 16px;">
+            <div class="form-group" style="margin-bottom: 12px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">选择本地图片 (若不选，系统将默认提供场景占位卡片)</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <button type="button" class="btn btn-outline" onclick="document.getElementById('image-file-input').click()" style="padding:8px 12px; font-size:11px; border-radius:8px;">选择本地文件</button>
+                <span id="image-file-name-label" style="font-size:11px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px;">未选择文件</span>
+              </div>
+              <input type="file" id="image-file-input" accept="image/*" style="display:none;" onchange="document.getElementById('image-file-name-label').innerText = this.files[0] ? this.files[0].name : '未选择文件'">
+            </div>
+            <div class="form-group" style="margin-bottom: 20px;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">画面具体场景描述 (必填，用于 AI 识别感知)</label>
+              <textarea id="image-input-text" rows="3" placeholder="例如：一张我和他并肩坐在草坪上的自拍合照，背景是晚霞" style="border-radius: 10px; font-size: 13px; resize:none;"></textarea>
+            </div>
+            <div class="form-actions" style="display: flex; gap: 10px;">
+              <button type="button" class="btn btn-outline" onclick="document.getElementById('image-input-overlay').classList.remove('active')" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px;">取消</button>
+              <button type="button" class="btn btn-primary" id="btn-image-submit" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px; background-color: #07c160; border: none;">发送图片</button>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  const select = document.getElementById("widget-presets-select");
-  let id = select.value;
-  if (!id) {
-    id = "widget_" + Date.now();
-  }
+    </div> <!-- app-window-container 结束 -->
 
-  let widgets = {};
-  try {
-    widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
-  } catch(e) {}
+    <!-- 底部 Dock 栏 -->
+    <footer id="dock">
+      <div class="dock-container" id="dock-grid"></div>
+    </footer>
+  </div> <!-- phone-container 结束 -->
 
-  widgets[id] = { id, name, html: code, widthSpan, heightSpan };
-  localStorage.setItem("beautify-widgets", JSON.stringify(widgets));
-  alert("组件编译与保存成功！可在桌面上长按空白槽位添加。");
-  loadWidgetPresets();
-  select.value = id;
-}
-
-function deleteWidgetPreset() {
-  const id = document.getElementById("widget-presets-select").value;
-  if (!id) {
-    alert("请选择一个已有组件进行删除");
-    return;
-  }
-  if (confirm("确定要删除此组件吗？这将从桌面所有已添加的地方将其自动卸载。")) {
-    let widgets = {};
-    try {
-      widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
-    } catch(e) {}
-    delete widgets[id];
-    localStorage.setItem("beautify-widgets", JSON.stringify(widgets));
-
-    // 清理桌面摆放
-    ["desktop", "dock"].forEach(type => {
-      let placed = {};
-      try { placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {}; } catch(e) {}
-      Object.keys(placed).forEach(slotIdx => {
-        if (placed[slotIdx] === id) delete placed[slotIdx];
-      });
-      localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
-    });
-
-    alert("组件已删除");
-    loadWidgetPresets();
-    loadWidgetToForm();
-    if (window.loadDesktopLayout) loadDesktopLayout();
-  }
-}
-
-// === 【一键复制组件开发 Prompt 模板函数】 ===
-function copyWidgetPromptToClipboard() {
-  const promptText = `# Role
-你是一个资深的前端动效与组件设计师，专为“叙事诗小手机（Story Phone）”虚拟操作系统设计桌面小部件（Widgets）。
-
-# Goal
-根据用户提出的功能需求与尺寸规格，生成一段 100% 独立自闭环、开箱即用的 HTML/CSS/JS 混合代码。该代码能够直接粘贴到小手机的“组件工坊”中无缝编译并渲染。
-
-# Technical Constraints & Code Standards (极其重要)
-为了防止组件破坏主系统或在页面重绘时引起浏览器假死，你编写的代码必须严格遵守以下技术规范：
-
-1. 作用域隔离 (Scope Isolation)：
-   - 脚本必须包裹在立即执行函数 IIFE 中：(function() { ... })();。
-   - 严禁声明任何全局变量或将属性挂载到 window 上，所有变量必须使用 const 或 let 进行块级约束，防止命名空间冲突。
-
-2. 防御性内存清理机制 (Anti-Memory Leak)：
-   - 如果组件中使用了 setInterval、setTimeout 或向全局 document / window 绑定了事件监听器，必须使用 MutationObserver 监听组件根节点在 DOM 树中的物理留存状态。
-   - 一旦检测到组件已被用户从桌面卸载，**必须立即清除定时器（clearInterval/clearTimeout）并注销全局监听**，防止多实例叠加导致主进程卡死。
-   - 示例卸载监听代码：
-     \`\`\`javascript
-     const container = document.getElementById("your-widget-unique-id");
-     const intervalId = setInterval(updateFunction, 1000);
-     const observer = new MutationObserver((mutations, obs) => {
-       if (!document.contains(container)) {
-         clearInterval(intervalId);
-         obs.disconnect();
-       }
-     });
-     observer.observe(document.body, { childList: true, subtree: true });
-     \`\`\`
-
-3. 视觉规范 (Aesthetics & Glassmorphism)：
-   - 组件默认继承操作系统的“仿微信/iOS 毛玻璃（Glassmorphism）”视觉调性。
-   - 容器背景必须使用半透明色彩：background: rgba(255, 255, 255, 0.12);。
-   - 容器边缘必须具备毛玻璃模糊：backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);。
-   - 容器边框必须是微弱发光的白色半透明描边：border: 1px solid rgba(255, 255, 255, 0.22);。
-   - 字体必须使用现代无衬线体 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif，并使用高清晰度文字阴影：text-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);。
-   - 时钟或动态变动的数字，必须开启等宽数字对齐，防止数字跳动导致的卡片滑步：font-feature-settings: 'tnum';。
-
-4. 尺寸与排版适应 (Sizing)：
-   - 必须使用绝对自适应布局（width: 100%; height: 100%; box-sizing: border-box;），确保在不同的 widthSpan（列宽）和 heightSpan（行高）下不发生内容物理溢出。
-
-# Output Format
-- 仅输出一个 Markdown 代码块，包含完整的 HTML/CSS/JS 代码。
-- 严禁输出任何多余的解释性文本、问候语或 Markdown 外侧修饰，确保用户可以一键复制。
-
----
-
-# User Input
-请根据以下要求，为我设计组件：
-- **组件名称**：[例如：极简数字时钟]
-- **占用尺寸**：宽 [X] 列，高 [Y] 行 （注：一排最大宽度为 4 列）
-- **功能细节**：[例如：实时拉取系统时间，显示小时与分钟，带动态闪烁的分隔符，以及农历日期]
-- **交互动效**：[例如：点击卡片时，背景色彩发生微弱渐变律动]`;
-
-  navigator.clipboard.writeText(promptText).then(() => {
-    alert("组件开发大模型 Prompt 模板已成功复制到您的剪贴板！\n\n您可以立刻将其粘贴发送给 ChatGPT/DeepSeek/Claude 等 AI 助手来为您生成高度合规的桌面小组件。");
-  }).catch(err => {
-    console.error("一键复制失败:", err);
-    alert("复制失败，您的浏览器可能未授予剪贴板访问权限，请在 README 的附录中手动复制。");
-  });
-}
-
-// ==========================================
-// 5. 数据管理高级备份 (7块分区隔离导入导出)
-// ==========================================
-async function clearAllAppData() {
-  if (confirm("系统数据全清除警告！\n\n此操作将彻底抹除当前小手机内产生的所有本地聊天记录、配置、美化及自定义组件，格式化为最初始状态。确定要彻底清空吗？")) {
-    if (confirm("再次确认：确定清除吗？清除后不可撤销。")) {
-      await db.api_presets.clear();
-      await db.archives.clear();
-      await db.relations.clear();
-      await db.sessions.clear();
-      await db.messages.clear();
-      await db.world_book_entries.clear();
-      await db.theaters.clear();
-      await db.offline_messages.clear();
-      await db.status_history.clear();
-      await db.sticker_groups.clear();
-      await db.sticker_items.clear();
-      
-      localStorage.clear();
-      alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
-      location.reload();
-    }
-  }
-}
-
-// 导出美化包
-function exportBeautifyPack() {
-  try {
-    const pack = {
-      wallpaper: localStorage.getItem("beautify-wallpaper"),
-      customIcons: localStorage.getItem("beautify-custom-icons"),
-      activeCss: localStorage.getItem("beautify-active-css"),
-      cssPresets: localStorage.getItem("custom-css-presets"),
-      placedWidgetsDesktop: localStorage.getItem("placed-widgets-desktop"),
-      placedWidgetsDock: localStorage.getItem("placed-widgets-dock"),
-      widgets: localStorage.getItem("beautify-widgets"),
-      dockOpacity: localStorage.getItem("beautify-dock-opacity")
-    };
-    
-    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `desktop_beautify_pack_${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch(e) {
-    alert("导出美化包失败: " + e.message);
-  }
-}
-
-function importBeautifyPack(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    try {
-      const data = JSON.parse(event.target.result);
-      if (confirm("导入美化包将覆盖现有的壁纸、自定义图标与组件库！确定继续吗？")) {
-        if (data.wallpaper) localStorage.setItem("beautify-wallpaper", data.wallpaper);
-        if (data.customIcons) localStorage.setItem("beautify-custom-icons", data.customIcons);
-        if (data.activeCss) localStorage.setItem("beautify-active-css", data.activeCss);
-        if (data.cssPresets) localStorage.setItem("custom-css-presets", data.cssPresets);
-        if (data.placedWidgetsDesktop) localStorage.setItem("placed-widgets-desktop", data.placedWidgetsDesktop);
-        if (data.placedWidgetsDock) localStorage.setItem("placed-widgets-dock", data.placedWidgetsDock);
-        if (data.widgets) localStorage.setItem("beautify-widgets", data.widgets);
-        if (data.dockOpacity) localStorage.setItem("beautify-dock-opacity", data.dockOpacity);
-
-        alert("美化包导入成功！");
-        location.reload();
-      }
-    } catch(err) {
-      alert("导入美化包失败: " + err.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-// 导出人设与聊天记录
-async function exportChatAndPersonas() {
-  try {
-    const rawBackup = {
-      archives: await db.archives.toArray(),
-      relations: await db.relations.toArray(),
-      sessions: await db.sessions.toArray(),
-      messages: await db.messages.toArray(),
-      offline_messages: await db.offline_messages.toArray(),
-      status_history: await db.status_history.toArray(),
-      localStorage: {
-        active_me_id: localStorage.getItem("active_me_id")
-      }
-    };
-    const backup = await serializeRecord(rawBackup);
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `personas_chat_backup_${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch(e) {
-    alert("导出聊天人设记录失败: " + e.message);
-  }
-}
-
-function importChatAndPersonas(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    try {
-      const rawData = JSON.parse(event.target.result);
-      const data = deserializeRecord(rawData);
-      if (confirm("警告：导入将覆盖现有的档案库、会话关系与所有聊天记录！确定继续吗？")) {
-        await db.transaction('rw', [
-          db.archives, db.relations, db.sessions, db.messages, db.offline_messages, db.status_history
-        ], async () => {
-          if (data.archives) {
-            await db.archives.clear();
-            await db.archives.bulkAdd(data.archives);
-          }
-          if (data.relations) {
-            await db.relations.clear();
-            await db.relations.bulkAdd(data.relations);
-          }
-          if (data.sessions) {
-            await db.sessions.clear();
-            await db.sessions.bulkAdd(data.sessions);
-          }
-          if (data.messages) {
-            await db.messages.clear();
-            await db.messages.bulkAdd(data.messages);
-          }
-          if (data.offline_messages) {
-            await db.offline_messages.clear();
-            await db.offline_messages.bulkAdd(data.offline_messages);
-          }
-          if (data.status_history) {
-            await db.status_history.clear();
-            await db.status_history.bulkAdd(data.status_history);
-          }
+  <script src="db.js"></script>
+  <script src="app_prompts.js"></script>
+  <script src="app_desktop.js"></script>
+  <script src="app_settings.js"></script>
+  <script src="app_archive.js"></script>
+  <script src="app_world_book.js"></script>
+  <script src="app_chat.js"></script>
+  <!-- 引入新写的总结与核心记忆关联召回脚本 -->
+  <script src="app_summary_memory.js"></script>
+  <script src="app_status.js"></script>
+  <script src="app_sticker.js"></script>
+  <script src="app_wallet.js"></script>
+  <script src="app_chat_quote.js"></script>
+  <script src="app_deeptalk.js"></script>
+  <script src="app_moments.js"></script>
+  <script src="app_chat_html_widget.js"></script>
+  <script src="app_chat_plot_engine.js"></script>
+  <script src="app_chat_mcp.js"></script>
+  <script>
+    // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
+    document.addEventListener("DOMContentLoaded", () => {
+      const slider = document.querySelector(".expand-slider");
+      const dots = document.querySelectorAll(".expand-dots .dot");
+      if (slider && dots.length > 0) {
+        // 监听横向滚动，自动点亮对应页码的圆点
+        slider.addEventListener("scroll", () => {
+          const index = Math.round(slider.scrollLeft / slider.clientWidth);
+          dots.forEach((dot, idx) => {
+            dot.classList.toggle("active", idx === index);
+          });
         });
 
-        if (data.localStorage && data.localStorage.active_me_id) {
-          localStorage.setItem("active_me_id", data.localStorage.active_me_id);
-        }
-
-        alert("人设聊天记录导入成功！");
-        location.reload();
-      }
-    } catch(err) {
-      alert("导入失败: " + err.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-// ==========================================
-// 6. 基础系统底层 (容量占用计算、无损大二进制导入/导出等)
-// ==========================================
-async function computeStorageUsage() {
-  try {
-    const api_presets = await db.api_presets.toArray();
-    const archives = await db.archives.toArray();
-    const relations = await db.relations.toArray();
-    const sessions = await db.sessions.toArray();
-    const messages = await db.messages.toArray();
-    const world_book_entries = await db.world_book_entries.toArray();
-    const theaters = await db.theaters.toArray();
-    const offline_messages = await db.offline_messages.toArray();
-    const status_history = await db.status_history.toArray();
-    const sticker_groups = await db.sticker_groups.toArray();
-    const sticker_items = await db.sticker_items.toArray();
-    // 增加深谈、朋友圈容量统筹计算
-    const deeptalks = await db.deeptalks.toArray();
-    const deeptalk_messages = await db.deeptalk_messages.toArray();
-    const deeptalk_thoughts = await db.deeptalk_thoughts.toArray();
-    const deeptalk_presets = await db.deeptalk_presets.toArray();
-    const moments = await db.moments.toArray();
-    const moment_comments = await db.moment_comments.toArray();
-    const moment_settings = await db.moment_settings.toArray();
-
-    const totalRecords = api_presets.length + archives.length + relations.length + 
-                         sessions.length + messages.length + world_book_entries.length + 
-                         theaters.length + offline_messages.length + status_history.length + 
-                         sticker_groups.length + sticker_items.length +
-                         deeptalks.length + deeptalk_messages.length + deeptalk_thoughts.length + deeptalk_presets.length +
-                         moments.length + moment_comments.length + moment_settings.length;
-                         
-    document.getElementById("db-total-records").innerText = totalRecords;
-
-    let imgBytes = 0;
-    archives.forEach(item => {
-      if (item.avatar && typeof item.avatar === 'string' && item.avatar.startsWith("data:")) {
-        imgBytes += item.avatar.length;
-      }
-    });
-    sticker_items.forEach(item => {
-      if (item.imageUrl && typeof item.imageUrl === 'string' && item.imageUrl.startsWith("data:")) {
-        imgBytes += item.imageUrl.length;
-      }
-    });
-
-    const fullDataObj = { 
-      api_presets, archives, relations, sessions, messages, 
-      world_book_entries, theaters, offline_messages, status_history, 
-      sticker_groups, sticker_items 
-    };
-    const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
-
-    document.getElementById("db-total-bytes").innerText = `${(allBytes / 1024).toFixed(2)} KB`;
-    document.getElementById("db-image-bytes").innerText = `${(imgBytes / 1024).toFixed(2)} KB`;
-  } catch (err) {
-    console.error("计算空间失败，数据表未完全就位:", err);
-  }
-}
-
-// === 大二进制 Blob / File 原生编解码转换层 ===
-function blobToDataURL(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-}
-
-function dataURLtoBlob(dataurl) {
-  const arr = dataurl.split(',');
-  const mime = arr[0].match(/:(.*?);/)[1];
-  const bstr = atob(arr[1]);
-  let n = bstr.length;
-  const u8arr = new Uint8Array(n);
-  while (n--) {
-    u8arr[n] = bstr.charCodeAt(n);
-  }
-  return new Blob([u8arr], { type: mime });
-}
-
-// 递归遍历任意记录将 Blob 原生转换为 Base64 容器
-async function serializeRecord(obj) {
-  if (!obj) return obj;
-  if (obj instanceof Blob) {
-    const dataURL = await blobToDataURL(obj);
-    return { __type: "Blob", data: dataURL };
-  }
-  if (Array.isArray(obj)) {
-    const serializedArr = [];
-    for (let item of obj) {
-      serializedArr.push(await serializeRecord(item));
-    }
-    return serializedArr;
-  }
-  if (typeof obj === 'object') {
-    const serializedObj = {};
-    for (let key in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        serializedObj[key] = await serializeRecord(obj[key]);
-      }
-    }
-    return serializedObj;
-  }
-  return obj;
-}
-
-// 递归遍历还原原生二进制 Blob 对象
-function deserializeRecord(obj) {
-  if (!obj) return obj;
-  if (typeof obj === 'object') {
-    if (obj.__type === "Blob" && typeof obj.data === 'string') {
-      return dataURLtoBlob(obj.data);
-    }
-    if (Array.isArray(obj)) {
-      return obj.map(item => deserializeRecord(item));
-    }
-    const restoredObj = {};
-    for (let key in obj) {
-      if (Object.prototype.hasOwnProperty.call(obj, key)) {
-        restoredObj[key] = deserializeRecord(obj[key]);
-      }
-    }
-    return restoredObj;
-  }
-  return obj;
-}
-
-// 备份数据导出逻辑
-async function exportBackup() {
-  try {
-    const rawBackup = {
-      api_presets: await db.api_presets.toArray(),
-      archives: await db.archives.toArray(),
-      relations: await db.relations.toArray(),
-      sessions: await db.sessions.toArray(),
-      messages: await db.messages.toArray(),
-      world_book_entries: await db.world_book_entries.toArray(),
-      theaters: await db.theaters.toArray(),
-      offline_messages: await db.offline_messages.toArray(),
-      status_history: await db.status_history.toArray(),
-      sticker_groups: await db.sticker_groups.toArray(),
-      sticker_items: await db.sticker_items.toArray(),
-      // 导出深谈、朋友圈表的数据
-      deeptalks: await db.deeptalks.toArray(),
-      deeptalk_messages: await db.deeptalk_messages.toArray(),
-      deeptalk_thoughts: await db.deeptalk_thoughts.toArray(),
-      deeptalk_presets: await db.deeptalk_presets.toArray(),
-      moments: await db.moments.toArray(),
-      moment_comments: await db.moment_comments.toArray(),
-      moment_settings: await db.moment_settings.toArray(),
-      localStorage: {
-        global_api_preset_id: localStorage.getItem("global_api_preset_id"),
-        active_me_id: localStorage.getItem("active_me_id"),
-        desktopLayout: localStorage.getItem("desktop-layout-v3"),
-        dockLayout: localStorage.getItem("dock-layout-v3"),
-        wallet_balance_v1: localStorage.getItem("wallet_balance_v1"),
-        wallet_ledger_v1: localStorage.getItem("wallet_ledger_v1"),
-        beautifyWallpaper: localStorage.getItem("beautify-wallpaper"),
-        customIcons: localStorage.getItem("beautify-custom-icons"),
-        activeCss: localStorage.getItem("beautify-active-css"),
-        cssPresets: localStorage.getItem("custom-css-presets"),
-        placedWidgetsDesktop: localStorage.getItem("placed-widgets-desktop"),
-        placedWidgetsDock: localStorage.getItem("placed-widgets-dock"),
-        widgets: localStorage.getItem("beautify-widgets"),
-        dockOpacity: localStorage.getItem("beautify-dock-opacity")
-      }
-    };
-    
-    const backup = await serializeRecord(rawBackup);
-    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `story_phone_all_backup_${Date.now()}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    console.error(error);
-    alert("完整数据备份失败: " + error.message);
-  }
-}
-
-// 备份数据还原导入逻辑
-async function importBackup(e) {
-  const file = e.target.files[0];
-  if (!file) return;
-  
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    try {
-      const rawData = JSON.parse(event.target.result);
-      if (!rawData || typeof rawData !== 'object') {
-        throw new Error("无效的 JSON 备份数据结构");
-      }
-      
-      const confirmImport = confirm("导入完整备份将覆盖所有的本地数据、人设、聊天记录以及美化配置！确定要继续吗？");
-      if (!confirmImport) return;
-      
-      const data = deserializeRecord(rawData);
-      
-      await db.transaction('rw', [
-        db.api_presets, db.archives, db.relations, db.sessions, db.messages, 
-        db.world_book_entries, db.theaters, db.offline_messages, db.status_history,
-        db.sticker_groups, db.sticker_items,
-        db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
-        db.moments, db.moment_comments, db.moment_settings // 增加朋友圈 3 张表的 rw 锁，防止死锁崩溃 [1]
-      ], async () => {
-        if (data.api_presets) {
-          await db.api_presets.clear();
-          await db.api_presets.bulkAdd(data.api_presets);
-        }
-        if (data.archives) {
-          await db.archives.clear();
-          await db.archives.bulkAdd(data.archives);
-        }
-        if (data.relations) {
-          await db.relations.clear();
-          await db.relations.bulkAdd(data.relations);
-        }
-        if (data.sessions) {
-          await db.sessions.clear();
-          await db.sessions.bulkAdd(data.sessions);
-        }
-        if (data.messages) {
-          await db.messages.clear();
-          await db.messages.bulkAdd(data.messages);
-        }
-        if (data.world_book_entries) {
-          await db.world_book_entries.clear();
-          await db.world_book_entries.bulkAdd(data.world_book_entries);
-        }
-        if (data.theaters) {
-          await db.theaters.clear();
-          await db.theaters.bulkAdd(data.theaters);
-        }
-        if (data.offline_messages) {
-          await db.offline_messages.clear();
-          await db.offline_messages.bulkAdd(data.offline_messages);
-        }
-        if (data.status_history) {
-          await db.status_history.clear();
-          await db.status_history.bulkAdd(data.status_history);
-        }
-        if (data.sticker_groups) {
-          await db.sticker_groups.clear();
-          await db.sticker_groups.bulkAdd(data.sticker_groups);
-        }
-        if (data.sticker_items) {
-          await db.sticker_items.clear();
-          await db.sticker_items.bulkAdd(data.sticker_items);
-        }
-        // 反向写入深谈 4 表
-        if (data.deeptalks) {
-          await db.deeptalks.clear();
-          await db.deeptalks.bulkAdd(data.deeptalks);
-        }
-        if (data.deeptalk_messages) {
-          await db.deeptalk_messages.clear();
-          await db.deeptalk_messages.bulkAdd(data.deeptalk_messages);
-        }
-        if (data.deeptalk_thoughts) {
-          await db.deeptalk_thoughts.clear();
-          await db.deeptalk_thoughts.bulkAdd(data.deeptalk_thoughts);
-        }
-        if (data.deeptalk_presets) {
-          await db.deeptalk_presets.clear();
-          await db.deeptalk_presets.bulkAdd(data.deeptalk_presets);
-        }
-        if (data.moments) {
-          await db.moments.clear();
-          await db.moments.bulkAdd(data.moments);
-        }
-        if (data.moment_comments) {
-          await db.moment_comments.clear();
-          await db.moment_comments.bulkAdd(data.moment_comments);
-        }
-        if (data.moment_settings) {
-          await db.moment_settings.clear();
-          await db.moment_settings.bulkAdd(data.moment_settings);
-        }
-      });
-      
-      if (data.localStorage) {
-        const keys = [
-          "global_api_preset_id", "active_me_id", "desktop-layout-v3", "dock-layout-v3",
-          "wallet_balance_v1", "wallet_ledger_v1", "beautify-wallpaper", "beautify-custom-icons",
-          "beautify-active-css", "custom-css-presets", "placed-widgets-desktop", "placed-widgets-dock",
-          "beautify-widgets", "beautify-dock-opacity"
-        ];
-        // 映射恢复
-        const map = {
-          desktopLayout: "desktop-layout-v3",
-          dockLayout: "dock-layout-v3",
-          beautifyWallpaper: "beautify-wallpaper",
-          customIcons: "beautify-custom-icons",
-          activeCss: "beautify-active-css",
-          cssPresets: "custom-css-presets",
-          placedWidgetsDesktop: "placed-widgets-desktop",
-          placedWidgetsDock: "placed-widgets-dock",
-          widgets: "beautify-widgets",
-          dockOpacity: "beautify-dock-opacity"
-        };
-
-        Object.keys(data.localStorage).forEach(k => {
-          const lKey = map[k] || k;
-          if (data.localStorage[k] !== null && data.localStorage[k] !== undefined) {
-            localStorage.setItem(lKey, data.localStorage[k]);
-          }
+        // 核心新增：为圆点绑定点击切换事件（完美解决电脑鼠标无法横向滑动切换的问题）
+        dots.forEach((dot, idx) => {
+          dot.style.cursor = "pointer";
+          dot.onclick = () => {
+            slider.scrollTo({
+              left: slider.clientWidth * idx,
+              behavior: "smooth"
+            });
+          };
         });
       }
-      
-      alert("全量数据导入成功！系统即将自动重载。");
-      location.reload();
-    } catch (error) {
-      console.error(error);
-      alert("导入备份失败: " + error.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-// === 新增：自适应 PWA/APK 移动端调试控制台 (vConsole) 动态开关管理 ===
-window.vConsoleInstance = null;
-
-function initVConsoleSetting() {
-  const toggle = document.getElementById("settings-vconsole-toggle");
-  if (!toggle) return;
-
-  const isEnabled = localStorage.getItem("settings-vconsole-enabled") === "true";
-  toggle.checked = isEnabled;
-
-  // 首次冷启动加载：静默启动（不弹 Toast 提示干扰用户）
-  applyVConsoleState(isEnabled, true);
-
-  toggle.onchange = (e) => {
-    const enabled = e.target.checked;
-    localStorage.setItem("settings-vconsole-enabled", enabled ? "true" : "false");
-    applyVConsoleState(enabled, false);
-  };
-}
-
-function applyVConsoleState(enabled, isFirstLoad) {
-  if (enabled) {
-    if (typeof VConsole !== 'undefined' && !window.vConsoleInstance) {
-      window.vConsoleInstance = new VConsole();
-      if (!isFirstLoad) showToast("调试控制台已开启 (绿色标签已就绪)");
-    } else if (typeof VConsole === 'undefined') {
-      if (!isFirstLoad) showToast("未检测到 vConsole 脚本，请确保 index.html 头部已引入");
-    }
-  } else {
-    if (window.vConsoleInstance) {
-      try {
-        window.vConsoleInstance.destroy();
-      } catch(e) {}
-      window.vConsoleInstance = null;
-      if (!isFirstLoad) showToast("调试控制台已关闭");
-    }
-  }
-}
+    });
+  </script>
+</body>
+</html>
