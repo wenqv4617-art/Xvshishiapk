@@ -86,7 +86,7 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.geolocationEnabled = true // 允许定位
+        
 
         // 注入 window.AndroidMCP 原生接口
         webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
