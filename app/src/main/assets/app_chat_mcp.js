@@ -207,9 +207,12 @@
       try {
         if (audioInstance) {
           audioInstance.pause();
+          // 核心修复：释放旧的内存 URL，防止多次加载产生内存溢出或解码器锁死 [1]
+          if (audioInstance.src && audioInstance.src.startsWith("blob:")) {
+            URL.revokeObjectURL(audioInstance.src);
+          }
         }
         
-        // 利用极速内存对象地址转化本地 File 二进制数据 [2]
         const url = URL.createObjectURL(file);
         audioInstance = new Audio(url);
         
@@ -228,12 +231,13 @@
           }
           showToast(`已成功唤醒真机播放器，正在播放：《${file.name}》`);
         }).catch(err => {
-          console.error(err);
-          showToast("真机解码音频文件失败，请检查文件格式！");
+          // 核心修复：在 vConsole 中以 ERROR 级别强输出真实的播放报错信息，方便精准排错 [1]
+          console.error("[MCP Audio Error] 真机播放失败，具体原因:", err);
+          showToast("真机播放失败：" + (err.message || "解码异常"));
         });
       } catch(e) {
-        console.error(e);
-        showToast("播放音频流遇到故障");
+        console.error("[MCP Audio Catch] 遭遇严重故障:", e);
+        showToast("播放音频流遇到严重故障");
       }
     },
 
