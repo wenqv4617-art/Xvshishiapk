@@ -11,7 +11,7 @@ import android.webkit.JavascriptInterface
 
 class AndroidMcp(private val context: Context) {
 
-    // 1. 安卓真机马达物理震动桥接 (支持 12 及以上新版和旧版震动)
+    // 1. 安卓真机马达物理震动桥接
     @JavascriptInterface
     fun triggerHardwareVibrator(milliseconds: Long) {
         try {
@@ -28,11 +28,11 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 2. 调起系统通知监听设置页 (OperitAI同款权限，让未来可以静默查收微信等真实系统通知)
+    // 2. 调起系统通知监听设置页
     @JavascriptInterface
     fun requestNotificationPermission() {
         try {
-            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
+            val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
@@ -41,7 +41,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 3. 调起安卓系统无障碍辅助设置页 (无障碍自动化发信基础)
+    // 3. 调起安卓系统无障碍辅助设置页
     @JavascriptInterface
     fun requestAccessibilityPermission() {
         try {
