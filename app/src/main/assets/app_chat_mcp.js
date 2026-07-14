@@ -40,14 +40,8 @@
       const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
       if (activeMsgToggle) activeMsgToggle.checked = isActiveMsgEnabled;
 
-      const isPetEnabled = localStorage.getItem("settings-mcp-pet-enabled") === "true";
-      const petToggle = document.getElementById("settings-mcp-pet-toggle");
-      if (petToggle) petToggle.checked = isPetEnabled;
-
-      const petImage = localStorage.getItem("mcp-desktop-pet-image");
-      const previewBox = document.getElementById("mcp-pet-preview-box");
-      if (previewBox && petImage) {
-        previewBox.innerHTML = `<img src="${petImage}" style="width:100%; height:100%; object-fit:contain;">`;
+      if (window.desktopPetSystem && typeof window.desktopPetSystem.loadMcpPanelState === 'function') {
+        window.desktopPetSystem.loadMcpPanelState();
       }
 
       // 回显本地扫描出的物理歌单 [1]
@@ -338,6 +332,11 @@
     triggerBackgroundActiveMessage: function() {
       if (!activeSessionId) return;
       
+      // 联动：定时器启动，桌宠首先气泡冒泡，直观排除定时器阻塞
+      if (window.desktopPetSystem && typeof window.desktopPetSystem.popBubble === 'function') {
+        window.desktopPetSystem.popBubble("有人冒泡。");
+      }
+      
       // === 新逻辑：通过 Kotlin 层直接发 HTTP 请求（用于后台场景）===
       // 获取当前输入框中的消息内容（如果没有新输入，则不会发信）
       const input = document.getElementById("chat-input");
@@ -388,6 +387,10 @@
               if (typeof appendMessageToDisplay === 'function') {
                 appendMessageToDisplay('ai', result.content);
               }
+              // 联动：有后台信件被拉取收到时，桌宠立刻气泡提示
+              if (window.desktopPetSystem && typeof window.desktopPetSystem.popBubble === 'function') {
+                window.desktopPetSystem.popBubble("有人来信。");
+              }
             }
           }
         } catch(e) {
@@ -396,72 +399,15 @@
       }
     },
 
-    // 7. 桌面悬浮桌宠控制
+    // 7. 桌面悬浮桌宠控制 (已重构委托至 app_desktop_pet.js)
     toggleDesktopPet: function(toggleEl) {
-      const isEnabled = toggleEl.checked;
-      if (isEnabled) {
-        if (window.AndroidMCP && typeof window.AndroidMCP.checkOverlayPermission === 'function') {
-          const hasPermission = window.AndroidMCP.checkOverlayPermission();
-          if (!hasPermission) {
-            toggleEl.checked = false;
-            showCustomConfirm("需要悬浮窗权限", "由于安卓系统限制，启动桌面桌宠必须授予「显示在其他应用上层」权限。是否现在前往系统设置授予？", () => {
-              window.AndroidMCP.requestOverlayPermission();
-            });
-            return;
-          }
-        }
-        
-        const petImage = localStorage.getItem("mcp-desktop-pet-image");
-        if (!petImage) {
-          toggleEl.checked = false;
-          showToast("请先上传透明底 PNG 桌宠立绘图片！");
-          return;
-        }
-        const size = parseInt(document.getElementById("mcp-pet-size-slider").value) || 100;
-        localStorage.setItem("settings-mcp-pet-enabled", "true");
-        
-        if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
-          window.AndroidMCP.showDesktopPet(petImage, size);
-        }
-        showToast("系统桌面悬浮桌宠已开启！");
-      } else {
-        localStorage.setItem("settings-mcp-pet-enabled", "false");
-        if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
-          window.AndroidMCP.hideDesktopPet();
-        }
-        showToast("桌宠已退出");
-      }
+      if (window.desktopPetSystem) window.desktopPetSystem.togglePetActive(toggleEl);
     },
-
     handlePetUpload: function(fileEl) {
-      if (fileEl.files.length > 0) {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const base64 = e.target.result;
-          localStorage.setItem("mcp-desktop-pet-image", base64);
-          document.getElementById("mcp-pet-preview-box").innerHTML = `<img src="${base64}" style="width:100%; height:100%; object-fit:contain;">`;
-          showToast("桌宠立绘上传成功！");
-          
-          // 如果桌宠开关是开启的，即时重绘
-          const toggle = document.getElementById("settings-mcp-pet-toggle");
-          if (toggle && toggle.checked) {
-            const size = parseInt(document.getElementById("mcp-pet-size-slider").value) || 100;
-            if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
-              window.AndroidMCP.showDesktopPet(base64, size);
-            }
-          }
-        };
-        reader.readAsDataURL(fileEl.files[0]);
-      }
+      if (window.desktopPetSystem) window.desktopPetSystem.handleStateImageUpload(fileEl);
     },
     changePetSize: function(val) {
-      document.getElementById("mcp-pet-size-val").innerText = `${val}dp`;
-      const toggle = document.getElementById("settings-mcp-pet-toggle");
-      if (toggle && toggle.checked) {
-        if (window.AndroidMCP && typeof window.AndroidMCP.updateDesktopPetSize === 'function') {
-          window.AndroidMCP.updateDesktopPetSize(parseInt(val));
-        }
-      }
+      if (window.desktopPetSystem) window.desktopPetSystem.changePetSize(val);
     }
   };
 
