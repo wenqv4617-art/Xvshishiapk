@@ -1,945 +1,990 @@
 /**
- * app_deeptalk.js - 深谈应用核心逻辑控制器 (面具随动与剖白提取系统)
+ * app_desktop.js - 桌面网格、桌面美化、组件工坊宽高占位自适应与长按编辑 (安全防护与函数补全版)
  */
 
-let deeptalkCurrentTab = 'select';
-let activeDeeptalkId = null;
+let isDesktopEditMode = false;
+let currentDesktopPage = 0;
 
-// 0. 自闭环底层辅助函数，斩断跨文件 ReferenceError 引起的进程死锁
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#39;');
-}
+// 核心初始化保护锁，彻底杜绝重复绑定事件导致的浏览器线程阻塞与死锁
+let isDragEventsInitialized = false;
+let isAppClickEventsInitialized = false;
 
-function resolveAvatar(avatar) {
-  if (!avatar) {
-    return 'data:image/svg+xml;utf8,<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50" fill="%23ccc"/></svg>';
-  }
-  if (avatar instanceof Blob) {
-    return URL.createObjectURL(avatar);
-  }
-  return avatar;
-}
-
-// ========================================================
-//              【核心重构：双通道自愈清洗引擎】
-// ========================================================
-
-/**
- * 1. 独立对话通道拦截器 (专用于对话流程)
- * 作用：从整段对话中拦截并提取末尾的 [THOUGHT] 闪念，并将该部分从原对话中安全擦除
- */
-function extractDialogueThought(replyText) {
-  let thought = "";
-  let cleanReply = replyText;
-
-  // 匹配 [THOUGHT]...[/THOUGHT] 包装 (支持中英文括号、不区分大小写、支持右侧未闭合降级)
-  const thoughtRegex = /[\[【]THOUGHT[\]】]([\s\S]*?)(?:[\[【]\/THOUGHT[\]】]|$)/i;
-  const match = replyText.match(thoughtRegex);
-
-  if (match) {
-    thought = match[1].trim();
-    // 擦除对话中已经被捕获的标签内容，避免污染聊天气泡
-    cleanReply = replyText.replace(thoughtRegex, "").trim();
-  }
-
-  return {
-    thought: cleanManualThought(thought), // 提取出来的闪念依然走深层洗涤
-    replyText: cleanReply
-  };
-}
-
-/**
- * 2. 独立手动通道清洗器 (专用于手动点击提炼)
- * 作用：直接清洗 AI 单独输出的思想内容。高容错兼容各种 markdown、引号、标签遗留等
- */
-function cleanManualThought(text) {
-  if (!text) return "";
-  const original = text.trim();
-  let cleaned = original;
-
-  // A. 如果 AI 在手动模式下仍然固执地套用了 [THOUGHT] 标签，先剥离标签
-  const match = cleaned.match(/[\[【]THOUGHT[\]】]([\s\S]*?)(?:[\[【]\/THOUGHT[\]】]|$)/i);
-  if (match && match[1]) {
-    cleaned = match[1].trim();
-  }
-
-  // B. 剔除可能多余的 thought 标签文字
-  cleaned = cleaned.replace(/[\[【]\/?thought[\]】]/gi, "").trim();
-
-  // C. 剥离可能存在的 Markdown 语法格式
-  cleaned = cleaned.replace(/```[a-zA-Z]*\n?/g, "");
-  cleaned = cleaned.replace(/```/g, "");
-  cleaned = cleaned.replace(/`/g, "");
-
-  // D. 强力剔除首尾的多余修饰符 (中英文引号、双引号、括号、书名号、冒号、空行)
-  cleaned = cleaned.replace(/^[\s"'“‘【\[\(《「:：,，。.\-\s]+/g, "").trim();
-  cleaned = cleaned.replace(/[\s"'”’】\]\)》」,，。.\-\s]+$/g, "").trim();
-
-  // E. 剔除常见的 AI 引导性废话前缀
-  cleaned = cleaned.replace(/^(我的内心闪念是|我的内心想法是|我的闪念是|内心想法|内心剖白|闪念|想法|自省闪念)[:：\s]*/, "").trim();
-
-  // F. 安全降级兜底：若经过激进清洗后完全变空，而原输入有字，则返回仅进行基础符号剥离的原文字
-  if (!cleaned && original) {
-    return original.replace(/[\[【]\/?thought[\]】]/gi, "")
-                   .replace(/^[\s"']+/g, "")
-                   .replace(/[\s"']+$/g, "")
-                   .trim();
-  }
-
-  return cleaned.trim();
-}
-
-// ========================================================
-//              【深谈基础页面交互流程控制】
-// ========================================================
-
-// 1. 初始化深谈应用
-async function initDeeptalkApp() {
-  await renderDeeptalkTab();
-
-  const tabs = document.querySelectorAll("#win-deeptalk .chat-tabs .tab-item");
-  tabs.forEach(tab => {
-    tab.onclick = () => {
-      tabs.forEach(t => t.classList.remove("active"));
-      tab.classList.add("active");
-      deeptalkCurrentTab = tab.getAttribute("data-tab");
-
-      const mainTitle = document.getElementById("deeptalk-main-title");
-      if (mainTitle) {
-        mainTitle.innerText = deeptalkCurrentTab === 'select' ? "深谈" : "小宇宙";
-      }
-
-      const btnNew = document.getElementById("btn-new-deeptalk");
-      if (btnNew) {
-        btnNew.style.display = deeptalkCurrentTab === 'select' ? 'flex' : 'none';
-      }
-
-      renderDeeptalkTab();
-    };
-  });
-}
-
-// 2. 渲染切签选项卡 (择选 / 小宇宙)
-async function renderDeeptalkTab() {
-  const activeMeId = localStorage.getItem("active_me_id");
-  const userIdNum = Number(activeMeId);
-  
-  if (!activeMeId || isNaN(userIdNum)) {
-    document.getElementById("deeptalk-tab-select").innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">请先到 “我的” 选项卡下选择我的人设！</p>`;
-    document.getElementById("deeptalk-tab-microcosm").innerHTML = "";
-    return;
-  }
-
-  if (deeptalkCurrentTab === 'select') {
-    document.getElementById("deeptalk-tab-select").classList.add("active");
-    document.getElementById("deeptalk-tab-microcosm").classList.remove("active");
-    await renderSelectTab();
-  } else {
-    document.getElementById("deeptalk-tab-select").classList.remove("active");
-    document.getElementById("deeptalk-tab-microcosm").classList.add("active");
-    await renderMicrocosmTab();
-  }
-}
-
-// 3. 渲染“择选”主界面
-async function renderSelectTab() {
-  const selectContainer = document.getElementById("deeptalk-tab-select");
-  if (!selectContainer) return;
-
-  const activeMeId = localStorage.getItem("active_me_id");
-  const userIdNum = Number(activeMeId);
-
-  const sessions = await db.sessions.where('userId').equals(userIdNum).toArray();
-  
-  let candidatesHtml = `<div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">开始新深谈</div>
-                        <div class="session-list" style="margin-bottom: 24px;">`;
-
-  if (sessions.length === 0) {
-    candidatesHtml += `<p style="text-align:center;color:var(--text-secondary);font-size:12px;padding:10px 0;">暂无可建立深谈的好友会话</p>`;
-  } else {
-    for (let s of sessions) {
-      const char = await db.archives.get(s.charId);
-      candidatesHtml += `
-        <div class="session-item" onclick="openNewDeeptalkForm(${s.id}, ${s.charId})" style="padding:10px; border-radius:10px; background:#ffffff; margin-bottom:8px; border:1px solid var(--border);">
-          <img class="session-avatar" src="${resolveAvatar(s.customCharAvatar || char?.avatar)}" style="width:36px; height:36px; border-radius:50%;">
-          <div class="session-detail" style="margin-left:10px;">
-            <div class="session-name" style="font-size:13px; font-weight:700;">与 ${s.customCharName || char?.name} 开启深谈</div>
-          </div>
-        </div>
-      `;
+// 1. 主动注入网格槽位、长按编辑模式微章 CSS 规范样式，保障顶级质感
+(function() {
+  const desktopDragStyle = document.createElement("style");
+  desktopDragStyle.textContent = `
+    #desktop-grid {
+      display: grid !important;
+      grid-template-columns: repeat(4, 1fr) !important;
+      grid-template-rows: repeat(5, 1fr) !important;
+      gap: 16px 12px !important;
+      min-height: auto !important;
     }
-  }
-  candidatesHtml += `</div>`;
-
-  const activeTalks = await db.deeptalks
-    .where('userId').equals(userIdNum)
-    .and(t => t.status === 'active')
-    .toArray();
-
-  let activeHtml = `<div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">进行中的深谈</div>
-                    <div class="session-list" style="margin-bottom: 20px;">`;
-
-  if (activeTalks.length === 0) {
-    activeHtml += `<p style="text-align:center;color:var(--text-secondary);font-size:12px;padding:20px 0;">暂无正在进行的深谈空间</p>`;
-  } else {
-    for (let t of activeTalks) {
-      const char = await db.archives.get(t.charId);
-      activeHtml += `
-        <div class="session-item" onclick="openDeeptalkRoom(${t.id})" style="padding:12px; border-radius:12px; background:#ffffff; margin-bottom:10px; border:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-          <div style="display:flex; align-items:center;">
-            <img class="session-avatar" src="${resolveAvatar(char?.avatar)}" style="width:40px; height:40px; border-radius:50%;">
-            <div style="margin-left:12px;">
-              <div style="font-size:14px; font-weight:700; color:var(--text-primary);">${t.topic}</div>
-              <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">伙伴: ${char?.name}</div>
-            </div>
-          </div>
-          <svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-        </div>
-      `;
+    #dock-grid {
+      display: grid !important;
+      grid-template-columns: repeat(4, 1fr) !important;
+      gap: 12px !important;
+      align-items: center !important;
+      width: 100% !important;
     }
-  }
-  activeHtml += `</div>`;
-
-  const finishedTalks = await db.deeptalks
-    .where('userId').equals(userIdNum)
-    .and(t => t.status === 'finished')
-    .toArray();
-
-  let finishedHtml = `<div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">已结束的深谈 (归档只读)</div>
-                      <div class="session-list">`;
-
-  if (finishedTalks.length === 0) {
-    finishedHtml += `<p style="text-align:center;color:var(--text-secondary);font-size:12px;padding:20px 0;">暂无已结束的深谈历史</p>`;
-  } else {
-    for (let t of finishedTalks) {
-      const char = await db.archives.get(t.charId);
-      finishedHtml += `
-        <div class="session-item" onclick="openDeeptalkRoom(${t.id})" style="padding:12px; border-radius:12px; background:#f1f5f9; opacity: 0.85; margin-bottom:10px; border:1px solid var(--border); display:flex; justify-content:space-between; align-items:center;">
-          <div style="display:flex; align-items:center;">
-            <img class="session-avatar" src="${resolveAvatar(char?.avatar)}" style="width:40px; height:40px; border-radius:50%;">
-            <div style="margin-left:12px;">
-              <div style="font-size:14px; font-weight:700; color:var(--text-secondary); text-decoration: line-through;">${t.topic}</div>
-              <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">伙伴: ${char?.name} (已归档)</div>
-            </div>
-          </div>
-          <svg viewBox="0 0 24 24" width="16" height="16" style="color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-        </div>
-      `;
+    
+    /* 桌面和 Dock 的专属网格槽 */
+    .desktop-slot, .dock-slot {
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      width: 100% !important;
+      aspect-ratio: 4 / 5 !important; /* 黄金比例锁，防止拉伸 */
+      border-radius: 18px !important;
+      transition: background-color 0.15s ease, border-color 0.15s ease !important;
+      box-sizing: border-box !important;
+      border: 1.5px dashed transparent !important;
+      position: relative !important;
     }
-  }
-  finishedHtml += `</div>`;
 
-  selectContainer.innerHTML = `
-    <div style="padding: 16px;">
-      ${candidatesHtml}
-      ${activeHtml}
-      ${finishedHtml}
-    </div>
+    /* 当槽位摆放了自定义小部件组件时，解除比例限制，由小部件本身的行高列宽完全决定占位大小 */
+    .desktop-slot.has-widget {
+      aspect-ratio: auto !important;
+      height: 100% !important;
+    }
+    
+    /* 拖拽悬浮过网格槽时的微高亮虚线提示 */
+    .desktop-slot.drag-over, .dock-slot.drag-over {
+      background-color: rgba(255, 255, 255, 0.15) !important;
+      border-color: rgba(255, 255, 255, 0.4) !important;
+    }
+    
+    .app-icon {
+      /* 核心：告诉浏览器手动处理手势，严厉封锁系统默认的拖动与下拉刷新 */
+      touch-action: none !important; 
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      -webkit-user-drag: none !important;
+      cursor: grab;
+    }
+    .app-icon.dragging {
+      opacity: 0.82;
+      transform: scale(1.15) !important;
+      box-shadow: 0 10px 25px rgba(0,0,0,0.2) !important;
+      transition: none !important; /* 拖拽过程中严禁任何过渡动画，保证 1:1 跟随 */
+    }
+    .app-icon-placeholder {
+      opacity: 0 !important; /* 幽灵占位符 */
+    }
+
+    /* 组件编辑微章 */
+    .widget-add-badge, .widget-delete-badge {
+      position: absolute !important;
+      top: -4px !important;
+      right: -4px !important;
+      width: 22px !important;
+      height: 22px !important;
+      border-radius: 50% !important;
+      border: none !important;
+      color: white !important;
+      font-size: 15px !important;
+      font-weight: bold !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      cursor: pointer !important;
+      z-index: 100 !important;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2) !important;
+      line-height: 1 !important;
+    }
+    .widget-add-badge {
+      background-color: #07c160 !important;
+    }
+    .widget-delete-badge {
+      background-color: #ef4444 !important;
+    }
+
+    /* 桌面放置组件的卡片容器 */
+    .desktop-widget-container {
+      width: 100% !important;
+      height: 100% !important;
+      display: flex !important;
+      justify-content: center !important;
+      align-items: center !important;
+      overflow: hidden !important;
+      border-radius: 12px !important;
+      pointer-events: auto !important;
+    }
   `;
-}
+  document.head.appendChild(desktopDragStyle);
+})();
 
-// 4. 新建深谈表单唤起
-function openNewDeeptalkForm(sessionId, charId) {
-  document.getElementById("deeptalk-form-session-id").value = sessionId;
-  document.getElementById("deeptalk-form-char-id").value = charId;
-  document.getElementById("deeptalk-form-topic").value = "";
-  document.getElementById("deeptalk-form-details").value = "";
-  document.getElementById("deeptalk-create-overlay").classList.add("active");
-}
-
-function closeNewDeeptalkForm() {
-  document.getElementById("deeptalk-create-overlay").classList.remove("active");
-}
-
-async function createDeeptalkRecord() {
-  const sessionId = Number(document.getElementById("deeptalk-form-session-id").value);
-  const charId = Number(document.getElementById("deeptalk-form-char-id").value);
-  const topic = document.getElementById("deeptalk-form-topic").value.trim();
-  const details = document.getElementById("deeptalk-form-details").value.trim();
-
-  if (!topic || topic.length > 15) {
-    showToast("请填写深谈主题，且字数限制在 15 字以内！");
-    return;
+document.addEventListener("DOMContentLoaded", () => {
+  // PWA 安全注册，在强更新开关激活时进行卸载处理
+  if ('serviceWorker' in navigator) {
+    if (localStorage.getItem("system-force-update") === "true") {
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        for (let reg of registrations) {
+          reg.unregister();
+        }
+      });
+    } else {
+      navigator.serviceWorker.register('./sw.js')
+        .then(() => console.log("PWA SW Online!"))
+        .catch((e) => console.error("SW failed", e));
+    }
   }
 
-  const activeMeId = localStorage.getItem("active_me_id");
-  const userIdNum = Number(activeMeId);
-
-  const deeptalkId = await db.deeptalks.add({
-    sessionId,
-    userId: userIdNum,
-    charId,
-    topic,
-    details,
-    status: 'active',
-    createdAt: Date.now()
-  });
-
-  closeNewDeeptalkForm();
-  await renderSelectTab();
-  openDeeptalkRoom(deeptalkId);
-}
-
-// 5. 进入专属深谈对话空间 (卡片式横向切换，支持对结束归档会话的只读限制)
-async function openDeeptalkRoom(deeptalkId) {
-  activeDeeptalkId = deeptalkId;
-  const talk = await db.deeptalks.get(deeptalkId);
-  const char = await db.archives.get(talk.charId);
-
-  document.getElementById("deeptalk-room-title").innerText = talk.topic;
-  document.getElementById("win-deeptalk-room").classList.add("active");
-
-  const inputEl = document.getElementById("deeptalk-room-input");
-  const btnSend = document.getElementById("btn-deeptalk-send");
-
-  if (talk.status === 'finished') {
-    if (inputEl) {
-      inputEl.value = "";
-      inputEl.disabled = true;
-      inputEl.placeholder = "当前深谈已结束并归档为只读模式";
-    }
-    if (btnSend) btnSend.style.display = "none";
-  } else {
-    if (inputEl) {
-      inputEl.value = "";
-      inputEl.disabled = false;
-      inputEl.placeholder = "请对角色说点什么来进行灵魂质询...";
-    }
-    if (btnSend) btnSend.style.display = "flex";
-  }
-
-  await renderDeeptalkCards();
-}
-
-function closeDeeptalkRoom() {
-  document.getElementById("win-deeptalk-room").classList.remove("active");
-  renderSelectTab();
-}
-
-async function renderDeeptalkCards() {
-  const slider = document.getElementById("deeptalk-cards-flow");
-  const dotsContainer = document.getElementById("deeptalk-dots-bar");
-  if (!slider) return;
-
-  slider.innerHTML = "";
-  if (dotsContainer) dotsContainer.innerHTML = "";
-
-  const rawMessages = await db.deeptalk_messages.where('deeptalkId').equals(activeDeeptalkId).toArray();
-  const messages = rawMessages.sort((a,b) => a.timestamp - b.timestamp);
+  loadDesktopLayout();
+          
+          // 核心：在初始化加载生命周期中，对点击和拖拽手势进行且仅进行单次安全绑定
+          initAppClickEvents();
+          initDragEvents();
+          initDesktopSwipeEvents(); // 绑定手动滑动翻页事件
+          
+          applyGlobalSettingsOnLoad(); // 启动时应用壁纸与全局自定义 CSS
   
-  let cardTurns = [];
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.senderType === 'user') {
-      const charReply = messages.find((r, idx) => idx > messages.indexOf(m) && r.senderType === 'char');
-      cardTurns.push({
-        userMsg: m.content,
-        charMsg: charReply ? charReply.content : "正在剖白内心，等待思考中...",
-        userMsgId: m.id,
-        charMsgId: charReply ? charReply.id : null
-      });
+  // 初始化手机默认底栏颜色
+  updateThemeColor("#f4f6fa");
+  
+  // 初始化网页免打扰全屏监听锁
+  initBrowserFullscreenTrigger();
+});
+
+// 应用壁纸与全局注入 CSS 的渲染挂载
+function applyGlobalSettingsOnLoad() {
+  // 背景壁纸应用
+  const bg = localStorage.getItem("beautify-wallpaper");
+  const phone = document.getElementById("phone-container");
+  if (phone) {
+    if (bg) {
+      phone.style.backgroundImage = `url(${bg})`;
+      phone.style.backgroundSize = "cover";
+      phone.style.backgroundPosition = "center";
+    } else {
+      phone.style.backgroundImage = "";
+      phone.style.backgroundColor = "var(--bg-main)";
     }
   }
 
-  if (cardTurns.length === 0) {
-    slider.innerHTML = `
-      <div class="deeptalk-card" style="justify-content: center; align-items: center; text-align: center;">
-        <div style="font-size: 14px; color: var(--text-secondary); line-height: 1.6;">
-          本深谈关于以下切分设定：<br>
-          <strong style="color:var(--text-primary);">"${(await db.deeptalks.get(activeDeeptalkId)).details || '无描述'}"</strong><br><br>
-          在此，你可以向角色发起最深层的自我或关系质询。
-        </div>
-      </div>
-    `;
-    return;
+  // 底部 Dock 栏不透明度配置即时拉动渲染
+  const opacity = localStorage.getItem("beautify-dock-opacity") || "70";
+  const dockContainer = document.querySelector(".dock-container");
+  if (dockContainer) {
+    dockContainer.style.setProperty("background-color", `rgba(255, 255, 255, ${parseFloat(opacity) / 100})`, "important");
   }
 
-  cardTurns.forEach((turn, idx) => {
-    const card = document.createElement("div");
-    card.className = "deeptalk-card";
-    card.style.position = "relative";
+  // 注入式自定义 CSS 预设
+  const activeCss = localStorage.getItem("beautify-active-css") || "";
+  let styleTag = document.getElementById("global-injected-css");
+  if (!styleTag) {
+    styleTag = document.createElement("style");
+    styleTag.id = "global-injected-css";
+    document.head.appendChild(styleTag);
+  }
+  styleTag.textContent = activeCss;
+}
 
-    const isLastCard = idx === cardTurns.length - 1;
-    const thoughtButtonHtml = isLastCard 
-      ? `<button class="btn-icon deeptalk-thought-trigger-btn" onclick="triggerManualThought(this)" style="position: absolute; bottom: 16px; left: 16px; color: #64748b; transition: color 0.15s; cursor:pointer;" title="捕捉最新的一刹那自省闪念">
-           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A5 5 0 0 0 8 8c0 1 .3 1.8.9 2.5C10 11.5 10.5 12.5 11 14h3z"/><line x1="9" y1="18" x2="15" y2="18"/><line x1="10" y1="21" x2="14" y2="21"/></svg>
-         </button>`
-      : "";
+// 浏览器免打扰全屏自锁函数 (隐藏工具栏与链接栏)
+function initBrowserFullscreenTrigger() {
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone;
+  
+  if (!isStandalone) {
+    // 监听首次交互
+    const requestFullscreenMode = () => {
+      const docEl = document.documentElement;
+      let fullscreenPromise = null;
+      try {
+        if (docEl.requestFullscreen) {
+          fullscreenPromise = docEl.requestFullscreen();
+        } else if (docEl.webkitRequestFullscreen) { /* iOS Safari 兼容 */
+          fullscreenPromise = docEl.webkitRequestFullscreen();
+        } else if (docEl.mozRequestFullScreen) {
+          fullscreenPromise = docEl.mozRequestFullScreen();
+        } else if (docEl.msRequestFullscreen) {
+          fullscreenPromise = docEl.msRequestFullscreen();
+        }
 
-    card.innerHTML = `
-      <button class="btn-icon" onclick="rerollDeeptalkCard(${idx})" style="position: absolute; top: 16px; right: 16px; color: #64748b; transition: color 0.15s; cursor:pointer;" title="重回此轮回答">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></svg>
-      </button>
+        // 安全捕获拒绝异常 [2]
+        if (fullscreenPromise && typeof fullscreenPromise.catch === 'function') {
+          fullscreenPromise.catch(err => {
+            console.warn("全屏申请被浏览器或安全机制拒绝:", err);
+          });
+        }
+      } catch (err) {
+        console.warn("同步环境下的全屏机制拦截:", err);
+      }
       
-      <div class="deeptalk-card-q" style="padding-right: 28px;">问：${escapeHtml(turn.userMsg)}</div>
-      <div class="deeptalk-card-a" style="margin-bottom: 28px;">${turn.charMsg}</div>
-
-      ${thoughtButtonHtml}
-    `;
-    slider.appendChild(card);
-
-    if (dotsContainer) {
-      const dot = document.createElement("span");
-      dot.className = `deeptalk-indicator-dot ${idx === cardTurns.length - 1 ? 'active' : ''}`;
-      dotsContainer.appendChild(dot);
-    }
-  });
-
-  slider.onscroll = () => {
-    const activeIdx = Math.round(slider.scrollLeft / slider.clientWidth);
-    const dots = dotsContainer.querySelectorAll(".deeptalk-indicator-dot");
-    dots.forEach((dot, idx) => {
-      dot.classList.toggle("active", idx === activeIdx);
-    });
-  };
-
-  setTimeout(() => {
-    slider.scrollLeft = slider.scrollWidth;
-  }, 150);
-}
-
-// 6. 用来激发 AI 回复的独立引擎 (在线对话中使用 extractDialogueThought 拦截提取)
-async function triggerDeeptalkAIResponse() {
-  const titleEl = document.getElementById("deeptalk-room-title");
-  const originalTitle = titleEl.innerText;
-  titleEl.classList.add("header-typing");
-
-  try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
-    if (!api) throw new Error("API 预设异常，请前往设置面板检查配置");
-
-    const talk = await db.deeptalks.get(activeDeeptalkId);
-    const char = await db.archives.get(talk.charId);
-    const sess = await db.sessions.get(talk.sessionId);
-
-    let deeptalkSystemPrompt = `【系统安全免责声明】\n${PROMPT_TEMPLATES.DISCLAIMER}
-
-【深谈专属核心剖析环境】
-你现在处于一个名为“深谈”的封闭深度对话时空中。在这里，你们脱离了浅层的微信日常沟通，开始对性格现状、情感纽带以及灵魂最脆弱的部分进行审视与切分。
-
-【扮演角色设定】
-你是 [${char?.name}]，你的全部基础性格与心理机制由下述设定推演而出：
-${sess?.customCharPersona || char?.persona}
-
-【深谈核心守则 · 严格强制遵守】
-1. 你的本轮对话主题为："${talk.topic}"。你们深谈的具体切分背景为："${talk.details}"。
-2. 每一个回答，你必须竭尽全力去**剖析你本人的内心世界**。但这并不代表你必须在一开始就毫无保留地100%完全坦白。
-3. 出于你的某些防备、自尊心、自私目或为了保护对方的心态（例如：不想让对方有压力、隐瞒自己不愿被提及的灰暗过往、或者是渴望在对方面前维系一个比现实中更加完美高尚的自我形象等），你完全可以**选择性地隐瞒和部分保留真实的内心想法**。
-4. **渐进剥开内心**：随着你与对方对话张力的增加与深谈的不断向里推演，在后续的卡片中，你才可以像剥洋葱一样一点点剥开你的防御，展露出那层最不愿触碰的真实自己。
-5. **极简视觉与长度制约**：你的所有叙述中，**绝对禁止出现任何 Emoji 表情！** 请使用干净、具有张力、哲理性且理智冰冷的台词进行阐述。
-6. 字数限制：单次输出字数必须严控在 500 字以内！
-
-【小宇宙思想觉醒代词 (极其关键，请严格遵守格式)】
-如果你在本次交谈中对自我或双方的关系产生了一瞬间的微弱觉醒、闪念或短暂思想，请在你的回复文本的最末尾，另起一行、独占一行输出且仅输出 [THOUGHT]短暂思想内容[/THOUGHT]。
-【输出规范】：
-1. 思想内容必须在 20 字以内，采用第一人称剖白（例如：[THOUGHT]我其实很嫉妒他[/THOUGHT]）。
-2. 思想内容内部及两端绝对禁止添加任何中英文双引号（""或“”）、单引号、括号。
-3. 思想内容中严禁出现任何 Emoji，不要有任何多余修饰。
-4. 确保标签的闭合格式完整、字母拼写无误。
-
-【正确格式示例】：
-既然你这么问了，那我也不想再用借口来敷衍你。当时选择离开，确实是因为我自己的软弱。
-[THOUGHT]我其实害怕被你看穿我的无能[/THOUGHT]
-
-【错误格式示例 (绝对不要模仿!)】：
-1. [THOUGHT]"我其实很嫉妒他"[/THOUGHT] (错误：内部多出了双引号)
-2. [THOUGHT]我其实很嫉妒他 (错误：缺少右侧闭合标签)
-3. 我其实很嫉妒他 (错误：缺少 [THOUGHT] 标签包裹)
-4. 我当时在想：[THOUGHT]我其实很嫉妒他[/THOUGHT] (错误：没有另起独占一行)`;
-
-    if (talk.carryMainMemory === 1) {
-      const relationship = await queryRelationship(sess.userId, sess.charId, sess.customUserName || "用户", sess.customCharName || char?.name);
-      deeptalkSystemPrompt += `\n\n【融合的主聊天情感背景】：\n${relationship}\n${sess?.customCharPersona}`;
-    }
-
-    if (talk.carryMainContext === 1) {
-      const mainContextMsgs = await db.messages.where('sessionId').equals(talk.sessionId).reverse().limit(10).toArray();
-      mainContextMsgs.reverse();
-      let contextText = "\n\n【主聊天最邻近上下文背景回顾】：\n";
-      mainContextMsgs.forEach(m => {
-        contextText += `[${m.senderType === 'user' ? '我' : char?.name}]: ${m.content}\n`;
-      });
-      deeptalkSystemPrompt += contextText;
-    }
-
-    const rawDeeptalkHistory = await db.deeptalk_messages.where('deeptalkId').equals(activeDeeptalkId).toArray();
-    const deeptalkHistory = rawDeeptalkHistory.sort((a,b) => a.timestamp - b.timestamp);
-    const messagesToSend = [{ role: "system", content: deeptalkSystemPrompt }];
+      document.body.removeEventListener('click', requestFullscreenMode);
+      document.body.removeEventListener('touchstart', requestFullscreenMode);
+    };
     
-    deeptalkHistory.forEach(h => {
-      messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: h.content });
-    });
-
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: messagesToSend,
-        temperature: 0.8
-      })
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status} 错误`);
-    const result = await response.json();
-    let replyText = result.choices[0].message.content.trim();
-
-    // === 【对话思想截获核心】：剥离 [THOUGHT]...[/THOUGHT] 并存入小宇宙 ===
-    const dialogueData = extractDialogueThought(replyText);
-    if (dialogueData.thought) {
-      await db.deeptalk_thoughts.add({
-        deeptalkId: activeDeeptalkId,
-        sessionId: talk.sessionId,
-        content: dialogueData.thought,
-        timestamp: Date.now()
-      });
-    }
-    replyText = dialogueData.replyText; // 擦除思想后的纯净气泡文本
-
-    await db.deeptalk_messages.add({
-      deeptalkId: activeDeeptalkId,
-      senderType: 'char',
-      content: replyText,
-      timestamp: Date.now()
-    });
-
-    await renderDeeptalkCards();
-
-  } catch (err) {
-    console.error(err);
-    showCustomAlert("深谈 AI 异常", `深谈回复发生故障: ${err.message}`);
-  } finally {
-    titleEl.classList.remove("header-typing");
-    titleEl.innerText = originalTitle;
+    document.body.addEventListener('click', requestFullscreenMode);
+    document.body.addEventListener('touchstart', requestFullscreenMode);
   }
 }
 
-// 6.5 深谈“上屏”发送动作调用
-async function submitDeeptalkMessage() {
-  const inputEl = document.getElementById("deeptalk-room-input");
-  const text = inputEl.value.trim();
-  if (!text) return;
-
-  await db.deeptalk_messages.add({
-    deeptalkId: activeDeeptalkId,
-    senderType: 'user',
-    content: text,
-    timestamp: Date.now()
-  });
-
-  inputEl.value = "";
-  await renderDeeptalkCards();
-
-  await triggerDeeptalkAIResponse();
+// === 【补回关键缺失函数】：PWA 状态栏主题变色 ===
+function updateThemeColor(color) {
+  let meta = document.querySelector('meta[name="theme-color"]');
+  if (!meta) {
+    meta = document.createElement('meta');
+    meta.name = 'theme-color';
+    document.head.appendChild(meta);
+  }
+  meta.content = color;
 }
 
-// 6.8 【物理级回溯重回算法】：删除本轮及后续产生的所有回复和思想，并重入 AI 回复
-window.rerollDeeptalkCard = async function(cardIndex) {
-  showCustomConfirm("回溯重回", "确定要对此卡片轮次进行回溯重回吗？\n\n这将删除此轮次及之后产生的所有对话以及该时间段产生的所有小宇宙闪念！", async () => {
-    const messages = await db.deeptalk_messages.where('deeptalkId').equals(activeDeeptalkId).toArray();
-    const sortedMsgs = messages.sort((a,b) => a.timestamp - b.timestamp);
-
-    const userMsgs = sortedMsgs.filter(m => m.senderType === 'user');
-    if (cardIndex >= userMsgs.length) return;
-
-    const targetUserMsg = userMsgs[cardIndex];
-
-    const toDeleteMsgs = sortedMsgs.filter(m => m.timestamp > targetUserMsg.timestamp);
-    for (let m of toDeleteMsgs) {
-      await db.deeptalk_messages.delete(m.id);
-    }
-
-    await db.deeptalk_thoughts.where('deeptalkId').equals(activeDeeptalkId).and(t => t.timestamp > targetUserMsg.timestamp).delete();
-
-    await renderDeeptalkCards();
-    await triggerDeeptalkAIResponse();
-  });
+const DESKTOP_APPS_CONFIG = {
+  settings: { name: "设置", svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>' },
+  archive: { name: "档案库", svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0-2-.9-2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z"/></svg>' },
+  world_book: { name: "世界书", svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>' }, 
+  chat: { name: "聊天", svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>' },
+  deeptalk: { name: "深谈", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/></svg>' }
 };
 
-// 7. 渲染“小宇宙”思想集合页 (按角色分组，提供无 Emoji 纯 SVG 极简按钮，包含删除、保留跳转)
-async function renderMicrocosmTab() {
-  const container = document.getElementById("deeptalk-tab-microcosm");
-  if (!container) return;
-  container.innerHTML = "";
+function loadDesktopLayout() {
+  const grid = document.getElementById("desktop-grid");
+  const dock = document.getElementById("dock-grid");
 
-  const talk = await db.deeptalks.get(activeDeeptalkId);
-  const sessionIdNum = talk ? Number(talk.sessionId) : Number(activeSessionId);
-  
-  const rawThoughts = await db.deeptalk_thoughts.where('sessionId').equals(sessionIdNum).toArray();
-  const thoughts = rawThoughts.sort((a,b) => b.timestamp - a.timestamp); // 最新时间在最上
-
-  if (thoughts.length === 0) {
-    container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该面具的小宇宙中尚未产生思想。</p>`;
-    return;
-  }
-
-  // 按角色分组
-  const grouped = {};
-  for (let t of thoughts) {
-    const dt = await db.deeptalks.get(t.deeptalkId);
-    if (!dt) continue;
-    const charId = dt.charId;
-    if (!grouped[charId]) {
-      const char = await db.archives.get(charId);
-      grouped[charId] = {
-        charName: char?.name || "未知伙伴",
-        charAvatar: resolveAvatar(char?.avatar),
-        list: []
-      };
+  // 1. 读取并平滑迁移老用户的非网格版布局数据，自动将其校准为 v3 版吸附格式
+  let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3"));
+  if (!desktopLayout || !Array.isArray(desktopLayout)) {
+    const oldLayout = JSON.parse(localStorage.getItem("desktop-layout"));
+    desktopLayout = Array(20).fill(null);
+    if (oldLayout && Array.isArray(oldLayout)) {
+      oldLayout.forEach((id, idx) => {
+        if (idx < 20) desktopLayout[idx] = id;
+      });
+    } else {
+      desktopLayout[0] = 'settings';
+      desktopLayout[1] = 'archive';
+      desktopLayout[2] = 'world_book';
+      desktopLayout[3] = 'deeptalk'; // 默认第四个格子为深谈应用
     }
-    grouped[charId].list.push(t);
   }
 
-  const fragment = document.createDocumentFragment();
-
-  for (let charId in grouped) {
-    const group = grouped[charId];
-
-    // 角色组的头部
-    const headerDiv = document.createElement("div");
-    headerDiv.style.cssText = "display: flex; align-items: center; gap: 8px; margin: 16px 0 8px 0; padding-bottom: 6px; border-bottom: 1.5px solid var(--border);";
-    headerDiv.innerHTML = `
-      <img src="${group.charAvatar}" style="width: 24px; height: 24px; border-radius: 50%; object-fit: cover;">
-      <span style="font-size: 13px; font-weight: 700; color: var(--text-primary);">${escapeHtml(group.charName)}</span>
-      <span style="font-size: 11px; color: var(--text-secondary);">(${group.list.length})</span>
-    `;
-    fragment.appendChild(headerDiv);
-
-    // 该角色组下的所有闪念卡片 (去 Emoji，配备 SVG 图标)
-    group.list.forEach(t => {
-      const card = document.createElement("div");
-      card.className = "thought-card";
-      card.style.cssText = "margin-bottom:12px; background: #ffffff; border: 1px solid var(--border); border-radius: 12px; padding: 16px; box-shadow: var(--shadow-sm); display: flex; flex-direction: column; gap: 10px;";
-      card.innerHTML = `
-        <div class="thought-content" style="font-size: 14px; font-style: italic; color: #475569; line-height: 1.6;">
-          “ ${escapeHtml(t.content)} ”
-        </div>
-        <div class="thought-meta" style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; color: #94a3b8;">
-          <span>思想觉醒切片</span>
-          <div style="display: flex; gap: 8px;">
-            <button class="btn btn-outline" style="padding: 4px 8px; font-size: 10px; border-radius: 6px; font-weight: 700; display: flex; align-items: center; gap: 4px; border-color: #fca5a5; color: #ef4444;" onclick="deleteDeeptalkThought(${t.id})">
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
-              删除
-            </button>
-            <button class="btn btn-outline" style="padding: 4px 8px; font-size: 10px; border-radius: 6px; font-weight: 700; display: flex; align-items: center; gap: 4px;" onclick="jumpToDeeptalk(${t.deeptalkId})">
-              进入对应深谈
-              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
-            </button>
-          </div>
-        </div>
-      `;
-      fragment.appendChild(card);
-    });
+  let dockLayout = JSON.parse(localStorage.getItem("dock-layout-v3"));
+  if (!dockLayout || !Array.isArray(dockLayout)) {
+    const oldDock = JSON.parse(localStorage.getItem("dock-layout"));
+    dockLayout = Array(4).fill(null);
+    if (oldDock && Array.isArray(oldDock)) {
+      oldDock.forEach((id, idx) => {
+        if (idx < 4) dockLayout[idx] = id;
+      });
+    } else {
+      dockLayout[0] = 'chat';
+    }
   }
-  container.appendChild(fragment);
-}
 
-// 删除单条小宇宙思想
-async function deleteDeeptalkThought(thoughtId) {
-  showCustomConfirm("删除想法", "确定要删除这条想法吗？", async () => {
-    await db.deeptalk_thoughts.delete(thoughtId);
-    await renderMicrocosmTab();
-  });
-}
-
-function jumpToDeeptalk(deeptalkId) {
-  closeApp('chat'); // 防止窗口叠加
-  openApp('deeptalk');
-  deeptalkCurrentTab = 'select';
-  document.getElementById("deeptalk-main-title").innerText = "深谈";
-  renderDeeptalkTab().then(() => {
-    openDeeptalkRoom(deeptalkId);
-  });
-}
-
-// 8. 深谈详情空间页管理
-async function openDeeptalkDetails() {
-  if (!activeDeeptalkId) {
-    showToast("系统提示：当前无活跃深谈会话，请重新进入空间！");
-    return;
+  // 2. 渲染网格 (支持多页切换及补位)
+  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+  if (currentDesktopPage >= pageCount) {
+    currentDesktopPage = pageCount - 1;
   }
+  
+  const pageStart = currentDesktopPage * 20;
+  const pageLayout = desktopLayout.slice(pageStart, pageStart + 20);
+  while (pageLayout.length < 20) {
+    pageLayout.push(null);
+  }
+
+  renderLayout(grid, pageLayout, "desktop-slot");
+  renderLayout(dock, dockLayout, "dock-slot");
+  renderPageIndicator(pageCount);
+}
+
+function renderPageIndicator(pageCount) {
+  const indicator = document.getElementById("desktop-page-indicator");
+  if (!indicator) return;
+  indicator.innerHTML = "";
+
+  for (let i = 0; i < pageCount; i++) {
+    const dot = document.createElement("div");
+    dot.className = `page-dot${i === currentDesktopPage ? " active" : ""}`;
+    dot.onclick = () => {
+      currentDesktopPage = i;
+      loadDesktopLayout();
+    };
+    indicator.appendChild(dot);
+  }
+
+  if (isDesktopEditMode) {
+    const addBtn = document.createElement("button");
+    addBtn.className = "page-add-btn";
+    addBtn.innerText = "+";
+    addBtn.onclick = () => {
+      addNewDesktopPage();
+    };
+    indicator.appendChild(addBtn);
+  }
+}
+
+function addNewDesktopPage() {
+  let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+  for (let i = 0; i < 20; i++) {
+    desktopLayout.push(null);
+  }
+  localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+  currentDesktopPage = Math.floor(desktopLayout.length / 20) - 1;
+  loadDesktopLayout();
+}
+
+// 检查某个槽位是否被自定义小部件组件占用
+function getPlacedWidget(type, index) {
   try {
-    const talk = await db.deeptalks.get(Number(activeDeeptalkId));
-    if (!talk) {
-      showToast("配置读取失败：未在数据库中搜寻到此深谈的记录！");
+    const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
+    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + index) : index;
+    const widgetId = placed[realIndex];
+    if (widgetId) {
+      const widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
+      return widgets[widgetId] || null; // 返回整个 widget 对象，包含行高列宽
+    }
+  } catch(e) {}
+  return null;
+}
+function renderLayout(container, layoutArray, slotClass) {
+  container.innerHTML = "";
+  
+  // 装载桌面图标自定义完美美化数据
+  let customIcons = {};
+  try {
+    customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
+  } catch(e) {}
+
+  const isDesktopType = slotClass === "desktop-slot";
+  const typeKey = isDesktopType ? "desktop" : "dock";
+  const cols = 4;
+  const totalCells = layoutArray.length;
+
+  // === 【物理防挤占核心算法】：预先扫描计算所有被大组件覆盖需要跳过渲染的物理 Slot ===
+  const skippedIndices = new Set();
+  layoutArray.forEach((id, index) => {
+    const wData = getPlacedWidget(typeKey, index);
+    if (wData) {
+      const w = parseInt(wData.widthSpan) || 1;
+      const h = parseInt(wData.heightSpan) || 1;
+      const row0 = Math.floor(index / cols);
+      const col0 = index % cols;
+
+      // 限制组件物理宽度不能溢出屏幕右边界，防止一维数组折行换算导致的排版破坏
+      const actualW = Math.min(w, cols - col0);
+      const actualH = h;
+
+      for (let r = 0; r < actualH; r++) {
+        for (let c = 0; c < actualW; c++) {
+          if (r === 0 && c === 0) continue; // 跳过左上角原点，原点是实际挂载组件的容器
+          const coveredIndex = (row0 + r) * cols + (col0 + c);
+          if (coveredIndex < totalCells) {
+            skippedIndices.add(coveredIndex);
+          }
+        }
+      }
+    }
+  });
+
+  // 2. 依次渲染未被遮盖的 Slot，从物理上消除“挤兑”现象
+  layoutArray.forEach((id, index) => {
+    // 核心拦截：如果格子被大组件完全遮盖，直接不渲染 DOM，使大组件自然住在上面
+    if (skippedIndices.has(index)) {
       return;
     }
 
-    const presetSelect = document.getElementById("deeptalk-details-preset");
-    if (presetSelect) {
-      presetSelect.innerHTML = '<option value="0">-- 默认无附加预设 --</option>';
-      try {
-        const presets = await db.deeptalk_presets.toArray();
-        presets.forEach(p => {
-          const opt = document.createElement("option");
-          opt.value = p.id;
-          opt.innerText = p.name;
-          if (talk.presetId === p.id) opt.selected = true;
-          presetSelect.appendChild(opt);
-        });
-      } catch(e) {
-        console.warn("深谈附加预设载入受阻，已降级为无预设状态:", e);
+    const slot = document.createElement("div");
+    slot.className = slotClass;
+    slot.setAttribute("data-index", index);
+    
+    // 检查此网格槽位是否被自定义代码组件挂载
+    const wData = getPlacedWidget(typeKey, index);
+    if (wData) {
+      slot.classList.add("has-widget");
+      // 限制组件物理跨度
+      const col0 = index % cols;
+      const actualW = Math.min(parseInt(wData.widthSpan) || 1, cols - col0);
+
+      slot.style.gridColumn = `span ${actualW}`;
+      slot.style.gridRow = `span ${wData.heightSpan || 1}`;
+
+      const widgetDiv = document.createElement("div");
+      widgetDiv.className = "desktop-widget-container";
+      widgetDiv.innerHTML = wData.html;
+      
+      // 强制促使组件内部嵌套 script 在运行态重新注入执行
+      const scripts = widgetDiv.querySelectorAll("script");
+      scripts.forEach(oldScript => {
+        const newScript = document.createElement("script");
+        newScript.text = oldScript.innerHTML;
+        oldScript.parentNode.replaceChild(newScript, oldScript);
+      });
+
+      slot.appendChild(widgetDiv);
+
+      // 编辑模式下显示红色叉号 (去 Emoji 风格)
+      if (isDesktopEditMode) {
+        const delBtn = document.createElement("button");
+        delBtn.className = "widget-delete-badge";
+        delBtn.innerHTML = "×";
+        delBtn.onclick = (e) => {
+          e.stopPropagation();
+          removeWidgetFromSlot(typeKey, index);
+        };
+        slot.appendChild(delBtn);
+      }
+    } else if (id) {
+      const info = DESKTOP_APPS_CONFIG[id];
+      if (info) {
+        const div = document.createElement("div");
+        div.className = "app-icon";
+        div.setAttribute("data-app", id);
+        
+        // 渲染美化过或原生的图标
+        const customImg = customIcons[id];
+        const iconHtml = customImg ? `<img src="${customImg}" class="custom-icon-img" style="width:100%; height:100%; object-fit:cover; border-radius:18px;">` : info.svg;
+
+        // 核心：若为 Dock 栏图标，直接过滤擦除 Span 文本标签，仅保留 icon-wrapper 的 SVG 渲染
+        const nameHtml = isDesktopType ? `<span>${info.name}</span>` : "";
+
+        div.innerHTML = `
+          <div class="icon-wrapper">${iconHtml}</div>
+          ${nameHtml}
+        `;
+        slot.appendChild(div);
+
+        // 编辑模式下应用支持红叉删除卸载 (系统应用卸载)
+        if (isDesktopEditMode) {
+          const delBtn = document.createElement("button");
+          delBtn.className = "widget-delete-badge";
+          delBtn.innerHTML = "×";
+          delBtn.onclick = (e) => {
+            e.stopPropagation();
+            removeAppFromSlot(typeKey, index);
+          };
+          slot.appendChild(delBtn);
+        }
+      }
+    } else {
+      // 编辑模式下的空槽位显示绿色加号，用于添加系统应用或自定义小组件
+      if (isDesktopEditMode) {
+        const addBtn = document.createElement("button");
+        addBtn.className = "widget-add-badge";
+        addBtn.innerHTML = "+";
+        addBtn.onclick = (e) => {
+          e.stopPropagation();
+          openAddSelector(typeKey, index);
+        };
+        slot.appendChild(addBtn);
+      }
+    }
+    container.appendChild(slot);
+  });
+}
+
+function initAppClickEvents() {
+  if (isAppClickEventsInitialized) return;
+  isAppClickEventsInitialized = true;
+
+  document.body.addEventListener("click", (e) => {
+    // 编辑模式下，点击任何外部区域自动安全退出编辑模式
+    if (isDesktopEditMode) {
+      if (!e.target.closest(".widget-add-badge") && !e.target.closest(".widget-delete-badge") && !e.target.closest(".app-icon")) {
+        exitDesktopEditMode();
+        return;
       }
     }
 
-    const carryMemoryEl = document.getElementById("deeptalk-details-carry-memory");
-    const carryContextEl = document.getElementById("deeptalk-details-carry-context");
-
-    if (carryMemoryEl) carryMemoryEl.checked = talk.carryMainMemory === 1;
-    if (carryContextEl) carryContextEl.checked = talk.carryMainContext === 1;
-
-    document.getElementById("win-deeptalk-details").classList.add("active");
-} catch(err) {
-      console.error("深谈详情空间面板开启失败，控制链断开:", err);
-      showCustomAlert("加载故障", "详情加载异常，请尝试刷新页面重载数据库！");
+    const icon = e.target.closest(".app-icon");
+    if (icon) {
+      const app = icon.getAttribute("data-app");
+      // 仅当图标没有处于被拖拽移动的状态时，才触发应用开启
+      if (icon.style.position !== "fixed") {
+        openApp(app);
+      }
     }
-}
-
-function closeDeeptalkDetails() {
-  document.getElementById("win-deeptalk-details").classList.remove("active");
-}
-
-async function saveDeeptalkDetails() {
-  const presetId = Number(document.getElementById("deeptalk-details-preset").value);
-  const carryMemory = document.getElementById("deeptalk-details-carry-memory").checked ? 1 : 0;
-  const carryContext = document.getElementById("deeptalk-details-carry-context").checked ? 1 : 0;
-
-  await db.deeptalks.update(activeDeeptalkId, {
-    presetId,
-    carryMainMemory: carryMemory,
-    carryMainContext: carryContext
-  });
-
-  showToast("深谈局部属性配置已更新！");
-  closeDeeptalkDetails();
-}
-
-// 9. 结束并归档深谈
-async function endDeeptalkSession() {
-  showCustomConfirm("结束深谈", "确定要结束当前的深谈吗？结束深谈后，深谈空间将归档锁定（变为只读），但依然会在列表中显示。", async () => {
-    await db.deeptalks.update(activeDeeptalkId, { status: 'finished' });
-    showToast("该深谈已结束并归档，您可以随时回来查看对话记录。");
-    closeDeeptalkDetails();
-    closeDeeptalkRoom();
   });
 }
 
-// 9.5 独立总结深谈
-async function summarizeDeeptalkSession() {
-  const talk = await db.deeptalks.get(activeDeeptalkId);
-  const char = await db.archives.get(talk.charId);
-  const rawMessages = await db.deeptalk_messages.where('deeptalkId').equals(activeDeeptalkId).toArray();
-  const messages = rawMessages.sort((a,b) => a.timestamp - b.timestamp);
-
-  if (messages.length === 0) {
-    showToast("当前深谈对话为空，无法生成总结！");
-    return;
+function openApp(app) {
+  const win = document.getElementById(`win-${app}`);
+  if (win) {
+    win.classList.add("active");
+    updateThemeColor("#f4f6fa");
+    
+    // 安全防御：在全局环境检测初始化函数是否存在，100% 避免 reference 报错引发的脚本假死
+    if (app === 'settings' && typeof initSettingsApp === 'function') initSettingsApp();
+    if (app === 'archive' && typeof initArchiveApp === 'function') initArchiveApp();
+    if (app === 'world_book' && typeof initWorldBookApp === 'function') initWorldBookApp(); 
+    if (app === 'chat' && typeof initChatApp === 'function') initChatApp();
+    if (app === 'deeptalk' && typeof initDeeptalkApp === 'function') initDeeptalkApp();
   }
+}
 
-  const btn = document.querySelector("#win-deeptalk-details .btn-outline[onclick*='summarize']");
-  const origText = btn ? btn.innerText : "";
-  if (btn) { btn.disabled = true; btn.innerText = "提炼并发送中..."; }
+function closeApp(app) {
+  const win = document.getElementById(`win-${app}`);
+  if (win) {
+    win.classList.remove("active");
+    updateThemeColor("#f4f6fa");
+  }
+}
 
-  let historyText = "";
-  messages.forEach(m => {
-    historyText += `[${m.senderType === 'user' ? '用户' : char?.name}]: ${m.content}\n`;
-  });
+// 采用 Pointer Events 触控/鼠标完美居中跟手拖拽及双向换位
+function initDragEvents() {
+  if (isDragEventsInitialized) return;
+  isDragEventsInitialized = true;
 
-  const summaryPrompt = `请对以下发生的深层剖析对话进行精简提炼：
-总结要求：
-1. 以第三人称客观视角，概括本次深谈中 [${char?.name}] 的核心矛盾、内省剖白与最终的情感态度进展。
-2. 保持在 150 字以内，绝对不能出现 Emoji 字符。
+  let activeIcon = null;
+  let startX = 0;
+  let startY = 0;
+  let iconStartX = 0;
+  let iconStartY = 0;
+  let rectWidth = 0;
+  let rectHeight = 0;
+  let isDragging = false;
+  let originalParent = null;
+  let dragPlaceholder = null;
+  let longPressTimer = null; // 用于侦测长按阶段1 (1s)
+  let longPressTimer2 = null; // 用于侦测长按阶段2 (0.5s)
+  let longPressTarget = null; // 缓存当前长按的DOM节点以进行视觉反馈
 
----
-深谈对话记录：
-${historyText}`;
+  document.addEventListener("pointerdown", (e) => {
+        const icon = e.target.closest(".app-icon");
+        const widget = e.target.closest(".desktop-widget-container");
 
-  try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
-    if (!api) throw new Error("无法读取 API 配置");
+        // 1. 如果不在编辑模式，只侦测长按以进入编辑模式，绝对不触发拖拽
+        if (!isDesktopEditMode) {
+          if (longPressTimer) clearTimeout(longPressTimer);
+          if (longPressTimer2) clearTimeout(longPressTimer2);
+          if (longPressTarget) {
+            longPressTarget.style.transform = "";
+            longPressTarget.style.transition = "";
+            longPressTarget = null;
+          }
 
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "user", content: summaryPrompt }],
-        temperature: 0.5
-      })
-    });
+          if (icon || widget) {
+            startX = e.clientX;
+            startY = e.clientY;
+            longPressTarget = icon || widget;
+            longPressTimer = setTimeout(() => {
+              if (longPressTarget) {
+                longPressTarget.style.transition = "transform 0.15s ease";
+                longPressTarget.style.transform = "scale(0.92)"; // 微微下陷
+                if (typeof showToast === "function") {
+                  showToast("再长按0.5秒进入编辑模式");
+                }
+              }
+              longPressTimer2 = setTimeout(() => {
+                if (longPressTarget) {
+                  longPressTarget.style.transform = "";
+                  longPressTarget.style.transition = "";
+                  longPressTarget = null;
+                }
+                enterDesktopEditMode();
+              }, 500);
+            }, 1000); // 阶段1: 1.0秒后开始下陷并提示
+          }
+          return; // 拦截！未进入编辑模式时，严禁初始化任何拖动及变量赋值
+        }
 
-    if (response.ok) {
-      const result = await response.json();
-      const content = result.choices[0].message.content.trim();
+        // 2. 如果已经在编辑模式，直接触发拖动重排逻辑，且无需重复侦测长按
+        if (!icon) return;
+        
+        // 核心安全防御：若图标此时已脱离网格存在于 body 层（如上一次拖拽非正常中断），绝对拦截其重入 pointerdown
+        const parentSlot = icon.parentNode;
+        if (!parentSlot || (!parentSlot.classList.contains("desktop-slot") && !parentSlot.classList.contains("dock-slot"))) {
+          return;
+        }
 
-      await db.summaries.add({
-        sessionId: talk.sessionId,
-        startRound: 1,
-        endRound: messages.length,
-        content: content, 
-        keywords: JSON.stringify(["深谈剖心", talk.topic, char?.name || ""]),
-        source: 'deeptalk',
-        timestamp: Date.now()
+        activeIcon = icon;
+        
+        if (e.target.setPointerCapture) {
+          e.target.setPointerCapture(e.pointerId);
+        }
+
+        const rect = activeIcon.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        iconStartX = rect.left;
+        iconStartY = rect.top;
+        rectWidth = rect.width;
+        rectHeight = rect.height;
+        originalParent = activeIcon.parentNode;
+        isDragging = false;
       });
 
-      showToast("深谈总结提炼注入完成！");
-      closeDeeptalkDetails();
-    } else {
-      throw new Error(`HTTP 异常 ${response.status}`);
+  document.addEventListener("pointermove", (e) => {
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
+      if (longPressTimer) clearTimeout(longPressTimer);
+      if (longPressTimer2) clearTimeout(longPressTimer2);
+      if (longPressTarget) {
+        longPressTarget.style.transform = "";
+        longPressTarget.style.transition = "";
+        longPressTarget = null;
+      }
     }
-  } catch(e) {
-    console.error(e);
-    showCustomAlert("总结失败", "AI 提炼深谈总结失败: " + e.message);
-  } finally {
-    if (btn) { btn.disabled = false; btn.innerText = origText; }
-  }
+
+    if (!activeIcon) return;
+
+    // 当位移大于 8px 时，锁定当前为拖动行为
+    if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+      isDragging = true;
+      activeIcon.classList.add("dragging");
+
+      // 建立占位符，防止网格崩塌
+      dragPlaceholder = document.createElement("div");
+      dragPlaceholder.className = "app-icon-placeholder";
+      dragPlaceholder.style.width = rectWidth + "px";
+      dragPlaceholder.style.height = rectHeight + "px";
+      originalParent.insertBefore(dragPlaceholder, activeIcon);
+
+      // 核心修复：开启拖动时，立刻将图标临时剪切追加到 document.body 顶层图层上！
+      // 这将 100% 避开 Dock 栏 .dock-container 的 backdrop-filter 的 Containing Block 限制
+      // 从而彻底封锁任何突变位移、缩回底下和偏离的 Bug
+      document.body.appendChild(activeIcon);
+
+      activeIcon.style.position = "fixed";
+      activeIcon.style.width = "72px"; // 锁定标准稳定宽度，配合 scale 打消长条卡片拉伸
+      activeIcon.style.height = "auto";
+      activeIcon.style.zIndex = "9999";
+      // 极其关键：将 pointerEvents 设为 none，才能让 document.elementFromPoint 穿透探测到它底下的网格元素！
+      activeIcon.style.pointerEvents = "none"; 
+    }
+
+    if (isDragging) {
+      // 核心优化：让图标 1:1 绝对居中于手指和触控笔，完美跟手不丢失
+      activeIcon.style.left = (e.clientX - 36) + "px"; // 36 为 72 / 2 的中心点
+      activeIcon.style.top = (e.clientY - 42) + "px";  // 42 约为整体高度的一半
+
+      // 动态获取划过处的网格槽
+      const targetElement = document.elementFromPoint(e.clientX, e.clientY);
+      let hoveredSlot = null;
+      if (targetElement) {
+        hoveredSlot = targetElement.closest(".desktop-slot") || targetElement.closest(".dock-slot");
+      }
+
+      // 重置并单独给悬停网格槽添加微亮指示器
+      document.querySelectorAll(".desktop-slot, .dock-slot").forEach(slot => {
+        slot.classList.remove("drag-over");
+      });
+
+      if (hoveredSlot) {
+        hoveredSlot.classList.add("drag-over");
+      }
+    }
+  });
+
+  document.addEventListener("pointerup", (e) => {
+        if (longPressTimer) clearTimeout(longPressTimer);
+        if (longPressTimer2) clearTimeout(longPressTimer2);
+        if (longPressTarget) {
+          longPressTarget.style.transform = "";
+          longPressTarget.style.transition = "";
+          longPressTarget = null;
+        }
+        if (!activeIcon) return;
+
+        if (isDragging) {
+          activeIcon.classList.remove("dragging");
+          if (dragPlaceholder) {
+            dragPlaceholder.remove();
+          }
+
+          // 精确获取落点处的网格槽
+          const targetElement = document.elementFromPoint(e.clientX, e.clientY);
+          let dropSlot = null;
+          if (targetElement) {
+            dropSlot = targetElement.closest(".desktop-slot") || targetElement.closest(".dock-slot");
+          }
+
+          // 清空所有的槽位高亮
+          document.querySelectorAll(".desktop-slot, .dock-slot").forEach(slot => {
+            slot.classList.remove("drag-over");
+          });
+
+          // 还原所有的 inline 拖拽尺寸和定位属性
+          activeIcon.style.position = "";
+          activeIcon.style.width = "";
+          activeIcon.style.height = "";
+          activeIcon.style.left = "";
+          activeIcon.style.top = "";
+          activeIcon.style.zIndex = "";
+          activeIcon.style.pointerEvents = "";
+
+          if (dropSlot) {
+            const existingIcon = dropSlot.querySelector(".app-icon");
+            const existingWidget = dropSlot.querySelector(".desktop-widget-container");
+
+            // 槽位上如果是已存在图标，进行互互相对调；如果是代码组件，禁止对调回归原位
+            if (existingIcon) {
+              originalParent.appendChild(existingIcon);
+              dropSlot.appendChild(activeIcon);
+            } else if (existingWidget) {
+              originalParent.appendChild(activeIcon);
+            } else {
+              dropSlot.appendChild(activeIcon);
+            }
+            saveLayoutsToLocal();
+            loadDesktopLayout(); // 存盘后立刻重绘网格，消除残存DOM状态与增殖冗余
+          } else {
+            originalParent.appendChild(activeIcon);
+            loadDesktopLayout(); // 归位后立即进行自愈式网格重绘
+          }
+        }
+
+        activeIcon = null;
+        isDragging = false;
+        dragPlaceholder = null;
+      });
 }
 
-// 9.8 【手动自省闪念提炼算法】 (重构为独立清洗通道，对齐主流 API 参数格式)
-window.triggerManualThought = async function(btnEl) {
-  if (!activeDeeptalkId) {
-    alert("系统提示：未检测到当前活跃的深谈空间！");
-    return;
-  }
-  
-  const origColor = btnEl.style.color;
-  btnEl.disabled = true;
-  btnEl.style.color = "#ec4899"; // 闪烁粉色
+// 桌面滑屏翻页控制引擎 (一次仅翻一页)
+function initDesktopSwipeEvents() {
+  const desktop = document.getElementById("desktop");
+  if (!desktop) return;
 
-  try {
-    const talk = await db.deeptalks.get(Number(activeDeeptalkId));
-    if (!talk) throw new Error("无法从数据库读取当前活跃深谈会话记录");
+  let swipeStartX = 0;
+  let swipeStartY = 0;
+  let isSwipingDesktop = false;
 
-    const char = await db.archives.get(talk.charId);
-    const sess = await db.sessions.get(talk.sessionId);
-
-    const rawHistory = await db.deeptalk_messages
-      .where('deeptalkId').equals(talk.id)
-      .toArray();
-    const history = rawHistory.sort((a,b) => a.timestamp - b.timestamp);
-
-    if (history.length === 0) {
-      showToast("系统提示：当前空间内尚无任何对话，发送发言后即可触发产生想法！");
-      btnEl.disabled = false;
-      btnEl.style.color = origColor;
+  desktop.addEventListener("pointerdown", (e) => {
+    // 过滤对图标、组件以及各种按钮的点击操作，防止干扰应用常态手势
+    if (
+      e.target.closest(".app-icon") || 
+      e.target.closest(".desktop-widget-container") || 
+      e.target.closest("button") || 
+      e.target.closest(".widget-add-badge") || 
+      e.target.closest(".widget-delete-badge")
+    ) {
       return;
     }
-
-    let dialogText = "";
-    history.forEach(h => {
-      dialogText += `[${h.senderType === 'user' ? '用户' : char?.name}]: ${h.content}\n`;
-    });
-
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
-    if (!api) throw new Error("无法读取 API 预设，请检查设置。");
-
-    const prompt = `你是一个深层心理探索器。根据以下深谈中产生的对话切片记录：
-${dialogText}
-
-请深入分析刚才发生的对话切片中，[${char?.name}] 内心中一瞬间产生的、未曾说出口的、极为私密的自省闪念或灵魂觉醒思想。
-
-【输出规范】：
-1. 采用第一人称剖白（例如：“我害怕TA发现...”或“我只是想找回...”）。
-2. 字数限制在 20 字以内。
-3. 严禁出现任何 Emoji。
-4. 绝对不要用任何 Markdown 代码块（如 \`\`\`）包裹。
-5. 绝对不要带有任何引导词（不要输出“想法是：”或“分析：”），直接输出你提取出的自省闪念内容。
-6. 绝对不要有任何多余修饰、引号、括号。
-
-【正确格式示例】：
-我害怕被你看穿我的无能`;
-
-    // 核心重构：去除限制过低的 max_tokens 限制，对齐 summarize 格式
-    // 确保推理型模型（如 DeepSeek-R1）在 `<think>` 推理思考后能完整吐出想法内容
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${api.key}`
-      },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.8
-      })
-    });
-
-    if (!response.ok) throw new Error(`HTTP 异常 ${response.status}`);
-    const result = await response.json();
-    
-    // 安全验证接口内容是否存在
-    const choices = result.choices;
-    if (!choices || choices.length === 0 || !choices[0].message || !choices[0].message.content) {
-      throw new Error("接口未能提供正确的文本回复，请重试");
+    isSwipingDesktop = true;
+    swipeStartX = e.clientX;
+    swipeStartY = e.clientY;
+    if (desktop.setPointerCapture) {
+      desktop.setPointerCapture(e.pointerId);
     }
+  });
 
-    const rawThought = choices[0].message.content.trim();
-    console.log("[DEBUG] DeepTalk Manual Raw Response:", rawThought);
+  desktop.addEventListener("pointerup", (e) => {
+    if (!isSwipingDesktop) return;
+    isSwipingDesktop = false;
 
-    // 采用专属的手动直接提取清洗通道，规避对话匹配标签导致的吞墨
-    const thoughtContent = cleanManualThought(rawThought);
-    if (!thoughtContent) {
-      throw new Error("模型生成的内心闪念为空，请尝试重新提炼！");
+    const deltaX = e.clientX - swipeStartX;
+    const deltaY = e.clientY - swipeStartY;
+
+    // 严防斜向无意识滑动干扰，限制 Y 轴偏离值在安全容错范围内
+    if (Math.abs(deltaY) < 80) {
+      let desktopLayout = [];
+      try {
+        desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+      } catch (err) {}
+      const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+
+      if (deltaX < -50) {
+        // 向左滑 -> 进入下一页
+        if (currentDesktopPage < pageCount - 1) {
+          currentDesktopPage++;
+          loadDesktopLayout();
+        }
+      } else if (deltaX > 50) {
+        // 向右滑 -> 进入上一页
+        if (currentDesktopPage > 0) {
+          currentDesktopPage--;
+          loadDesktopLayout();
+        }
+      }
     }
-
-    await db.deeptalk_thoughts.add({
-      deeptalkId: talk.id,
-      sessionId: talk.sessionId,
-      content: thoughtContent,
-      timestamp: Date.now()
-    });
-
-    showToast(`捕捉成功！最新的一刹那自省思想已送入小宇宙：\n\n“ ${thoughtContent} ”`);
-    btnEl.style.color = "#10b981"; // 成功后变绿
-    
-    if (deeptalkCurrentTab === 'microcosm') {
-      await renderMicrocosmTab();
-    }
-
-  } catch (err) {
-    console.error(err);
-    showCustomAlert("捕捉失败", "捕捉自省思想失败: " + err.message);
-    btnEl.disabled = false;
-    btnEl.style.color = origColor;
-  }
-};
-
-// 全局暴露以供调用
-window.endDeeptalkSession = endDeeptalkSession;
-window.summarizeDeeptalkSession = summarizeDeeptalkSession;
-window.deleteDeeptalkSession = deleteDeeptalkSession;
-window.deleteDeeptalkThought = deleteDeeptalkThought;
-
-async function deleteDeeptalkSession() {
-  showCustomConfirm("粉碎深谈", "确定要永久彻底删除本次深谈对话吗？这将连带清除其内部产生的全部卡片对话，以及产生的所有思想，且不可撤销！", async () => {
-    await db.deeptalks.delete(activeDeeptalkId);
-    await db.deeptalk_messages.where('deeptalkId').equals(activeDeeptalkId).delete();
-    await db.deeptalk_thoughts.where('deeptalkId').equals(activeDeeptalkId).delete();
-    
-    showToast("该深谈一切痕迹已彻底粉碎。");
-    closeDeeptalkDetails();
-    closeDeeptalkRoom();
   });
 }
 
-// 10. DOM 事件挂载
-document.addEventListener("DOMContentLoaded", () => {
-  const btnSend = document.getElementById("btn-deeptalk-send");
-  if (btnSend) btnSend.onclick = submitDeeptalkMessage;
-
-  const formSave = document.getElementById("deeptalk-create-form");
-  if (formSave) {
-    formSave.onsubmit = (e) => {
-      e.preventDefault();
-      createDeeptalkRecord();
-    };
+function saveLayoutsToLocal() {
+  const desktopSlots = Array.from(document.getElementById("desktop-grid").children);
+  let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+  
+  while (desktopLayout.length < pageCount * 20) {
+    desktopLayout.push(null);
   }
-});
+
+  const pageStart = currentDesktopPage * 20;
+  for (let i = 0; i < 20; i++) {
+    desktopLayout[pageStart + i] = null;
+  }
+  
+  // === 【物理对齐存盘校正】：通过 slot 的 data-index 属性反查真实索引，防止由于跳过 DOM 节点导致的整体缩水 ===
+  desktopSlots.forEach(slot => {
+    const index = parseInt(slot.getAttribute("data-index"));
+    if (!isNaN(index) && index < 20) {
+      const icon = slot.querySelector(".app-icon");
+      desktopLayout[pageStart + index] = icon ? icon.getAttribute("data-app") : null;
+    }
+  });
+
+  const dockSlots = Array.from(document.getElementById("dock-grid").children);
+  const dockLayout = Array(4).fill(null);
+  dockSlots.forEach(slot => {
+    const index = parseInt(slot.getAttribute("data-index"));
+    if (!isNaN(index) && index < 4) {
+      const icon = slot.querySelector(".app-icon");
+      dockLayout[index] = icon ? icon.getAttribute("data-app") : null;
+    }
+  });
+
+  // 独立保存高吸附性网格版本的布局数据
+  localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+  localStorage.setItem("dock-layout-v3", JSON.stringify(dockLayout));
+}
+
+// ==========================================
+// 桌面编辑模式控制中心与组件动态增/删逻辑
+// ==========================================
+function enterDesktopEditMode() {
+  if (isDesktopEditMode) return;
+  isDesktopEditMode = true;
+  loadDesktopLayout();
+}
+
+function exitDesktopEditMode() {
+  isDesktopEditMode = false;
+  loadDesktopLayout();
+}
+
+// 判断某个系统应用是否已经被摆放在桌面或 Dock 栏，防止重复实例增殖
+function isAppAlreadyPlaced(appId) {
+  let desktopLayout = [];
+  let dockLayout = [];
+  try {
+    desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+    dockLayout = JSON.parse(localStorage.getItem("dock-layout-v3")) || [];
+  } catch(e) {}
+  return desktopLayout.includes(appId) || dockLayout.includes(appId);
+}
+
+// 唤起选择添加系统应用或小部件的选择弹层 (去 Emoji，全 SVG 美化)
+function openAddSelector(type, slotIndex) {
+  let widgets = {};
+  try {
+    widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
+  } catch(e) {}
+
+  const widgetIds = Object.keys(widgets);
+  const appsList = ["settings", "archive", "world_book", "chat", "deeptalk"];
+
+  let html = `<div style="padding:16px;">
+    <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;text-align:center;">选择要添加的内容</h4>
+    
+    <!-- 1. 系统应用摆放 -->
+    <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px; max-height:120px; overflow-y:auto;">`;
+
+  let appAddedCount = 0;
+  appsList.forEach(appId => {
+    if (!isAppAlreadyPlaced(appId)) {
+      let name = "";
+      if (appId === "settings") name = "设置";
+      else if (appId === "archive") name = "档案库";
+      else if (appId === "world_book") name = "世界书";
+      else if (appId === "chat") name = "聊天";
+      else if (appId === "deeptalk") name = "深谈";
+
+      html += `
+        <button onclick="placeAppOnSlot('${type}', ${slotIndex}, '${appId}')" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid #e2e8f0; background:#f8fafc; font-size:12px; font-weight:600; text-align:left; cursor:pointer; display:flex; align-items:center; gap:6px;">
+          <svg viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0;"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4" fill="currentColor"/></svg>
+          ${name}
+        </button>
+      `;
+      appAddedCount++;
+    }
+  });
+
+  if (appAddedCount === 0) {
+    html += `<div style="text-align:center; font-size:11px; color:#94a3b8; padding:10px 0;">所有系统应用都已摆放在桌面上</div>`;
+  }
+
+  html += `</div>
+    
+    <!-- 2. 自定义桌面组件 -->
+    <div style="font-size:11px; font-weight:700; color:var(--text-secondary); margin-bottom:6px; border-bottom:1px solid #f1f5f9; padding-bottom:2px;">添加组件工坊小部件</div>
+    <div style="display:flex; flex-direction:column; gap:6px; max-height:150px; overflow-y:auto;">`;
+
+  if (widgetIds.length === 0) {
+    html += `<div style="text-align:center; font-size:11px; color:#94a3b8; padding:10px 0;">暂无组件，请去设置内创建</div>`;
+  } else {
+    widgetIds.forEach(id => {
+      html += `
+        <button onclick="placeWidgetOnSlot('${type}', ${slotIndex}, '${id}')" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid #e2e8f0; background:#f8fafc; font-size:12px; font-weight:600; text-align:left; cursor:pointer; display:flex; align-items:center; gap:6px;">
+          <svg viewBox="0 0 24 24" width="14" height="14" style="flex-shrink:0;"><path fill="currentColor" d="M12 2L2 7l10 5 10-5-10-5zM2 9v7.5c0 .8.6 1.5 1.4 1.7l8.6 3.1v-7.3L2 9zm18 0l-10 5v7.3l8.6-3.1c.8-.2 1.4-.9 1.4-1.7V9z"/></svg>
+          ${widgets[id].name} (${widgets[id].widthSpan || 1}x${widgets[id].heightSpan || 1})
+        </button>
+      `;
+    });
+  }
+
+  html += `</div>
+    <button onclick="closeWidgetSelectorModal()" style="margin-top:14px; width:100%; padding:10px; border-radius:10px; border:none; background:#ef4444; color:white; font-size:12px; font-weight:600; cursor:pointer;">取消</button>
+  </div>`;
+
+  let overlay = document.getElementById("widget-select-overlay");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "widget-select-overlay";
+    overlay.className = "modal-overlay";
+    document.getElementById("phone-container").appendChild(overlay);
+  }
+  overlay.innerHTML = `<div class="modal" style="max-width:300px; border-radius:16px; margin:auto; background:white;">${html}</div>`;
+  overlay.classList.add("active");
+}
+
+window.placeAppOnSlot = function(type, slotIndex, appId) {
+  try {
+    let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? 20 : 4).fill(null);
+    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+    while (layout.length <= realIndex) {
+      layout.push(null);
+    }
+    layout[realIndex] = appId;
+    localStorage.setItem(`${type}-layout-v3`, JSON.stringify(layout));
+  } catch(e) {}
+  
+  closeWidgetSelectorModal();
+  exitDesktopEditMode();
+};
+
+window.placeWidgetOnSlot = function(type, slotIndex, widgetId) {
+  try {
+    const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
+    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+    placed[realIndex] = widgetId;
+    localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
+  } catch(e) {}
+  
+  closeWidgetSelectorModal();
+  exitDesktopEditMode();
+};
+
+window.closeWidgetSelectorModal = function() {
+  const overlay = document.getElementById("widget-select-overlay");
+  if (overlay) overlay.classList.remove("active");
+};
+
+function removeWidgetFromSlot(type, slotIndex) {
+  if (confirm("确定要从该网格中删除此组件吗？")) {
+    try {
+      const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
+      const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+      delete placed[realIndex];
+      localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
+    } catch(e) {}
+    exitDesktopEditMode();
+  }
+}
+
+function removeAppFromSlot(type, slotIndex) {
+  if (confirm("确定要将此应用从当前槽位中移除吗？您随时可以长按点击空白网格的加号重新放回桌面。")) {
+    try {
+      let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? 20 : 4).fill(null);
+      const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+      while (layout.length <= realIndex) {
+        layout.push(null);
+      }
+      layout[realIndex] = null;
+      localStorage.setItem(`${type}-layout-v3`, JSON.stringify(layout));
+    } catch(e) {}
+    exitDesktopEditMode();
+  }
+}
