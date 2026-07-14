@@ -404,7 +404,7 @@
           const hasPermission = window.AndroidMCP.checkOverlayPermission();
           if (!hasPermission) {
             toggleEl.checked = false;
-            showCustomConfirm("需要悬浮窗权限", "由于安卓系统限制，启动桌面桌宠必须授予"显示在其他应用上层"权限。是否现在前往系统设置授予？", () => {
+            showCustomConfirm("需要悬浮窗权限", "由于安卓系统限制，启动桌面桌宠必须授予「显示在其他应用上层」权限。是否现在前往系统设置授予？", () => {
               window.AndroidMCP.requestOverlayPermission();
             });
             return;
