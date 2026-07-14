@@ -90,44 +90,52 @@
         </header>
         <div class="win-body">
           <!-- 一级主菜单 -->
-          <div id="settings-lv1">
-            <div class="menu-item" onclick="openSettingsLv2('api')">
-              <span>API 协议设置</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            <div id="settings-lv1">
+              <div class="menu-item" onclick="openSettingsLv2('api')">
+                <span>API 协议设置</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openSettingsLv2('beautify')">
+                <span>桌面美化设置</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openSettingsLv2('css')">
+                <span>全局 CSS 注入</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openSettingsLv2('widget')">
+                <span>组件工坊</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openSettingsLv2('deeptalk')">
+                <span>深谈预设设置</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openSettingsLv2('data')">
+                <span>数据管理</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openSettingsLv2('force-update')">
+                <span>系统强更新</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <!-- 新增：控制台一级开关，无二级菜单 -->
+              <div class="menu-item" style="display:flex; align-items:center; justify-content:space-between; cursor:default;" onclick="event.stopPropagation();">
+                <span>调试控制台</span>
+                <label class="switch">
+                  <input type="checkbox" id="settings-vconsole-toggle">
+                  <span class="slider"></span>
+                </label>
+              </div>
+              <!-- 新增：后台运行与系统通知一级开关，无二级菜单 -->
+              <div class="menu-item" style="display:flex; align-items:center; justify-content:space-between; cursor:default;" onclick="event.stopPropagation();">
+                <span>开启后台运行与通知</span>
+                <label class="switch">
+                  <input type="checkbox" id="settings-background-toggle">
+                  <span class="slider"></span>
+                </label>
+              </div>
             </div>
-            <div class="menu-item" onclick="openSettingsLv2('beautify')">
-              <span>桌面美化设置</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-            </div>
-            <div class="menu-item" onclick="openSettingsLv2('css')">
-              <span>全局 CSS 注入</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-            </div>
-            <div class="menu-item" onclick="openSettingsLv2('widget')">
-              <span>组件工坊</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-            </div>
-            <div class="menu-item" onclick="openSettingsLv2('deeptalk')">
-              <span>深谈预设设置</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-            </div>
-            <div class="menu-item" onclick="openSettingsLv2('data')">
-              <span>数据管理</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-            </div>
-            <div class="menu-item" onclick="openSettingsLv2('force-update')">
-              <span>系统强更新</span>
-              <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
-            </div>
-            <!-- 新增：控制台一级开关，无二级菜单 -->
-            <div class="menu-item" style="display:flex; align-items:center; justify-content:space-between; cursor:default;" onclick="event.stopPropagation();">
-              <span>调试控制台</span>
-              <label class="switch">
-                <input type="checkbox" id="settings-vconsole-toggle">
-                <span class="slider"></span>
-              </label>
-            </div>
-          </div>
 
           <!-- 二级：API 设置 -->
           <div id="settings-lv2-api" class="settings-lv2-panel" style="display:none;">
