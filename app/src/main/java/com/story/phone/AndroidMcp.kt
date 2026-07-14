@@ -20,6 +20,7 @@ class AndroidMcp(private val context: Context) {
 
     companion object {
         private const val TAG = "AndroidMcp"
+        var mainActivity: MainActivity? = null
     }
 
     private var mediaPlayer: MediaPlayer? = null
@@ -452,8 +453,8 @@ class AndroidMcp(private val context: Context) {
         }.toString()
     }
 
-    // ============================================================
-    //  桌面悬浮桌宠 (支持多状态复合控制、真机拖动过滤、双击跨进程反向唤醒、TextView原生冒泡)
+// ============================================================
+    //  桌面悬浮桌宠 (升级版：支持多状态复合控制、真机拖动过滤、双击跨进程反向唤醒、TextView原生冒泡)
     // ============================================================
 
     @JavascriptInterface
@@ -491,7 +492,7 @@ class AndroidMcp(private val context: Context) {
                 val sizePx = (sizeDp * density).toInt()
 
                 if (floatPetView == null) {
-                    // 创建根容器 FrameLayout
+                    // 创建复合式 FrameLayout 悬浮容器
                     val layout = android.widget.FrameLayout(context)
 
                     // 1. 创建气泡 TextView，采用圆角白底描边风格
@@ -548,7 +549,7 @@ class AndroidMcp(private val context: Context) {
                         y = 500
                     }
 
-                    // 绑定高动态拖拽滑动与双击判定逻辑
+                    // 绑定拖拽滑动与双击判定
                     bindOverlayTouchListener(layout, params, windowManager)
 
                     windowManager.addView(layout, params)
@@ -648,7 +649,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 绑定物理触摸手势并滤除位移以解析双击
+    // 绑定物理触摸并滤除位移以解析双击
     private fun bindOverlayTouchListener(view: android.view.View, params: android.view.WindowManager.LayoutParams, windowManager: android.view.WindowManager) {
         view.setOnTouchListener(object : android.view.View.OnTouchListener {
             private var lastAction: Int = 0
@@ -677,7 +678,7 @@ class AndroidMcp(private val context: Context) {
                         if (Math.abs(diffX) < 15 && Math.abs(diffY) < 15) {
                             val clickTime = System.currentTimeMillis()
                             if (clickTime - lastClickTime < 350) {
-                                onOverlayDoubleClick() // 双击执行跨端程序唤醒
+                                onOverlayDoubleClick() // 双击执行程序唤醒 [1]
                             }
                             lastClickTime = clickTime
                         }
@@ -699,18 +700,17 @@ class AndroidMcp(private val context: Context) {
         })
     }
 
-    // 双击跨进程唤醒 MainActivity
+    // 双击悬浮窗：唤醒主程序 MainActivity
     private fun onOverlayDoubleClick() {
         Log.d(TAG, "onOverlayDoubleClick() called, waking up MainActivity")
         try {
             val intent = Intent(context, MainActivity::class.java).apply {
                 action = Intent.ACTION_MAIN
-                category = Intent.CATEGORY_LAUNCHER
+                addCategory(Intent.CATEGORY_LAUNCHER) // 修正：Kotlin标准调用API
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             }
             context.startActivity(intent)
 
-            // WebView 恢复活跃后，跨进程反向通过 JS 唤醒对话
             val handler = android.os.Handler(android.os.Looper.getMainLooper())
             handler.postDelayed({
                 mainActivity?.runOnUiThread {
