@@ -14,6 +14,7 @@
   <link rel="stylesheet" href="sticker.css">
   <link rel="stylesheet" href="deeptalk.css">
   <link rel="stylesheet" href="chat_html.css">
+  <link rel="stylesheet" href="desktop_pet.css">
   <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
   <style>
     /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
@@ -1280,27 +1281,72 @@
                         </div>
                       </div>
 
-                      <!-- 桌宠悬浮窗卡片 -->
+                      <!-- 升级版桌宠悬浮窗卡片 -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
                         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                           <h4 style="margin:0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
-                            🧸 系统桌面悬浮桌宠
+                            🧸 独立多状态悬浮桌宠
                           </h4>
                           <label class="switch">
-                            <input type="checkbox" id="settings-mcp-pet-toggle" onchange="mcpSystem.toggleDesktopPet(this)">
+                            <input type="checkbox" id="settings-mcp-pet-toggle" onchange="desktopPetSystem.togglePetActive(this)">
                             <span class="slider"></span>
                           </label>
                         </div>
-                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
-                          <button class="btn btn-outline" onclick="document.getElementById('mcp-pet-file-input').click()" style="flex:1; font-size: 11px; padding:6px; border-radius:8px; font-weight:600; cursor:pointer;">上传透明底 PNG</button>
-                          <input type="file" id="mcp-pet-file-input" accept="image/png" style="display:none;" onchange="mcpSystem.handlePetUpload(this)">
-                          <div id="mcp-pet-preview-box" style="width:36px; height:36px; border:1px dashed var(--border); border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#f8fafc;">
-                            <span style="font-size:8px; color:var(--text-secondary);">无图</span>
+                        
+                        <div style="font-size:11px; color:#e11d48; margin-bottom:8px; font-weight:700;" id="mcp-pet-char-warning">
+                          当前绑定角色：无 (请进入会话后配置)
+                        </div>
+
+                        <!-- 交互模式选择 -->
+                        <div style="margin-bottom:10px;">
+                          <label style="font-size:11px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:4px;">交互响应模式</label>
+                          <select id="mcp-pet-mode" style="width:100%; padding:6px; border:1.5px solid var(--border); border-radius:8px; font-size:12px;" onchange="desktopPetSystem.saveMcpUiSettings()">
+                            <option value="custom">自定义对话 (台词+概率)</option>
+                            <option value="api">实时生成 (大模型接口生成+动作)</option>
+                          </select>
+                        </div>
+
+                        <!-- 状态配置分发 -->
+                        <div style="background:#f8fafc; border:1px solid var(--border); border-radius:10px; padding:10px; margin-bottom:10px;">
+                          <label style="font-size:11px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:4px;">当前编辑状态状态</label>
+                          <select id="mcp-pet-state-select" style="width:100%; padding:6px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; margin-bottom:8px;" onchange="desktopPetSystem.onStateSelectChange()">
+                            <option value="default">初始化 (default)</option>
+                            <option value="happy">开心 (happy)</option>
+                            <option value="sad">难过 (sad)</option>
+                            <option value="angry">生气 (angry)</option>
+                            <option value="hesitant">犹豫 (hesitant)</option>
+                            <option value="wash">洗漱 (wash)</option>
+                            <option value="eat">吃饭 (eat)</option>
+                            <option value="sleep">睡觉 (sleep)</option>
+                            <option value="watch">看着你 (watch)</option>
+                          </select>
+
+                          <!-- 该状态图样管理 -->
+                          <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+                            <button class="btn btn-outline" onclick="document.getElementById('mcp-pet-state-file').click()" style="flex:1; font-size: 11px; padding:6px; border-radius:8px; font-weight:600; cursor:pointer;">上传此状态图</button>
+                            <input type="file" id="mcp-pet-state-file" accept="image/*" style="display:none;" onchange="desktopPetSystem.handleStateImageUpload(this)">
+                            <button class="btn btn-danger-outline" onclick="desktopPetSystem.clearStateImage()" style="font-size: 11px; padding:6px 10px; border-radius:8px; font-weight:600; color:#ef4444; border-color:#fca5a5;">清除</button>
+                            <div id="mcp-pet-state-preview" style="width:36px; height:36px; border:1px dashed var(--border); border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#ffffff; flex-shrink:0;">
+                              <span style="font-size:8px; color:var(--text-secondary);">无图</span>
+                            </div>
+                          </div>
+
+                          <!-- 仅在自定义模式下可见的台词/概率管理 -->
+                          <div id="mcp-pet-custom-fields">
+                            <div style="margin-bottom:8px;">
+                              <label style="font-size:11px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:2px;">出现概率权重 (0-100)</label>
+                              <input type="number" id="mcp-pet-state-prob" min="0" max="100" value="10" style="width:100%; padding:6px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; font-weight:700;" onchange="desktopPetSystem.saveMcpUiSettings()">
+                            </div>
+                            <div>
+                              <label style="font-size:11px; font-weight:600; color:var(--text-secondary); display:block; margin-bottom:2px;">触发台词 (每行一句)</label>
+                              <textarea id="mcp-pet-state-dialogues" rows="3" placeholder="触发此状态时的台词，每行一句" style="width:100%; border:1.5px solid var(--border); border-radius:8px; padding:6px; font-size:11px; resize:none;" onchange="desktopPetSystem.saveMcpUiSettings()"></textarea>
+                            </div>
                           </div>
                         </div>
+
                         <div style="display:flex; gap:8px; align-items:center;">
                           <span style="font-size:12px; color:var(--text-primary); font-weight:600;">桌宠大小：</span>
-                          <input type="range" id="mcp-pet-size-slider" min="60" max="250" value="100" style="flex:1;" oninput="mcpSystem.changePetSize(this.value)">
+                          <input type="range" id="mcp-pet-size-slider" min="60" max="250" value="100" style="flex:1;" oninput="desktopPetSystem.changePetSize(this.value)">
                           <span style="font-size:12px; color:var(--text-primary); font-weight:700;" id="mcp-pet-size-val">100dp</span>
                         </div>
                       </div>
@@ -2153,6 +2199,7 @@
   <script src="app_chat_html_widget.js"></script>
   <script src="app_chat_plot_engine.js"></script>
   <script src="app_chat_mcp.js"></script>
+  <script src="app_desktop_pet.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {
