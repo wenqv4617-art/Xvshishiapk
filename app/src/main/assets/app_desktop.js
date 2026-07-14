@@ -19,6 +19,11 @@ let isAppClickEventsInitialized = false;
       grid-template-rows: repeat(5, 1fr) !important;
       gap: 16px 12px !important;
       min-height: auto !important;
+      width: 100% !important;
+      max-width: 100% !important;
+      margin: 0 auto !important;
+      padding: 0 !important;
+      box-sizing: border-box !important;
     }
     #dock-grid {
       display: grid !important;
@@ -26,6 +31,9 @@ let isAppClickEventsInitialized = false;
       gap: 12px !important;
       align-items: center !important;
       width: 100% !important;
+      margin: 0 auto !important;
+      padding: 0 !important;
+      box-sizing: border-box !important;
     }
     
     /* 桌面和 Dock 的专属网格槽 */
@@ -40,6 +48,8 @@ let isAppClickEventsInitialized = false;
       box-sizing: border-box !important;
       border: 1.5px dashed transparent !important;
       position: relative !important;
+      margin: 0 !important;
+      padding: 0 !important;
     }
 
     /* 当槽位摆放了自定义小部件组件时，解除比例限制，由小部件本身的行高列宽完全决定占位大小 */
@@ -48,22 +58,40 @@ let isAppClickEventsInitialized = false;
       height: 100% !important;
     }
     
-    /* 拖拽悬浮过网格槽时的微高亮虚线提示 */
-    .desktop-slot.drag-over, .dock-slot.drag-over {
-      background-color: rgba(255, 255, 255, 0.15) !important;
-      border-color: rgba(255, 255, 255, 0.4) !important;
-    }
-    
     .app-icon {
-          user-select: none !important;
-          -webkit-user-select: none !important;
-          -webkit-user-drag: none !important;
-        }
-        .edit-mode .app-icon {
-          /* 仅在编辑模式下激活触控阻断，以便进行拖动重排 */
-          touch-action: none !important; 
-          cursor: grab;
-        }
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      justify-content: center !important;
+      text-align: center !important;
+      width: 100% !important;
+      height: 100% !important;
+      margin: 0 !important;
+      padding: 0 !important;
+      box-sizing: border-box !important;
+      user-select: none !important;
+      -webkit-user-select: none !important;
+      -webkit-user-drag: none !important;
+    }
+    .app-icon .icon-wrapper {
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      margin: 0 auto 6px auto !important;
+      box-sizing: border-box !important;
+    }
+    .app-icon span {
+      display: block !important;
+      width: 100% !important;
+      text-align: center !important;
+      margin: 0 auto !important;
+      box-sizing: border-box !important;
+    }
+    .edit-mode .app-icon {
+      /* 仅在编辑模式下激活触控阻断，以便进行拖动重排 */
+      touch-action: none !important; 
+      cursor: grab;
+    }
     .app-icon.dragging {
       opacity: 0.82;
       transform: scale(1.15) !important;
