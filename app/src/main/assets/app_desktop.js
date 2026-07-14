@@ -752,23 +752,27 @@ function initDragEvents() {
       dragPlaceholder.style.height = rectHeight + "px";
       originalParent.insertBefore(dragPlaceholder, activeIcon);
 
-      // 核心修复：开启拖动时，立刻将图标临时剪切追加到 document.body 顶层图层上！
-      // 这将 100% 避开 Dock 栏 .dock-container 的 backdrop-filter 的 Containing Block 限制
-      // 从而彻底封锁任何突变位移、缩回底下 and 偏离的 Bug
-      document.body.appendChild(activeIcon);
+      // 核心修复：开启拖动时，将图标临时剪切追加到 #phone-container 顶层图层上！
+      // 这将完美避开 Dock 栏 .dock-container 的 backdrop-filter 的 Containing Block 限制
+      // 同时也避开了 body 层 flexbox 布局对图标尺寸的强制拉伸，一箭双雕！
+      const phoneContainer = document.getElementById("phone-container");
+      if (phoneContainer) {
+        phoneContainer.appendChild(activeIcon);
+      }
 
-      activeIcon.style.position = "fixed";
-      activeIcon.style.width = "72px"; // 锁定标准稳定宽度，配合 scale 打消长条卡片拉伸
+      activeIcon.style.position = "absolute";
+      activeIcon.style.width = "72px"; // 锁定标准稳定宽度
       activeIcon.style.height = "auto";
       activeIcon.style.zIndex = "9999";
-      // 极其关键：将 pointerEvents 设为 none，才能让 document.elementFromPoint 穿透探测到它底下的网格元素！
       activeIcon.style.pointerEvents = "none"; 
     }
 
     if (isDragging) {
-      // 核心优化：让图标 1:1 绝对居中于手指和触控笔，完美跟手不丢失
-      activeIcon.style.left = (e.clientX - 36) + "px"; // 36 为 72 / 2 的中心点
-      activeIcon.style.top = (e.clientY - 42) + "px";  // 42 约为整体高度的一半
+      // 核心优化：让图标 1:1 结合 #phone-container 的绝对坐标，实现高精度非弹性跟随
+      const phoneContainer = document.getElementById("phone-container");
+      const phoneRect = phoneContainer ? phoneContainer.getBoundingClientRect() : { left: 0, top: 0 };
+      activeIcon.style.left = (e.clientX - phoneRect.left - 36) + "px"; // 36 为 72 / 2 的中心点
+      activeIcon.style.top = (e.clientY - phoneRect.top - 42) + "px";  // 42 约为整体高度的一半
 
       // 动态获取划过处的网格槽
       const targetElement = document.elementFromPoint(e.clientX, e.clientY);
@@ -957,6 +961,13 @@ function initDesktopSwipeEvents() {
       }
     }
   });
+
+  // 核心阻断：向整个桌面绑定 touchmove 的拦截器，并强行阻断默认回弹，确保真机 pointermove 的手势事件不被系统蚕食丢包 [1]
+  desktop.addEventListener("touchmove", (e) => {
+    if (isSwipingDesktop) {
+      e.preventDefault();
+    }
+  }, { passive: false });
 
   document.addEventListener("pointercancel", () => {
     isSwipingDesktop = false;
