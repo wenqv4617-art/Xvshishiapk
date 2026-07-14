@@ -2,8 +2,10 @@ package com.story.phone
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -13,39 +15,91 @@ import android.media.MediaPlayer
 import java.io.File
 import java.io.FileWriter
 import org.json.JSONArray
+import androidx.core.content.ContextCompat
 
 class AndroidMcp(private val context: Context) {
 
     private var mediaPlayer: MediaPlayer? = null
-    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     @JavascriptInterface
     fun toggleBackgroundWakeLock(enabled: Boolean) {
         try {
             val serviceIntent = Intent(context, McpForegroundService::class.java)
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
             if (enabled) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    context.startForegroundService(serviceIntent)
-                } else {
-                    context.startService(serviceIntent)
+                // ★ 修复点1：Android 13+ 必须先检查通知权限再启动前台服务
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
+                        != PackageManager.PERMISSION_GRANTED) {
+                        // 权限不足时，回退到只获取 WakeLock，不启动前台服务（不闪退）
+                        acquireWakeLockOnly(powerManager)
+                        return
+                    }
                 }
-                if (wakeLock == null) {
-                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "StoryPhone::BackgroundWakeLock")
+                // ★ 修复点2：安全启动前台服务，外层 try-catch 兜底
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        context.startForegroundService(serviceIntent)
+                    } else {
+                        context.startService(serviceIntent)
+                    }
+                } catch (e: Exception) {
+                    // 如果前台服务启动失败，降级为只获取 WakeLock
+                    acquireWakeLockOnly(powerManager)
+                    e.printStackTrace()
+                    return
                 }
-                if (wakeLock?.isHeld == false) {
-                    wakeLock?.acquire()
-                }
+                // ★ 修复点3：WakeLock 加超时释放，防止内存泄漏
+                acquireWakeLock(powerManager)
             } else {
-                context.stopService(serviceIntent)
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
+                try {
+                    context.stopService(serviceIntent)
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-                wakeLock = null
+                releaseWakeLock()
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    // ★ 修复辅助方法：带超时的 WakeLock 获取
+    private fun acquireWakeLock(powerManager: PowerManager) {
+        if (wakeLock == null) {
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "StoryPhone::BackgroundWakeLock"
+            )
+        }
+        if (wakeLock?.isHeld == false) {
+            wakeLock?.acquire(10 * 60 * 1000L) // 10分钟超时自动释放，防止常驻泄漏
+        }
+    }
+
+    // ★ 修复辅助方法：仅获取 WakeLock（前台服务启动失败时降级用）
+    private fun acquireWakeLockOnly(powerManager: PowerManager) {
+        if (wakeLock == null) {
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "StoryPhone::BackgroundWakeLock"
+            )
+        }
+        if (wakeLock?.isHeld == false) {
+            wakeLock?.acquire(10 * 60 * 1000L)
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        wakeLock = null
     }
 
     @JavascriptInterface
