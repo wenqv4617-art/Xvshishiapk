@@ -2,10 +2,8 @@ package com.story.phone
 
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
-import android.os.PowerManager
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
@@ -15,91 +13,40 @@ import android.media.MediaPlayer
 import java.io.File
 import java.io.FileWriter
 import org.json.JSONArray
-import androidx.core.content.ContextCompat
+import org.json.JSONObject
 
 class AndroidMcp(private val context: Context) {
 
     private var mediaPlayer: MediaPlayer? = null
-    private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     @JavascriptInterface
     fun toggleBackgroundWakeLock(enabled: Boolean) {
         try {
             val serviceIntent = Intent(context, McpForegroundService::class.java)
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             if (enabled) {
-                // ★ 修复点1：Android 13+ 必须先检查通知权限再启动前台服务
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
-                        != PackageManager.PERMISSION_GRANTED) {
-                        // 权限不足时，回退到只获取 WakeLock，不启动前台服务（不闪退）
-                        acquireWakeLockOnly(powerManager)
-                        return
-                    }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
                 }
-                // ★ 修复点2：安全启动前台服务，外层 try-catch 兜底
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        context.startForegroundService(serviceIntent)
-                    } else {
-                        context.startService(serviceIntent)
-                    }
-                } catch (e: Exception) {
-                    // 如果前台服务启动失败，降级为只获取 WakeLock
-                    acquireWakeLockOnly(powerManager)
-                    e.printStackTrace()
-                    return
+                if (wakeLock == null) {
+                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "StoryPhone::BackgroundWakeLock")
                 }
-                // ★ 修复点3：WakeLock 加超时释放，防止内存泄漏
-                acquireWakeLock(powerManager)
+                if (wakeLock?.isHeld == false) {
+                    wakeLock?.acquire()
+                }
             } else {
-                try {
-                    context.stopService(serviceIntent)
-                } catch (e: Exception) {
-                    e.printStackTrace()
+                context.stopService(serviceIntent)
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
                 }
-                releaseWakeLock()
+                wakeLock = null
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
-    }
-
-    // ★ 修复辅助方法：带超时的 WakeLock 获取
-    private fun acquireWakeLock(powerManager: PowerManager) {
-        if (wakeLock == null) {
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "StoryPhone::BackgroundWakeLock"
-            )
-        }
-        if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(10 * 60 * 1000L) // 10分钟超时自动释放，防止常驻泄漏
-        }
-    }
-
-    // ★ 修复辅助方法：仅获取 WakeLock（前台服务启动失败时降级用）
-    private fun acquireWakeLockOnly(powerManager: PowerManager) {
-        if (wakeLock == null) {
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "StoryPhone::BackgroundWakeLock"
-            )
-        }
-        if (wakeLock?.isHeld == false) {
-            wakeLock?.acquire(10 * 60 * 1000L)
-        }
-    }
-
-    private fun releaseWakeLock() {
-        try {
-            if (wakeLock?.isHeld == true) {
-                wakeLock?.release()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        wakeLock = null
     }
 
     @JavascriptInterface
@@ -167,7 +114,7 @@ class AndroidMcp(private val context: Context) {
         return dir
     }
 
-    // 1. 物理数据导出直写至真机：/Download/Storypoem/ (解决 PWA WebView 下载失灵) [1]
+    // 1. 物理数据导出直写至真机：/Download/Storypoem/
     @JavascriptInterface
     fun saveBackupFile(jsonString: String, fileName: String): Boolean {
         return try {
@@ -182,7 +129,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 2. 静默读取真机 /Music/Storypoem 目录下的本地歌单列表 [1]
+    // 2. 静默读取真机 /Music/Storypoem 目录下的本地歌单列表
     @JavascriptInterface
     fun scanLocalMusicFolder(): String {
         val jsonArray = JSONArray()
@@ -200,7 +147,7 @@ class AndroidMcp(private val context: Context) {
         return jsonArray.toString()
     }
 
-    // 3. Android 原生 MediaPlayer 后台音乐播放器 (解决浏览器同源限制并支持锁屏后台不中断) [1]
+    // 3. Android 原生 MediaPlayer 后台音乐播放器
     @JavascriptInterface
     fun playNativeMusic(songName: String): Boolean {
         return try {
@@ -243,7 +190,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 4. 安卓真机马达物理震动桥接 (支持 12 及以上新版和旧版震动)
+    // 4. 安卓真机马达物理震动桥接
     @JavascriptInterface
     fun triggerHardwareVibrator(milliseconds: Long) {
         try {
@@ -260,7 +207,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 5. 调起系统通知监听设置页 (OperitAI同款权限，让未来可以静默查收微信等真实系统通知)
+    // 5. 调起系统通知监听设置页
     @JavascriptInterface
     fun requestNotificationPermission() {
         try {
@@ -273,7 +220,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 6. 调起安卓系统无障碍辅助设置页 (无障碍自动化发信基础)
+    // 6. 调起安卓系统无障碍辅助设置页
     @JavascriptInterface
     fun requestAccessibilityPermission() {
         try {
@@ -286,7 +233,7 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 7. 原生写入真机物理闹钟 (无需 Termux，APK 拥有高特权 Intent 直写)
+    // 7. 原生写入真机物理闹钟
     @JavascriptInterface
     fun setAndroidSystemAlarm(hour: Int, minute: Int, message: String) {
         try {
@@ -294,7 +241,7 @@ class AndroidMcp(private val context: Context) {
                 putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
                 putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
                 putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, message)
-                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true) // 不弹出系统界面，静默设定
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
@@ -310,6 +257,70 @@ class AndroidMcp(private val context: Context) {
     private var bgPollTimer: java.util.Timer? = null
     private var floatPetView: android.view.View? = null
 
+    // ============================================================
+    //  后台主动发信 — Kotlin 层直接发 HTTP 请求（绕过 WebView 冻结）
+    // ============================================================
+
+    // 存储前端注册的 API 配置
+    private var bgApiUrl: String = ""
+    private var bgApiKey: String = ""
+    private var bgApiModel: String = ""
+
+    // 待发送消息队列（线程安全）
+    private val pendingMessages = mutableListOf<String>()
+    private var bgSendInProgress = false
+
+    // 后台发信结果暂存
+    private var lastBgResultJson: String? = null
+
+    /**
+     * 前端注册 API 配置到 Kotlin 层（由 toggleActiveMessage 调用）
+     */
+    @JavascriptInterface
+    fun registerBgApiConfig(jsonConfig: String) {
+        try {
+            val config = JSONObject(jsonConfig)
+            bgApiUrl = config.optString("url", "")
+            bgApiKey = config.optString("key", "")
+            bgApiModel = config.optString("model", "")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * 前端推送一条待发送消息到 Kotlin 队列
+     */
+    @JavascriptInterface
+    fun pushBgMessage(message: String) {
+        synchronized(pendingMessages) {
+            pendingMessages.add(message)
+        }
+    }
+
+    /**
+     * 前端查询待发送队列长度
+     */
+    @JavascriptInterface
+    fun getBgPendingCount(): Int {
+        synchronized(pendingMessages) {
+            return pendingMessages.size
+        }
+    }
+
+    /**
+     * 前端消费（拉取）后台发信结果，返回后自动清空
+     */
+    @JavascriptInterface
+    fun pollBgResult(): String? {
+        val result = lastBgResultJson
+        lastBgResultJson = null
+        return result
+    }
+
+    /**
+     * 启动后台轮询发信（定时器在 Kotlin 层直接发 HTTP，不依赖 WebView）
+     */
     @JavascriptInterface
     fun startBackgroundPolling(intervalMinutes: Int) {
         try {
@@ -317,18 +328,75 @@ class AndroidMcp(private val context: Context) {
             bgPollTimer = java.util.Timer().apply {
                 scheduleAtFixedRate(object : java.util.TimerTask() {
                     override fun run() {
-                        val handler = android.os.Handler(android.os.Looper.getMainLooper())
-                        handler.post {
+                        // 如果没有待发消息或正在发送，跳过本轮
+                        val message: String
+                        synchronized(pendingMessages) {
+                            if (pendingMessages.isEmpty() || bgSendInProgress) return
+                            message = pendingMessages.removeFirst()
+                            bgSendInProgress = true
+                        }
+
+                        try {
+                            // 检查 API 配置是否已注册
+                            val apiUrl = bgApiUrl
+                            val apiKey = bgApiKey
+                            val apiModel = bgApiModel
+                            if (apiUrl.isEmpty() || apiKey.isEmpty()) {
+                                storeBgResult(400, "{\"error\":\"API 配置未注册，请先在 MCP 面板开启后台主动发信\"}")
+                                return
+                            }
+
+                            // 构造请求体：兼容 OpenAI 格式
+                            val requestBody = JSONObject().apply {
+                                put("model", apiModel)
+                                put("messages", JSONArray().apply {
+                                    put(JSONObject().apply {
+                                        put("role", "user")
+                                        put("content", message)
+                                    })
+                                })
+                                put("stream", false)
+                            }
+
+                            // Kotlin 层直接用 HttpURLConnection 发请求
+                            val conn = java.net.URL(apiUrl).openConnection() as java.net.HttpURLConnection
                             try {
-                                val webView = getWebView()
-                                webView?.evaluateJavascript("javascript:if(window.mcpSystem && typeof window.mcpSystem.triggerBackgroundActiveMessage === 'function') { window.mcpSystem.triggerBackgroundActiveMessage(); }", null)
-                            } catch (e: Exception) {
-                                e.printStackTrace()
+                                conn.requestMethod = "POST"
+                                conn.setRequestProperty("Content-Type", "application/json")
+                                conn.setRequestProperty("Authorization", "Bearer $apiKey")
+                                conn.doOutput = true
+                                conn.connectTimeout = 15000
+                                conn.readTimeout = 60000
+
+                                conn.outputStream.use { os ->
+                                    os.write(requestBody.toString().toByteArray(Charsets.UTF_8))
+                                }
+
+                                val responseCode = conn.responseCode
+                                val responseBody = if (responseCode in 200..299) {
+                                    conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                                } else {
+                                    val errorBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
+                                    "{\"error\":\"HTTP $responseCode\",\"body\":${JSONObject.quote(errorBody)}}"
+                                }
+
+                                storeBgResult(responseCode, responseBody)
+                            } finally {
+                                conn.disconnect()
+                            }
+                        } catch (e: Exception) {
+                            storeBgResult(0, "{\"error\":${JSONObject.quote(e.message ?: e.toString())}}")
+                            e.printStackTrace()
+                        } finally {
+                            synchronized(pendingMessages) {
+                                bgSendInProgress = false
                             }
                         }
                     }
                 }, intervalMinutes * 60 * 1000L, intervalMinutes * 60 * 1000L)
             }
+            // 存入标记供前端拉取
+            storeBgResult(0, "{\"info\":\"background_polling_started\",\"interval_minutes\":$intervalMinutes}")
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -339,10 +407,26 @@ class AndroidMcp(private val context: Context) {
         try {
             bgPollTimer?.cancel()
             bgPollTimer = null
+            synchronized(pendingMessages) {
+                bgSendInProgress = false
+            }
+            storeBgResult(0, "{\"info\":\"background_polling_stopped\"}")
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
+
+    private fun storeBgResult(code: Int, bodyJson: String) {
+        lastBgResultJson = JSONObject().apply {
+            put("code", code)
+            put("body", bodyJson)
+            put("timestamp", System.currentTimeMillis())
+        }.toString()
+    }
+
+    // ============================================================
+    //  桌面悬浮桌宠
+    // ============================================================
 
     @JavascriptInterface
     fun checkOverlayPermission(): Boolean {
