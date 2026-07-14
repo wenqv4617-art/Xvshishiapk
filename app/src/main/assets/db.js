@@ -1,8 +1,8 @@
 // db.js - 初始化本地 IndexedDB 数据库
 const db = new Dexie("StoryPhoneDatabase");
 
-// 声明表结构 (升级至 Version 10 增加 HTML 互动卡片存储系统)
-db.version(10).stores({
+// 声明表结构 (升级至 Version 11 增加独立多状态悬浮桌宠系统)
+db.version(11).stores({
   api_presets: 'id++, name, protocol, url, key, model, temperature',
   archives: 'id++, type, name, avatar, remark, group, persona, parentId', 
   relations: 'id++, fromId, toId, relation',
@@ -42,5 +42,8 @@ db.version(10).stores({
   moment_settings: 'id++, userId',
 
   // === Version 10 新增：HTML 互动卡片存储表 ===
-  html_cards: 'id++, sessionId, timestamp'
+  html_cards: 'id++, sessionId, timestamp',
+
+  // === Version 11 新增：独立悬浮多状态桌宠存储表 ===
+  desktop_pets: 'charId, mode'
 });
