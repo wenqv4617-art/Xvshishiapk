@@ -17,6 +17,7 @@ function initSettingsApp() {
   loadBeautifyForm();
   loadDeeptalkPresetsList(); // 初始化载入深谈预设
   initVConsoleSetting();     // 初始化调试控制台开关状态
+  initBackgroundSetting();   // 初始化后台运行开关状态
 
   // 绑定：二级面板中深谈预设设置的保存、删除与表单反馈
   document.getElementById("btn-save-deeptalk-preset").onclick = saveDeeptalkPreset;
@@ -1472,5 +1473,32 @@ function applyVConsoleState(enabled, isFirstLoad) {
       window.vConsoleInstance = null;
       if (!isFirstLoad) showToast("调试控制台已关闭");
     }
+  }
+}
+
+function initBackgroundSetting() {
+  const toggle = document.getElementById("settings-background-toggle");
+  if (!toggle) return;
+
+  const isEnabled = localStorage.getItem("settings-background-enabled") === "true";
+  toggle.checked = isEnabled;
+
+  applyBackgroundState(isEnabled, true);
+
+  toggle.onchange = (e) => {
+    const enabled = e.target.checked;
+    localStorage.setItem("settings-background-enabled", enabled ? "true" : "false");
+    applyBackgroundState(enabled, false);
+  };
+}
+
+function applyBackgroundState(enabled, isFirstLoad) {
+  if (window.AndroidMCP && typeof window.AndroidMCP.toggleBackgroundWakeLock === 'function') {
+    window.AndroidMCP.toggleBackgroundWakeLock(enabled);
+    if (!isFirstLoad) {
+      showToast(enabled ? "后台休眠已锁定，系统通知功能已就绪" : "后台运行已关闭");
+    }
+  } else {
+    if (!isFirstLoad) showToast("当前非真机特权环境，无法开启系统不休眠锁定");
   }
 }
