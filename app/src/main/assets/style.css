@@ -136,16 +136,18 @@ body {
   height: 24px;
 }
 .page-dot {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
-  background-color: rgba(100, 116, 139, 0.4);
+  background-color: rgba(148, 163, 184, 0.4); /* 柔和未选中灰色 */
   cursor: pointer;
-  transition: background-color 0.2s, transform 0.2s;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .page-dot.active {
-  background-color: var(--primary);
-  transform: scale(1.2);
+  width: 18px; /* 选中时演变为小长条 */
+  height: 6px;
+  border-radius: 3px;
+  background-color: rgba(71, 85, 105, 0.85); /* 优雅的深石板灰色 */
 }
 .page-add-btn {
   width: 20px;
