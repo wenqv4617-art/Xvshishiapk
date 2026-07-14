@@ -65,8 +65,8 @@ let isAppClickEventsInitialized = false;
       align-items: center !important;
       justify-content: center !important;
       text-align: center !important;
-      width: 100% !important;
-      height: 100% !important;
+      width: 72px !important; /* 核心修正：固定宽度为标准的72px，绝不使用 100% 从而杜绝追加到body时膨胀 */
+      height: auto !important; /* 核心修正：高度完全自适应，绝不使用 100% 从而杜绝追加到body时膨胀 */
       margin: 0 !important;
       padding: 0 !important;
       box-sizing: border-box !important;
