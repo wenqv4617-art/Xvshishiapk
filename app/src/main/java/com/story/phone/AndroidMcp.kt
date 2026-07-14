@@ -700,26 +700,16 @@ class AndroidMcp(private val context: Context) {
         })
     }
 
-    // 双击悬浮窗：唤醒主程序 MainActivity
+// 双击真机悬浮窗：直接在后台安全评估 JS，不再强制启动 Activity 调起前台 [1]
     private fun onOverlayDoubleClick() {
-        Log.d(TAG, "onOverlayDoubleClick() called, waking up MainActivity")
+        Log.d(TAG, "onOverlayDoubleClick() called, executing JS quietly in background")
         try {
-            val intent = Intent(context, MainActivity::class.java).apply {
-                action = Intent.ACTION_MAIN
-                addCategory(Intent.CATEGORY_LAUNCHER) // 修正：Kotlin标准调用API
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            mainActivity?.runOnUiThread {
+                getWebView()?.evaluateJavascript(
+                    "javascript:if(window.desktopPetSystem) { window.desktopPetSystem.handleDoubleClickBackground(); }",
+                    null
+                )
             }
-            context.startActivity(intent)
-
-            val handler = android.os.Handler(android.os.Looper.getMainLooper())
-            handler.postDelayed({
-                mainActivity?.runOnUiThread {
-                    getWebView()?.evaluateJavascript(
-                        "javascript:if(window.desktopPetSystem) { window.desktopPetSystem.handleDoubleClick(); }",
-                        null
-                    )
-                }
-            }, 300)
         } catch (e: Exception) {
             e.printStackTrace()
         }
