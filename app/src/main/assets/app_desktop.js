@@ -93,6 +93,8 @@ let isAppClickEventsInitialized = false;
       cursor: grab;
     }
     .app-icon.dragging {
+      width: 72px !important;
+      height: auto !important;
       opacity: 0.82;
       transform: scale(1.15) !important;
       box-shadow: 0 10px 25px rgba(0,0,0,0.2) !important;
