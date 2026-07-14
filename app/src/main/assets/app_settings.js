@@ -921,6 +921,16 @@ async function clearAllAppData() {
       await db.status_history.clear();
       await db.sticker_groups.clear();
       await db.sticker_items.clear();
+      await db.summaries.clear();
+      await db.deeptalks.clear();
+      await db.deeptalk_messages.clear();
+      await db.deeptalk_thoughts.clear();
+      await db.deeptalk_presets.clear();
+      await db.moments.clear();
+      await db.moment_comments.clear();
+      await db.moment_settings.clear();
+      await db.html_cards.clear();
+      await db.desktop_pets.clear();
       
       localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1113,7 +1123,7 @@ async function computeStorageUsage() {
     const status_history = await db.status_history.toArray();
     const sticker_groups = await db.sticker_groups.toArray();
     const sticker_items = await db.sticker_items.toArray();
-    // 增加深谈、朋友圈容量统筹计算
+    const summaries = await db.summaries.toArray();
     const deeptalks = await db.deeptalks.toArray();
     const deeptalk_messages = await db.deeptalk_messages.toArray();
     const deeptalk_thoughts = await db.deeptalk_thoughts.toArray();
@@ -1121,13 +1131,16 @@ async function computeStorageUsage() {
     const moments = await db.moments.toArray();
     const moment_comments = await db.moment_comments.toArray();
     const moment_settings = await db.moment_settings.toArray();
+    const html_cards = await db.html_cards.toArray();
+    const desktop_pets = await db.desktop_pets.toArray();
 
     const totalRecords = api_presets.length + archives.length + relations.length + 
                          sessions.length + messages.length + world_book_entries.length + 
                          theaters.length + offline_messages.length + status_history.length + 
-                         sticker_groups.length + sticker_items.length +
+                         sticker_groups.length + sticker_items.length + summaries.length +
                          deeptalks.length + deeptalk_messages.length + deeptalk_thoughts.length + deeptalk_presets.length +
-                         moments.length + moment_comments.length + moment_settings.length;
+                         moments.length + moment_comments.length + moment_settings.length +
+                         html_cards.length + desktop_pets.length;
                          
     document.getElementById("db-total-records").innerText = totalRecords;
 
@@ -1146,7 +1159,9 @@ async function computeStorageUsage() {
     const fullDataObj = { 
       api_presets, archives, relations, sessions, messages, 
       world_book_entries, theaters, offline_messages, status_history, 
-      sticker_groups, sticker_items 
+      sticker_groups, sticker_items, summaries,
+      deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
+      moments, moment_comments, moment_settings, html_cards, desktop_pets
     };
     const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
@@ -1241,7 +1256,7 @@ async function exportBackup() {
       status_history: await db.status_history.toArray(),
       sticker_groups: await db.sticker_groups.toArray(),
       sticker_items: await db.sticker_items.toArray(),
-      // 导出深谈、朋友圈表的数据
+      summaries: await db.summaries.toArray(),
       deeptalks: await db.deeptalks.toArray(),
       deeptalk_messages: await db.deeptalk_messages.toArray(),
       deeptalk_thoughts: await db.deeptalk_thoughts.toArray(),
@@ -1249,6 +1264,8 @@ async function exportBackup() {
       moments: await db.moments.toArray(),
       moment_comments: await db.moment_comments.toArray(),
       moment_settings: await db.moment_settings.toArray(),
+      html_cards: await db.html_cards.toArray(),
+      desktop_pets: await db.desktop_pets.toArray(),
       localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1319,9 +1336,9 @@ async function importBackup(e) {
       await db.transaction('rw', [
         db.api_presets, db.archives, db.relations, db.sessions, db.messages, 
         db.world_book_entries, db.theaters, db.offline_messages, db.status_history,
-        db.sticker_groups, db.sticker_items,
+        db.sticker_groups, db.sticker_items, db.summaries,
         db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
-        db.moments, db.moment_comments, db.moment_settings // 增加朋友圈 3 张表的 rw 锁，防止死锁崩溃 [1]
+        db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets // 增加全部 21 张物理表的 rw 锁，防止因事务漏锁引起闪退 [1]
       ], async () => {
         if (data.api_presets) {
           await db.api_presets.clear();
@@ -1367,7 +1384,10 @@ async function importBackup(e) {
           await db.sticker_items.clear();
           await db.sticker_items.bulkAdd(data.sticker_items);
         }
-        // 反向写入深谈 4 表
+        if (data.summaries) {
+          await db.summaries.clear();
+          await db.summaries.bulkAdd(data.summaries);
+        }
         if (data.deeptalks) {
           await db.deeptalks.clear();
           await db.deeptalks.bulkAdd(data.deeptalks);
@@ -1395,6 +1415,14 @@ async function importBackup(e) {
         if (data.moment_settings) {
           await db.moment_settings.clear();
           await db.moment_settings.bulkAdd(data.moment_settings);
+        }
+        if (data.html_cards) {
+          await db.html_cards.clear();
+          await db.html_cards.bulkAdd(data.html_cards);
+        }
+        if (data.desktop_pets) {
+          await db.desktop_pets.clear();
+          await db.desktop_pets.bulkAdd(data.desktop_pets);
         }
       });
       
