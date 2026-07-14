@@ -131,12 +131,13 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   loadDesktopLayout();
-  
-  // 核心：在初始化加载生命周期中，对点击和拖拽手势进行且仅进行单次安全绑定
-  initAppClickEvents();
-  initDragEvents();
-  
-  applyGlobalSettingsOnLoad(); // 启动时应用壁纸与全局自定义 CSS
+          
+          // 核心：在初始化加载生命周期中，对点击和拖拽手势进行且仅进行单次安全绑定
+          initAppClickEvents();
+          initDragEvents();
+          initDesktopSwipeEvents(); // 绑定手动滑动翻页事件
+          
+          applyGlobalSettingsOnLoad(); // 启动时应用壁纸与全局自定义 CSS
   
   // 初始化手机默认底栏颜色
   updateThemeColor("#f4f6fa");
@@ -535,19 +536,44 @@ function initDragEvents() {
   let isDragging = false;
   let originalParent = null;
   let dragPlaceholder = null;
-  let longPressTimer = null; // 用于侦测长按以进入编辑模式
+  let longPressTimer = null; // 用于侦测长按阶段1 (1s)
+  let longPressTimer2 = null; // 用于侦测长按阶段2 (0.5s)
+  let longPressTarget = null; // 缓存当前长按的DOM节点以进行视觉反馈
 
   document.addEventListener("pointerdown", (e) => {
     const icon = e.target.closest(".app-icon");
     const widget = e.target.closest(".desktop-widget-container");
 
     if (longPressTimer) clearTimeout(longPressTimer);
+    if (longPressTimer2) clearTimeout(longPressTimer2);
+    if (longPressTarget) {
+      longPressTarget.style.transform = "";
+      longPressTarget.style.transition = "";
+      longPressTarget = null;
+    }
 
     // 在桌面空置或图标、组件卡片上长按，确认调起编辑模式
     if (icon || widget) {
+      startX = e.clientX;
+      startY = e.clientY;
+      longPressTarget = icon || widget;
       longPressTimer = setTimeout(() => {
-        enterDesktopEditMode();
-      }, 700);
+        if (longPressTarget) {
+          longPressTarget.style.transition = "transform 0.15s ease";
+          longPressTarget.style.transform = "scale(0.92)"; // 微微下陷
+          if (typeof showToast === "function") {
+            showToast("再长按0.5秒进入编辑模式");
+          }
+        }
+        longPressTimer2 = setTimeout(() => {
+          if (longPressTarget) {
+            longPressTarget.style.transform = "";
+            longPressTarget.style.transition = "";
+            longPressTarget = null;
+          }
+          enterDesktopEditMode();
+        }, 500);
+      }, 1000); // 阶段1: 1.0秒后开始下陷并提示
     }
 
     if (!icon) return;
@@ -576,14 +602,20 @@ function initDragEvents() {
   });
 
   document.addEventListener("pointermove", (e) => {
-    if (!activeIcon) return;
-
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
 
     if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
       if (longPressTimer) clearTimeout(longPressTimer);
+      if (longPressTimer2) clearTimeout(longPressTimer2);
+      if (longPressTarget) {
+        longPressTarget.style.transform = "";
+        longPressTarget.style.transition = "";
+        longPressTarget = null;
+      }
     }
+
+    if (!activeIcon) return;
 
     // 当位移大于 8px 时，锁定当前为拖动行为
     if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
@@ -635,6 +667,12 @@ function initDragEvents() {
 
   document.addEventListener("pointerup", (e) => {
     if (longPressTimer) clearTimeout(longPressTimer);
+    if (longPressTimer2) clearTimeout(longPressTimer2);
+    if (longPressTarget) {
+      longPressTarget.style.transform = "";
+      longPressTarget.style.transition = "";
+      longPressTarget = null;
+    }
     if (!activeIcon) return;
 
     if (isDragging) {
@@ -686,6 +724,66 @@ function initDragEvents() {
     activeIcon = null;
     isDragging = false;
     dragPlaceholder = null;
+  });
+}
+
+// 桌面滑屏翻页控制引擎 (一次仅翻一页)
+function initDesktopSwipeEvents() {
+  const desktop = document.getElementById("desktop");
+  if (!desktop) return;
+
+  let swipeStartX = 0;
+  let swipeStartY = 0;
+  let isSwipingDesktop = false;
+
+  desktop.addEventListener("pointerdown", (e) => {
+    // 过滤对图标、组件以及各种按钮的点击操作，防止干扰应用常态手势
+    if (
+      e.target.closest(".app-icon") || 
+      e.target.closest(".desktop-widget-container") || 
+      e.target.closest("button") || 
+      e.target.closest(".widget-add-badge") || 
+      e.target.closest(".widget-delete-badge")
+    ) {
+      return;
+    }
+    isSwipingDesktop = true;
+    swipeStartX = e.clientX;
+    swipeStartY = e.clientY;
+    if (desktop.setPointerCapture) {
+      desktop.setPointerCapture(e.pointerId);
+    }
+  });
+
+  desktop.addEventListener("pointerup", (e) => {
+    if (!isSwipingDesktop) return;
+    isSwipingDesktop = false;
+
+    const deltaX = e.clientX - swipeStartX;
+    const deltaY = e.clientY - swipeStartY;
+
+    // 严防斜向无意识滑动干扰，限制 Y 轴偏离值在安全容错范围内
+    if (Math.abs(deltaY) < 80) {
+      let desktopLayout = [];
+      try {
+        desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+      } catch (err) {}
+      const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+
+      if (deltaX < -50) {
+        // 向左滑 -> 进入下一页
+        if (currentDesktopPage < pageCount - 1) {
+          currentDesktopPage++;
+          loadDesktopLayout();
+        }
+      } else if (deltaX > 50) {
+        // 向右滑 -> 进入上一页
+        if (currentDesktopPage > 0) {
+          currentDesktopPage--;
+          loadDesktopLayout();
+        }
+      }
+    }
   });
 }
 
