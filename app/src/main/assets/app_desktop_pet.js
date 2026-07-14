@@ -236,7 +236,7 @@
       }, duration);
     },
 
-    // 双击触发灵魂唤醒对话
+    // 双击触发灵魂唤醒对话（当在应用内部双击时调用，会切入 WeChat 对话）
     handleDoubleClick: async function() {
       if (!this.activeCharId) return;
 
@@ -246,6 +246,17 @@
           openWeChatDialog(list[0].id);
         }
       }
+
+      if (this.currentPetConfig.mode === 'api') {
+        await this.triggerApiInteraction();
+      } else {
+        this.triggerCustomInteraction();
+      }
+    },
+
+    // 核心新增：系统桌面双击时的后台静默对话（不唤醒/不更改应用内 WeChat 主窗口） [1]
+    handleDoubleClickBackground: async function() {
+      if (!this.activeCharId) return;
 
       if (this.currentPetConfig.mode === 'api') {
         await this.triggerApiInteraction();
