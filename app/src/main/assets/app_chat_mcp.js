@@ -31,6 +31,20 @@
       const toggle = document.getElementById("settings-mcp-prompt-toggle");
       if (toggle) toggle.checked = isMcpEnabled;
 
+      const isActiveMsgEnabled = localStorage.getItem("settings-mcp-active-msg-enabled") === "true";
+      const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
+      if (activeMsgToggle) activeMsgToggle.checked = isActiveMsgEnabled;
+
+      const isPetEnabled = localStorage.getItem("settings-mcp-pet-enabled") === "true";
+      const petToggle = document.getElementById("settings-mcp-pet-toggle");
+      if (petToggle) petToggle.checked = isPetEnabled;
+
+      const petImage = localStorage.getItem("mcp-desktop-pet-image");
+      const previewBox = document.getElementById("mcp-pet-preview-box");
+      if (previewBox && petImage) {
+        previewBox.innerHTML = `<img src="${petImage}" style="width:100%; height:100%; object-fit:contain;">`;
+      }
+
       // 回显本地扫描出的物理歌单 [1]
       const listEl = document.getElementById("mcp-playlist-list");
       if (listEl) {
@@ -241,6 +255,104 @@
       const mins = Math.floor(activeSeconds / 60);
       const secs = activeSeconds % 60;
       document.getElementById("mcp-screentime-val").innerText = `${mins} 分钟 ${secs} 秒`;
+    },
+
+    // 6. 后台主动发信控制
+    toggleActiveMessage: function(toggleEl) {
+      const isEnabled = toggleEl.checked;
+      localStorage.setItem("settings-mcp-active-msg-enabled", isEnabled ? "true" : "false");
+      if (isEnabled) {
+        const interval = parseInt(document.getElementById("mcp-active-msg-interval").value) || 10;
+        if (window.AndroidMCP && typeof window.AndroidMCP.startBackgroundPolling === 'function') {
+          window.AndroidMCP.startBackgroundPolling(interval);
+          showToast(`后台主动发信服务已开启，每隔 ${interval} 分钟触发一次`);
+        } else {
+          showToast("后台主动发信已模拟开启");
+        }
+      } else {
+        if (window.AndroidMCP && typeof window.AndroidMCP.stopBackgroundPolling === 'function') {
+          window.AndroidMCP.stopBackgroundPolling();
+        }
+        showToast("后台主动发信服务已关闭");
+      }
+    },
+
+    // 7. 桌面悬浮桌宠控制
+    toggleDesktopPet: function(toggleEl) {
+      const isEnabled = toggleEl.checked;
+      if (isEnabled) {
+        if (window.AndroidMCP && typeof window.AndroidMCP.checkOverlayPermission === 'function') {
+          const hasPermission = window.AndroidMCP.checkOverlayPermission();
+          if (!hasPermission) {
+            toggleEl.checked = false;
+            showCustomConfirm("需要悬浮窗权限", "由于安卓系统限制，启动桌面桌宠必须授予“显示在其他应用上层”权限。是否现在前往系统设置授予？", () => {
+              window.AndroidMCP.requestOverlayPermission();
+            });
+            return;
+          }
+        }
+        
+        const petImage = localStorage.getItem("mcp-desktop-pet-image");
+        if (!petImage) {
+          toggleEl.checked = false;
+          showToast("请先上传透明底 PNG 桌宠立绘图片！");
+          return;
+        }
+        const size = parseInt(document.getElementById("mcp-pet-size-slider").value) || 100;
+        localStorage.setItem("settings-mcp-pet-enabled", "true");
+        
+        if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
+          window.AndroidMCP.showDesktopPet(petImage, size);
+        }
+        showToast("系统桌面悬浮桌宠已开启！");
+      } else {
+        localStorage.setItem("settings-mcp-pet-enabled", "false");
+        if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
+          window.AndroidMCP.hideDesktopPet();
+        }
+        showToast("桌宠已退出");
+      }
+    },
+
+    handlePetUpload: function(fileEl) {
+      if (fileEl.files.length > 0) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const base64 = e.target.result;
+          localStorage.setItem("mcp-desktop-pet-image", base64);
+          document.getElementById("mcp-pet-preview-box").innerHTML = `<img src="${base64}" style="width:100%; height:100%; object-fit:contain;">`;
+          showToast("桌宠立绘上传成功！");
+          
+          // 如果桌宠开关是开启的，即时重绘
+          const toggle = document.getElementById("settings-mcp-pet-toggle");
+          if (toggle && toggle.checked) {
+            const size = parseInt(document.getElementById("mcp-pet-size-slider").value) || 100;
+            if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
+              window.AndroidMCP.showDesktopPet(base64, size);
+            }
+          }
+        };
+        reader.readAsDataURL(fileEl.files[0]);
+      }
+    },
+
+    changePetSize: function(val) {
+      document.getElementById("mcp-pet-size-val").innerText = `${val}dp`;
+      const toggle = document.getElementById("settings-mcp-pet-toggle");
+      if (toggle && toggle.checked) {
+        if (window.AndroidMCP && typeof window.AndroidMCP.updateDesktopPetSize === 'function') {
+          window.AndroidMCP.updateDesktopPetSize(parseInt(val));
+        }
+      }
+    },
+
+    triggerBackgroundActiveMessage: function() {
+      if (activeSessionId) {
+        const btnReply = document.getElementById("btn-dialog-reply");
+        if (btnReply && !onlineAbortController) {
+          btnReply.click();
+        }
+      }
     }
   };
 
