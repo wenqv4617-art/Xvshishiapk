@@ -22,6 +22,10 @@ let activeTheaterId = null;
 let activeOfflineSelectedMsgId = null;
 let isOfflineMultiSelectMode = false;
 
+// === 自定义弹窗编辑临时变量 ===
+let currentEditingMsgId = null;
+let isEditingOfflineMsg = false;
+
 function getMessageDisplayDate(msg, sess) {
   if (!sess || sess.timePerceptionToggle !== 0) {
     return new Date(msg.timestamp);
@@ -69,6 +73,26 @@ function formatWeChatTime(date, relativeToDate) {
   } else {
     return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日 ${timeStr}`;
   }
+}
+
+function openCustomEditModal(msgId, content, isOffline) {
+  currentEditingMsgId = msgId;
+  isEditingOfflineMsg = isOffline;
+  const overlay = document.getElementById("custom-edit-overlay");
+  const textarea = document.getElementById("custom-edit-textarea");
+  if (overlay && textarea) {
+    textarea.value = content;
+    overlay.classList.add("active");
+    setTimeout(() => textarea.focus(), 50);
+  }
+}
+
+function closeCustomEditModal() {
+  const overlay = document.getElementById("custom-edit-overlay");
+  if (overlay) {
+    overlay.classList.remove("active");
+  }
+  currentEditingMsgId = null;
 }
 
 // === 核心修复：添加初始化绑定保护锁，100% 杜绝二次加载事件死锁与卡顿 ===
@@ -1575,11 +1599,7 @@ function initContextMenuHandlers() {
       menu.style.display = "none";
       const msg = await db.messages.get(selectedMsgId);
       if (!msg) return;
-      const newContent = prompt("请编辑您的消息内容:", msg.content);
-      if (newContent !== null && newContent.trim() !== "") {
-        await db.messages.update(selectedMsgId, { content: newContent.trim() });
-        renderDialogMessages();
-      }
+      openCustomEditModal(selectedMsgId, msg.content, false);
     };
   }
 
@@ -1590,7 +1610,7 @@ function initContextMenuHandlers() {
       const msg = await db.messages.get(selectedMsgId);
       if (!msg) return;
       await db.messages.update(selectedMsgId, { isFavorite: 1 });
-      alert("该消息已成功收入收藏室。");
+      showCustomAlert("收入收藏室", "该消息已成功收入收藏室。");
     };
   }
 
@@ -1613,7 +1633,7 @@ function initContextMenuHandlers() {
         await db.messages.update(selectedMsgId, { isRecalled: 1 });
         renderDialogMessages();
       } else {
-        alert("无法撤回，这不是您的发言！");
+        showCustomAlert("撤回失败", "无法撤回，这不是您的发言！");
       }
     };
   }
@@ -1622,10 +1642,10 @@ function initContextMenuHandlers() {
   if (btnDeleteSingle) {
     btnDeleteSingle.onclick = async () => {
       menu.style.display = "none";
-      if (confirm("确定要删除这条消息吗？此操作不可逆。")) {
+      showCustomConfirm("确认删除", "确定要删除这条消息吗？此操作不可逆。", async () => {
         await db.messages.delete(selectedMsgId);
         renderDialogMessages();
-      }
+      });
     };
   }
 
@@ -1654,11 +1674,11 @@ function initContextMenuHandlers() {
       }
 
       if (!targetUserMsg) {
-        alert("无法回溯，未能在上下文中搜寻到我的发言。");
+        showCustomAlert("无法回溯", "未能在上下文中搜寻到我的发言。");
         return;
       }
 
-      if (confirm(`确定要回溯重回吗？\n\n此操作将擦除该消息之后（包括当前消息）的所有对话并重新获取 AI 回复。`)) {
+      showCustomConfirm("回溯重回", "确定要回溯重回吗？\n\n此操作将擦除该消息之后（包括当前消息）的所有对话并重新获取 AI 回复。", async () => {
         const rawList = await db.messages.where('sessionId').equals(activeSessionId).toArray();
         const toDelete = rawList.filter(m => m.timestamp > targetUserMsg.timestamp);
         
@@ -1670,7 +1690,7 @@ function initContextMenuHandlers() {
 
         const btnReply = document.getElementById("btn-dialog-reply");
         if (btnReply) btnReply.click();
-      }
+      });
     };
   }
 
@@ -1686,14 +1706,14 @@ function initContextMenuHandlers() {
     btnMultiDelete.onclick = async () => {
       const checked = document.querySelectorAll(".msg-checkbox:checked");
       if (checked.length === 0) return;
-      if (confirm(`确认要彻底删除这 ${checked.length} 条选中的消息吗？`)) {
+      showCustomConfirm("批量删除", `确认要彻底删除这 ${checked.length} 条选中的消息吗？`, async () => {
         for (let chk of checked) {
           const id = Number(chk.getAttribute("data-msg-id"));
           await db.messages.delete(id);
         }
         exitMultiSelectMode();
         renderDialogMessages();
-      }
+      });
     };
   }
 }
@@ -1737,6 +1757,34 @@ async function buildSystemPrompt(sessionId) {
 function bindChatAppEvents() {
   if (isChatAppEventsBound) return;
   isChatAppEventsBound = true;
+
+  // 绑定自定义消息编辑框控制
+  const btnCloseEditModal = document.getElementById("btn-close-edit-modal");
+  const btnCancelEditModal = document.getElementById("btn-cancel-edit-modal");
+  const btnSaveEditModal = document.getElementById("btn-save-edit-modal");
+  
+  if (btnCloseEditModal) btnCloseEditModal.onclick = closeCustomEditModal;
+  if (btnCancelEditModal) btnCancelEditModal.onclick = closeCustomEditModal;
+  if (btnSaveEditModal) {
+    btnSaveEditModal.onclick = async () => {
+      const textarea = document.getElementById("custom-edit-textarea");
+      const newContent = textarea ? textarea.value.trim() : "";
+      if (currentEditingMsgId) {
+        if (isEditingOfflineMsg) {
+          if (newContent !== "") {
+            await db.offline_messages.update(currentEditingMsgId, { content: newContent });
+            renderOfflineMessages();
+          }
+        } else {
+          if (newContent !== "") {
+            await db.messages.update(currentEditingMsgId, { content: newContent });
+            renderDialogMessages();
+          }
+        }
+      }
+      closeCustomEditModal();
+    };
+  }
 
   const btnNewChat = document.getElementById("btn-new-chat");
   if (btnNewChat) {
@@ -2874,11 +2922,7 @@ function initOfflineContextMenuHandlers() {
       menu.style.display = "none";
       const msg = await db.offline_messages.get(activeOfflineSelectedMsgId);
       if (!msg) return;
-      const newContent = prompt("请编辑您的线下卡片描述:", msg.content);
-      if (newContent !== null && newContent.trim() !== "") {
-        await db.offline_messages.update(activeOfflineSelectedMsgId, { content: newContent.trim() });
-        renderOfflineMessages();
-      }
+      openCustomEditModal(activeOfflineSelectedMsgId, msg.content, true);
     };
   }
 
@@ -2889,7 +2933,7 @@ function initOfflineContextMenuHandlers() {
       const msg = await db.offline_messages.get(activeOfflineSelectedMsgId);
       if (!msg) return;
       await db.offline_messages.update(activeOfflineSelectedMsgId, { isFavorite: 1 });
-      alert("该段落卡片已成功收入收藏室。");
+      showCustomAlert("收入收藏室", "该段落卡片已成功收入收藏室。");
     };
   }
 
@@ -2897,10 +2941,10 @@ function initOfflineContextMenuHandlers() {
   if (btnOfflineDeleteSingle) {
     btnOfflineDeleteSingle.onclick = async () => {
       menu.style.display = "none";
-      if (confirm("确定要删除这条线下记录吗？此操作不可逆。")) {
+      showCustomConfirm("确认删除", "确定要删除这条线下记录吗？此操作不可逆。", async () => {
         await db.offline_messages.delete(activeOfflineSelectedMsgId);
         renderOfflineMessages();
-      }
+      });
     };
   }
 
@@ -2943,11 +2987,11 @@ function initOfflineContextMenuHandlers() {
       }
 
       if (!targetUserMsg) {
-        alert("无法回溯，未能在上下文中搜寻到我的发言。");
+        showCustomAlert("无法回溯", "未能在上下文中搜寻到我的发言。");
         return;
       }
 
-      if (confirm("确定要回溯重回吗？\n\n此操作将擦除该发言之后（包括当前发言）的所有线下段落卡片并重新获取 AI 回复。")) {
+      showCustomConfirm("回溯重回", "确定要回溯重回吗？\n\n此操作将擦除该发言之后（包括当前发言）的所有线下段落卡片并重新获取 AI 回复。", async () => {
         const toDelete = rawList.filter(m => m.timestamp > targetUserMsg.timestamp);
         for (let td of toDelete) {
           await db.offline_messages.delete(td.id);
@@ -2955,7 +2999,7 @@ function initOfflineContextMenuHandlers() {
         await renderOfflineMessages();
         const offlineReplyBtn = document.getElementById("btn-offline-reply");
         if (offlineReplyBtn) offlineReplyBtn.click();
-      }
+      });
     };
   }
 
@@ -2969,14 +3013,14 @@ function initOfflineContextMenuHandlers() {
     btnOfflineMultiDelete.onclick = async () => {
       const checked = document.querySelectorAll(".offline-msg-checkbox:checked");
       if (checked.length === 0) return;
-      if (confirm(`确认要彻底删除这 ${checked.length} 条选中的线下记录吗？`)) {
+      showCustomConfirm("批量删除", `确认要彻底删除这 ${checked.length} 条选中的线下记录吗？`, async () => {
         for (let chk of checked) {
           const id = Number(chk.getAttribute("data-msg-id"));
           await db.offline_messages.delete(id);
         }
         exitOfflineMultiSelectMode();
         renderOfflineMessages();
-      }
+      });
     };
   }
 }
@@ -3246,101 +3290,101 @@ async function saveOfflineDetails() {
 
 // 结束赴约模式 (赴约模式专属记忆回写与长效记忆库存储同步)
 async function endAppointment() {
-  if (!confirm("确定要结束当前的线下赴约吗？\n\n系统将自动根据当前的总结系统提示词生成一段经历总结，并无缝注入角色心智，成为后续长效记忆的一部分。")) return;
-  
-  const header = document.getElementById("offline-chat-title");
-  header.classList.add("header-typing");
-  header.innerText = "正在记忆同步中...";
+  showCustomConfirm("结束赴约", "确定要结束当前的线下赴约吗？\n\n系统将自动根据当前的总结系统提示词生成一段经历总结，并无缝注入角色心智，成为后续长效记忆的一部分。", async () => {
+    const header = document.getElementById("offline-chat-title");
+    header.classList.add("header-typing");
+    header.innerText = "正在记忆同步中...";
 
-  try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
-    if (!api) throw new Error("无法加载全局 API 预设，无法同步记忆。");
+    try {
+      const presetId = localStorage.getItem("global_api_preset_id");
+      const api = await db.api_presets.get(Number(presetId));
+      if (!api) throw new Error("无法加载全局 API 预设，无法同步记忆。");
 
-    const msgs = await db.offline_messages
-      .where('sessionId').equals(activeSessionId)
-      .and(m => m.isTheater === 0)
-      .sortBy('timestamp');
+      const msgs = await db.offline_messages
+        .where('sessionId').equals(activeSessionId)
+        .and(m => m.isTheater === 0)
+        .sortBy('timestamp');
 
-    if (msgs.length === 0) {
-      alert("暂无对话数据，无需总结记忆。");
-      return;
+      if (msgs.length === 0) {
+        showCustomAlert("无可总结数据", "暂无对话数据，无需总结记忆。");
+        return;
+      }
+
+      let dialogText = "";
+      const sess = await db.sessions.get(activeSessionId);
+      const char = await db.archives.get(sess.charId);
+      const user = await db.archives.get(sess.userId);
+      const charName = sess.customCharName || char?.name || "对方";
+      const userName = sess.customUserName || user?.name || "我";
+
+      msgs.forEach(m => {
+        const sender = m.senderType === 'user' ? userName : charName;
+        dialogText += `[${sender}]: ${m.content}\n`;
+      });
+
+      const summaryPromptTemplate = sess.summarySystemPrompt || "以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。";
+
+      const summaryPrompt = `请对以下发生的线下约会场景与白描对话经历进行深度、简练的总结。
+  总结要求：
+  1. 依照规范执行总结："${summaryPromptTemplate}"
+  2. 此总结将被永久保留在该角色的“长久记忆库”中，供后续检索召回。
+
+  ---
+  线下对话原文：
+  ${dialogText}
+  ---`;
+
+      const response = await fetch(`${api.url}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+        body: JSON.stringify({
+          model: api.model,
+          messages: [{ role: "user", content: summaryPrompt }],
+          temperature: 0.5
+        })
+      });
+
+      if (!response.ok) throw new Error("API 总结调用失败");
+
+      const result = await response.json();
+      const summaryContent = result.choices[0].message.content.trim();
+
+      // 1. 无缝回写长期角色记忆
+      const currentPersona = sess.customCharPersona || char?.persona || "";
+      const updatedPersona = `${currentPersona}\n\n【线下共同经历记忆（结束赴约时同步注入）：\n${summaryContent}】`;
+
+      await db.sessions.update(activeSessionId, {
+        customCharPersona: updatedPersona
+      });
+
+      // 2. 将线下总结无缝写入 summaries 记忆数据库中，支持长周期模糊召回！
+      await db.summaries.add({
+        sessionId: activeSessionId,
+        startRound: 1,
+        endRound: msgs.length,
+        content: `[线下赴约共同经历记忆]：` + summaryContent,
+        keywords: JSON.stringify(["线下见面", "赴约约会", charName]),
+        timestamp: Date.now()
+      });
+
+      await db.offline_messages
+        .where('sessionId').equals(activeSessionId)
+        .and(m => m.isTheater === 0)
+        .delete();
+
+      showCustomAlert("记忆同步成功", `赴约已圆满结束！\n\n线下经历总结已成功载入至角色的“长久记忆库”和脑海中：\n\n${summaryContent}`);
+      
+      closeOfflineDetails();
+      exitOfflineChat();
+
+    } catch (err) {
+      console.error(err);
+      showCustomAlert("同步失败", "总结约会经历失败: " + err.message);
+    } finally {
+      header.classList.remove("header-typing");
+      header.innerText = "线下见面";
     }
-
-    let dialogText = "";
-    const sess = await db.sessions.get(activeSessionId);
-    const char = await db.archives.get(sess.charId);
-    const user = await db.archives.get(sess.userId);
-    const charName = sess.customCharName || char?.name || "对方";
-    const userName = sess.customUserName || user?.name || "我";
-
-    msgs.forEach(m => {
-      const sender = m.senderType === 'user' ? userName : charName;
-      dialogText += `[${sender}]: ${m.content}\n`;
-    });
-
-    const summaryPromptTemplate = sess.summarySystemPrompt || "以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。";
-
-    const summaryPrompt = `请对以下发生的线下约会场景与白描对话经历进行深度、简练的总结。
-总结要求：
-1. 依照规范执行总结："${summaryPromptTemplate}"
-2. 此总结将被永久保留在该角色的“长久记忆库”中，供后续检索召回。
-
----
-线下对话原文：
-${dialogText}
----`;
-
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "user", content: summaryPrompt }],
-        temperature: 0.5
-      })
-    });
-
-    if (!response.ok) throw new Error("API 总结调用失败");
-
-    const result = await response.json();
-    const summaryContent = result.choices[0].message.content.trim();
-
-    // 1. 无缝回写长期角色记忆
-    const currentPersona = sess.customCharPersona || char?.persona || "";
-    const updatedPersona = `${currentPersona}\n\n【线下共同经历记忆（结束赴约时同步注入）：\n${summaryContent}】`;
-
-    await db.sessions.update(activeSessionId, {
-      customCharPersona: updatedPersona
-    });
-
-    // 2. 将线下总结无缝写入 summaries 记忆数据库中，支持长周期模糊召回！
-    await db.summaries.add({
-      sessionId: activeSessionId,
-      startRound: 1,
-      endRound: msgs.length,
-      content: `[线下赴约共同经历记忆]：` + summaryContent,
-      keywords: JSON.stringify(["线下见面", "赴约约会", charName]),
-      timestamp: Date.now()
-    });
-
-    await db.offline_messages
-      .where('sessionId').equals(activeSessionId)
-      .and(m => m.isTheater === 0)
-      .delete();
-
-    alert(`赴约已圆满结束！\n\n线下经历总结已成功载入至角色的“长久记忆库”和脑海中：\n\n${summaryContent}`);
-    
-    closeOfflineDetails();
-    exitOfflineChat();
-
-  } catch (err) {
-    console.error(err);
-    alert("总结约会经历失败: " + err.message);
-  } finally {
-    header.classList.remove("header-typing");
-    header.innerText = "线下见面";
-  }
+  });
 }
 
 // 安全收拢事件监听注册，防范 DOM null 崩溃并在生命周期内强制单次绑定限制 [1]
