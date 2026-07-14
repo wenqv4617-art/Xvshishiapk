@@ -1,5 +1,10 @@
 /**
  * app_chat_mcp.js - Model Context Protocol & Mobile Control Panel 物理扫歌与原生播放联动中枢 [1]
+ * 
+ * 修改说明（后台发信修复）：
+ * - toggleActiveMessage(): 开启时从 IndexedDB 读取当前 API preset，通过 registerBgApiConfig() 注册到 Kotlin 层
+ * - triggerBackgroundActiveMessage(): 改为双重逻辑——先通过 pushBgMessage() 推消息到 Kotlin 队列，
+ *   再通过 pollBgResult() 轮询后台发信结果；同时保留原有 btnReply.click() 逻辑以兼容前台场景
  */
 
 (function() {
@@ -257,23 +262,137 @@
       document.getElementById("mcp-screentime-val").innerText = `${mins} 分钟 ${secs} 秒`;
     },
 
-    // 6. 后台主动发信控制
+    // ==========================================
+    //  6. 后台主动发信控制（重写版）
+    // ==========================================
+    // 修复说明：修正后台发信必须在 APP 前台才能运行的 WebView 冻结问题。
+    // 开启后台发信时，从 IndexedDB 读取当前 API preset 注册到 Kotlin 层，
+    // Kotlin 层直接使用 HttpURLConnection 发送 HTTP 请求，完全绕过 WebView 冻结限制。
+    // 同时保留前台场景下的 btnReply.click() 逻辑以保持兼容。
+    // ==========================================
+
     toggleActiveMessage: function(toggleEl) {
       const isEnabled = toggleEl.checked;
       localStorage.setItem("settings-mcp-active-msg-enabled", isEnabled ? "true" : "false");
+      
       if (isEnabled) {
         const interval = parseInt(document.getElementById("mcp-active-msg-interval").value) || 10;
-        if (window.AndroidMCP && typeof window.AndroidMCP.startBackgroundPolling === 'function') {
-          window.AndroidMCP.startBackgroundPolling(interval);
-          showToast(`后台主动发信服务已开启，每隔 ${interval} 分钟触发一次`);
-        } else {
-          showToast("后台主动发信已模拟开启");
-        }
+        
+        // 开启时：从 IndexedDB 读取当前选中的 API preset，注册到 Kotlin 层
+        (async () => {
+          try {
+            // 读取全局 API preset 设置（与 app_chat.js 中发信时读取相同的配置）
+            const currentApiId = parseInt(localStorage.getItem("global_api_preset_id") || "0");
+            let apiConfig = null;
+            
+            if (currentApiId > 0 && typeof db !== 'undefined' && db.api_presets) {
+              apiConfig = await db.api_presets.get(currentApiId);
+            }
+            
+            if (!apiConfig && typeof db !== 'undefined' && db.api_presets) {
+              // 如果没有选中的 preset，读取第一个可用配置
+              apiConfig = await db.api_presets.limit(1).first();
+            }
+            
+            if (apiConfig && apiConfig.url && apiConfig.key) {
+              // 注册 API 配置到 Kotlin 层（参数：url, key, model, temperature）
+              if (window.AndroidMCP && typeof window.AndroidMCP.registerBgApiConfig === 'function') {
+                window.AndroidMCP.registerBgApiConfig(
+                  apiConfig.url,
+                  apiConfig.key,
+                  apiConfig.model || 'gpt-3.5-turbo',
+                  apiConfig.temperature !== undefined ? apiConfig.temperature : 1.0
+                );
+              }
+              
+              // 启动后台轮询
+              if (window.AndroidMCP && typeof window.AndroidMCP.startBackgroundPolling === 'function') {
+                window.AndroidMCP.startBackgroundPolling(interval);
+                showToast(`后台主动发信服务已开启（API: ${apiConfig.name || apiConfig.url}），每隔 ${interval} 分钟轮询一次`);
+              } else {
+                showToast("后台主动发信已模拟开启");
+              }
+            } else {
+              showToast("未找到 API 配置！请先在设置中配置 API Preset");
+              toggleEl.checked = false;
+              localStorage.setItem("settings-mcp-active-msg-enabled", "false");
+            }
+          } catch(e) {
+            console.error("读取 API 配置失败:", e);
+            showToast("读取 API 配置失败，请确认已正确设置 API Preset");
+            toggleEl.checked = false;
+            localStorage.setItem("settings-mcp-active-msg-enabled", "false");
+          }
+        })();
+        
       } else {
+        // 关闭时：停止后台轮询
         if (window.AndroidMCP && typeof window.AndroidMCP.stopBackgroundPolling === 'function') {
           window.AndroidMCP.stopBackgroundPolling();
         }
         showToast("后台主动发信服务已关闭");
+      }
+    },
+
+    // 后台主动发信触发器（由 Kotlin 层定时调用）
+    triggerBackgroundActiveMessage: function() {
+      if (!activeSessionId) return;
+      
+      // === 新逻辑：通过 Kotlin 层直接发 HTTP 请求（用于后台场景）===
+      // 获取当前输入框中的消息内容（如果没有新输入，则不会发信）
+      const input = document.getElementById("chat-input");
+      let message = "";
+      if (input && input.value.trim()) {
+        message = input.value.trim();
+      }
+      
+      if (message) {
+        // 有消息内容：推送到 Kotlin 层的后台发送队列
+        if (window.AndroidMCP && typeof window.AndroidMCP.pushBgMessage === 'function') {
+          try {
+            window.AndroidMCP.pushBgMessage(message);
+            // 清空输入框
+            input.value = "";
+            // 调整高度
+            input.style.height = 'auto';
+          } catch(e) {
+            console.error("pushBgMessage 失败:", e);
+          }
+        }
+      }
+      
+      // === 保留原有逻辑：通过 btnReply.click() 触发前端发信（用于前台场景）===
+      // 如果当前 APP 在前台，WebView 正常运行时，走原有逻辑
+      const btnReply = document.getElementById("btn-dialog-reply");
+      if (btnReply && !onlineAbortController) {
+        btnReply.click();
+      }
+      
+      // === 轮询后台发信结果并更新界面 ===
+      if (window.AndroidMCP && typeof window.AndroidMCP.pollBgResult === 'function') {
+        try {
+          const resultJson = window.AndroidMCP.pollBgResult();
+          if (resultJson) {
+            const result = JSON.parse(resultJson);
+            if (result && result.content) {
+              // 模拟收到消息：如果 session 列表中有当前会话，追加 AI 响应
+              // 这里与 app_chat.js 中收到消息后更新界面的逻辑保持一致
+              if (typeof addMessageToSession === 'function') {
+                addMessageToSession(activeSessionId, {
+                  type: 'ai',
+                  text: result.content,
+                  time: new Date().toLocaleString()
+                });
+              }
+              // 更新对话显示
+              if (typeof appendMessageToDisplay === 'function') {
+                appendMessageToDisplay('ai', result.content);
+              }
+            }
+          }
+        } catch(e) {
+          console.error("pollBgResult 失败:", e);
+        }
       }
     },
 
@@ -285,7 +404,7 @@
           const hasPermission = window.AndroidMCP.checkOverlayPermission();
           if (!hasPermission) {
             toggleEl.checked = false;
-            showCustomConfirm("需要悬浮窗权限", "由于安卓系统限制，启动桌面桌宠必须授予“显示在其他应用上层”权限。是否现在前往系统设置授予？", () => {
+            showCustomConfirm("需要悬浮窗权限", "由于安卓系统限制，启动桌面桌宠必须授予"显示在其他应用上层"权限。是否现在前往系统设置授予？", () => {
               window.AndroidMCP.requestOverlayPermission();
             });
             return;
@@ -335,22 +454,12 @@
         reader.readAsDataURL(fileEl.files[0]);
       }
     },
-
     changePetSize: function(val) {
       document.getElementById("mcp-pet-size-val").innerText = `${val}dp`;
       const toggle = document.getElementById("settings-mcp-pet-toggle");
       if (toggle && toggle.checked) {
         if (window.AndroidMCP && typeof window.AndroidMCP.updateDesktopPetSize === 'function') {
           window.AndroidMCP.updateDesktopPetSize(parseInt(val));
-        }
-      }
-    },
-
-    triggerBackgroundActiveMessage: function() {
-      if (activeSessionId) {
-        const btnReply = document.getElementById("btn-dialog-reply");
-        if (btnReply && !onlineAbortController) {
-          btnReply.click();
         }
       }
     }
