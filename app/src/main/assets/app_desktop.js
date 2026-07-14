@@ -620,6 +620,8 @@ function initDragEvents() {
   let activeIcon = null;
   let startX = 0;
   let startY = 0;
+  let lastMoveX = 0; // 动态变量：记录手指最新的移动坐标，破解闭包限制
+  let lastMoveY = 0;
   let iconStartX = 0;
   let iconStartY = 0;
   let rectWidth = 0;
@@ -648,24 +650,20 @@ function initDragEvents() {
           if (icon || widget) {
             startX = e.clientX;
             startY = e.clientY;
+            lastMoveX = e.clientX; // 初始化最新坐标
+            lastMoveY = e.clientY;
             longPressTarget = icon || widget;
+            
+            // 改进：单级高抗干扰定时器，1.2秒后直接校验动态位移决定是否进入编辑模式
             longPressTimer = setTimeout(() => {
-              if (longPressTarget) {
-                longPressTarget.style.transition = "transform 0.15s ease";
-                longPressTarget.style.transform = "scale(0.92)"; // 微微下陷
-                if (typeof showToast === "function") {
-                  showToast("再长按0.5秒进入编辑模式");
-                }
-              }
-              longPressTimer2 = setTimeout(() => {
-                if (longPressTarget) {
-                  longPressTarget.style.transform = "";
-                  longPressTarget.style.transition = "";
-                  longPressTarget = null;
-                }
+              const dx = lastMoveX - startX;
+              const dy = lastMoveY - startY;
+              // 容差过滤：手指位移小于10px才判定为真长按，避免误触
+              if (Math.abs(dx) < 10 && Math.abs(dy) < 10 && !isDesktopEditMode) {
                 enterDesktopEditMode();
-              }, 500);
-            }, 1000); // 阶段1: 1.0秒后开始下陷并提示
+              }
+              longPressTimer = null;
+            }, 1200);
           }
           return; // 拦截！未进入编辑模式时，严禁初始化任何拖动及变量赋值
         }
@@ -697,12 +695,23 @@ function initDragEvents() {
       });
 
   document.addEventListener("pointermove", (e) => {
+    // 持续向动态变量投递最新的坐标，解决定时器闭包只取旧值的问题
+    lastMoveX = e.clientX;
+    lastMoveY = e.clientY;
+
     const dx = e.clientX - startX;
     const dy = e.clientY - startY;
 
-    if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
-      if (longPressTimer) clearTimeout(longPressTimer);
-      if (longPressTimer2) clearTimeout(longPressTimer2);
+    // 改进：一旦位移超出颤动阈值（10px），立刻在滑动第一步销毁定时器，防止事件漏发
+    if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+      if (longPressTimer2) {
+        clearTimeout(longPressTimer2);
+        longPressTimer2 = null;
+      }
       if (longPressTarget) {
         longPressTarget.style.transform = "";
         longPressTarget.style.transition = "";
