@@ -166,7 +166,7 @@
       }
     },
 
-    // 渲染或更新桌宠外观（支持网页渲染与安卓原生悬浮窗双端同步） [1]
+    // 渲染或更新桌宠外观（支持网页渲染与安卓原生悬浮窗双端同步）
     renderPetToDesktop: function() {
       const container = document.getElementById("desktop-pet-container");
       if (!container) return;
@@ -177,38 +177,53 @@
       if (!isPetEnabled || !this.currentPetConfig) {
         container.style.display = "none";
         if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
-          window.AndroidMCP.hideDesktopPet(); // 联动真机：隐藏原生系统悬浮窗 [1]
+          window.AndroidMCP.hideDesktopPet(); // 联动真机：隐藏原生系统悬浮窗
         }
         return;
       }
 
-      // 1. 网页内 DOM 呈现
-      container.style.display = "block";
       const size = parseInt(localStorage.getItem("mcp-pet-size-slider") || "100");
-      container.style.width = `${size}px`;
-      container.style.height = `${size}px`;
-
-      const imgEl = document.getElementById("desktop-pet-img");
       const base64 = this.currentPetConfig.statesConfig[this.currentState] || this.currentPetConfig.statesConfig['default'];
-      
-      if (base64) {
-        imgEl.src = base64;
-        
-        // 2. 真机系统级悬浮窗投射（实现退出 App 后依然能在手机桌面显示） [1]
-        if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
+
+      // 核心消减双生桌宠：如果检测到处于安卓特权外壳中，隐藏网页 DOM 桌宠，100% 交由真机系统级悬浮窗托管！ [1]
+      if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
+        container.style.display = "none"; // 隐藏 DOM 容器，杜绝两个桌宠重叠
+        if (base64) {
           try {
             window.AndroidMCP.showDesktopPet(base64, size);
           } catch(e) {
             console.error("同步原生系统级桌宠失败:", e);
           }
         }
+        return;
+      }
+
+      // 网页端 PWA 正常渲染
+      container.style.display = "block";
+      container.style.width = `${size}px`;
+      container.style.height = `${size}px`;
+
+      const imgEl = document.getElementById("desktop-pet-img");
+      if (base64) {
+        imgEl.src = base64;
       } else {
         imgEl.src = 'data:image/svg+xml;utf8,<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="%23fca5a5"/><text x="12" y="15" font-size="8" text-anchor="middle" fill="%23ffffff">无图</text></svg>';
       }
     },
 
-    // 气泡冒泡机制
+    // 气泡冒泡机制 (真机环境下直接发送给安卓系统 TextView 进行全局桌面渲染) [1]
     popBubble: function(text, duration = 3000) {
+      // 优先调用安卓真机系统级悬浮气泡
+      if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPetBubble === 'function') {
+        try {
+          window.AndroidMCP.showDesktopPetBubble(text, duration);
+          return;
+        } catch(e) {
+          console.error("调用原生悬浮窗冒泡失败:", e);
+        }
+      }
+
+      // 网页内 DOM 冒泡兜底
       const bubble = document.getElementById("desktop-pet-bubble");
       if (!bubble) return;
 
@@ -343,7 +358,6 @@
       if (!select) return;
       const st = select.value;
 
-      // 1. 渲染该状态的预览
       const previewBox = document.getElementById("mcp-pet-state-preview");
       if (previewBox) {
         const base64 = this.currentPetConfig.statesConfig[st];
@@ -352,7 +366,6 @@
           : `<span style="font-size:8px; color:var(--text-secondary);">无图</span>`;
       }
 
-      // 2. 渲染该状态的自定义台词与概率
       const probInput = document.getElementById("mcp-pet-state-prob");
       const dialoguesArea = document.getElementById("mcp-pet-state-dialogues");
       
@@ -433,7 +446,7 @@
       }
     },
 
-    // 改变大小（同步改变系统悬浮窗与网页悬浮窗） [1]
+    // 改变大小（同步改变系统悬浮窗与网页悬浮窗）
     changePetSize: function(val) {
       const sizeVal = document.getElementById("mcp-pet-size-val");
       if (sizeVal) sizeVal.innerText = `${val}dp`;
@@ -443,18 +456,17 @@
       
       if (window.AndroidMCP && typeof window.AndroidMCP.updateDesktopPetSize === 'function') {
         try {
-          window.AndroidMCP.updateDesktopPetSize(parseInt(val)); // 同步更改真机物理悬浮窗尺寸 [1]
+          window.AndroidMCP.updateDesktopPetSize(parseInt(val)); // 同步更改真机物理悬浮窗尺寸
         } catch(e) {
           console.error("设置原生悬浮窗尺寸失败:", e);
         }
       }
     },
 
-    // 全局控制开启与关闭（支持真机系统悬浮窗权限拦截申请） [1]
+    // 全局控制开启与关闭（支持真机系统悬浮窗权限拦截申请）
     togglePetActive: function(toggleEl) {
       const isEnabled = toggleEl.checked;
       if (isEnabled) {
-        // 真机环境下，强行拦截并申请系统级「显示在其他应用上层」的悬浮窗特权 [1]
         if (window.AndroidMCP && typeof window.AndroidMCP.checkOverlayPermission === 'function') {
           try {
             const hasPermission = window.AndroidMCP.checkOverlayPermission();
@@ -478,7 +490,6 @@
         const container = document.getElementById("desktop-pet-container");
         if (container) container.style.display = "none";
         
-        // 联动真机：隐藏并销毁系统级悬浮窗口 [1]
         if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
           try {
             window.AndroidMCP.hideDesktopPet();
