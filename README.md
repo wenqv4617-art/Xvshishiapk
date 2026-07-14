@@ -1,4 +1,4 @@
-# 叙事诗小手机 开发与安卓 APK 特权架构参考手册 (2026年特权版)
+# 叙事诗小手机 开发与安卓 APK 特权架构参考手册 (2026年解耦特权版)
 
 本手册是“叙事诗小手机”系统的核心开发和维护指南。本系统是一个通过 **Android Native Shell (Kotlin) + Core Web View (HTML5)** 混合开发（Hybrid）封装而成的真机级 **Android 原生特权 App** [1]。项目前端采用 **HTML5 + CSS3 + 纯原生 JavaScript** 构建，底层依赖 **Dexie.js (IndexedDB)** 保证数据的事务级持久化，并利用 **Model Context Protocol (MCP)** 硬件级联动协议打破沙箱，实现了真机定位、实时气象、物理马达震动、系统物理闹钟直写、本地歌单后台锁屏放歌、数据一键本地物理导出等深度系统级特权功能 [1]。
 
@@ -6,7 +6,7 @@
 
 ## 目录
 1. **PWA 混合 App 物理目录结构**
-2. **核心配置文件及底层 Kotlin 代码全文汇编**
+2. **核心配置文件及底端 Kotlin 代码全文汇编**
    - 2.1 `.github/workflows/build-apk.yml` (自动云打包)
    - 2.2 `settings.gradle.kts` (多模块注册)
    - 2.3 `build.gradle.kts` (根项目编译)
@@ -16,21 +16,36 @@
    - 2.7 `app/src/main/res/layout/activity_main.xml` (视图布局)
    - 2.8 `app/src/main/java/com/story/phone/MainActivity.kt` (主 Activity 容器)
    - 2.9 `app/src/main/java/com/story/phone/AndroidMcp.kt` (高特权原生接口)
-3. **MCP (Model Context Protocol / Mobile Control Panel) 深度实现机理**
-   - 3.1 提示词总开关与歌单物理扫描 JS 代码 (`app_chat_mcp.js`)
-   - 3.2 传感数据向大模型（AI）的 mind 注入
-   - 3.3 大模型对物理放歌指令的反向自动化驱使
-4. **终极功能拓展技术蓝图（AI窥屏、摄像头控制、后台发邮件）**
-5. **新增真机特权权限操作指南 (How to Add Permissions)**
+3. **Dexie 数据库设计规范 (Version 11 升级版)**
+4. **悬浮多状态桌宠与真机系统级交互机制**
+   - 4.1 角色跟随与配置隔离 (IndexedDB 状态存储)
+   - 4.2 桌宠 9 种多动作状态定义
+   - 4.3 自定义对话模式 (台词加权随机)
+   - 4.4 实时生成模式 (大模型动作控制)
+   - 4.5 真机系统级双击手势与跨进程反向唤醒
+5. **JS 独立高精度后台定时发信调度引擎**
+   - 5.1 WebView 后台冷冻局限与保活心跳
+   - 5.2 独立发信时间片轮询算法
+   - 5.3 携带世界书与长 RAG 记忆的高质量后台 Prompt 编译
+   - 5.4 联动真机通知与桌面冒泡的气泡可视链
+6. **网页/原生避让与防区双生桌宠消减机制**
+   - 6.1 “双生桌宠”视觉重叠痛点
+   - 6.2 网页 DOM 节点物理级拦截与销毁
+7. **长周期记忆、深谈空间与协同组件剖析**
+   - 7.1 会话总结与长久记忆库 (`app_summary_memory.js`)
+   - 7.2 深度对话剖析空间 (`app_deeptalk.js`)
+   - 7.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js` & `chat_html.css`)
+   - 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
+8. **无限拓展开发蓝图 (Where & How to Add Features)**
 
 ---
 
 ## 1. PWA 混合 App 物理目录结构
 
-请确保您本地的仓库目录结构与下方结构完全一致。所有前端网页资产、图标、音频等文件，必须存放在 `app/src/main/assets/` 路径下，以便打包进 APK 资源内部 [2]。
+请确保您本地的仓库目录结构与下方结构保持一致。所有前端网页资产、图标、音频等文件，必须存放在 `app/src/main/assets/` 路径下，以便打包进 APK 资源内部 [2]。
 
 ```text
-(您的新项目根目录)
+(您的项目根目录)
 ├── .github/
 │   └── workflows/
 │       └── build-apk.yml           # GitHub Actions 自动云打包配置文件
@@ -41,7 +56,9 @@
 │   │       │   ├── index.html
 │   │       │   ├── style.css
 │   │       │   ├── app_chat.js
-│   │       │   ├── app_chat_mcp.js # MCP 物理控制与扫歌前端逻辑
+│   │       │   ├── app_desktop_pet.js # 🧸 升级版独立多状态悬浮桌宠逻辑
+│   │       │   ├── desktop_pet.css    # 🎨 悬浮桌宠与真机仿真气泡样式
+│   │       │   ├── app_chat_mcp.js    # MCP 物理联动前端逻辑
 │   │       │   └── (其他所有的前端资源：.js, .css, .json, .png等)
 │   │       ├── java/com/story/phone/
 │   │       │   ├── MainActivity.kt        # 安卓原生主 Activity 代码
@@ -60,7 +77,7 @@
 
 ---
 
-## 2. 核心配置文件及底层 Kotlin 代码全文汇编
+## 2. 核心配置文件及底端 Kotlin 代码全文汇编
 
 ### 2.1 云端自动化签名打包管线：`.github/workflows/build-apk.yml`
 ```yaml
@@ -86,7 +103,7 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # 核心升级：通过锁定并持久化缓存 ~/.android 密钥目录，确保后续编译的所有 APK 共享同一个数字证书，避免真机覆盖安装时的数字证书冲突
+      # 通过锁定并持久化缓存 ~/.android 密钥目录，确保后续编译的所有 APK 共享同一个数字证书，避免真机覆盖安装时的数字证书冲突
       - name: Cache Android Keystore
         uses: actions/cache@v4
         with:
@@ -150,8 +167,8 @@ android {
         applicationId = "com.story.phone"
         minSdk = 26 // 安卓 8.0，保障完美兼容通知监听、硬件马达与无障碍接口
         targetSdk = 34
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     buildTypes {
@@ -194,7 +211,7 @@ dependencies {
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒等安卓硬件权限 -->
+    <!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒、上层悬浮窗等安卓硬件权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -202,13 +219,13 @@ dependencies {
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     
-    <!-- 新增：申请读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
+    <!-- 读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
-    <!-- 将 allowBackup 显式设为 false，彻底关闭系统云端数据备份，避免卸载重装时还原旧缓存 -->
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
@@ -289,20 +306,18 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = object : WebViewClient() {
             @Suppress("DEPRECATION")
             override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
-                return false // 确保旧版 API 下 WebView 内部跳转
+                return false
             }
 
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: android.webkit.WebResourceRequest?
             ): Boolean {
-                return false // 确保新版 API 下 WebView 内部跳转
+                return false
             }
         }
 
-        // 核心重写：解决真机定位授权与网页 Input File 文件选择器在宿主壳中无响应的问题
         webView.webChromeClient = object : WebChromeClient() {
-            // 支持 HTML5 Geolocation 定位授权
             override fun onGeolocationPermissionsShowPrompt(
                 origin: String?,
                 callback: GeolocationPermissions.Callback?
@@ -310,7 +325,6 @@ class MainActivity : AppCompatActivity() {
                 callback?.invoke(origin, true, false)
             }
 
-            // 支持 HTML5 <input type="file"> 文件选择器（打通网页导入/导出、图片上传通道）
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -320,7 +334,6 @@ class MainActivity : AppCompatActivity() {
                 (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
                 fileUploadCallback = filePathCallback
 
-                // 核心修复：通过 Elvis 操作符，在 intent 为空时提前阻断返回，保证编译器类型收拢安全
                 val intent = fileChooserParams?.createIntent() ?: return false
                 try {
                     startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE)
@@ -334,28 +347,26 @@ class MainActivity : AppCompatActivity() {
 
         val settings: WebSettings = webView.settings
         settings.javaScriptEnabled = true
-        settings.domStorageEnabled = true // 启用 LocalStorage
-        settings.allowFileAccess = true   // 允许访问 assets 内的本地文件
+        settings.domStorageEnabled = true
+        settings.allowFileAccess = true
         settings.allowContentAccess = true
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        settings.geolocationEnabled = true // 允许定位
+        settings.geolocationEnabled = true
 
-        // 核心修复：禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动点播放歌的特权！ [1]
+        // 禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动播放歌的特权！ [1]
         settings.mediaPlaybackRequiresUserGesture = false
 
-        // 注入 window.AndroidMCP 原生接口
+        // 注入 window.AndroidMCP 原生接口并注册主 Activity 句柄，支持后台双击跨端唤醒
+        AndroidMcp.mainActivity = this
         webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
 
-        // 加载 assets 本地打包的前端页面
         webView.loadUrl("file:///android_asset/index.html")
 
-        // 自动申请 Android 定位与通知的系统级运行时权限
         requestAppPermissions()
     }
 
-    // 处理文件选择器弹窗的回调 (通过安全类型转换绕过严格空指针拦截)
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == FILE_CHOOSER_RESULT_CODE) {
@@ -368,13 +379,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 申请运行时权限
     private fun requestAppPermissions() {
         val permissions = mutableListOf(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
-        // 动态合并追加存储与媒体音频权限，兼容 Android 13+ 与旧版系统
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
@@ -400,7 +409,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
         if (webView.canGoBack()) {
-            webView.goBack() // 返回键优先控制 WebView 回退
+            webView.goBack()
         } else {
             super.onBackPressed()
         }
@@ -409,28 +418,126 @@ class MainActivity : AppCompatActivity() {
 ```
 
 ### 2.9 原生特权硬件接口：`app/src/main/java/com/story/phone/AndroidMcp.kt`
+（该完整 Kotlin 代码已升级，增加了带有气泡 TextView 渲染的 FrameLayout 悬浮容器、点击位移过滤手势算法、以及跨进程反向通过 JS 唤醒灵魂质询的后台评估引擎 [1]）
+
 ```kotlin
 package com.story.phone
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.PixelFormat
 import android.os.Build
-import android.os.Environment
-import android.os.VibrationEffect
-import android.os.Vibrator
-import android.os.VibratorManager
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
+import android.widget.ImageView
+import android.widget.TextView
+import android.util.Base64
+import android.graphics.BitmapFactory
+import android.os.Environment
 import android.media.MediaPlayer
+import android.util.Log
 import java.io.File
 import java.io.FileWriter
 import org.json.JSONArray
+import org.json.JSONObject
 
 class AndroidMcp(private val context: Context) {
 
-    private var mediaPlayer: MediaPlayer? = null
+    companion object {
+        private const val TAG = "AndroidMcp"
+        var mainActivity: MainActivity? = null
+    }
 
-    // 初始化时自动创建本地物理存储文件夹：/Download/Storypoem 与 /Music/Storypoem
+    private var mediaPlayer: MediaPlayer? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var bgPollTimer: java.util.Timer? = null
+    
+    // 悬浮窗原生节点引用
+    private var floatPetView: View? = null
+    private var petImageView: ImageView? = null
+    private var bubbleTextView: TextView? = null
+    private var hideBubbleRunnable: Runnable? = null
+
+    @JavascriptInterface
+    fun toggleBackgroundWakeLock(enabled: Boolean) {
+        Log.d(TAG, "toggleBackgroundWakeLock() called, enabled=$enabled")
+        try {
+            val serviceIntent = Intent(context, McpForegroundService::class.java)
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (enabled) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+                if (wakeLock == null) {
+                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "StoryPhone::BackgroundWakeLock")
+                }
+                if (wakeLock?.isHeld == false) {
+                    wakeLock?.acquire()
+                }
+            } else {
+                context.stopService(serviceIntent)
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+                wakeLock = null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun showSystemNotification(title: String, message: String) {
+        Log.d(TAG, "showSystemNotification() called, title=$title, message=${message.take(50)}...")
+        try {
+            val channelId = "story_phone_bg_channel"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                var channel = notificationManager.getNotificationChannel(channelId)
+                if (channel == null) {
+                    channel = android.app.NotificationChannel(channelId, "叙事诗后台通知", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+                        description = "用于接收后台聊天消息通知"
+                    }
+                    notificationManager.createNotificationChannel(channel)
+                }
+            }
+
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                context, 0, intent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
+
+            val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     init {
         try {
             getDownloadDir()
@@ -452,9 +559,9 @@ class AndroidMcp(private val context: Context) {
         return dir
     }
 
-    // 1. 物理数据导出直写至真机：/Download/Storypoem/ (解决 PWA WebView 下载失灵) [1]
     @JavascriptInterface
     fun saveBackupFile(jsonString: String, fileName: String): Boolean {
+        Log.d(TAG, "saveBackupFile() called, fileName=$fileName, data.length=${jsonString.length}")
         return try {
             val targetFile = File(getDownloadDir(), fileName)
             val writer = FileWriter(targetFile)
@@ -467,9 +574,9 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 2. 静默读取真机 /Music/Storypoem 目录下的本地歌单列表 [1]
     @JavascriptInterface
     fun scanLocalMusicFolder(): String {
+        Log.d(TAG, "scanLocalMusicFolder() called")
         val jsonArray = JSONArray()
         try {
             val musicDir = getMusicDir()
@@ -485,9 +592,9 @@ class AndroidMcp(private val context: Context) {
         return jsonArray.toString()
     }
 
-    // 3. Android 原生 MediaPlayer 后台音乐播放器 (解决浏览器同源限制并支持锁屏后台不中断) [1]
     @JavascriptInterface
     fun playNativeMusic(songName: String): Boolean {
+        Log.d(TAG, "playNativeMusic() called, songName=$songName")
         return try {
             val musicFile = File(getMusicDir(), songName)
             if (!musicFile.exists()) return false
@@ -508,6 +615,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun pauseNativeMusic() {
+        Log.d(TAG, "pauseNativeMusic() called")
         try {
             if (mediaPlayer?.isPlaying == true) {
                 mediaPlayer?.pause()
@@ -519,6 +627,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun stopNativeMusic() {
+        Log.d(TAG, "stopNativeMusic() called")
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -528,9 +637,9 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 4. 安卓真机马达物理震动桥接 (支持 12 及以上新版和旧版震动)
     @JavascriptInterface
     fun triggerHardwareVibrator(milliseconds: Long) {
+        Log.d(TAG, "triggerHardwareVibrator() called, milliseconds=$milliseconds")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -545,9 +654,9 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 5. 调起系统通知监听设置页 (OperitAI同款权限，让未来可以静默查收微信等真实系统通知)
     @JavascriptInterface
     fun requestNotificationPermission() {
+        Log.d(TAG, "requestNotificationPermission() called")
         try {
             val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -558,9 +667,9 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 6. 调起安卓系统无障碍辅助设置页 (无障碍自动化发信基础)
     @JavascriptInterface
     fun requestAccessibilityPermission() {
+        Log.d(TAG, "requestAccessibilityPermission() called")
         try {
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -571,18 +680,280 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
-    // 7. 原生写入真机物理闹钟 (无需 Termux，APK 拥有高特权 Intent 直写)
     @JavascriptInterface
     fun setAndroidSystemAlarm(hour: Int, minute: Int, message: String) {
+        Log.d(TAG, "setAndroidSystemAlarm() called, hour=$hour, minute=$minute, message=$message")
         try {
             val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
                 putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
                 putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
                 putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, message)
-                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true) // 不弹出系统界面，静默设定
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun getWebView(): WebView? {
+        return (context as? MainActivity)?.findViewById(R.id.webview)
+    }
+
+    // ============================================================
+    //  悬浮窗特权检查与系统申请
+    // ============================================================
+
+    @JavascriptInterface
+    fun checkOverlayPermission(): Boolean {
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+        Log.d(TAG, "checkOverlayPermission() called, returning $result")
+        return result
+    }
+
+    @JavascriptInterface
+    fun requestOverlayPermission() {
+        Log.d(TAG, "requestOverlayPermission() called")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                data = android.net.Uri.parse("package:${context.packageName}")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        }
+    }
+
+    // ============================================================
+    //  真机系统级悬浮复合窗（带 TextView 原生气泡、双击手势、不退焦静默交互） [1]
+    // ============================================================
+
+    @JavascriptInterface
+    fun showDesktopPet(base64Str: String, sizeDp: Int) {
+        Log.d(TAG, "showDesktopPet() called, sizeDp=$sizeDp, base64.length=${base64Str.length}")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val density = context.resources.displayMetrics.density
+                val sizePx = (sizeDp * density).toInt()
+
+                if (floatPetView == null) {
+                    val layout = android.widget.FrameLayout(context)
+
+                    // 1. 动态构建白底圆角描边的系统气泡 TextView
+                    val bubble = TextView(context).apply {
+                        visibility = View.GONE
+                        setTextColor(android.graphics.Color.BLACK)
+                        setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+                        textSize = 12f
+                        maxWidth = (160 * density).toInt()
+                        
+                        val shape = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(android.graphics.Color.WHITE)
+                            cornerRadius = 24f
+                            setStroke(2, android.graphics.Color.parseColor("#e2e8f0"))
+                        }
+                        background = shape
+                    }
+                    val bubbleParams = android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                        bottomMargin = sizePx + (10 * density).toInt()
+                    }
+                    layout.addView(bubble, bubbleParams)
+                    bubbleTextView = bubble
+
+                    // 2. 动态构建桌宠 ImageView
+                    val imageView = ImageView(context).apply {
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    }
+                    val petParams = android.widget.FrameLayout.LayoutParams(sizePx, sizePx).apply {
+                        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    }
+                    layout.addView(imageView, petParams)
+                    petImageView = imageView
+
+                    val layoutParamsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WindowManager.LayoutParams.TYPE_PHONE
+                    }
+
+                    val params = WindowManager.LayoutParams(
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        layoutParamsType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        PixelFormat.TRANSLUCENT
+                    ).apply {
+                        gravity = Gravity.TOP or Gravity.START
+                        x = 100
+                        y = 500
+                    }
+
+                    // 绑定高动态滑动拖动与双击探测
+                    bindOverlayTouchListener(layout, params, windowManager)
+
+                    windowManager.addView(layout, params)
+                    floatPetView = layout
+                } else {
+                    petImageView?.layoutParams = petImageView?.layoutParams?.apply {
+                        width = sizePx
+                        height = sizePx
+                    }
+                    bubbleTextView?.layoutParams = (bubbleTextView?.layoutParams as? android.widget.FrameLayout.LayoutParams)?.apply {
+                        bottomMargin = sizePx + (10 * density).toInt()
+                    }
+                    floatPetView?.let {
+                        windowManager.updateViewLayout(it, it.layoutParams)
+                    }
+                }
+
+                val cleanBase64 = base64Str.substringAfter("base64,")
+                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+                val bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                petImageView?.setImageBitmap(bitmap)
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun showDesktopPetBubble(text: String, durationMs: Long) {
+        Log.d(TAG, "showDesktopPetBubble() called, text=$text, durationMs=$durationMs")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                if (bubbleTextView == null) return@post
+                bubbleTextView?.text = text
+                bubbleTextView?.visibility = View.VISIBLE
+
+                hideBubbleRunnable?.let { handler.removeCallbacks(it) }
+                val runnable = Runnable {
+                    bubbleTextView?.visibility = View.GONE
+                }
+                hideBubbleRunnable = runnable
+                handler.postDelayed(runnable, durationMs)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun updateDesktopPetSize(sizeDp: Int) {
+        Log.d(TAG, "updateDesktopPetSize() called, sizeDp=$sizeDp")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                val view = floatPetView ?: return@post
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val density = context.resources.displayMetrics.density
+                val sizePx = (sizeDp * density).toInt()
+
+                petImageView?.layoutParams = petImageView?.layoutParams?.apply {
+                    width = sizePx
+                    height = sizePx
+                }
+                bubbleTextView?.layoutParams = (bubbleTextView?.layoutParams as? android.widget.FrameLayout.LayoutParams)?.apply {
+                    bottomMargin = sizePx + (10 * density).toInt()
+                }
+
+                val params = view.layoutParams as WindowManager.LayoutParams
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun hideDesktopPet() {
+        Log.d(TAG, "hideDesktopPet() called")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                if (floatPetView != null) {
+                    val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    windowManager.removeView(floatPetView)
+                    floatPetView = null
+                    petImageView = null
+                    bubbleTextView = null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun bindOverlayTouchListener(view: View, params: WindowManager.LayoutParams, windowManager: WindowManager) {
+        view.setOnTouchListener(object : View.OnTouchListener {
+            private var lastAction: Int = 0
+            private var initialX: Int = 0
+            private var initialY: Int = 0
+            private var initialTouchX: Float = 0f
+            private var initialTouchY: Float = 0f
+            private var lastClickTime: Long = 0
+
+            override fun onTouch(v: View, event: MotionEvent?): Boolean {
+                if (event == null) return false
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        lastAction = event.action
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val diffX = event.rawX - initialTouchX
+                        val diffY = event.rawY - initialTouchY
+                        
+                        if (Math.abs(diffX) < 15 && Math.abs(diffY) < 15) {
+                            val clickTime = System.currentTimeMillis()
+                            if (clickTime - lastClickTime < 350) {
+                                onOverlayDoubleClick() // 双击执行跨进程程序后台安全评价 JS
+                            }
+                            lastClickTime = clickTime
+                        }
+                        lastAction = event.action
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = initialX + (event.rawX - initialTouchX).toInt()
+                        params.y = initialY + (event.rawY - initialTouchY).toInt()
+                        try {
+                            windowManager.updateViewLayout(view, params)
+                        } catch (e: Exception) {}
+                        lastAction = event.action
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+    }
+
+    private fun onOverlayDoubleClick() {
+        Log.d(TAG, "onOverlayDoubleClick() called, executing JS quietly in background")
+        try {
+            mainActivity?.runOnUiThread {
+                getWebView()?.evaluateJavascript(
+                    "javascript:if(window.desktopPetSystem) { window.desktopPetSystem.handleDoubleClickBackground(); }",
+                    null
+                )
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -592,427 +963,210 @@ class AndroidMcp(private val context: Context) {
 
 ---
 
-## 3. MCP (Model Context Protocol) 深度实现机理
+## 3. Dexie 数据库设计规范 (Version 11 升级版)
 
-本系统中的 MCP 既是真机的控制面板，也是与大模型进行状态共频的协议通道。
-
-### 3.1 提示词总开关与歌单物理扫描 JS 代码 (`app_chat_mcp.js`)
-请确保在您 assets 前端静态目录下，`app_chat_mcp.js` 采用如下实现方式，彻底与 Kotlin 底层打通：
+系统数据库包含 19 张物理表。为了打通**独立多状态悬浮桌宠**以及**自动发信解耦控制**，数据库升级至 **Version 11** [1]，新增了 `desktop_pets` 物理表，用以按角色（`charId`）高度隔离桌宠图片、触发概率和自动发信阈值 [1]。
 
 ```javascript
-/**
- * app_chat_mcp.js - Model Context Protocol & Mobile Control Panel 物理扫歌与原生播放联动中枢 [1]
- */
+db.version(11).stores({
+  // 1. 大模型 API 预设表
+  api_presets: 'id++, name, protocol, url, key, model, temperature',
 
-(function() {
-  const mcpSystem = {
-    // 自动扫描出的物理歌曲列表 (存放歌曲的真实文件名，如 "song.mp3") [1]
-    localPlaylist: [],
+  // 2. 档案表 (包含角色、用户、NPC 分区)
+  archives: 'id++, type, name, avatar, remark, group, persona, parentId', 
 
-    // 开启中枢控制面板
-    openPanel: function() {
-      if (!activeSessionId) {
-        showToast("请先进入一个好友聊天对话！");
-        return;
-      }
-      document.getElementById("chat-mcp-panel").classList.add("active");
-      this.refreshScreentimeDisplay();
-      
-      // 开启面板时自动扫描本地物理歌单并加载设置 [1]
-      this.scanAndSyncLocalMusic();
-    },
+  // 3. 社会关系映射表 (连接 character 与 user)
+  relations: 'id++, fromId, toId, relation',
 
-    // 关闭控制面板
-    closePanel: function() {
-      document.getElementById("chat-mcp-panel").classList.remove("active");
-    },
+  // 4. 会话配置与偏好设置表 (支持动态非索引字段 plotRequirement 的无损写入)
+  sessions: 'id++, userId, charId, customCharName, customCharAvatar, customCharPersona, customUserAvatar, customUserPersona, lastMessageTime, mountedEntryIds, offlineMinWordCount, offlineMaxWordCount, offlineAutoSummaryCount, offlineMountedEntryIds, stickerMountedGroupIds, autoSummaryToggle, autoSummaryInterval, bufferRounds, summarySystemPrompt, coreSelfStatus, coreSelfPurpose, coreSelfChanges, coreRelationship, coreUserInEyes',
 
-    // 载入并同步 MCP 本地配置
-    loadMcpSettings: function() {
-      const isMcpEnabled = localStorage.getItem("settings-mcp-prompt-enabled") === "true";
-      const toggle = document.getElementById("settings-mcp-prompt-toggle");
-      if (toggle) toggle.checked = isMcpEnabled;
+  // 5. 线上对话消息全纪录表
+  messages: 'id++, sessionId, senderType, senderId, content, contentType, timestamp, isFavorite',
 
-      // 回显本地扫描出的物理歌单 [1]
-      const listEl = document.getElementById("mcp-playlist-list");
-      if (listEl) {
-        if (this.localPlaylist.length > 0) {
-          listEl.innerHTML = this.localPlaylist.map((s, idx) => `<div style="padding: 4px 6px; margin-bottom: 2px; border-radius:4px; background:rgba(0,0,0,0.03); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="mcpSystem.playTrackByIndex(${idx})">#${idx} - ${s}</div>`).join("");
-          return;
-        }
-        listEl.innerHTML = "歌单为空。请用手机文件管理器将 MP3/WAV 歌曲放入本地存储的 /Music/Storypoem/ 目录下，然后重新打开此页面即可自动刷新！";
-      }
-    },
+  // 6. 世界书词条库
+  world_book_entries: 'id++, group, title, content, depth, isActive',
 
-    // MCP 神经注入开关切换
-    togglePrompt: function(toggleEl) {
-      localStorage.setItem("settings-mcp-prompt-enabled", toggleEl.checked ? "true" : "false");
-      showToast(toggleEl.checked ? "已成功建立神经感知！物理传感器与歌单已同步至 AI。" : "已切断神经数据通道。");
-    },
+  // 7. 线下剧场实例表
+  theaters: 'id++, sessionId, name, scenario, minWordCount, maxWordCount, carryMemory, createdAt',
 
-    // 1. 同步地理位置与天气
-    syncLocation: function() {
-      const geoStatus = document.getElementById("mcp-geo-status");
-      const weatherStatus = document.getElementById("mcp-weather-status");
-      
-      if (!navigator.geolocation) {
-        showToast("您的设备浏览器不支持 GPS 地理定位");
-        return;
-      }
+  // 8. 线下段落卡片流表
+  offline_messages: 'id++, theaterId, sessionId, isTheater, senderType, content, timestamp, isFavorite',
 
-      geoStatus.innerText = "正在向 Android 设备申请高精度定位...";
-      showToast("正在读取 GPS 位置...");
+  // 9. 窥秘内心状态变化切片历史表
+  status_history: 'id++, sessionId, theaterId, isTheater, timestamp, attire, affection, excitement, thoughts, hiddenCorners',
 
-      navigator.geolocation.getCurrentPosition(async (position) => {
-        const lat = position.coords.latitude.toFixed(4);
-        const lon = position.coords.longitude.toFixed(4);
-        geoStatus.innerText = `设备实测 GPS (纬度:${lat}, 经度:${lon})`;
+  // 10. 表情包分组表
+  sticker_groups: 'id++, name, sortOrder',
 
-        try {
-          weatherStatus.innerText = "正在连接 Open-Meteo 气象中枢...";
-          const response = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current_weather=true`);
-          const data = await response.json();
-          
-          if (data && data.current_weather) {
-            const temp = data.current_weather.temperature;
-            const code = data.current_weather.weathercode;
-            
-            const weatherMap = {
-              0: "晴朗 (Clear Sky)",
-              1: "大部分晴朗", 2: "多云", 3: "阴天",
-              45: "雾气", 48: "沉积雾",
-              51: "细雨", 53: "中等毛毛雨", 55: "重度毛毛雨",
-              61: "微雨", 63: "中雨", 65: "大雨 (Rainy)",
-              71: "微雪", 73: "中雪", 75: "大雪",
-              80: "阵雨", 81: "中等阵雨", 82: "暴雨",
-              95: "雷暴", 96: "雷暴伴有冰雹"
-            };
+  // 11. 表情包单条数据表 (imageUrl 支持 Base64 二进制)
+  sticker_items: 'id++, groupId, sortOrder, imageUrl, caption',
 
-            const weatherDesc = weatherMap[code] || "多云或局部晴";
-            const weatherObj = {
-              city: `Android GPS定位 (经度:${lon}, 纬度:${lat})`,
-              temp: temp,
-              weather: weatherDesc
-            };
+  // 12. 阶段性会话总结记录表
+  summaries: 'id++, sessionId, startRound, endRound, content, keywords, timestamp',
 
-            localStorage.setItem("mcp_loc_weather", JSON.stringify(weatherObj));
-            weatherStatus.innerText = `实时室外温度: ${temp}°C | 当前天气: ${weatherDesc}`;
-            showToast("环境传感器数据已注入！AI 已同步您的时空认知。");
-          } else {
-            throw new Error("获取气象协议失败");
-          }
-        } catch(err) {
-          weatherStatus.innerText = "天气查询失败，但定位坐标已成功记录。";
-          console.error(err);
-        }
-      }, (error) => {
-        geoStatus.innerText = "定位失败，未获得 Android 浏览器定位权限";
-        showToast("GPS 读取失败，请检查浏览器定位权限开关！");
-      }, { enableHighAccuracy: true, timeout: 8000 });
-    },
+  // 13. 深谈记录主表
+  deeptalks: 'id++, sessionId, userId, charId, topic, status, createdAt',
 
-    // 2. 物理马达震动
-    triggerVibration: function() {
-      if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
-        window.AndroidMCP.triggerHardwareVibrator(400); // 原生震动
-        showToast("震动信号已发送至 Android 硬件马达");
-        return;
-      }
-      if (navigator.vibrate) {
-        navigator.vibrate([200, 100, 200]);
-        showToast("H5 震动信号已发送");
-      } else {
-        showToast("您的设备不支持物理震动 API");
-      }
-    },
+  // 14. 深谈消息内容表
+  deeptalk_messages: 'id++, deeptalkId, senderType, timestamp',
 
-    // 3. 原生物理时钟直写闹钟 [1]
-    setAlarm: function() {
-      const input = document.getElementById("mcp-timer-input");
-      const seconds = parseInt(input.value);
-      if (isNaN(seconds) || seconds <= 0) {
-        showToast("请输入合法的闹钟倒计时秒数！");
-        return;
-      }
+  // 15. 思想小宇宙闪念切片表
+  deeptalk_thoughts: 'id++, deeptalkId, sessionId, timestamp',
 
-      const targetDate = new Date(Date.now() + seconds * 1000);
-      const hour = targetDate.getHours();
-      const minute = targetDate.getMinutes();
+  // 16. 全局深谈附加提示词预设表
+  deeptalk_presets: 'id++, name',
 
-      // 物理级直写：绕过沙箱，直接写入手机系统的原生时钟闹钟！ [1]
-      if (window.AndroidMCP && typeof window.AndroidMCP.setAndroidSystemAlarm === 'function') {
-        window.AndroidMCP.setAndroidSystemAlarm(hour, minute, "叙事诗小手机：神经倒计时闹铃");
-        showToast(`已成功写入系统时钟！物理闹钟已设定在 ${hour}:${String(minute).padStart(2, '0')}`);
-        this.closePanel();
-        return;
-      }
+  // 17. 朋友圈系统主表
+  moments: 'id++, userId, senderType, senderId, timestamp',
 
-      // 降级模拟
-      showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒`);
-      this.closePanel();
+  // 18. 朋友圈二级评论表
+  moment_comments: 'id++, momentId, senderType, senderId, timestamp',
+  moment_settings: 'id++, userId',
 
-      setTimeout(() => {
-        if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
-          window.AndroidMCP.triggerHardwareVibrator(600);
-        } else if (navigator.vibrate) {
-          navigator.vibrate([400, 100, 400, 100, 600]);
-        }
-        showCustomAlert("⏰ MCP 警报通知", "您设定的倒计时神经闹钟已经唤醒！");
-      }, seconds * 1000);
-    },
+  // 19. HTML 互动卡片存储表
+  html_cards: 'id++, sessionId, timestamp',
 
-    // 4.1 静默扫描真机 /Music/Storypoem 物理目录并载入 [1]
-    scanAndSyncLocalMusic: function() {
-      if (window.AndroidMCP && typeof window.AndroidMCP.scanLocalMusicFolder === 'function') {
-        try {
-          const jsonStr = window.AndroidMCP.scanLocalMusicFolder();
-          this.localPlaylist = JSON.parse(jsonStr);
-
-          // 同步歌单名称给 LocalStorage，供大模型提示词读取感知 [1]
-          localStorage.setItem("mcp_playlist_titles", jsonStr);
-
-          const titleEl = document.getElementById("mcp-music-title");
-          if (titleEl) {
-            titleEl.innerText = this.localPlaylist.length > 0 
-              ? `已自动装载本地歌曲：${this.localPlaylist.length} 首` 
-              : "歌单就绪：尚未在手机 /Music/Storypoem 下放置歌曲";
-          }
-        } catch(e) {
-          console.error("扫描本地物理歌单失败:", e);
-        }
-      } else {
-        // H5 降级提示
-        const titles = localStorage.getItem("mcp_playlist_titles");
-        if (titles) {
-          try { this.localPlaylist = JSON.parse(titles); } catch(e) {}
-        }
-      }
-      this.loadMcpSettings();
-    },
-
-    // 4.2 通过原生 MediaPlayer 进行物理音频后台/锁屏播放 (彻底击穿 Origin 拦截) [1]
-    playTrackByIndex: function(index) {
-      if (this.localPlaylist.length === 0) {
-        showToast("本地歌单为空！请先将 MP3 歌曲丢入手机 /Music/Storypoem 目录下");
-        return;
-      }
-      if (index < 0 || index >= this.localPlaylist.length) {
-        showToast("指令点播的音乐索引超出界限");
-        return;
-      }
-
-      const songName = this.localPlaylist[index];
-      
-      // 核心直连：调用原生 APK 的 Kotlin 媒体引擎，实现完美的后台放歌与锁屏驻留 [1]
-      if (window.AndroidMCP && typeof window.AndroidMCP.playNativeMusic === 'function') {
-        const success = window.AndroidMCP.playNativeMusic(songName);
-        if (success) {
-          document.getElementById("mcp-music-title").innerText = `正在物理播放：${songName}`;
-          showToast(`已成功唤醒原生播放器后台播放：《${songName}》`);
-        } else {
-          showToast("真机原生播放音频流失败");
-        }
-        return;
-      }
-
-      showToast("当前环境暂不支持原生物理音频流后台播放，请在 APK 壳中运行。");
-    },
-
-    // 按歌名进行模糊匹配播放
-    playTrackByTitle: function(title) {
-      if (this.localPlaylist.length === 0) return;
-      const index = this.localPlaylist.findIndex(s => s.toLowerCase().includes(title.toLowerCase()));
-      if (index !== -1) {
-        this.playTrackByIndex(index);
-      } else {
-        showToast(`歌单中未找到包含 "${title}" 的歌曲`);
-      }
-    },
-
-    stopMusic: function() {
-      if (window.AndroidMCP && typeof window.AndroidMCP.stopNativeMusic === 'function') {
-        window.AndroidMCP.stopNativeMusic();
-        document.getElementById("mcp-music-title").innerText = "音乐播放已暂停";
-        showToast("音频播放已暂停");
-      }
-    },
-
-    // 5. 屏幕扮演时间刷新展现
-    refreshScreentimeDisplay: function() {
-      const activeSeconds = parseInt(localStorage.getItem("mcp_screen_time_today") || "0");
-      const mins = Math.floor(activeSeconds / 60);
-      const secs = activeSeconds % 60;
-      document.getElementById("mcp-screentime-val").innerText = `${mins} 分钟 ${secs} 秒`;
-    }
-  };
-
-  // ==========================================
-  //  5. 精准统计今日 PWA 屏幕使用时长
-  // ==========================================
-  let activeSeconds = parseInt(localStorage.getItem("mcp_screen_time_today") || "0");
-  setInterval(() => {
-    if (document.visibilityState === 'visible') {
-      activeSeconds++;
-      localStorage.setItem("mcp_screen_time_today", activeSeconds);
-    }
-  }, 1000);
-
-  // ==========================================
-  //  6. 防御性自注册绑定 (自适应 DOMContentLoaded 周期)
-  // ==========================================
-  function bindMcpTrigger() {
-    const btn = document.getElementById("btn-chat-mcp");
-    if (btn) {
-      btn.onclick = (e) => {
-        if (e) e.preventDefault();
-        document.getElementById("chat-expand-panel").classList.remove("active");
-        mcpSystem.openPanel();
-      };
-    }
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", bindMcpTrigger);
-  } else {
-    bindMcpTrigger();
-  }
-
-  window.mcpSystem = mcpSystem;
-})();
+  // === Version 11 新增：独立悬浮多状态桌宠存储表 ===
+  desktop_pets: 'charId, mode'
+});
 ```
 
-### 3.2 传感数据向大模型（AI）的 mind 注入
-在开启中枢神经控制面板顶部的“融入 AI 提示词 (MCP 协议)”开关后，大手机会在 `app_prompts.js` 的编译段落（深度 `-490`）中自动提取 GPS 范围、实时气温和手机内置 `/Music/Storypoem` 下的所有 MP3 文件列表：
+---
 
+## 4. 悬浮多状态桌宠与真机系统级交互机制
+
+### 4.1 角色跟随与配置隔离 (IndexedDB 状态存储)
+*   **设计原则**：每个角色拥有专属的桌宠动作图组和行为配置。桌宠的状态读取以 IndexedDB 中的 `desktop_pets` 表作为唯一媒介，**彻底弃用 LocalStorage 的 5MB 受限配额**，避免多角色图片 Base64 堆叠引发的溢出崩溃 [1]。
+*   **激活逻辑**：系统只允许一个桌宠在桌面上处于活跃状态。当开启 A 角色的桌宠时，B 角色桌宠被自动设置为不启用状态 [1]；即使在应用内切换至其他角色的聊天页面，**A 角色的真机悬浮窗依然平稳悬浮在系统桌面和 launcher 之上**，实现了彻底的激活态开关隔离 [1]。
+
+### 4.2 桌宠 9 种多动作状态定义
+系统内置并强制对齐以下 9 种典型的二次元/拟真动作状态：
+1. `default` (初始化)：无动作或平稳呼吸。
+2. `happy` (开心)：大喜、雀跃状态。
+3. `sad` (难过)：失落、低头。
+4. `angry` (生气)：赌气、叉腰。
+5. `hesitant` (犹豫)：疑惑、歪头。
+6. `wash` (洗漱)：刷牙、梳妆。
+7. `eat` (吃饭)：咀嚼、下午茶。
+8. `sleep` (睡觉)：闭眼、吐泡泡。
+9. `watch` (看着你)：注视、凝望。
+
+### 4.3 自定义对话模式 (台词加权随机)
+在自定义模式下，用户可为 9 种状态分配 `0-100` 的**出现概率权重**，并在每个状态下方配置多行专属台词。桌宠在双击或空闲触发时，会采用高动态随机加权算法选定一种状态切换图片，并随机抓取该状态下的一行台词通过原生 TextView 气泡展现。
+
+### 4.4 实时生成模式 (大模型动作控制)
+当设定为实时生成模式，悬浮窗在双击时会展示“思考中...”，并在后台静默对 API 预设发起 completions 请求 [1]。大语言模型会扮演当前桌宠的性格背景，并在回复的最后一行强制追加状态标记：
 ```text
-【Model Context Protocol (MCP) 真机设备环境参数注入】：
-- 物理位置/GPS坐标范围: Android GPS定位 (经度:116.3974, 纬度:39.9087)
-- 外部实时气温: 24.5°C
-- 外部实时气象: 晴朗 (Clear Sky)
-- 当前用户手机内导入的设备本地歌单（共 3 首）：
-  * [歌曲索引: 0] - "周杰伦 - 晴天.mp3"
-  * [歌曲索引: 1] - "Lo-fi Rain Sound.wav"
-  * [歌曲索引: 2] - "疗愈钢琴曲.mp3"
-
-【核心交互指令】：在聊天中，如果你觉得气氛合适，或者在探讨音乐、深夜闲聊等特定语境下，你可以主动挑选上述歌单里的任意一首歌播放给用户听。
-若你想控制用户手机自动播放歌单中的某一首音乐，请在你的回复文本最末尾追加以下格式的播放指令（必须单独占一行）：
-[PLAY_MUSIC]{"index": 歌曲索引}
+(对白内容...)
+[PET_STATE]状态名称
 ```
+大手机前端拦截器捕获该标志后，会瞬时完成文字气泡展现和桌宠图片状态的物理跳转。
 
-### 3.3 大模型对物理放歌指令的反向自动化驱使
-当 AI 做出放歌判定并在回复尾端输出 `[PLAY_MUSIC]{"index": 0}` 指令时：
-1.  前端 **`app_chat.js`** 的回复拦截器会在消息上屏前，瞬时通过正则捕获该指令并将其从文本中物理擦除（保障气泡文本的干净呈现） [1]；
-2.  JS 自动在后台向 Java 桥梁发送指令：`window.AndroidMCP.playNativeMusic("周杰伦 - 晴天.mp3")` [1]；
-3.  原生 Kotlin 通过 **Android 原生 `MediaPlayer`** 在真机后台中调起播放 [1]；
-4.  即使此时您将小手机 App 退回到手机后台、切换到其他应用、或者**将手机屏幕彻底锁屏**，音乐依然会流畅、不间断地持续播放 [1]！
+### 4.5 真机系统级双击手势与跨进程反向唤醒
+*   **手势位移过滤算法**：为了防止手指拖拽悬浮窗时误触发双击，在 Kotlin `bindOverlayTouchListener` 中计算了按下（Down）与抬起（Up）之间的坐标位移差。**只有位移差小于 15px 且两次点击间隔小于 350ms 时**，才确认为双击交互 [1]。
+*   **不打扰静默执行**：用户在手机系统桌面上双击桌宠时，App 不需要频繁强行蹦到前台（这会造成极不连贯的跳出感）。原生端通过 `evaluateJavascript` **直接在后台静默执行 JS 引擎逻辑**，实现完美的后台放歌、气泡冒泡和 AI 计算交互 [1]。
 
 ---
 
-## 4. 终极功能拓展技术蓝图 (窥屏/OCR、摄像头控制、后台发信)
+## 5. JS 独立高精度后台定时发信调度引擎
 
-当您后期需要继续扩展诸如 **AI 窥屏/截图、操控摄像头、后台静默发邮件** 等深度特权功能时，可遵循以下技术实现路径：
+### 5.1 WebView 后台冷冻局限与保活心跳
+由于 Android OS 深度的省电和隐私策略，当 App 进入后台时，WebView 的 CPU 分配会被严厉降频，甚至使 `setInterval` 定时器彻底处于冻结状态。
+*   **特权破沙箱方案**：在后台主动发信开启时，通过 Kotlin 调起 **`McpForegroundService` 前台服务**，并在真机上显示低能耗的“叙事诗保活通知” [1]。这会强行将 App 的优先级提高到前台，阻止 OS 对 WebView 的冷冻，保障 JS 心跳线程即使在息屏、锁屏状态下依然能够精准跳动 [1]。
 
-### 4.1 扩展 1：AI 截取真机屏幕并进行视觉分析 (窥屏/OCR)
-*   **物理瓶颈**：由于安卓隐私沙箱，网页绝对禁止截图。
-*   **特权突破路径**：
-    1.  **APK 清单文件声明**：
-        在 `AndroidManifest.xml` 中声明媒体投影与前景服务权限：
-        `<uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>`
-    2.  **Kotlin 端实现**：
-        在 `MainActivity.kt` 中，调用 Android 官方的 **`MediaProjectionManager`** 启动录屏/截图投影服务。用户在首次启动时会弹出“允许录制/投影您的屏幕”的系统级安全提示 [2]。
-    3.  **桥接开发**：
-        在 `AndroidMcp.kt` 中编写 `@JavascriptInterface fun captureScreen()` 接口。该接口激活后静默调用 `MediaProjection` 快速捕获当前屏幕像素生成 Bitmap，转换成 Base64。
-    4.  **MCP 注入**：
-        前端 JS 接收到 Base64 截图数据后，将其作为图片多模态参数（如 gpt-4o 的 image 数组）直接喂给 API 接口。这样 AI 就能瞬间具备“看懂您当前手机屏幕正在做什么”的能力！
+### 5.2 独立发信时间片轮询算法
+系统在 JavaScript 端运行一个每 30 秒执行一次的**高精度全局发信调度器（Ticker）**：
+```javascript
+const lastTrigger = parseInt(localStorage.getItem(`mcp_last_msg_time_${charId}`));
+if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
+```
+调度器逐个检索配置了自动发信的角色，**各角色发信间隔完全物理分离，互不干扰** [1]（如角色 A 设置 10 分钟，角色 B 设置 2 分钟 [1]）。相比之前 Kotlin 层的单一硬编码轮询，该方案完美满足了多角色社交拟真深度要求 [1]。
 
-### 4.2 扩展 2：操控真机摄像头拍照并同步心境 (Camera Controller)
-*   **物理瓶颈**：网页拍照必须频繁弹出浏览器摄像头允许提示，容易被系统回收。
-*   **特权突破路径**：
-    1.  **APK 清单文件声明**：
-        `<uses-permission android:name="android.permission.CAMERA" />`
-    2.  **Kotlin 桥接开发**：
-        引入 Android 官方高效的 **CameraX 依赖库**，在 `AndroidMcp.kt` 中编写：
-        ```kotlin
-        @JavascriptInterface
-        fun takeSilentPhoto() {
-            // 在后台隐式绑定 CameraX 的 ImageCapture
-            // 绑定后，不弹出预览界面，直接控制前置/后置摄像头静默拍照
-            // 拍照完成后将图像存储至 assets 临时目录或转换为 Base64
-        }
-        ```
-    3.  **运行机理**：
-        当您和 AI 在闲聊时，您可以点击“同步视界”或者由 AI 做出命令。大手机利用 Kotlin 在毫秒内完成静默拍摄，将照片作为 Context 自动发给 API，让 AI 真正做到“看见您眼前的现实世界和您的神态”。
+### 5.3 携带世界书与长 RAG 记忆的高质量后台 Prompt 编译
+*   **智能编译升级**：之前 Kotlin 直接发送 HTTP 请求无法调用复杂的 JS 数据。重构后的 JS 后台发信引擎，能够**完全读取并调用大手机最核心的 RAG 召回机制、记忆提炼模型与世界书词条挂载** [1]。
+*   **指令注入**：调度器在触发自动发信时，会静默拼装深度为 `-490` 的主动开启话题指令，让大模型产生极其自然、富有生活感和思念意味的主动攀谈信息，彻底告别公式化的问候 [1]。
 
-### 4.3 扩展 3：后台发送真实邮件 (Automated Background Email)
-*   **特权突破路径**：
-    1.  由于网页没有 SMTP 传输通道，我们直接在 Kotlin 原生端集成 **JavaMail (Jakarta Mail) 依赖库**。
-    2.  **Kotlin 桥接开发**：
-        在 `AndroidMcp.kt` 中声明发送邮件的子线程方法：
-        ```kotlin
-        @JavascriptInterface
-        fun sendBackgroundEmail(to: String, subject: String, content: String) {
-            Thread {
-                try {
-                    // 配置您的 SMTP 服务器（如 QQ邮箱 / 163 邮箱）
-                    val props = System.getProperties().apply {
-                        put("mail.smtp.host", "smtp.qq.com")
-                        put("mail.smtp.auth", "true")
-                        put("mail.smtp.port", "465")
-                    }
-                    val session = Session.getInstance(props, object: Authenticator() { ... })
-                    val message = MimeMessage(session).apply {
-                        setFrom(InternetAddress("你的邮箱@qq.com"))
-                        addRecipient(Message.RecipientType.TO, InternetAddress(to))
-                        setSubject(subject)
-                        setText(content)
-                    }
-                    Transport.send(message)
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }.start()
-        }
-        ```
-    3.  **运行机理**：
-        AI 在聊天中决定给您发送一封真实的秘密信件，它的指令在后台被前端拦截，调用 `window.AndroidMCP.sendBackgroundEmail` 接口，您的安卓手机就会在后台静默发送一封真实的电子邮件到您的工作邮箱中，打破次元壁！
+### 5.4 联动真机通知与桌面冒泡的气泡可视链
+为了给用户提供完全无死角的“自动发信状态可视排查”，系统打通了完整的联动气泡链：
+*   **第一步：定时器启动** $\rightarrow$ 当前活跃的桌面桌宠头上会瞬时冒出 `“有人冒泡。”` 的系统气泡 [1]，代表 JS 调度已经就绪并正在向 API 发送网络请求，**直观排除了定时器冷冻或失效问题**。
+*   **第二步：消息生成并收到** $\rightarrow$ 此时若 App 处于后台，Kotlin 会直接向真机状态栏直推标准的**系统悬浮通知** [1]（如：`A：“你睡了吗？”`），同时桌面桌宠头上的气泡会瞬间切换提示：`“有人来信。”` [1]，构建起流畅而极其逼真的真机扮演闭环 [1]。
 
 ---
 
-## 5. 新增真机特权权限操作指南 (How to Add Permissions)
+## 6. 网页/原生避让与防区双生桌宠消减机制
 
-当您在后期想要引入类似摄像头或文件读取等高特权新功能时，请严格遵守以下**三段式权限追加规范**：
+### 6.1 “双生桌宠”视觉重叠痛点
+在 Hybrid (混合) App 中，如果系统悬浮窗（Native Window）处于显示状态，它会盖在所有应用程序（包括 PWA 自身）的头部 [1]。如果此时网页 DOM 也生成了 `#desktop-pet-container` 节点，用户就会在 App 的主界面上**同时看到两个重叠在一起的桌宠**，其中一个不可点击，体验极差 [1]。
 
-### 5.1 规范一：系统清单静态声明
-打开 `app/src/main/AndroidManifest.xml`，在最外层（`<manifest>` 标签下方）追加相应的权限：
-```xml
-<!-- 例：追加摄像头与录音权限 -->
-<uses-permission android:name="android.permission.CAMERA" />
-<uses-permission android:name="android.permission.RECORD_AUDIO" />
-```
+### 6.2 网页 DOM 节点物理级拦截与销毁
+大手机采取了**“彻底拔除网页 DOM”**的消减策略 [1]：
+*   **入口拦截**：在 `app_desktop_pet.js` 的 `createDomElements` 初始化阶段，进行环境嗅探。若检测到 `window.AndroidMCP` 存在（即运行在真机 APK 壳中），直接 `return`，在物理层面上根本不创建该 HTML 节点 [1]。
+*   **运行时销毁**：在 `renderPetToDesktop` 执行阶段，增加强防区判定。如发现任何因 WebView 异步延迟导致漏网创建的 DOM 桌宠，执行：
+    ```javascript
+    const container = document.getElementById("desktop-pet-container");
+    if (container) container.remove(); // 强制拔除销毁
+    ```
+    将所有渲染、手势拖拽、气泡冒泡权限 100% 交予真机系统窗口托管，彻底消除了双生重合的显示故障 [1]。
 
-### 5.2 规范二：原生 Activity 运行时动态申请
-由于 Android 6.0 以上的权限保护机制，仅在 Manifest 中声明是不够的，必须在用户开启 App 时弹出“系统级同意弹窗” [1]。
-请打开 `MainActivity.kt`，找到 `requestAppPermissions()` 方法：
-把
-```kotlin
-    private fun requestAppPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        )
-```
-替换为 (在这里追加您需要真机向用户动态弹窗申请的权限即可)
-```kotlin
-    private fun requestAppPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO
-        )
-```
+---
 
-### 5.3 规范三：自研 H5 UI 提示兜底
-在 `app_chat_mcp.js` 中调用高特权 API 时，先进行非空判定（`if (window.AndroidMCP)`）[2]。如果当前运行在普通浏览器或 PWA 环境下：
-*   **坚决不允许直接抛出未定义异常，以免导致 JS 引擎崩溃假死 [1]**！
-*   通过 `showToast()` 温和地提示用户：“*检测到当前处于普通浏览器环境，无法调用物理马达/时钟直写，请安装并使用叙事诗 APK 特权版。*”保障两套环境下的兼容自愈性 [2]。
+## 7. 长周期记忆、深谈空间与协同组件剖析
+
+### 7.1 会话总结与长久记忆库 (`app_summary_memory.js`)
+*   **长周期记忆提炼**：通过后台静默扫描，大手机会自动切割对话轮次。在对话达到阈值（如 10 轮）且排除最后 5 轮（保护当前短期语境）后，向大模型发起合成总结。
+*   **RAG 模糊检索召回**：提炼出的总结记录（带 Keywords 热词）会持久化在 `summaries` 表中。在主聊天用户输入新消息时，系统会执行 RAG 检索，将匹配到的历史总结平铺成长期记忆并注入 System Prompt 深度 `-600` 位置，赋予角色长周期的稳定记忆力。
+
+### 7.2 深度对话剖析空间 (`app_deeptalk.js`)
+*   **内心质询舱**：深谈是独立于主会话的剖析空间，采用优雅的 `scroll-snap` 强吸附卡片排版。用户可以配置“择选”对立执念，在对话中彻底剥离角色的社交面具。
+*   **内心闪念拦截**：深谈中 AI 的回复会包含特有的情绪标志：
+    ```text
+    [THOUGHT]真实的内心剖白和潜意识挣扎[/THOUGHT]
+    ```
+    前端引擎拦截此标签，将其替换抹除后，将纯净的台词上屏，而把 [THOUGHT] 中的短暂内心潜意识闪念写入 `deeptalk_thoughts`（小宇宙）中永久封存。
+
+### 7.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js`)
+*   **全功能组件生成**：支持根据会话语境，让 AI 编写出高度交互、带样式与完整 JS 交互的单文件 HTML 卡片（如迷你游戏、心率雷达图）。
+*   **零写入清洗视图**：支持一键在“原始文本视图”和“清洗后运行视图（Iframe 沙盒）”之间进行零写入双态切换。
+*   **代码维修舱**：在主会话下方注入 `#html-repair-overlay` 隔离空间。维修舱可载入 100% 原始代码并在输入时进行防抖实时沙盒渲染。
+
+### 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
+*   **最高优先级大纲控制**：剧情引导舱允许用户输入任意故事走向大纲。该大纲会作为高优控制指令，在 System Prompt 的深度 `-480` 原子化拼入模型头部，驱使大模型往特定矛盾冲突或态度演进方向推进。
+
+---
+
+## 8. 无限拓展开发蓝图 (Where & How to Add Features)
+
+### 蓝图 A：新增高特权 Android 系统接口 (如操控真机摄像头拍照)
+1. **静态清单声明**：
+   在 `AndroidManifest.xml` 中追加物理权限申请：
+   ```xml
+   <uses-permission android:name="android.permission.CAMERA" />
+   ```
+2. **Activity 运行时授权申请**：
+   在 `MainActivity.kt` 的 `requestAppPermissions` 数组中并入：
+   ```kotlin
+   Manifest.permission.CAMERA
+   ```
+3. **编写 Kotlin 桥接方法**：
+   在 `AndroidMcp.kt` 中添加高特权 JavaScript 注入方法：
+   ```kotlin
+   @JavascriptInterface
+   fun takeSilentPhoto() {
+       // 控制 CameraX 在后台进行无快门声静默拍照并转为 Base64
+   }
+   ```
+4. **前端 JS 驱动与自愈防崩保护**：
+   在前端 JS 中通过非空判定进行调用，保障非真机 APK 环境下也能完美兼容防崩 [1]：
+   ```javascript
+   if (window.AndroidMCP && typeof window.AndroidMCP.takeSilentPhoto === 'function') {
+       window.AndroidMCP.takeSilentPhoto();
+   } else {
+       showToast("当前非真机环境，无法使用镜头拍照特权。");
+   }
+   ```
+
+### 蓝图 B：向 Dexie 中追加新物理表
+1. 打开 `db.js`。
+2. 将版本号升级（如从 `db.version(11)` 升级至 `db.version(12)`），并在 stores 里定义您的新表索引字段。
+3. **防止备份损坏**：任何新增的表，必须手动在 `app_settings.js` 的 `computeStorageUsage()` 记录累加、`exportBackup()` 的导出字段映射、以及 `importBackup()` 还原清空时的事务 RW 锁列表中进行同步声明，否则在进行 PWA 数据大备份还原时会遭遇事务空指针，引发页面假死 [1]。
