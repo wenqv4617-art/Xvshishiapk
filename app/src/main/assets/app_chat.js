@@ -2635,6 +2635,20 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text') {
   };
   msg.id = await db.messages.add(msg);
   await appendMessageToDOM(msg);
+
+  if (senderType === 'char' && localStorage.getItem("settings-background-enabled") === "true") {
+    if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
+      const sess = await db.sessions.get(activeSessionId);
+      const char = sess ? await db.archives.get(sess.charId) : null;
+      const senderName = sess?.customCharName || char?.name || "对方";
+      let cleanText = content;
+      if (contentType === 'voice') cleanText = "[语音消息]";
+      else if (contentType === 'image') cleanText = "[图片与描述]";
+      else if (contentType === 'transfer') cleanText = "[微信转账]";
+      else if (contentType === 'red_envelope') cleanText = "[微信红包]";
+      window.AndroidMCP.showSystemNotification(senderName, cleanText);
+    }
+  }
 }
 
 // 语音消息与图片场景描述展开机制挂载
