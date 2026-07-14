@@ -10,14 +10,16 @@
     <uses-permission android:name="android.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    
+    <!-- ★ 修复点：前台服务权限声明，Android 14+ 必须 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     
     <!-- 新增：申请读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
-    <!-- 将 allowBackup 显式设为 false，彻底关闭系统云端数据备份，避免卸载重装时还原旧缓存 -->
     <application
         android:allowBackup="false"
         android:icon="@drawable/ic_launcher"
@@ -39,10 +41,12 @@
             </intent-filter>
         </activity>
 
+        <!-- ★ 修复点：显式声明 foregroundServiceType="specialUse"，Android 14+ 启动前台服务的必要条件 -->
         <service
             android:name=".McpForegroundService"
             android:enabled="true"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse" />
 
     </application>
 
