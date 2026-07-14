@@ -24,6 +24,7 @@ let isAppClickEventsInitialized = false;
       margin: 0 auto !important;
       padding: 0 !important;
       box-sizing: border-box !important;
+      touch-action: none !important; /* 彻底拦截原生横屏滑动翻页的触控权冲突 */
     }
     #dock-grid {
       display: grid !important;
@@ -72,6 +73,7 @@ let isAppClickEventsInitialized = false;
       user-select: none !important;
       -webkit-user-select: none !important;
       -webkit-user-drag: none !important;
+      touch-action: none !important; /* 拦截原生触控滑动，确保 pointermove 在滑动切页时被 100% 触发 */
     }
     .app-icon .icon-wrapper {
       display: flex !important;
@@ -736,7 +738,6 @@ function initDragEvents() {
 
     if (!activeIcon) return;
 
-    // 当位移大于 8px 时，锁定当前为拖动行为
     if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
       isDragging = true;
       activeIcon.classList.add("dragging");
@@ -750,7 +751,7 @@ function initDragEvents() {
 
       // 核心修复：开启拖动时，立刻将图标临时剪切追加到 document.body 顶层图层上！
       // 这将 100% 避开 Dock 栏 .dock-container 的 backdrop-filter 的 Containing Block 限制
-      // 从而彻底封锁任何突变位移、缩回底下和偏离的 Bug
+      // 从而彻底封锁任何突变位移、缩回底下 and 偏离的 Bug
       document.body.appendChild(activeIcon);
 
       activeIcon.style.position = "fixed";
@@ -846,6 +847,44 @@ function initDragEvents() {
         isDragging = false;
         dragPlaceholder = null;
       });
+
+  // 安全防御：当系统发出硬件或系统级的 pointercancel 信号时，必须安全销毁并还原所有进行中的长按定时器和拖拽状态
+  document.addEventListener("pointercancel", (e) => {
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+    if (longPressTimer2) {
+      clearTimeout(longPressTimer2);
+      longPressTimer2 = null;
+    }
+    if (longPressTarget) {
+      longPressTarget.style.transform = "";
+      longPressTarget.style.transition = "";
+      longPressTarget = null;
+    }
+    if (activeIcon) {
+      if (isDragging) {
+        activeIcon.classList.remove("dragging");
+        if (dragPlaceholder) {
+          dragPlaceholder.remove();
+        }
+        // 还原所有的拖拽 inline 属性并安全归位，打消由于手势中断引发的图标凭空丢失
+        activeIcon.style.position = "";
+        activeIcon.style.width = "";
+        activeIcon.style.height = "";
+        activeIcon.style.left = "";
+        activeIcon.style.top = "";
+        activeIcon.style.zIndex = "";
+        activeIcon.style.pointerEvents = "";
+        originalParent.appendChild(activeIcon);
+        loadDesktopLayout();
+      }
+      activeIcon = null;
+      isDragging = false;
+      dragPlaceholder = null;
+    }
+  });
 }
 
 // 桌面滑屏翻页控制引擎 (一次仅翻一页)
