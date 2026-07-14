@@ -2,12 +2,18 @@ package com.story.phone
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Resources
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
 import android.webkit.GeolocationPermissions
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -16,6 +22,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.story.phone.R
 
@@ -154,46 +161,101 @@ class MainActivity : AppCompatActivity() {
     }
 }
 
-class McpForegroundService : android.app.Service() {
-    private val CHANNEL_ID = "mcp_foreground_service_channel"
+/**
+ * 前台服务 —— 保障后台运行时不被系统杀进程，
+ * 同时支持歌单持续播放与后台发信功能。
+ *
+ * ⚠ 使用前必须满足：
+ * 1) AndroidManifest.xml 中声明了 <service android:foregroundServiceType="specialUse" />
+ * 2) Android 13+ 已获取 POST_NOTIFICATIONS 权限
+ * 3) 调用 context.startForegroundService(intent) 后，本服务必须在 5 秒内
+ *    调用 startForeground()，否则系统抛出 ForegroundServiceDidNotStartInTimeException
+ */
+class McpForegroundService : Service() {
+
+    companion object {
+        private const val CHANNEL_ID = "mcp_foreground_service_channel"
+        private const val NOTIFICATION_ID = 1005
+    }
 
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = android.app.PendingIntent.getActivity(
-            this, 0, notificationIntent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
-            } else {
-                android.app.PendingIntent.FLAG_UPDATE_CURRENT
-            }
-        )
 
-        val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("叙事诗前台守护中")
-            .setContentText("系统不休眠、歌单播放与后台发信功能保护中")
-            .setSmallIcon(R.drawable.ic_launcher)
-            .setContentIntent(pendingIntent)
-            .build()
-
-        startForeground(1005, notification)
+        val notification = buildNotification()
+        startForeground(NOTIFICATION_ID, notification)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return START_STICKY
     }
 
-    override fun onBind(intent: Intent?): android.os.IBinder? = null
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    // ---------------------------------------------------------------
+    // 通知构建
+    // ---------------------------------------------------------------
+
+    /**
+     * 构建前台通知：
+     * - 优先使用项目自有图标 R.drawable.ic_launcher
+     * - 若资源加载失败（例如资源 ID 无效或资源未找到），
+     *   降级为 Android 系统内置图标 android.R.drawable.ic_dialog_info
+     */
+    private fun buildNotification(): android.app.Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        // 安全加载小图标 —— 避免因资源找不到导致前台服务启动失败
+        val smallIcon = safeGetSmallIcon()
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("叙事诗前台守护中")
+            .setContentText("系统不休眠、歌单播放与后台发信功能保护中")
+            .setSmallIcon(smallIcon)
+            .setContentIntent(pendingIntent)
+            .build()
+    }
+
+    /**
+     * 安全获取通知小图标：
+     * 尝试使用 R.drawable.ic_launcher，若抛出异常则降级为系统图标
+     */
+    private fun safeGetSmallIcon(): Int {
+        return try {
+            // 验证资源是否存在
+            resources.getDrawable(R.drawable.ic_launcher, theme)
+            R.drawable.ic_launcher
+        } catch (e: Resources.NotFoundException) {
+            // 资源未找到时使用系统原生图标兜底
+            android.R.drawable.ic_dialog_info
+        } catch (e: Exception) {
+            android.R.drawable.ic_dialog_info
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 通知渠道
+    // ---------------------------------------------------------------
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val serviceChannel = android.app.NotificationChannel(
+            val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
                 "叙事诗后台守护通道",
-                android.app.NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_LOW
             )
-            val manager = getSystemService(android.app.NotificationManager::class.java)
+            val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(serviceChannel)
         }
     }
