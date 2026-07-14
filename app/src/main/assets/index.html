@@ -1262,6 +1262,49 @@
                         </div>
                       </div>
 
+                      <!-- 主动发信控制卡片 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                          <h4 style="margin:0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
+                            ✉️ 后台主动发信服务
+                          </h4>
+                          <label class="switch">
+                            <input type="checkbox" id="settings-mcp-active-msg-toggle" onchange="mcpSystem.toggleActiveMessage(this)">
+                            <span class="slider"></span>
+                          </label>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
+                          <span style="font-size:12px; color:var(--text-primary); font-weight:600;">后台自动触发间隔：</span>
+                          <input type="number" id="mcp-active-msg-interval" value="10" min="1" style="width:60px; padding:6px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:12px; font-weight:700;">
+                          <span style="font-size:12px; color:var(--text-primary); font-weight:600;">分钟</span>
+                        </div>
+                      </div>
+
+                      <!-- 桌宠悬浮窗卡片 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                          <h4 style="margin:0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
+                            🧸 系统桌面悬浮桌宠
+                          </h4>
+                          <label class="switch">
+                            <input type="checkbox" id="settings-mcp-pet-toggle" onchange="mcpSystem.toggleDesktopPet(this)">
+                            <span class="slider"></span>
+                          </label>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:10px;">
+                          <button class="btn btn-outline" onclick="document.getElementById('mcp-pet-file-input').click()" style="flex:1; font-size: 11px; padding:6px; border-radius:8px; font-weight:600; cursor:pointer;">上传透明底 PNG</button>
+                          <input type="file" id="mcp-pet-file-input" accept="image/png" style="display:none;" onchange="mcpSystem.handlePetUpload(this)">
+                          <div id="mcp-pet-preview-box" style="width:36px; height:36px; border:1px dashed var(--border); border-radius:8px; overflow:hidden; display:flex; align-items:center; justify-content:center; background:#f8fafc;">
+                            <span style="font-size:8px; color:var(--text-secondary);">无图</span>
+                          </div>
+                        </div>
+                        <div style="display:flex; gap:8px; align-items:center;">
+                          <span style="font-size:12px; color:var(--text-primary); font-weight:600;">桌宠大小：</span>
+                          <input type="range" id="mcp-pet-size-slider" min="60" max="250" value="100" style="flex:1;" oninput="mcpSystem.changePetSize(this.value)">
+                          <span style="font-size:12px; color:var(--text-primary); font-weight:700;" id="mcp-pet-size-val">100dp</span>
+                        </div>
+                      </div>
+
                     </div>
                   </div>
                 </div>
