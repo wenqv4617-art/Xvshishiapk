@@ -1263,20 +1263,20 @@
                         </div>
                       </div>
 
-                      <!-- 主动发信控制卡片 -->
+                      <!-- 主动发信控制卡片（升级为各角色完全独立解耦版本） -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">
                         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
                           <h4 style="margin:0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
                             ✉️ 后台主动发信服务
                           </h4>
                           <label class="switch">
-                            <input type="checkbox" id="settings-mcp-active-msg-toggle" onchange="mcpSystem.toggleActiveMessage(this)">
+                            <input type="checkbox" id="settings-mcp-active-msg-toggle" onchange="desktopPetSystem.saveMcpUiSettings()">
                             <span class="slider"></span>
                           </label>
                         </div>
                         <div style="display:flex; gap:8px; align-items:center; margin-top:8px;">
                           <span style="font-size:12px; color:var(--text-primary); font-weight:600;">后台自动触发间隔：</span>
-                          <input type="number" id="mcp-active-msg-interval" value="10" min="1" style="width:60px; padding:6px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:12px; font-weight:700;">
+                          <input type="number" id="mcp-active-msg-interval" value="10" min="1" style="width:60px; padding:6px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:12px; font-weight:700;" onchange="desktopPetSystem.saveMcpUiSettings()">
                           <span style="font-size:12px; color:var(--text-primary); font-weight:600;">分钟</span>
                         </div>
                       </div>
