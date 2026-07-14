@@ -10,6 +10,7 @@ import android.os.VibratorManager
 import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.media.MediaPlayer
+import android.util.Log
 import java.io.File
 import java.io.FileWriter
 import org.json.JSONArray
@@ -17,11 +18,16 @@ import org.json.JSONObject
 
 class AndroidMcp(private val context: Context) {
 
+    companion object {
+        private const val TAG = "AndroidMcp"
+    }
+
     private var mediaPlayer: MediaPlayer? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
     @JavascriptInterface
     fun toggleBackgroundWakeLock(enabled: Boolean) {
+        Log.d(TAG, "toggleBackgroundWakeLock() called, enabled=$enabled")
         try {
             val serviceIntent = Intent(context, McpForegroundService::class.java)
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
@@ -51,6 +57,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun showSystemNotification(title: String, message: String) {
+        Log.d(TAG, "showSystemNotification() called, title=$title, message=${message.take(50)}...")
         try {
             val channelId = "story_phone_bg_channel"
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
@@ -117,6 +124,7 @@ class AndroidMcp(private val context: Context) {
     // 1. 物理数据导出直写至真机：/Download/Storypoem/
     @JavascriptInterface
     fun saveBackupFile(jsonString: String, fileName: String): Boolean {
+        Log.d(TAG, "saveBackupFile() called, fileName=$fileName, data.length=${jsonString.length}")
         return try {
             val targetFile = File(getDownloadDir(), fileName)
             val writer = FileWriter(targetFile)
@@ -132,6 +140,7 @@ class AndroidMcp(private val context: Context) {
     // 2. 静默读取真机 /Music/Storypoem 目录下的本地歌单列表
     @JavascriptInterface
     fun scanLocalMusicFolder(): String {
+        Log.d(TAG, "scanLocalMusicFolder() called")
         val jsonArray = JSONArray()
         try {
             val musicDir = getMusicDir()
@@ -150,6 +159,7 @@ class AndroidMcp(private val context: Context) {
     // 3. Android 原生 MediaPlayer 后台音乐播放器
     @JavascriptInterface
     fun playNativeMusic(songName: String): Boolean {
+        Log.d(TAG, "playNativeMusic() called, songName=$songName")
         return try {
             val musicFile = File(getMusicDir(), songName)
             if (!musicFile.exists()) return false
@@ -170,6 +180,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun pauseNativeMusic() {
+        Log.d(TAG, "pauseNativeMusic() called")
         try {
             if (mediaPlayer?.isPlaying == true) {
                 mediaPlayer?.pause()
@@ -181,6 +192,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun stopNativeMusic() {
+        Log.d(TAG, "stopNativeMusic() called")
         try {
             mediaPlayer?.stop()
             mediaPlayer?.release()
@@ -193,6 +205,7 @@ class AndroidMcp(private val context: Context) {
     // 4. 安卓真机马达物理震动桥接
     @JavascriptInterface
     fun triggerHardwareVibrator(milliseconds: Long) {
+        Log.d(TAG, "triggerHardwareVibrator() called, milliseconds=$milliseconds")
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -210,6 +223,7 @@ class AndroidMcp(private val context: Context) {
     // 5. 调起系统通知监听设置页
     @JavascriptInterface
     fun requestNotificationPermission() {
+        Log.d(TAG, "requestNotificationPermission() called")
         try {
             val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -223,6 +237,7 @@ class AndroidMcp(private val context: Context) {
     // 6. 调起安卓系统无障碍辅助设置页
     @JavascriptInterface
     fun requestAccessibilityPermission() {
+        Log.d(TAG, "requestAccessibilityPermission() called")
         try {
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -236,6 +251,7 @@ class AndroidMcp(private val context: Context) {
     // 7. 原生写入真机物理闹钟
     @JavascriptInterface
     fun setAndroidSystemAlarm(hour: Int, minute: Int, message: String) {
+        Log.d(TAG, "setAndroidSystemAlarm() called, hour=$hour, minute=$minute, message=$message")
         try {
             val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
                 putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
@@ -277,13 +293,15 @@ class AndroidMcp(private val context: Context) {
      * 前端注册 API 配置到 Kotlin 层（由 toggleActiveMessage 调用）
      */
     @JavascriptInterface
-    fun registerBgApiConfig(jsonConfig: String) {
+    fun registerBgApiConfig(url: String, key: String, model: String, temperature: Double) {
+        Log.d(TAG, "registerBgApiConfig() called, url=$url, key=${key.take(8)}..., model=$model, temperature=$temperature")
         try {
-            val config = JSONObject(jsonConfig)
-            bgApiUrl = config.optString("url", "")
-            bgApiKey = config.optString("key", "")
-            bgApiModel = config.optString("model", "")
+            bgApiUrl = url
+            bgApiKey = key
+            bgApiModel = model
+            Log.d(TAG, "registerBgApiConfig() success, bgApiUrl=$bgApiUrl, bgApiModel=$bgApiModel")
         } catch (e: Exception) {
+            Log.e(TAG, "registerBgApiConfig() error: ${e.message}", e)
             e.printStackTrace()
         }
     }
@@ -293,8 +311,10 @@ class AndroidMcp(private val context: Context) {
      */
     @JavascriptInterface
     fun pushBgMessage(message: String) {
+        Log.d(TAG, "pushBgMessage() called, message=${message.take(50)}...")
         synchronized(pendingMessages) {
             pendingMessages.add(message)
+            Log.d(TAG, "pushBgMessage() success, pending count=${pendingMessages.size}")
         }
     }
 
@@ -304,7 +324,9 @@ class AndroidMcp(private val context: Context) {
     @JavascriptInterface
     fun getBgPendingCount(): Int {
         synchronized(pendingMessages) {
-            return pendingMessages.size
+            val count = pendingMessages.size
+            Log.d(TAG, "getBgPendingCount() called, returning $count")
+            return count
         }
     }
 
@@ -315,6 +337,7 @@ class AndroidMcp(private val context: Context) {
     fun pollBgResult(): String? {
         val result = lastBgResultJson
         lastBgResultJson = null
+        Log.d(TAG, "pollBgResult() called, returning=${result?.take(80)}...")
         return result
     }
 
@@ -323,6 +346,7 @@ class AndroidMcp(private val context: Context) {
      */
     @JavascriptInterface
     fun startBackgroundPolling(intervalMinutes: Int) {
+        Log.d(TAG, "startBackgroundPolling() called, intervalMinutes=$intervalMinutes")
         try {
             stopBackgroundPolling()
             bgPollTimer = java.util.Timer().apply {
@@ -404,6 +428,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun stopBackgroundPolling() {
+        Log.d(TAG, "stopBackgroundPolling() called")
         try {
             bgPollTimer?.cancel()
             bgPollTimer = null
@@ -430,15 +455,18 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun checkOverlayPermission(): Boolean {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             Settings.canDrawOverlays(context)
         } else {
             true
         }
+        Log.d(TAG, "checkOverlayPermission() called, returning $result")
+        return result
     }
 
     @JavascriptInterface
     fun requestOverlayPermission() {
+        Log.d(TAG, "requestOverlayPermission() called")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
                 data = android.net.Uri.parse("package:${context.packageName}")
@@ -450,6 +478,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun showDesktopPet(base64Str: String, sizeDp: Int) {
+        Log.d(TAG, "showDesktopPet() called, sizeDp=$sizeDp, base64.length=${base64Str.length}")
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         handler.post {
             try {
@@ -531,6 +560,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun updateDesktopPetSize(sizeDp: Int) {
+        Log.d(TAG, "updateDesktopPetSize() called, sizeDp=$sizeDp")
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         handler.post {
             try {
@@ -551,6 +581,7 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun hideDesktopPet() {
+        Log.d(TAG, "hideDesktopPet() called")
         val handler = android.os.Handler(android.os.Looper.getMainLooper())
         handler.post {
             try {
