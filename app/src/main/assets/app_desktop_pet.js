@@ -1,5 +1,5 @@
 /**
- * app_desktop_pet.js - 独立多状态悬浮桌宠、后台多角色独立定时发信调度引擎
+ * app_desktop_pet.js - 独立多状态悬浮桌宠与真机解耦控制联动引擎
  */
 (function() {
   const STATE_NAMES = {
@@ -15,33 +15,38 @@
   };
 
   const desktopPetSystem = {
-    activeCharId: null,
-    currentPetConfig: null,
+    editingCharId: null,      // 当前正在 MCP 面板中配置/编辑的 CharID
+    activePetCharId: null,    // 全局当前正在显示/活跃的桌宠 CharID
+    editingPetConfig: null,   // 正在配置的桌宠数据
+    activePetConfig: null,    // 正在活跃的桌宠数据
     currentState: 'default',
     bubbleTimer: null,
 
     // 初始化桌宠环境
     init: async function() {
       this.createDomElements();
+      
+      // 1. 读取全局活跃桌宠 ID，保障冷启动自愈
+      const savedActiveCharId = localStorage.getItem("active_pet_char_id");
+      if (savedActiveCharId && savedActiveCharId !== "null" && savedActiveCharId !== "undefined") {
+        this.activePetCharId = Number(savedActiveCharId);
+        await this.loadActivePetConfig(this.activePetCharId);
+      }
+      
+      // 2. 同步当前的编辑窗口
       await this.syncWithActiveSession();
+      this.renderPetToDesktop();
     },
 
-    // 监控活动会话
+    // 监控活动会话以装载 MCP 面板回显，但不破坏桌宠在桌面上的持续显示
     syncWithActiveSession: async function() {
       if (typeof activeSessionId !== 'undefined' && activeSessionId) {
         try {
           const sess = await db.sessions.get(activeSessionId);
           if (sess && sess.charId) {
-            this.activeCharId = sess.charId;
-            const char = await db.archives.get(sess.charId);
-            const warningEl = document.getElementById("mcp-pet-char-warning");
-            if (warningEl) {
-              warningEl.innerText = `当前绑定角色：${char ? char.name : '未知'}`;
-              warningEl.style.color = "#07c160"; // 绿色提示就绪
-            }
-            await this.loadPetConfig(sess.charId);
-            this.renderPetToDesktop();
-            this.onStateSelectChange(); // 刷新 MCP 面板中对应状态的展示
+            this.editingCharId = sess.charId;
+            await this.loadEditingPetConfig(sess.charId);
+            this.loadMcpPanelState();
             return;
           }
         } catch (e) {
@@ -49,19 +54,18 @@
         }
       }
       
-      // 回退未进入会话状态
-      const warningEl = document.getElementById("mcp-pet-char-warning");
-      if (warningEl) {
-        warningEl.innerText = "当前绑定角色：无 (请进入会话后配置)";
-        warningEl.style.color = "#e11d48";
-      }
-      this.currentPetConfig = null;
-      this.activeCharId = null;
-      this.renderPetToDesktop();
+      this.editingCharId = null;
+      this.editingPetConfig = null;
+      this.loadMcpPanelState();
     },
 
-    // 创建 DOM（供 PWA/浏览器环境内作为兜底呈现）
+    // 网页内 DOM 容器构建（仅作为非安卓环境下的兜底呈现）
     createDomElements: function() {
+      // 核心防冲突 1：如果处于 Android 外壳环境（哪怕延迟加载），彻底禁止创建任何 DOM 元素
+      if (window.AndroidMCP || (window.parent && window.parent.AndroidMCP)) {
+        return;
+      }
+
       if (document.getElementById("desktop-pet-container")) return;
 
       const container = document.createElement("div");
@@ -81,7 +85,7 @@
 
       this.bindDragEvents(container);
 
-      // 双击触发灵魂唤醒对话
+      // 双击唤醒
       container.ondblclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -89,7 +93,7 @@
       };
     },
 
-    // 拖动逻辑
+    // 网页内拖动逻辑
     bindDragEvents: function(el) {
       let isDragging = false;
       let startX, startY;
@@ -129,9 +133,19 @@
       });
     },
 
-    // 从 IndexedDB 加载当前角色的专属桌宠与发信设定 [1]
-    loadPetConfig: async function(charId) {
-      if (!charId) return;
+    // 辅助加载编辑中桌宠
+    loadEditingPetConfig: async function(charId) {
+      this.editingPetConfig = await this.getOrCreatePetConfig(charId);
+    },
+
+    // 辅助加载当前活跃桌宠
+    loadActivePetConfig: async function(charId) {
+      this.activePetConfig = await this.getOrCreatePetConfig(charId);
+    },
+
+    // 数据库防穿透创建
+    getOrCreatePetConfig: async function(charId) {
+      if (!charId) return null;
       try {
         let config = await db.desktop_pets.get(charId);
         if (!config) {
@@ -140,10 +154,10 @@
             mode: 'custom',
             statesConfig: {},
             customDialogues: {},
-            petEnabled: false,       // 独立角色桌宠开启开关
-            petSize: 100,            // 独立尺寸
-            activeMsgEnabled: false, // 独立主动定时发信开关 [1]
-            activeMsgInterval: 10    // 独立自动发信时间间隔 [1]
+            petEnabled: false,
+            petSize: 100,
+            activeMsgEnabled: false,
+            activeMsgInterval: 10
           };
           Object.keys(STATE_NAMES).forEach(st => {
             config.customDialogues[st] = {
@@ -155,8 +169,6 @@
         }
         if (!config.statesConfig) config.statesConfig = {};
         if (!config.customDialogues) config.customDialogues = {};
-        if (config.activeMsgInterval === undefined) config.activeMsgInterval = 10;
-        
         Object.keys(STATE_NAMES).forEach(st => {
           if (!config.customDialogues[st]) {
             config.customDialogues[st] = {
@@ -165,54 +177,59 @@
             };
           }
         });
-        this.currentPetConfig = config;
+        return config;
       } catch (e) {
-        console.error("加载桌宠 IndexedDB 数据失败:", e);
+        console.error("加载桌宠配置失败:", e);
+        return null;
       }
     },
 
-    // 渲染或更新桌宠外观（采用各角色完全解耦的独立桌宠开关） [1]
+    // 渲染或更新全局活跃桌宠的外观 (只与当前活跃的 activePetConfig 相关，与当前聊天页是谁彻底脱钩) [1]
     renderPetToDesktop: function() {
-      const container = document.getElementById("desktop-pet-container");
-      if (!container) return;
-
-      // 绝不使用全局 LocalStorage，改为每个角色完全解耦的独立桌宠开关！ [1]
-      const isPetEnabled = this.currentPetConfig && this.currentPetConfig.petEnabled;
-      
-      if (!isPetEnabled || !this.currentPetConfig) {
-        container.style.display = "none";
-        if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
-          window.AndroidMCP.hideDesktopPet(); // 隐藏真机悬浮窗
+      // 核心防冲突 2：如果在真机环境下，强行将网页 DOM 桌宠永久彻底拔除，杜绝双桌宠异常
+      if (window.AndroidMCP || (window.parent && window.parent.AndroidMCP)) {
+        const container = document.getElementById("desktop-pet-container");
+        if (container) container.remove(); // 强制移出网页 DOM
+        
+        // 渲染真机系统级窗口
+        if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
+          if (this.activePetCharId && this.activePetConfig && this.activePetConfig.petEnabled) {
+            const size = this.activePetConfig.petSize || 100;
+            const base64 = this.activePetConfig.statesConfig[this.currentState] || this.activePetConfig.statesConfig['default'];
+            if (base64) {
+              window.AndroidMCP.showDesktopPet(base64, size);
+            }
+          } else {
+            window.AndroidMCP.hideDesktopPet();
+          }
         }
         return;
       }
 
-      // 1. 网页内 DOM 呈现
+      // 网页 PWA 端正常渲染
+      const container = document.getElementById("desktop-pet-container");
+      if (!container) return;
+
+      if (!this.activePetCharId || !this.activePetConfig || !this.activePetConfig.petEnabled) {
+        container.style.display = "none";
+        return;
+      }
+
       container.style.display = "block";
-      const size = this.currentPetConfig.petSize || 100;
+      const size = this.activePetConfig.petSize || 100;
       container.style.width = `${size}px`;
       container.style.height = `${size}px`;
 
       const imgEl = document.getElementById("desktop-pet-img");
-      const base64 = this.currentPetConfig.statesConfig[this.currentState] || this.currentPetConfig.statesConfig['default'];
-      
+      const base64 = this.activePetConfig.statesConfig[this.currentState] || this.activePetConfig.statesConfig['default'];
       if (base64) {
         imgEl.src = base64;
-        
-        // 2. 真机系统级悬浮窗投射
-        if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
-          try {
-            window.AndroidMCP.showDesktopPet(base64, size);
-          } catch(e) {
-            console.error("同步原生系统级桌宠失败:", e);
-          }
-        }
       } else {
         imgEl.src = 'data:image/svg+xml;utf8,<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="%23fca5a5"/><text x="12" y="15" font-size="8" text-anchor="middle" fill="%23ffffff">无图</text></svg>';
       }
     },
 
-    // 气泡冒泡机制
+    // 气泡冒泡重定向
     popBubble: function(text, duration = 3000) {
       if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPetBubble === 'function') {
         try {
@@ -235,42 +252,42 @@
       }, duration);
     },
 
-    // 双击触发灵魂唤醒对话
+    // 双击调起 App (基于当前活跃活跃桌宠绑定的角色) [1]
     handleDoubleClick: async function() {
-      if (!this.activeCharId) return;
+      if (!this.activePetCharId) return;
 
       if (typeof openWeChatDialog === 'function' && typeof activeSessionId !== 'undefined') {
-        const list = await db.sessions.where('charId').equals(this.activeCharId).toArray();
+        const list = await db.sessions.where('charId').equals(this.activePetCharId).toArray();
         if (list.length > 0) {
           openWeChatDialog(list[0].id);
         }
       }
 
-      if (this.currentPetConfig.mode === 'api') {
+      if (this.activePetConfig.mode === 'api') {
         await this.triggerApiInteraction();
       } else {
         this.triggerCustomInteraction();
       }
     },
 
-    // 外部后台双击静默唤醒
+    // 真机系统桌面双击后台静默触发
     handleDoubleClickBackground: async function() {
-      if (!this.activeCharId) return;
+      if (!this.activePetCharId) return;
 
-      if (this.currentPetConfig.mode === 'api') {
+      if (this.activePetConfig.mode === 'api') {
         await this.triggerApiInteraction();
       } else {
         this.triggerCustomInteraction();
       }
     },
 
-    // 自定义对话响应逻辑 (台词 + 概率)
+    // 自定义对话触发 (作用于当前活跃活跃桌宠) [1]
     triggerCustomInteraction: function() {
-      if (!this.currentPetConfig) return;
+      if (!this.activePetConfig) return;
 
       const candidates = [];
       Object.keys(STATE_NAMES).forEach(st => {
-        const cfg = this.currentPetConfig.customDialogues[st];
+        const cfg = this.activePetConfig.customDialogues[st];
         if (cfg) {
           const prob = parseInt(cfg.probability) || 0;
           if (prob > 0) {
@@ -297,7 +314,7 @@
       this.currentState = selectedState;
       this.renderPetToDesktop();
 
-      const dialogueCfg = this.currentPetConfig.customDialogues[selectedState];
+      const dialogueCfg = this.activePetConfig.customDialogues[selectedState];
       const lines = dialogueCfg && dialogueCfg.textLines 
         ? dialogueCfg.textLines.split('\n').map(l => l.trim()).filter(l => l.length > 0)
         : [];
@@ -310,7 +327,7 @@
       }
     },
 
-    // 实时生成 API 交互
+    // 实时生成 API 交互 (作用于当前活跃活跃桌宠) [1]
     triggerApiInteraction: async function() {
       this.popBubble("思考中...");
 
@@ -320,7 +337,10 @@
         const api = await db.api_presets.get(Number(presetId));
         if (!api) throw new Error("API预设丢失");
 
-        const sess = await db.sessions.get(activeSessionId);
+        // 定位全局活跃桌宠关联会话
+        const sessions = await db.sessions.where('charId').equals(this.activePetCharId).toArray();
+        if (sessions.length === 0) throw new Error("未找到对应会话");
+        const sess = sessions[0];
         const char = await db.archives.get(sess.charId);
 
         const prompt = `你现在是用户的桌面悬浮桌宠，扮演【${char.name}】。
@@ -363,14 +383,14 @@
 
     // 控制 MCP 面板中状态的选择改变
     onStateSelectChange: function() {
-      if (!this.currentPetConfig) return;
+      if (!this.editingPetConfig) return;
       const select = document.getElementById("mcp-pet-state-select");
       if (!select) return;
       const st = select.value;
 
       const previewBox = document.getElementById("mcp-pet-state-preview");
       if (previewBox) {
-        const base64 = this.currentPetConfig.statesConfig[st];
+        const base64 = this.editingPetConfig.statesConfig[st];
         previewBox.innerHTML = base64 
           ? `<img src="${base64}" style="width:100%; height:100%; object-fit:contain;">`
           : `<span style="font-size:8px; color:var(--text-secondary);">无图</span>`;
@@ -379,7 +399,7 @@
       const probInput = document.getElementById("mcp-pet-state-prob");
       const dialoguesArea = document.getElementById("mcp-pet-state-dialogues");
       
-      const dialogueCfg = this.currentPetConfig.customDialogues[st];
+      const dialogueCfg = this.editingPetConfig.customDialogues[st];
       if (probInput && dialogueCfg) {
         probInput.value = dialogueCfg.probability !== undefined ? dialogueCfg.probability : (st === 'default' ? 100 : 0);
       }
@@ -388,13 +408,13 @@
       }
     },
 
-    // 从 MCP 选项卡收集并保存数据 [1]
+    // 保存 MCP 面板修改 (仅作用于正在编辑配置的 editingPetConfig) [1]
     saveMcpUiSettings: async function() {
-      if (!this.currentPetConfig) return;
+      if (!this.editingPetConfig) return;
 
       const modeSelect = document.getElementById("mcp-pet-mode");
       if (modeSelect) {
-        this.currentPetConfig.mode = modeSelect.value;
+        this.editingPetConfig.mode = modeSelect.value;
       }
 
       const select = document.getElementById("mcp-pet-state-select");
@@ -403,44 +423,38 @@
         const probInput = document.getElementById("mcp-pet-state-prob");
         const dialoguesArea = document.getElementById("mcp-pet-state-dialogues");
 
-        if (!this.currentPetConfig.customDialogues[st]) {
-          this.currentPetConfig.customDialogues[st] = {};
+        if (!this.editingPetConfig.customDialogues[st]) {
+          this.editingPetConfig.customDialogues[st] = {};
         }
         if (probInput) {
-          this.currentPetConfig.customDialogues[st].probability = parseInt(probInput.value) || 0;
+          this.editingPetConfig.customDialogues[st].probability = parseInt(probInput.value) || 0;
         }
         if (dialoguesArea) {
-          this.currentPetConfig.customDialogues[st].textLines = dialoguesArea.value;
+          this.editingPetConfig.customDialogues[st].textLines = dialoguesArea.value;
         }
       }
 
-      // === 解耦：独立收集保存每个角色的自动发信与桌宠开启设置 === [1]
       const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
       if (activeMsgToggle) {
-        this.currentPetConfig.activeMsgEnabled = activeMsgToggle.checked;
+        this.editingPetConfig.activeMsgEnabled = activeMsgToggle.checked;
       }
       const activeMsgIntervalInput = document.getElementById("mcp-active-msg-interval");
       if (activeMsgIntervalInput) {
-        this.currentPetConfig.activeMsgInterval = parseInt(activeMsgIntervalInput.value) || 10;
+        this.editingPetConfig.activeMsgInterval = parseInt(activeMsgIntervalInput.value) || 10;
       }
 
-      const petToggle = document.getElementById("settings-mcp-pet-toggle");
-      if (petToggle) {
-        this.currentPetConfig.petEnabled = petToggle.checked;
-      }
-      
-      const sizeSlider = document.getElementById("mcp-pet-size-slider");
-      if (sizeSlider) {
-        this.currentPetConfig.petSize = parseInt(sizeSlider.value) || 100;
+      // 如果当前编辑的正是全局活跃的那只，即时同步其热内存配置
+      if (this.activePetCharId === this.editingCharId) {
+        this.activePetConfig = this.editingPetConfig;
       }
 
-      await db.desktop_pets.put(this.currentPetConfig);
+      await db.desktop_pets.put(this.editingPetConfig);
       this.renderPetToDesktop();
     },
 
-    // 上传对应状态的 Base64 动作图
+    // 上传状态图 (editing)
     handleStateImageUpload: function(fileEl) {
-      if (fileEl.files.length > 0 && this.currentPetConfig) {
+      if (fileEl.files.length > 0 && this.editingPetConfig) {
         const select = document.getElementById("mcp-pet-state-select");
         if (!select) return;
         const st = select.value;
@@ -448,9 +462,13 @@
         const reader = new FileReader();
         reader.onload = async (e) => {
           const base64 = e.target.result;
-          this.currentPetConfig.statesConfig[st] = base64;
+          this.editingPetConfig.statesConfig[st] = base64;
           
-          await db.desktop_pets.put(this.currentPetConfig);
+          if (this.activePetCharId === this.editingCharId) {
+            this.activePetConfig = this.editingPetConfig;
+          }
+
+          await db.desktop_pets.put(this.editingPetConfig);
           showToast(`[${STATE_NAMES[st]}] 状态动画图上传成功！`);
           
           this.onStateSelectChange();
@@ -460,15 +478,20 @@
       }
     },
 
-    // 清除动作图
+    // 清除状态图
     clearStateImage: async function() {
-      if (this.currentPetConfig) {
+      if (this.editingPetConfig) {
         const select = document.getElementById("mcp-pet-state-select");
         if (!select) return;
         const st = select.value;
 
-        delete this.currentPetConfig.statesConfig[st];
-        await db.desktop_pets.put(this.currentPetConfig);
+        delete this.editingPetConfig.statesConfig[st];
+        
+        if (this.activePetCharId === this.editingCharId) {
+          this.activePetConfig = this.editingPetConfig;
+        }
+
+        await db.desktop_pets.put(this.editingPetConfig);
         showToast(`已清空 [${STATE_NAMES[st]}] 状态动画图`);
         
         this.onStateSelectChange();
@@ -476,11 +499,15 @@
       }
     },
 
-    // 改变大小（同步改变系统悬浮窗尺寸）
+    // 改变尺寸 (editing)
     changePetSize: function(val) {
-      if (this.currentPetConfig) {
-        this.currentPetConfig.petSize = parseInt(val) || 100;
+      if (this.editingPetConfig) {
+        this.editingPetConfig.petSize = parseInt(val) || 100;
       }
+      if (this.activePetCharId === this.editingCharId) {
+        this.activePetConfig = this.editingPetConfig;
+      }
+      
       const sizeVal = document.getElementById("mcp-pet-size-val");
       if (sizeVal) sizeVal.innerText = `${val}dp`;
       localStorage.setItem("mcp-pet-size-slider", val);
@@ -491,15 +518,16 @@
       if (window.AndroidMCP && typeof window.AndroidMCP.updateDesktopPetSize === 'function') {
         try {
           window.AndroidMCP.updateDesktopPetSize(parseInt(val));
-        } catch(e) {
-          console.error(e);
-        }
+        } catch(e) { console.error(e); }
       }
     },
 
-    // 独立角色的悬浮权限拦截申请
-    togglePetActive: function(toggleEl) {
+    // 绑定角色开关的桌宠权限与转移逻辑 [1]
+    togglePetActive: async function(toggleEl) {
       const isEnabled = toggleEl.checked;
+      const charId = this.editingCharId;
+      if (!charId) return;
+
       if (isEnabled) {
         if (window.AndroidMCP && typeof window.AndroidMCP.checkOverlayPermission === 'function') {
           try {
@@ -511,48 +539,85 @@
               });
               return;
             }
-          } catch(e) {
-            console.error(e);
-          }
+          } catch(e) { console.error(e); }
         }
+
+        // 1. 实现强去叠：开启新桌宠时，将其他所有角色的启用标记清空
+        try {
+          const allPets = await db.desktop_pets.toArray();
+          for (let pet of allPets) {
+            if (pet.charId !== charId && pet.petEnabled) {
+              pet.petEnabled = false;
+              await db.desktop_pets.put(pet);
+            }
+          }
+        } catch(e) { console.error(e); }
+
+        // 2. 将当前配置开启
+        if (this.editingPetConfig) {
+          this.editingPetConfig.petEnabled = true;
+          await db.desktop_pets.put(this.editingPetConfig);
+        }
+
+        // 3. 切换全局桌宠持有者
+        localStorage.setItem("active_pet_char_id", charId);
+        this.activePetCharId = charId;
+        this.activePetConfig = this.editingPetConfig;
+        this.currentState = 'default';
+        
+        showToast("该角色桌面悬浮桌宠已开启！");
+      } else {
+        // 关闭当前桌宠
+        if (this.editingPetConfig) {
+          this.editingPetConfig.petEnabled = false;
+          await db.desktop_pets.put(this.editingPetConfig);
+        }
+        localStorage.removeItem("active_pet_char_id");
+        this.activePetCharId = null;
+        this.activePetConfig = null;
+        showToast("该角色桌宠已退出");
       }
-      
-      // 保存解耦配置 [1]
-      this.saveMcpUiSettings();
-      showToast(isEnabled ? "该角色桌面悬浮桌宠已开启！" : "该角色桌宠已退出");
+
+      this.renderPetToDesktop();
+      this.loadMcpPanelState(); // 重新同步回显面板
     },
 
     // 渲染 UI 面板设置初始回显 [1]
     loadMcpPanelState: function() {
-      if (!this.currentPetConfig) return;
+      const warningEl = document.getElementById("mcp-pet-char-warning");
+      
+      // 无会话时，置灰置空
+      if (!this.editingCharId || !this.editingPetConfig) {
+        if (warningEl) warningEl.innerText = "当前编辑角色：无 (请进入会话后配置)";
+        return;
+      }
 
       const modeSelect = document.getElementById("mcp-pet-mode");
-      if (modeSelect) modeSelect.value = this.currentPetConfig.mode || "custom";
+      if (modeSelect) modeSelect.value = this.editingPetConfig.mode || "custom";
 
       const sizeSlider = document.getElementById("mcp-pet-size-slider");
-      const size = this.currentPetConfig.petSize || 100;
+      const size = this.editingPetConfig.petSize || 100;
       if (sizeSlider) sizeSlider.value = size;
       const sizeVal = document.getElementById("mcp-pet-size-val");
       if (sizeVal) sizeVal.innerText = `${size}dp`;
 
-      // 解耦：独立回显当前活跃角色的主动发信开关及桌宠开关 [1]
       const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
-      if (activeMsgToggle) activeMsgToggle.checked = !!this.currentPetConfig.activeMsgEnabled;
+      if (activeMsgToggle) activeMsgToggle.checked = !!this.editingPetConfig.activeMsgEnabled;
 
       const activeMsgIntervalInput = document.getElementById("mcp-active-msg-interval");
-      if (activeMsgIntervalInput) activeMsgIntervalInput.value = this.currentPetConfig.activeMsgInterval || 10;
+      if (activeMsgIntervalInput) activeMsgIntervalInput.value = this.editingPetConfig.activeMsgInterval || 10;
 
+      // 该角色专属桌宠开关回显
       const petToggle = document.getElementById("settings-mcp-pet-toggle");
-      if (petToggle) petToggle.checked = !!this.currentPetConfig.petEnabled;
+      if (petToggle) {
+        petToggle.checked = !!this.editingPetConfig.petEnabled;
+      }
 
       this.onStateSelectChange();
     },
 
     // ==========================================
-    //  JS 独立高精度后台定时发信调度引擎 (彻底解决多角色时间分离) [1]
-    // ==========================================
-    // 原生 Timer 不具备 RAG、世界书、长效记忆等多态 Prompt 编译权限，
-    // 因此在 JS 层实现全自动化时间调度，再调用 popBubble 和 showSystemNotification
+    //  JS 独立高精度后台定时发信调度引擎 (各角色完全独立解耦) [1]
     // ==========================================
     triggerActiveMessageForChar: async function(charId) {
       try {
@@ -560,26 +625,24 @@
         if (sessions.length === 0) return;
         const sess = sessions[0];
 
-        // 1. 联动桌宠气泡（有人冒泡）
-        if (this.activeCharId === charId && this.currentState !== 'sleep') {
+        // 联动桌宠（仅在该角色正好是当前全局活跃桌宠时冒泡提示）
+        if (this.activePetCharId === charId && this.currentState !== 'sleep') {
           this.popBubble("有人冒泡。");
         }
 
-        // 2. 编译该角色在特定会话下的专属 RAG 记忆与世界书 Prompt
+        // 编译 Prompt
         let systemPrompt = await buildGlobalSystemPrompt(sess.id);
-        
         systemPrompt += `\n\n【重要指令（你正在主动发起对话）】：
 目前距离上一轮聊天已经过去了一段时间，用户现在处于闲置状态。现在是你主动开启话题、发微信消息打破尴尬的时候。
-请根据你当前的人设关系、世界书语境，发送一条极其自然、带有你特定情绪色彩的消息。控制在40字以内。
+请根据你当前的人设关系、世界书语境，发送一条极其自然、带有你特定情绪色彩的消息。控制在40字内。
 表现得就像在真实的微信聊天中，你突然想跟对方聊天一样自然，严禁刻板套话。`;
 
-        // 加载历史会话
+        // 加载历史
         const history = await db.messages.where('sessionId').equals(sess.id).reverse().limit(10).toArray();
         history.reverse();
 
         const messagesToSend = [{ role: "system", content: systemPrompt }];
         history.forEach(h => {
-          // 擦除指令标志以喂入上下文
           let cleanContent = h.content;
           if (typeof cleanContent === 'string') {
             cleanContent = cleanContent.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
@@ -607,7 +670,6 @@
         const result = await response.json();
         let reply = result.choices[0].message.content.trim();
 
-        // 清洗回复文本并入库
         reply = reply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
 
         const newMsg = {
@@ -623,20 +685,19 @@
         const char = await db.archives.get(charId);
         const charName = sess.customCharName || char?.name || "对方";
 
-        // 如果刚好在这个角色的主聊天窗口，立即刷新上屏
         if (typeof activeSessionId !== 'undefined' && activeSessionId === sess.id) {
           if (typeof renderDialogMessages === 'function') {
             await renderDialogMessages();
           }
         }
 
-        // 3. 真机通知系统
+        // 推送通知
         if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
           window.AndroidMCP.showSystemNotification(charName, reply);
         }
 
-        // 4. 联动桌宠气泡（有人来信）
-        if (this.activeCharId === charId) {
+        // 联动来信冒泡提示
+        if (this.activePetCharId === charId) {
           this.popBubble("有人来信。");
         }
 
@@ -646,7 +707,7 @@
     }
   };
 
-  // 全局定时发信调度引擎 (每 30 秒执行一次时间扫描，达到解耦分离) [1]
+  // 全局高精度定时扫描线程
   if (!window.activeMsgSchedulerInterval) {
     window.activeMsgSchedulerInterval = setInterval(async () => {
       if (typeof db === 'undefined' || !db.desktop_pets) return;
@@ -660,7 +721,6 @@
             const lastTimeKey = `mcp_last_msg_time_${pet.charId}`;
             const lastTrigger = parseInt(localStorage.getItem(lastTimeKey) || "0") || now;
             
-            // 首次冷启动时间对齐，防止瞬间连环发信
             if (!localStorage.getItem(lastTimeKey)) {
               localStorage.setItem(lastTimeKey, now);
               continue;
@@ -673,7 +733,7 @@
           }
         }
       } catch(e) {
-        console.error("主动发信调度引擎执行异常:", e);
+        console.error("主动发信调度异常:", e);
       }
     }, 30000);
   }
