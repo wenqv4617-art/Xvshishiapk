@@ -99,7 +99,8 @@ class MainActivity : AppCompatActivity() {
         // 解锁 AI 在后台静默自动点播放歌
         settings.mediaPlaybackRequiresUserGesture = false
 
-        // 注入 window.AndroidMCP 原生接口
+        // 注入 window.AndroidMCP 原生接口并向静态通道注册主 Activity 引用
+        AndroidMcp.mainActivity = this
         webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
 
         // 加载 assets 本地打包的前端页面
