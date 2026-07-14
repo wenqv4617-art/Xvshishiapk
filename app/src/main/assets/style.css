@@ -125,3 +125,41 @@ body {
     max-width: 100%; max-height: 100%; border-radius: 0; border: none;
   }
 }
+
+/* 桌面翻页指示器样式 */
+#desktop-page-indicator {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  height: 24px;
+}
+.page-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background-color: rgba(100, 116, 139, 0.4);
+  cursor: pointer;
+  transition: background-color 0.2s, transform 0.2s;
+}
+.page-dot.active {
+  background-color: var(--primary);
+  transform: scale(1.2);
+}
+.page-add-btn {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background-color: #07c160;
+  color: white;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-left: 4px;
+  line-height: 1;
+}
