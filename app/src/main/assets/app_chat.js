@@ -3055,19 +3055,61 @@ async function triggerOfflineReply() {
     if (!api) throw new Error("所选的 API 预设可能已被删除，请重新配置！");
 
     let rawList = [];
-    if (isOfflineTheater) {
-      rawList = await db.offline_messages.where('theaterId').equals(activeTheaterId).sortBy('timestamp');
-    } else {
-      rawList = await db.offline_messages.where('sessionId').equals(activeSessionId).and(m => m.isTheater === 0).sortBy('timestamp');
-    }
+        let carryMemory = false;
+        
+        if (isOfflineTheater) {
+          const theater = await db.theaters.get(Number(activeTheaterId));
+          carryMemory = theater ? !!theater.carryMemory : false;
+        } else {
+          carryMemory = true; // 赴约模式强制开启 carryMemory 以实现与线上同步
+        }
 
-    const history = rawList.slice(-15); 
-    const systemPrompt = await buildOfflineSystemPrompt(activeSessionId, activeTheaterId, isOfflineTheater);
+        if (carryMemory) {
+          // 混合线上与线下对话历史，保障连续可变的平滑对话过渡
+          const onlineMsgs = await db.messages.where('sessionId').equals(activeSessionId).toArray();
+          let offlineMsgs = [];
+          if (isOfflineTheater) {
+            offlineMsgs = await db.offline_messages.where('theaterId').equals(activeTheaterId).toArray();
+          } else {
+            offlineMsgs = await db.offline_messages.where('sessionId').equals(activeSessionId).and(m => m.isTheater === 0).toArray();
+          }
+          rawList = [...onlineMsgs, ...offlineMsgs].sort((a, b) => a.timestamp - b.timestamp);
+        } else {
+          // 独立剧场未开启 carryMemory 状态：仅依赖剧场内部线下对话
+          rawList = await db.offline_messages.where('theaterId').equals(activeTheaterId).sortBy('timestamp');
+        }
 
-    const messagesToSend = [{ role: "system", content: systemPrompt }];
-    history.forEach(h => {
-      messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: h.content });
-    });
+        const history = rawList.slice(-15); 
+        const systemPrompt = await buildOfflineSystemPrompt(activeSessionId, activeTheaterId, isOfflineTheater);
+
+        const messagesToSend = [{ role: "system", content: systemPrompt }];
+        history.forEach(h => {
+          let displayContent = h.content;
+          if (h.isRecalled === 1) {
+            displayContent = "[已撤回该消息]";
+          } else if (h.contentType === 'image') {
+            try {
+              const data = JSON.parse(h.content);
+              displayContent = `[图片描述: ${data.text}]`;
+            } catch(e) {}
+          } else if (h.contentType === 'voice') {
+            try {
+              const data = JSON.parse(h.content);
+              displayContent = `[语音转文字: ${data.text}]`;
+            } catch(e) {}
+          } else if (h.contentType === 'transfer') {
+            try {
+              const data = JSON.parse(h.content);
+              displayContent = `[微信转账: ￥${parseFloat(data.amount).toFixed(2)}]`;
+            } catch(e) {}
+          } else if (h.contentType === 'red_envelope') {
+            try {
+              const data = JSON.parse(h.content);
+              displayContent = `[微信红包: ${data.remark || '恭喜发财'}]`;
+            } catch(e) {}
+          }
+          messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: displayContent });
+        });
 
     const response = await fetch(`${api.url}/chat/completions`, {
       method: "POST",
