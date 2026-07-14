@@ -13,6 +13,9 @@ let isAppClickEventsInitialized = false;
 (function() {
   const desktopDragStyle = document.createElement("style");
   desktopDragStyle.textContent = `
+    #desktop {
+      touch-action: none !important; /* 彻底拦截原生手势抢占，解放高精度左右切页滑屏 */
+    }
     #desktop-grid {
       display: grid !important;
       grid-template-columns: repeat(4, 1fr) !important;
@@ -923,7 +926,8 @@ function initDesktopSwipeEvents() {
     swipeStartY = e.clientY;
   });
 
-  desktop.addEventListener("pointerup", (e) => {
+  // 改在 document 上全局监听 pointerup 和 pointercancel，彻底解决滑动出界、滑动到其他节点上导致 pointerup 不触发的顽疾！
+  document.addEventListener("pointerup", (e) => {
     if (!isSwipingDesktop) return;
     isSwipingDesktop = false;
 
@@ -952,6 +956,10 @@ function initDesktopSwipeEvents() {
         }
       }
     }
+  });
+
+  document.addEventListener("pointercancel", () => {
+    isSwipingDesktop = false;
   });
 }
 
