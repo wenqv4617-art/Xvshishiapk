@@ -287,6 +287,53 @@ function loadDesktopLayout() {
   renderLayout(grid, pageLayout, "desktop-slot");
   renderLayout(dock, dockLayout, "dock-slot");
   renderPageIndicator(pageCount);
+
+  // 3. 编辑模式下，如果当前页是空白页且总页数大于1，在右上角渲染一个“删除此页?”按钮
+  let delBtn = document.getElementById("btn-delete-page-indicator");
+  if (delBtn) delBtn.remove();
+
+  if (isDesktopEditMode && pageCount > 1) {
+    let isPageBlank = true;
+    for (let i = 0; i < 20; i++) {
+      if (pageLayout[i] !== null) {
+        isPageBlank = false;
+        break;
+      }
+      if (getPlacedWidget("desktop", i) !== null) {
+        isPageBlank = false;
+        break;
+      }
+    }
+
+    if (isPageBlank) {
+      const desktopMain = document.getElementById("desktop");
+      if (desktopMain) {
+        desktopMain.style.position = "relative"; // 保证绝对定位的锚定基准
+        delBtn = document.createElement("button");
+        delBtn.id = "btn-delete-page-indicator";
+        delBtn.innerText = "删除此页?";
+        delBtn.style.cssText = `
+          position: absolute;
+          top: 10px;
+          right: 15px;
+          background-color: #ef4444;
+          color: white;
+          border: none;
+          border-radius: 12px;
+          padding: 4px 10px;
+          font-size: 11px;
+          font-weight: bold;
+          cursor: pointer;
+          z-index: 1000;
+          box-shadow: 0 2px 6px rgba(239, 68, 68, 0.2);
+        `;
+        delBtn.onclick = () => {
+          window.deleteCurrentDesktopPage();
+        };
+        desktopMain.appendChild(delBtn);
+      }
+    }
+  }
 }
 
 function renderPageIndicator(pageCount) {
@@ -324,6 +371,37 @@ function addNewDesktopPage() {
   currentDesktopPage = Math.floor(desktopLayout.length / 20) - 1;
   loadDesktopLayout();
 }
+
+window.deleteCurrentDesktopPage = function() {
+  if (confirm("确定要删除当前空白页吗？")) {
+    let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+    const pageStart = currentDesktopPage * 20;
+    
+    // 移除对应页面的20个数据槽
+    desktopLayout.splice(pageStart, 20);
+    localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+    
+    // 同步清洗和偏移对应页面及后续页面的组件绑定位置
+    try {
+      const placed = JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {};
+      const newPlaced = {};
+      Object.keys(placed).forEach(key => {
+        const idx = parseInt(key);
+        if (idx < pageStart) {
+          newPlaced[idx] = placed[idx];
+        } else if (idx >= pageStart + 20) {
+          newPlaced[idx - 20] = placed[idx];
+        }
+      });
+      localStorage.setItem("placed-widgets-desktop", JSON.stringify(newPlaced));
+    } catch(e) {}
+
+    if (currentDesktopPage > 0) {
+      currentDesktopPage--;
+    }
+    loadDesktopLayout();
+  }
+};
 
 // 检查某个槽位是否被自定义小部件组件占用
 function getPlacedWidget(type, index) {
@@ -474,11 +552,22 @@ function renderLayout(container, layoutArray, slotClass) {
   });
 }
 
+let lastPointerDownX = 0;
+let lastPointerDownY = 0;
+document.addEventListener("pointerdown", (e) => {
+  lastPointerDownX = e.clientX;
+  lastPointerDownY = e.clientY;
+});
+
 function initAppClickEvents() {
   if (isAppClickEventsInitialized) return;
   isAppClickEventsInitialized = true;
 
   document.body.addEventListener("click", (e) => {
+    // 如果手指按下和抬起之间的位移超过 15px，判定为滑动操作，直接忽略点击
+    const dist = Math.hypot(e.clientX - lastPointerDownX, e.clientY - lastPointerDownY);
+    if (dist > 15) return;
+
     // 编辑模式下，点击任何外部区域自动安全退出编辑模式
     if (isDesktopEditMode) {
       if (!e.target.closest(".widget-add-badge") && !e.target.closest(".widget-delete-badge") && !e.target.closest(".app-icon")) {
@@ -743,22 +832,30 @@ function initDesktopSwipeEvents() {
   let isSwipingDesktop = false;
 
   desktop.addEventListener("pointerdown", (e) => {
-    // 过滤对图标、组件以及各种按钮的点击操作，防止干扰应用常态手势
-    if (
-      e.target.closest(".app-icon") || 
-      e.target.closest(".desktop-widget-container") || 
-      e.target.closest("button") || 
-      e.target.closest(".widget-add-badge") || 
-      e.target.closest(".widget-delete-badge")
-    ) {
-      return;
+    // 编辑模式下才过滤图标和组件（因为需要拖拽），普通模式下允许从图标上开始滑动翻页
+    if (isDesktopEditMode) {
+      if (
+        e.target.closest(".app-icon") || 
+        e.target.closest(".desktop-widget-container") || 
+        e.target.closest("button") || 
+        e.target.closest(".widget-add-badge") || 
+        e.target.closest(".widget-delete-badge")
+      ) {
+        return;
+      }
+    } else {
+      // 普通模式下仅过滤点击按钮
+      if (
+        e.target.closest("button") || 
+        e.target.closest(".widget-add-badge") || 
+        e.target.closest(".widget-delete-badge")
+      ) {
+        return;
+      }
     }
     isSwipingDesktop = true;
     swipeStartX = e.clientX;
     swipeStartY = e.clientY;
-    if (desktop.setPointerCapture) {
-      desktop.setPointerCapture(e.pointerId);
-    }
   });
 
   desktop.addEventListener("pointerup", (e) => {
