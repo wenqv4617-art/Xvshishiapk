@@ -3,6 +3,7 @@
  */
 
 let isDesktopEditMode = false;
+let currentDesktopPage = 0;
 
 // 核心初始化保护锁，彻底杜绝重复绑定事件导致的浏览器线程阻塞与死锁
 let isDragEventsInitialized = false;
@@ -270,16 +271,65 @@ function loadDesktopLayout() {
     }
   }
 
-  // 2. 渲染网格
-  renderLayout(grid, desktopLayout, "desktop-slot");
+  // 2. 渲染网格 (支持多页切换及补位)
+  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+  if (currentDesktopPage >= pageCount) {
+    currentDesktopPage = pageCount - 1;
+  }
+  
+  const pageStart = currentDesktopPage * 20;
+  const pageLayout = desktopLayout.slice(pageStart, pageStart + 20);
+  while (pageLayout.length < 20) {
+    pageLayout.push(null);
+  }
+
+  renderLayout(grid, pageLayout, "desktop-slot");
   renderLayout(dock, dockLayout, "dock-slot");
+  renderPageIndicator(pageCount);
 }
 
-// 检查某个槽位是否被自定义组件占用
+function renderPageIndicator(pageCount) {
+  const indicator = document.getElementById("desktop-page-indicator");
+  if (!indicator) return;
+  indicator.innerHTML = "";
+
+  for (let i = 0; i < pageCount; i++) {
+    const dot = document.createElement("div");
+    dot.className = `page-dot${i === currentDesktopPage ? " active" : ""}`;
+    dot.onclick = () => {
+      currentDesktopPage = i;
+      loadDesktopLayout();
+    };
+    indicator.appendChild(dot);
+  }
+
+  if (isDesktopEditMode) {
+    const addBtn = document.createElement("button");
+    addBtn.className = "page-add-btn";
+    addBtn.innerText = "+";
+    addBtn.onclick = () => {
+      addNewDesktopPage();
+    };
+    indicator.appendChild(addBtn);
+  }
+}
+
+function addNewDesktopPage() {
+  let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+  for (let i = 0; i < 20; i++) {
+    desktopLayout.push(null);
+  }
+  localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+  currentDesktopPage = Math.floor(desktopLayout.length / 20) - 1;
+  loadDesktopLayout();
+}
+
+// 检查某个槽位是否被自定义小部件组件占用
 function getPlacedWidget(type, index) {
   try {
     const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
-    const widgetId = placed[index];
+    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + index) : index;
+    const widgetId = placed[realIndex];
     if (widgetId) {
       const widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
       return widgets[widgetId] || null; // 返回整个 widget 对象，包含行高列宽
@@ -287,7 +337,6 @@ function getPlacedWidget(type, index) {
   } catch(e) {}
   return null;
 }
-
 function renderLayout(container, layoutArray, slotClass) {
   container.innerHTML = "";
   
@@ -642,14 +691,24 @@ function initDragEvents() {
 
 function saveLayoutsToLocal() {
   const desktopSlots = Array.from(document.getElementById("desktop-grid").children);
-  const desktopLayout = Array(20).fill(null);
+  let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
+  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+  
+  while (desktopLayout.length < pageCount * 20) {
+    desktopLayout.push(null);
+  }
+
+  const pageStart = currentDesktopPage * 20;
+  for (let i = 0; i < 20; i++) {
+    desktopLayout[pageStart + i] = null;
+  }
   
   // === 【物理对齐存盘校正】：通过 slot 的 data-index 属性反查真实索引，防止由于跳过 DOM 节点导致的整体缩水 ===
   desktopSlots.forEach(slot => {
     const index = parseInt(slot.getAttribute("data-index"));
     if (!isNaN(index) && index < 20) {
       const icon = slot.querySelector(".app-icon");
-      desktopLayout[index] = icon ? icon.getAttribute("data-app") : null;
+      desktopLayout[pageStart + index] = icon ? icon.getAttribute("data-app") : null;
     }
   });
 
@@ -770,7 +829,11 @@ function openAddSelector(type, slotIndex) {
 window.placeAppOnSlot = function(type, slotIndex, appId) {
   try {
     let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? 20 : 4).fill(null);
-    layout[slotIndex] = appId;
+    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+    while (layout.length <= realIndex) {
+      layout.push(null);
+    }
+    layout[realIndex] = appId;
     localStorage.setItem(`${type}-layout-v3`, JSON.stringify(layout));
   } catch(e) {}
   
@@ -781,7 +844,8 @@ window.placeAppOnSlot = function(type, slotIndex, appId) {
 window.placeWidgetOnSlot = function(type, slotIndex, widgetId) {
   try {
     const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
-    placed[slotIndex] = widgetId;
+    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+    placed[realIndex] = widgetId;
     localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
   } catch(e) {}
   
@@ -798,7 +862,8 @@ function removeWidgetFromSlot(type, slotIndex) {
   if (confirm("确定要从该网格中删除此组件吗？")) {
     try {
       const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
-      delete placed[slotIndex];
+      const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+      delete placed[realIndex];
       localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
     } catch(e) {}
     exitDesktopEditMode();
@@ -809,7 +874,11 @@ function removeAppFromSlot(type, slotIndex) {
   if (confirm("确定要将此应用从当前槽位中移除吗？您随时可以长按点击空白网格的加号重新放回桌面。")) {
     try {
       let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? 20 : 4).fill(null);
-      layout[slotIndex] = null;
+      const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+      while (layout.length <= realIndex) {
+        layout.push(null);
+      }
+      layout[realIndex] = null;
       localStorage.setItem(`${type}-layout-v3`, JSON.stringify(layout));
     } catch(e) {}
     exitDesktopEditMode();
