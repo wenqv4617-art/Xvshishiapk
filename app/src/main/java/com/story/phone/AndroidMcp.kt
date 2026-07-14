@@ -22,8 +22,14 @@ class AndroidMcp(private val context: Context) {
     @JavascriptInterface
     fun toggleBackgroundWakeLock(enabled: Boolean) {
         try {
+            val serviceIntent = Intent(context, McpForegroundService::class.java)
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             if (enabled) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
                 if (wakeLock == null) {
                     wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "StoryPhone::BackgroundWakeLock")
                 }
@@ -31,6 +37,7 @@ class AndroidMcp(private val context: Context) {
                     wakeLock?.acquire()
                 }
             } else {
+                context.stopService(serviceIntent)
                 if (wakeLock?.isHeld == true) {
                     wakeLock?.release()
                 }
@@ -239,6 +246,184 @@ class AndroidMcp(private val context: Context) {
             context.startActivity(intent)
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    private fun getWebView(): android.webkit.WebView? {
+        return (context as? MainActivity)?.findViewById(R.id.webview)
+    }
+
+    private var bgPollTimer: java.util.Timer? = null
+    private var floatPetView: android.view.View? = null
+
+    @JavascriptInterface
+    fun startBackgroundPolling(intervalMinutes: Int) {
+        try {
+            stopBackgroundPolling()
+            bgPollTimer = java.util.Timer().apply {
+                scheduleAtFixedRate(object : java.util.TimerTask() {
+                    override fun run() {
+                        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+                        handler.post {
+                            try {
+                                val webView = getWebView()
+                                webView?.evaluateJavascript("javascript:if(window.mcpSystem && typeof window.mcpSystem.triggerBackgroundActiveMessage === 'function') { window.mcpSystem.triggerBackgroundActiveMessage(); }", null)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
+                        }
+                    }
+                }, intervalMinutes * 60 * 1000L, intervalMinutes * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun stopBackgroundPolling() {
+        try {
+            bgPollTimer?.cancel()
+            bgPollTimer = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun checkOverlayPermission(): Boolean {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+    }
+
+    @JavascriptInterface
+    fun requestOverlayPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                data = android.net.Uri.parse("package:${context.packageName}")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        }
+    }
+
+    @JavascriptInterface
+    fun showDesktopPet(base64Str: String, sizeDp: Int) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            try {
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+                
+                if (floatPetView != null) {
+                    try {
+                        windowManager.removeView(floatPetView)
+                    } catch (e: Exception) {}
+                    floatPetView = null
+                }
+
+                val imageView = android.widget.ImageView(context)
+                imageView.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                
+                val cleanBase64 = base64Str.substringAfter("base64,")
+                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                imageView.setImageBitmap(bitmap)
+
+                val layoutParamsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.view.WindowManager.LayoutParams.TYPE_PHONE
+                }
+
+                val density = context.resources.displayMetrics.density
+                val sizePx = (sizeDp * density).toInt()
+
+                val params = android.view.WindowManager.LayoutParams(
+                    sizePx,
+                    sizePx,
+                    layoutParamsType,
+                    android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    android.graphics.PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                    x = 100
+                    y = 100
+                }
+
+                imageView.setOnTouchListener(object : android.view.View.OnTouchListener {
+                    private var initialX = 0
+                    private var initialY = 0
+                    private var initialTouchX = 0f
+                    private var initialTouchY = 0f
+
+                    override fun onTouch(v: android.view.View?, event: android.view.MotionEvent?): Boolean {
+                        if (event == null) return false
+                        when (event.action) {
+                            android.view.MotionEvent.ACTION_DOWN -> {
+                                initialX = params.x
+                                initialY = params.y
+                                initialTouchX = event.rawX
+                                initialTouchY = event.rawY
+                                return true
+                            }
+                            android.view.MotionEvent.ACTION_MOVE -> {
+                                params.x = initialX + (event.rawX - initialTouchX).toInt()
+                                params.y = initialY + (event.rawY - initialTouchY).toInt()
+                                try {
+                                    windowManager.updateViewLayout(imageView, params)
+                                } catch (e: Exception) {}
+                                return true
+                            }
+                        }
+                        return false
+                    }
+                })
+
+                windowManager.addView(imageView, params)
+                floatPetView = imageView
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun updateDesktopPetSize(sizeDp: Int) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            try {
+                val view = floatPetView ?: return@post
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+                val density = context.resources.displayMetrics.density
+                val sizePx = (sizeDp * density).toInt()
+
+                val params = view.layoutParams as android.view.WindowManager.LayoutParams
+                params.width = sizePx
+                params.height = sizePx
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun hideDesktopPet() {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            try {
+                if (floatPetView != null) {
+                    val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+                    windowManager.removeView(floatPetView)
+                    floatPetView = null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 }
