@@ -55,13 +55,15 @@ let isAppClickEventsInitialized = false;
     }
     
     .app-icon {
-      /* 核心：告诉浏览器手动处理手势，严厉封锁系统默认的拖动与下拉刷新 */
-      touch-action: none !important; 
-      user-select: none !important;
-      -webkit-user-select: none !important;
-      -webkit-user-drag: none !important;
-      cursor: grab;
-    }
+          user-select: none !important;
+          -webkit-user-select: none !important;
+          -webkit-user-drag: none !important;
+        }
+        .edit-mode .app-icon {
+          /* 仅在编辑模式下激活触控阻断，以便进行拖动重排 */
+          touch-action: none !important; 
+          cursor: grab;
+        }
     .app-icon.dragging {
       opacity: 0.82;
       transform: scale(1.15) !important;
@@ -934,11 +936,19 @@ function saveLayoutsToLocal() {
 function enterDesktopEditMode() {
   if (isDesktopEditMode) return;
   isDesktopEditMode = true;
+  const phone = document.getElementById("phone-container");
+  if (phone) {
+    phone.classList.add("edit-mode");
+  }
   loadDesktopLayout();
 }
 
 function exitDesktopEditMode() {
   isDesktopEditMode = false;
+  const phone = document.getElementById("phone-container");
+  if (phone) {
+    phone.classList.remove("edit-mode");
+  }
   loadDesktopLayout();
 }
 
