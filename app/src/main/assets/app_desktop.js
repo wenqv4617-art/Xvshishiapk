@@ -286,74 +286,59 @@ function loadDesktopLayout() {
     pageLayout.push(null);
   }
 
-  renderLayout(grid, pageLayout, "desktop-slot");
-  renderLayout(dock, dockLayout, "dock-slot");
-  renderPageIndicator(pageCount);
-
-  // 3. 编辑模式下，如果当前页是空白页且总页数大于1，在右上角渲染一个“删除此页?”按钮
-  let delBtn = document.getElementById("btn-delete-page-indicator");
-  if (delBtn) delBtn.remove();
-
-  if (isDesktopEditMode && pageCount > 1) {
-    let isPageBlank = true;
-    for (let i = 0; i < 20; i++) {
-      if (pageLayout[i] !== null) {
-        isPageBlank = false;
-        break;
-      }
-      if (getPlacedWidget("desktop", i) !== null) {
-        isPageBlank = false;
-        break;
-      }
+  let isPageBlank = true;
+  for (let i = 0; i < 20; i++) {
+    if (pageLayout[i] !== null) {
+      isPageBlank = false;
+      break;
     }
-
-    if (isPageBlank) {
-      const desktopMain = document.getElementById("desktop");
-      if (desktopMain) {
-        desktopMain.style.position = "relative"; // 保证绝对定位的锚定基准
-        delBtn = document.createElement("button");
-        delBtn.id = "btn-delete-page-indicator";
-        delBtn.innerText = "删除此页?";
-        delBtn.style.cssText = `
-          position: absolute;
-          top: 10px;
-          right: 15px;
-          background-color: #ef4444;
-          color: white;
-          border: none;
-          border-radius: 12px;
-          padding: 4px 10px;
-          font-size: 11px;
-          font-weight: bold;
-          cursor: pointer;
-          z-index: 1000;
-          box-shadow: 0 2px 6px rgba(239, 68, 68, 0.2);
-        `;
-        delBtn.onclick = () => {
-          window.deleteCurrentDesktopPage();
-        };
-        desktopMain.appendChild(delBtn);
-      }
+    if (getPlacedWidget("desktop", i) !== null) {
+      isPageBlank = false;
+      break;
     }
   }
+
+  renderLayout(grid, pageLayout, "desktop-slot");
+  renderLayout(dock, dockLayout, "dock-slot");
+  renderPageIndicator(pageCount, isPageBlank);
+
+  // 清理任何残留的老版右上角删除按钮，保持 UI 清爽
+  let delBtn = document.getElementById("btn-delete-page-indicator");
+  if (delBtn) delBtn.remove();
 }
 
-function renderPageIndicator(pageCount) {
+function renderPageIndicator(pageCount, isPageBlank) {
   const indicator = document.getElementById("desktop-page-indicator");
   if (!indicator) return;
   indicator.innerHTML = "";
 
+  const isLastPage = currentDesktopPage === pageCount - 1;
+  const canDeleteCurrentPage = isDesktopEditMode && pageCount > 1 && isLastPage && isPageBlank;
+
   for (let i = 0; i < pageCount; i++) {
     const dot = document.createElement("div");
-    dot.className = `page-dot${i === currentDesktopPage ? " active" : ""}`;
-    dot.onclick = () => {
-      currentDesktopPage = i;
-      loadDesktopLayout();
-    };
+    
+    if (i === currentDesktopPage && canDeleteCurrentPage) {
+      // 在编辑模式下，如果当前页是最后一页且是空白页，长条变成一个红色减号
+      dot.className = "page-dot active delete-page-dot";
+      dot.innerText = "-";
+      dot.style.cssText = "background-color: #ef4444 !important; color: white !important; display: flex !important; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 50% !important; width: 14px !important; height: 14px !important; line-height: 1 !important;";
+      dot.onclick = (e) => {
+        e.stopPropagation();
+        window.deleteCurrentDesktopPage();
+      };
+    } else {
+      dot.className = `page-dot${i === currentDesktopPage ? " active" : ""}`;
+      dot.onclick = () => {
+        currentDesktopPage = i;
+        loadDesktopLayout();
+      };
+    }
     indicator.appendChild(dot);
   }
 
-  if (isDesktopEditMode) {
+  // 只有在无法删除当前页（即不是空白末页）时，编辑模式下才渲染 "+" 新增页按钮
+  if (isDesktopEditMode && !canDeleteCurrentPage) {
     const addBtn = document.createElement("button");
     addBtn.className = "page-add-btn";
     addBtn.innerText = "+";
