@@ -272,6 +272,9 @@ class AndroidMcp(private val context: Context) {
 
     private var bgPollTimer: java.util.Timer? = null
     private var floatPetView: android.view.View? = null
+    private var petImageView: android.widget.ImageView? = null
+    private var bubbleTextView: android.widget.TextView? = null
+    private var hideBubbleRunnable: Runnable? = null
 
     // ============================================================
     //  后台主动发信 — Kotlin 层直接发 HTTP 请求（绕过 WebView 冻结）
@@ -450,7 +453,7 @@ class AndroidMcp(private val context: Context) {
     }
 
     // ============================================================
-    //  桌面悬浮桌宠
+    //  桌面悬浮桌宠 (支持多状态复合控制、真机拖动过滤、双击跨进程反向唤醒、TextView原生冒泡)
     // ============================================================
 
     @JavascriptInterface
@@ -484,74 +487,115 @@ class AndroidMcp(private val context: Context) {
             try {
                 val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
                 
-                if (floatPetView != null) {
-                    try {
-                        windowManager.removeView(floatPetView)
-                    } catch (e: Exception) {}
-                    floatPetView = null
-                }
-
-                val imageView = android.widget.ImageView(context)
-                imageView.scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
-                
-                val cleanBase64 = base64Str.substringAfter("base64,")
-                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
-                val bitmap = android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
-                imageView.setImageBitmap(bitmap)
-
-                val layoutParamsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                } else {
-                    @Suppress("DEPRECATION")
-                    android.view.WindowManager.LayoutParams.TYPE_PHONE
-                }
-
                 val density = context.resources.displayMetrics.density
                 val sizePx = (sizeDp * density).toInt()
 
-                val params = android.view.WindowManager.LayoutParams(
-                    sizePx,
-                    sizePx,
-                    layoutParamsType,
-                    android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                    android.graphics.PixelFormat.TRANSLUCENT
-                ).apply {
-                    gravity = android.view.Gravity.TOP or android.view.Gravity.START
-                    x = 100
-                    y = 100
+                if (floatPetView == null) {
+                    // 创建根容器 FrameLayout
+                    val layout = android.widget.FrameLayout(context)
+
+                    // 1. 创建气泡 TextView，采用圆角白底描边风格
+                    val bubble = android.widget.TextView(context).apply {
+                        visibility = android.view.View.GONE
+                        setTextColor(android.graphics.Color.BLACK)
+                        setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+                        textSize = 12f
+                        maxWidth = (160 * density).toInt()
+                        
+                        val shape = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(android.graphics.Color.WHITE)
+                            cornerRadius = 24f
+                            setStroke(2, android.graphics.Color.parseColor("#e2e8f0")) // 浅灰描边
+                        }
+                        background = shape
+                    }
+                    val bubbleParams = android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                        bottomMargin = sizePx + (10 * density).toInt() // 居于桌宠上方
+                    }
+                    layout.addView(bubble, bubbleParams)
+                    bubbleTextView = bubble
+
+                    // 2. 创建图片 ImageView
+                    val imageView = android.widget.ImageView(context).apply {
+                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    }
+                    val petParams = android.widget.FrameLayout.LayoutParams(sizePx, sizePx).apply {
+                        gravity = android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL
+                    }
+                    layout.addView(imageView, petParams)
+                    petImageView = imageView
+
+                    val layoutParamsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        android.view.WindowManager.LayoutParams.TYPE_PHONE
+                    }
+
+                    val params = android.view.WindowManager.LayoutParams(
+                        android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+                        android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+                        layoutParamsType,
+                        android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or android.view.WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        android.graphics.PixelFormat.TRANSLUCENT
+                    ).apply {
+                        gravity = android.view.Gravity.TOP or android.view.Gravity.START
+                        x = 100
+                        y = 500
+                    }
+
+                    // 绑定高动态拖拽滑动与双击判定逻辑
+                    bindOverlayTouchListener(layout, params, windowManager)
+
+                    windowManager.addView(layout, params)
+                    floatPetView = layout
+                } else {
+                    // 更新现有容器的尺寸约束
+                    petImageView?.layoutParams = petImageView?.layoutParams?.apply {
+                        width = sizePx
+                        height = sizePx
+                    }
+                    bubbleTextView?.layoutParams = (bubbleTextView?.layoutParams as? android.widget.FrameLayout.LayoutParams)?.apply {
+                        bottomMargin = sizePx + (10 * density).toInt()
+                    }
+                    floatPetView?.let {
+                        windowManager.updateViewLayout(it, it.layoutParams)
+                    }
                 }
 
-                imageView.setOnTouchListener(object : android.view.View.OnTouchListener {
-                    private var initialX = 0
-                    private var initialY = 0
-                    private var initialTouchX = 0f
-                    private var initialTouchY = 0f
+                // 载入并解码 Base64 图像
+                val cleanBase64 = base64Str.substringAfter("base64,")
+                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+                val bitmap = android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                petImageView?.setImageBitmap(bitmap)
 
-                    override fun onTouch(v: android.view.View?, event: android.view.MotionEvent?): Boolean {
-                        if (event == null) return false
-                        when (event.action) {
-                            android.view.MotionEvent.ACTION_DOWN -> {
-                                initialX = params.x
-                                initialY = params.y
-                                initialTouchX = event.rawX
-                                initialTouchY = event.rawY
-                                return true
-                            }
-                            android.view.MotionEvent.ACTION_MOVE -> {
-                                params.x = initialX + (event.rawX - initialTouchX).toInt()
-                                params.y = initialY + (event.rawY - initialTouchY).toInt()
-                                try {
-                                    windowManager.updateViewLayout(imageView, params)
-                                } catch (e: Exception) {}
-                                return true
-                            }
-                        }
-                        return false
-                    }
-                })
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
 
-                windowManager.addView(imageView, params)
-                floatPetView = imageView
+    // 真机物理冒泡接口 [1]
+    @JavascriptInterface
+    fun showDesktopPetBubble(text: String, durationMs: Long) {
+        Log.d(TAG, "showDesktopPetBubble() called, text=$text, durationMs=$durationMs")
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        handler.post {
+            try {
+                if (bubbleTextView == null) return@post
+                bubbleTextView?.text = text
+                bubbleTextView?.visibility = android.view.View.VISIBLE
+
+                hideBubbleRunnable?.let { handler.removeCallbacks(it) }
+                val runnable = Runnable {
+                    bubbleTextView?.visibility = android.view.View.GONE
+                }
+                hideBubbleRunnable = runnable
+                handler.postDelayed(runnable, durationMs)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -569,9 +613,15 @@ class AndroidMcp(private val context: Context) {
                 val density = context.resources.displayMetrics.density
                 val sizePx = (sizeDp * density).toInt()
 
+                petImageView?.layoutParams = petImageView?.layoutParams?.apply {
+                    width = sizePx
+                    height = sizePx
+                }
+                bubbleTextView?.layoutParams = (bubbleTextView?.layoutParams as? android.widget.FrameLayout.LayoutParams)?.apply {
+                    bottomMargin = sizePx + (10 * density).toInt()
+                }
+
                 val params = view.layoutParams as android.view.WindowManager.LayoutParams
-                params.width = sizePx
-                params.height = sizePx
                 windowManager.updateViewLayout(view, params)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -589,10 +639,89 @@ class AndroidMcp(private val context: Context) {
                     val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
                     windowManager.removeView(floatPetView)
                     floatPetView = null
+                    petImageView = null
+                    bubbleTextView = null
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+    }
+
+    // 绑定物理触摸手势并滤除位移以解析双击
+    private fun bindOverlayTouchListener(view: android.view.View, params: android.view.WindowManager.LayoutParams, windowManager: android.view.WindowManager) {
+        view.setOnTouchListener(object : android.view.View.OnTouchListener {
+            private var lastAction: Int = 0
+            private var initialX: Int = 0
+            private var initialY: Int = 0
+            private var initialTouchX: Float = 0f
+            private var initialTouchY: Float = 0f
+            private var lastClickTime: Long = 0
+
+            override fun onTouch(v: android.view.View?, event: android.view.MotionEvent?): Boolean {
+                if (event == null) return false
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        lastAction = event.action
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_UP -> {
+                        val diffX = event.rawX - initialTouchX
+                        val diffY = event.rawY - initialTouchY
+                        
+                        // 位移微弱，判定为非拖拽的点击
+                        if (Math.abs(diffX) < 15 && Math.abs(diffY) < 15) {
+                            val clickTime = System.currentTimeMillis()
+                            if (clickTime - lastClickTime < 350) {
+                                onOverlayDoubleClick() // 双击执行跨端程序唤醒
+                            }
+                            lastClickTime = clickTime
+                        }
+                        lastAction = event.action
+                        return true
+                    }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        params.x = initialX + (event.rawX - initialTouchX).toInt()
+                        params.y = initialY + (event.rawY - initialTouchY).toInt()
+                        try {
+                            windowManager.updateViewLayout(view, params)
+                        } catch (e: Exception) {}
+                        lastAction = event.action
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+    }
+
+    // 双击跨进程唤醒 MainActivity
+    private fun onOverlayDoubleClick() {
+        Log.d(TAG, "onOverlayDoubleClick() called, waking up MainActivity")
+        try {
+            val intent = Intent(context, MainActivity::class.java).apply {
+                action = Intent.ACTION_MAIN
+                category = Intent.CATEGORY_LAUNCHER
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+            }
+            context.startActivity(intent)
+
+            // WebView 恢复活跃后，跨进程反向通过 JS 唤醒对话
+            val handler = android.os.Handler(android.os.Looper.getMainLooper())
+            handler.postDelayed({
+                mainActivity?.runOnUiThread {
+                    getWebView()?.evaluateJavascript(
+                        "javascript:if(window.desktopPetSystem) { window.desktopPetSystem.handleDoubleClick(); }",
+                        null
+                    )
+                }
+            }, 300)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }
