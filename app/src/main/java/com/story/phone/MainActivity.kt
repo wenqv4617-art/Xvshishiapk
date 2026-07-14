@@ -1,0 +1,262 @@
+package com.story.phone
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.res.Resources
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.IBinder
+import android.webkit.GeolocationPermissions
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
+import com.story.phone.R
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var webView: WebView
+    private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private val FILE_CHOOSER_RESULT_CODE = 101
+    private val PERMISSIONS_REQUEST_CODE = 102
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        webView = findViewById(R.id.webview)
+        
+        webView.webViewClient = object : WebViewClient() {
+            @Suppress("DEPRECATION")
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                return false 
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?
+            ): Boolean {
+                return false 
+            }
+        }
+
+        // 重写 WebChromeClient 解决定位授权与网页 File 文件选择器失灵问题
+        webView.webChromeClient = object : WebChromeClient() {
+            // 支持 HTML5 Geolocation 定位授权
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                callback?.invoke(origin, true, false)
+            }
+
+            // 支持 HTML5 <input type="file"> 文件选择器
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                @Suppress("UNCHECKED_CAST")
+                (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
+                fileUploadCallback = filePathCallback
+
+                // 【修复点】：如果 createIntent 返回 null，直接 return false，彻底解决报错！
+                val intent = fileChooserParams?.createIntent() ?: return false
+                
+                try {
+                    startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE)
+                } catch (e: ActivityNotFoundException) {
+                    fileUploadCallback = null
+                    return false
+                }
+                return true
+            }
+        }
+
+        val settings: WebSettings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true 
+        settings.allowFileAccess = true   
+        settings.allowContentAccess = true
+        settings.databaseEnabled = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        
+        // 解锁 AI 在后台静默自动点播放歌
+        settings.mediaPlaybackRequiresUserGesture = false
+
+        // 注入 window.AndroidMCP 原生接口
+        webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
+
+        // 加载 assets 本地打包的前端页面
+        webView.loadUrl("file:///android_asset/index.html")
+
+        // 自动申请 Android 定位与通知的系统级运行时权限
+        requestAppPermissions()
+    }
+
+    // 处理文件选择器弹窗的回调 
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == FILE_CHOOSER_RESULT_CODE) {
+            if (fileUploadCallback == null) return
+            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+            
+            @Suppress("UNCHECKED_CAST")
+            (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(results)
+            fileUploadCallback = null
+        }
+    }
+
+    // 申请运行时权限
+    private fun requestAppPermissions() {
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        // 动态合并追加存储与媒体音频权限，兼容 Android 13+ 与旧版系统
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            @Suppress("DEPRECATION")
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            @Suppress("DEPRECATION")
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+
+        val listToRequest = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (listToRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(
+                this,
+                listToRequest.toTypedArray(),
+                PERMISSIONS_REQUEST_CODE
+            )
+        }
+    }
+
+    override fun onBackPressed() {
+        if (webView.canGoBack()) {
+            webView.goBack() // 返回键优先控制 WebView 回退
+        } else {
+            super.onBackPressed()
+        }
+    }
+}
+
+/**
+ * 前台服务 —— 保障后台运行时不被系统杀进程，
+ * 同时支持歌单持续播放与后台发信功能。
+ *
+ * ⚠ 使用前必须满足：
+ * 1) AndroidManifest.xml 中声明了 <service android:foregroundServiceType="specialUse" />
+ * 2) Android 13+ 已获取 POST_NOTIFICATIONS 权限
+ * 3) 调用 context.startForegroundService(intent) 后，本服务必须在 5 秒内
+ *    调用 startForeground()，否则系统抛出 ForegroundServiceDidNotStartInTimeException
+ */
+class McpForegroundService : Service() {
+
+    companion object {
+        private const val CHANNEL_ID = "mcp_foreground_service_channel"
+        private const val NOTIFICATION_ID = 1005
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+
+        val notification = buildNotification()
+        startForeground(NOTIFICATION_ID, notification)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    // ---------------------------------------------------------------
+    // 通知构建
+    // ---------------------------------------------------------------
+
+    /**
+     * 构建前台通知：
+     * - 优先使用项目自有图标 R.drawable.ic_launcher
+     * - 若资源加载失败（例如资源 ID 无效或资源未找到），
+     *   降级为 Android 系统内置图标 android.R.drawable.ic_dialog_info
+     */
+    private fun buildNotification(): android.app.Notification {
+        val notificationIntent = Intent(this, MainActivity::class.java)
+
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            notificationIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        // 安全加载小图标 —— 避免因资源找不到导致前台服务启动失败
+        val smallIcon = safeGetSmallIcon()
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("叙事诗前台守护中")
+            .setContentText("系统不休眠、歌单播放与后台发信功能保护中")
+            .setSmallIcon(smallIcon)
+            .setContentIntent(pendingIntent)
+            .build()
+    }
+
+    /**
+     * 安全获取通知小图标：
+     * 尝试使用 R.drawable.ic_launcher，若抛出异常则降级为系统图标
+     */
+    private fun safeGetSmallIcon(): Int {
+        return try {
+            // 验证资源是否存在
+            resources.getDrawable(R.drawable.ic_launcher, theme)
+            R.drawable.ic_launcher
+        } catch (e: Resources.NotFoundException) {
+            // 资源未找到时使用系统原生图标兜底
+            android.R.drawable.ic_dialog_info
+        } catch (e: Exception) {
+            android.R.drawable.ic_dialog_info
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // 通知渠道
+    // ---------------------------------------------------------------
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(
+                CHANNEL_ID,
+                "叙事诗后台守护通道",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(serviceChannel)
+        }
+    }
+}
