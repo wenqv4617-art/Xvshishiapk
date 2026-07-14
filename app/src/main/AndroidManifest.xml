@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒等安卓硬件权限 -->
+<!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒等安卓硬件权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -9,20 +9,23 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    
     <!-- 新增：申请读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
 
+    <!-- 将 allowBackup 显式设为 false，彻底关闭系统云端数据备份，避免卸载重装时还原旧缓存 -->
     <application
-            android:allowBackup="false"
-            android:icon="@drawable/ic_launcher"
-            android:label="叙事诗小手机"
-            android:supportsRtl="true"
-            android:theme="@style/Theme.AppCompat.Light.NoActionBar"
-            android:usesCleartextTraffic="true"
-            android:requestLegacyExternalStorage="true">
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="叙事诗小手机"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true">
         
         <activity
             android:name=".MainActivity"
@@ -35,6 +38,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".McpForegroundService"
+            android:enabled="true"
+            android:exported="false" />
 
     </application>
 
