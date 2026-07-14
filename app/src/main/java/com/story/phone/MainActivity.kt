@@ -147,9 +147,54 @@ class MainActivity : AppCompatActivity() {
 
     override fun onBackPressed() {
         if (webView.canGoBack()) {
-            webView.goBack() 
+            webView.goBack() // 返回键优先控制 WebView 回退
         } else {
             super.onBackPressed()
+        }
+    }
+}
+
+class McpForegroundService : android.app.Service() {
+    private val CHANNEL_ID = "mcp_foreground_service_channel"
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+        val notificationIntent = Intent(this, MainActivity::class.java)
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this, 0, notificationIntent,
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            } else {
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            }
+        )
+
+        val notification = androidx.core.app.NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("叙事诗前台守护中")
+            .setContentText("系统不休眠、歌单播放与后台发信功能保护中")
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        startForeground(1005, notification)
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        return START_STICKY
+    }
+
+    override fun onBind(intent: Intent?): android.os.IBinder? = null
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = android.app.NotificationChannel(
+                CHANNEL_ID,
+                "叙事诗后台守护通道",
+                android.app.NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(android.app.NotificationManager::class.java)
+            manager?.createNotificationChannel(serviceChannel)
         }
     }
 }
