@@ -541,65 +541,69 @@ function initDragEvents() {
   let longPressTarget = null; // 缓存当前长按的DOM节点以进行视觉反馈
 
   document.addEventListener("pointerdown", (e) => {
-    const icon = e.target.closest(".app-icon");
-    const widget = e.target.closest(".desktop-widget-container");
+        const icon = e.target.closest(".app-icon");
+        const widget = e.target.closest(".desktop-widget-container");
 
-    if (longPressTimer) clearTimeout(longPressTimer);
-    if (longPressTimer2) clearTimeout(longPressTimer2);
-    if (longPressTarget) {
-      longPressTarget.style.transform = "";
-      longPressTarget.style.transition = "";
-      longPressTarget = null;
-    }
-
-    // 在桌面空置或图标、组件卡片上长按，确认调起编辑模式
-    if (icon || widget) {
-      startX = e.clientX;
-      startY = e.clientY;
-      longPressTarget = icon || widget;
-      longPressTimer = setTimeout(() => {
-        if (longPressTarget) {
-          longPressTarget.style.transition = "transform 0.15s ease";
-          longPressTarget.style.transform = "scale(0.92)"; // 微微下陷
-          if (typeof showToast === "function") {
-            showToast("再长按0.5秒进入编辑模式");
-          }
-        }
-        longPressTimer2 = setTimeout(() => {
+        // 1. 如果不在编辑模式，只侦测长按以进入编辑模式，绝对不触发拖拽
+        if (!isDesktopEditMode) {
+          if (longPressTimer) clearTimeout(longPressTimer);
+          if (longPressTimer2) clearTimeout(longPressTimer2);
           if (longPressTarget) {
             longPressTarget.style.transform = "";
             longPressTarget.style.transition = "";
             longPressTarget = null;
           }
-          enterDesktopEditMode();
-        }, 500);
-      }, 1000); // 阶段1: 1.0秒后开始下陷并提示
-    }
 
-    if (!icon) return;
-    
-    // 核心安全防御：若图标此时已脱离网格存在于 body 层（如上一次拖拽非正常中断），绝对拦截其重入 pointerdown，杜绝图标自我克隆 Bug
-    const parentSlot = icon.parentNode;
-    if (!parentSlot || (!parentSlot.classList.contains("desktop-slot") && !parentSlot.classList.contains("dock-slot"))) {
-      return;
-    }
+          if (icon || widget) {
+            startX = e.clientX;
+            startY = e.clientY;
+            longPressTarget = icon || widget;
+            longPressTimer = setTimeout(() => {
+              if (longPressTarget) {
+                longPressTarget.style.transition = "transform 0.15s ease";
+                longPressTarget.style.transform = "scale(0.92)"; // 微微下陷
+                if (typeof showToast === "function") {
+                  showToast("再长按0.5秒进入编辑模式");
+                }
+              }
+              longPressTimer2 = setTimeout(() => {
+                if (longPressTarget) {
+                  longPressTarget.style.transform = "";
+                  longPressTarget.style.transition = "";
+                  longPressTarget = null;
+                }
+                enterDesktopEditMode();
+              }, 500);
+            }, 1000); // 阶段1: 1.0秒后开始下陷并提示
+          }
+          return; // 拦截！未进入编辑模式时，严禁初始化任何拖动及变量赋值
+        }
 
-    activeIcon = icon;
-    
-    if (e.target.setPointerCapture) {
-      e.target.setPointerCapture(e.pointerId);
-    }
+        // 2. 如果已经在编辑模式，直接触发拖动重排逻辑，且无需重复侦测长按
+        if (!icon) return;
+        
+        // 核心安全防御：若图标此时已脱离网格存在于 body 层（如上一次拖拽非正常中断），绝对拦截其重入 pointerdown
+        const parentSlot = icon.parentNode;
+        if (!parentSlot || (!parentSlot.classList.contains("desktop-slot") && !parentSlot.classList.contains("dock-slot"))) {
+          return;
+        }
 
-    const rect = activeIcon.getBoundingClientRect();
-    startX = e.clientX;
-    startY = e.clientY;
-    iconStartX = rect.left;
-    iconStartY = rect.top;
-    rectWidth = rect.width;
-    rectHeight = rect.height;
-    originalParent = activeIcon.parentNode;
-    isDragging = false;
-  });
+        activeIcon = icon;
+        
+        if (e.target.setPointerCapture) {
+          e.target.setPointerCapture(e.pointerId);
+        }
+
+        const rect = activeIcon.getBoundingClientRect();
+        startX = e.clientX;
+        startY = e.clientY;
+        iconStartX = rect.left;
+        iconStartY = rect.top;
+        rectWidth = rect.width;
+        rectHeight = rect.height;
+        originalParent = activeIcon.parentNode;
+        isDragging = false;
+      });
 
   document.addEventListener("pointermove", (e) => {
     const dx = e.clientX - startX;
@@ -666,65 +670,67 @@ function initDragEvents() {
   });
 
   document.addEventListener("pointerup", (e) => {
-    if (longPressTimer) clearTimeout(longPressTimer);
-    if (longPressTimer2) clearTimeout(longPressTimer2);
-    if (longPressTarget) {
-      longPressTarget.style.transform = "";
-      longPressTarget.style.transition = "";
-      longPressTarget = null;
-    }
-    if (!activeIcon) return;
-
-    if (isDragging) {
-      activeIcon.classList.remove("dragging");
-      if (dragPlaceholder) {
-        dragPlaceholder.remove();
-      }
-
-      // 精确获取落点处的网格槽
-      const targetElement = document.elementFromPoint(e.clientX, e.clientY);
-      let dropSlot = null;
-      if (targetElement) {
-        dropSlot = targetElement.closest(".desktop-slot") || targetElement.closest(".dock-slot");
-      }
-
-      // 清空所有的槽位高亮
-      document.querySelectorAll(".desktop-slot, .dock-slot").forEach(slot => {
-        slot.classList.remove("drag-over");
-      });
-
-      // 还原所有的 inline 拖拽尺寸和定位属性
-      activeIcon.style.position = "";
-      activeIcon.style.width = "";
-      activeIcon.style.height = "";
-      activeIcon.style.left = "";
-      activeIcon.style.top = "";
-      activeIcon.style.zIndex = "";
-      activeIcon.style.pointerEvents = "";
-
-      if (dropSlot) {
-        const existingIcon = dropSlot.querySelector(".app-icon");
-        const existingWidget = dropSlot.querySelector(".desktop-widget-container");
-
-        // 槽位上如果是已存在图标，进行互互相对调；如果是代码组件，禁止对调回归原位
-        if (existingIcon) {
-          originalParent.appendChild(existingIcon);
-          dropSlot.appendChild(activeIcon);
-        } else if (existingWidget) {
-          originalParent.appendChild(activeIcon);
-        } else {
-          dropSlot.appendChild(activeIcon);
+        if (longPressTimer) clearTimeout(longPressTimer);
+        if (longPressTimer2) clearTimeout(longPressTimer2);
+        if (longPressTarget) {
+          longPressTarget.style.transform = "";
+          longPressTarget.style.transition = "";
+          longPressTarget = null;
         }
-        saveLayoutsToLocal();
-      } else {
-        originalParent.appendChild(activeIcon);
-      }
-    }
+        if (!activeIcon) return;
 
-    activeIcon = null;
-    isDragging = false;
-    dragPlaceholder = null;
-  });
+        if (isDragging) {
+          activeIcon.classList.remove("dragging");
+          if (dragPlaceholder) {
+            dragPlaceholder.remove();
+          }
+
+          // 精确获取落点处的网格槽
+          const targetElement = document.elementFromPoint(e.clientX, e.clientY);
+          let dropSlot = null;
+          if (targetElement) {
+            dropSlot = targetElement.closest(".desktop-slot") || targetElement.closest(".dock-slot");
+          }
+
+          // 清空所有的槽位高亮
+          document.querySelectorAll(".desktop-slot, .dock-slot").forEach(slot => {
+            slot.classList.remove("drag-over");
+          });
+
+          // 还原所有的 inline 拖拽尺寸和定位属性
+          activeIcon.style.position = "";
+          activeIcon.style.width = "";
+          activeIcon.style.height = "";
+          activeIcon.style.left = "";
+          activeIcon.style.top = "";
+          activeIcon.style.zIndex = "";
+          activeIcon.style.pointerEvents = "";
+
+          if (dropSlot) {
+            const existingIcon = dropSlot.querySelector(".app-icon");
+            const existingWidget = dropSlot.querySelector(".desktop-widget-container");
+
+            // 槽位上如果是已存在图标，进行互互相对调；如果是代码组件，禁止对调回归原位
+            if (existingIcon) {
+              originalParent.appendChild(existingIcon);
+              dropSlot.appendChild(activeIcon);
+            } else if (existingWidget) {
+              originalParent.appendChild(activeIcon);
+            } else {
+              dropSlot.appendChild(activeIcon);
+            }
+            saveLayoutsToLocal();
+            loadDesktopLayout(); // 存盘后立刻重绘网格，消除残存DOM状态与增殖冗余
+          } else {
+            originalParent.appendChild(activeIcon);
+            loadDesktopLayout(); // 归位后立即进行自愈式网格重绘
+          }
+        }
+
+        activeIcon = null;
+        isDragging = false;
+        dragPlaceholder = null;
+      });
 }
 
 // 桌面滑屏翻页控制引擎 (一次仅翻一页)
