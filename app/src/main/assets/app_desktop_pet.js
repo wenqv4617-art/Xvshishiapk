@@ -1,5 +1,5 @@
 /**
- * app_desktop_pet.js - 独立多状态悬浮桌宠与真机系统级悬浮窗联动引擎
+ * app_desktop_pet.js - 独立多状态悬浮桌宠、后台多角色独立定时发信调度引擎
  */
 (function() {
   const STATE_NAMES = {
@@ -79,7 +79,6 @@
       container.appendChild(img);
       document.body.appendChild(container);
 
-      // 绑定指针手势拖动
       this.bindDragEvents(container);
 
       // 双击触发灵魂唤醒对话
@@ -90,7 +89,7 @@
       };
     },
 
-    // 拖动逻辑（仅在网页内悬浮时有效）
+    // 拖动逻辑
     bindDragEvents: function(el) {
       let isDragging = false;
       let startX, startY;
@@ -130,7 +129,7 @@
       });
     },
 
-    // 从 IndexedDB 加载当前角色的专属桌宠设定
+    // 从 IndexedDB 加载当前角色的专属桌宠与发信设定 [1]
     loadPetConfig: async function(charId) {
       if (!charId) return;
       try {
@@ -140,7 +139,11 @@
             charId: charId,
             mode: 'custom',
             statesConfig: {},
-            customDialogues: {}
+            customDialogues: {},
+            petEnabled: false,       // 独立角色桌宠开启开关
+            petSize: 100,            // 独立尺寸
+            activeMsgEnabled: false, // 独立主动定时发信开关 [1]
+            activeMsgInterval: 10    // 独立自动发信时间间隔 [1]
           };
           Object.keys(STATE_NAMES).forEach(st => {
             config.customDialogues[st] = {
@@ -152,6 +155,8 @@
         }
         if (!config.statesConfig) config.statesConfig = {};
         if (!config.customDialogues) config.customDialogues = {};
+        if (config.activeMsgInterval === undefined) config.activeMsgInterval = 10;
+        
         Object.keys(STATE_NAMES).forEach(st => {
           if (!config.customDialogues[st]) {
             config.customDialogues[st] = {
@@ -166,54 +171,49 @@
       }
     },
 
-    // 渲染或更新桌宠外观（支持网页渲染与安卓原生悬浮窗双端同步）
+    // 渲染或更新桌宠外观（采用各角色完全解耦的独立桌宠开关） [1]
     renderPetToDesktop: function() {
       const container = document.getElementById("desktop-pet-container");
       if (!container) return;
 
-      const isPetEnabled = localStorage.getItem("settings-mcp-pet-enabled") === "true";
+      // 绝不使用全局 LocalStorage，改为每个角色完全解耦的独立桌宠开关！ [1]
+      const isPetEnabled = this.currentPetConfig && this.currentPetConfig.petEnabled;
       
-      // 如果未开启，或者数据未加载，双端卸载
       if (!isPetEnabled || !this.currentPetConfig) {
         container.style.display = "none";
         if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
-          window.AndroidMCP.hideDesktopPet(); // 联动真机：隐藏原生系统悬浮窗
+          window.AndroidMCP.hideDesktopPet(); // 隐藏真机悬浮窗
         }
         return;
       }
 
-      const size = parseInt(localStorage.getItem("mcp-pet-size-slider") || "100");
-      const base64 = this.currentPetConfig.statesConfig[this.currentState] || this.currentPetConfig.statesConfig['default'];
+      // 1. 网页内 DOM 呈现
+      container.style.display = "block";
+      const size = this.currentPetConfig.petSize || 100;
+      container.style.width = `${size}px`;
+      container.style.height = `${size}px`;
 
-      // 核心消减双生桌宠：如果检测到处于安卓特权外壳中，隐藏网页 DOM 桌宠，100% 交由真机系统级悬浮窗托管！ [1]
-      if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
-        container.style.display = "none"; // 隐藏 DOM 容器，杜绝两个桌宠重叠
-        if (base64) {
+      const imgEl = document.getElementById("desktop-pet-img");
+      const base64 = this.currentPetConfig.statesConfig[this.currentState] || this.currentPetConfig.statesConfig['default'];
+      
+      if (base64) {
+        imgEl.src = base64;
+        
+        // 2. 真机系统级悬浮窗投射
+        if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPet === 'function') {
           try {
             window.AndroidMCP.showDesktopPet(base64, size);
           } catch(e) {
             console.error("同步原生系统级桌宠失败:", e);
           }
         }
-        return;
-      }
-
-      // 网页端 PWA 正常渲染
-      container.style.display = "block";
-      container.style.width = `${size}px`;
-      container.style.height = `${size}px`;
-
-      const imgEl = document.getElementById("desktop-pet-img");
-      if (base64) {
-        imgEl.src = base64;
       } else {
         imgEl.src = 'data:image/svg+xml;utf8,<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="10" fill="%23fca5a5"/><text x="12" y="15" font-size="8" text-anchor="middle" fill="%23ffffff">无图</text></svg>';
       }
     },
 
-    // 气泡冒泡机制 (真机环境下直接发送给安卓系统 TextView 进行全局桌面渲染) [1]
+    // 气泡冒泡机制
     popBubble: function(text, duration = 3000) {
-      // 优先调用安卓真机系统级悬浮气泡
       if (window.AndroidMCP && typeof window.AndroidMCP.showDesktopPetBubble === 'function') {
         try {
           window.AndroidMCP.showDesktopPetBubble(text, duration);
@@ -223,7 +223,6 @@
         }
       }
 
-      // 网页内 DOM 冒泡兜底
       const bubble = document.getElementById("desktop-pet-bubble");
       if (!bubble) return;
 
@@ -236,7 +235,7 @@
       }, duration);
     },
 
-    // 双击触发灵魂唤醒对话（当在应用内部双击时调用，会切入 WeChat 对话）
+    // 双击触发灵魂唤醒对话
     handleDoubleClick: async function() {
       if (!this.activeCharId) return;
 
@@ -254,7 +253,7 @@
       }
     },
 
-    // 核心新增：系统桌面双击时的后台静默对话（不唤醒/不更改应用内 WeChat 主窗口） [1]
+    // 外部后台双击静默唤醒
     handleDoubleClickBackground: async function() {
       if (!this.activeCharId) return;
 
@@ -265,7 +264,7 @@
       }
     },
 
-    // 自定义对话响应逻辑 (台词 + 概率概率)
+    // 自定义对话响应逻辑 (台词 + 概率)
     triggerCustomInteraction: function() {
       if (!this.currentPetConfig) return;
 
@@ -389,7 +388,7 @@
       }
     },
 
-    // 从 MCP 选项卡收集并保存数据
+    // 从 MCP 选项卡收集并保存数据 [1]
     saveMcpUiSettings: async function() {
       if (!this.currentPetConfig) return;
 
@@ -413,6 +412,26 @@
         if (dialoguesArea) {
           this.currentPetConfig.customDialogues[st].textLines = dialoguesArea.value;
         }
+      }
+
+      // === 解耦：独立收集保存每个角色的自动发信与桌宠开启设置 === [1]
+      const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
+      if (activeMsgToggle) {
+        this.currentPetConfig.activeMsgEnabled = activeMsgToggle.checked;
+      }
+      const activeMsgIntervalInput = document.getElementById("mcp-active-msg-interval");
+      if (activeMsgIntervalInput) {
+        this.currentPetConfig.activeMsgInterval = parseInt(activeMsgIntervalInput.value) || 10;
+      }
+
+      const petToggle = document.getElementById("settings-mcp-pet-toggle");
+      if (petToggle) {
+        this.currentPetConfig.petEnabled = petToggle.checked;
+      }
+      
+      const sizeSlider = document.getElementById("mcp-pet-size-slider");
+      if (sizeSlider) {
+        this.currentPetConfig.petSize = parseInt(sizeSlider.value) || 100;
       }
 
       await db.desktop_pets.put(this.currentPetConfig);
@@ -457,24 +476,28 @@
       }
     },
 
-    // 改变大小（同步改变系统悬浮窗与网页悬浮窗）
+    // 改变大小（同步改变系统悬浮窗尺寸）
     changePetSize: function(val) {
+      if (this.currentPetConfig) {
+        this.currentPetConfig.petSize = parseInt(val) || 100;
+      }
       const sizeVal = document.getElementById("mcp-pet-size-val");
       if (sizeVal) sizeVal.innerText = `${val}dp`;
       localStorage.setItem("mcp-pet-size-slider", val);
       
       this.renderPetToDesktop();
+      this.saveMcpUiSettings();
       
       if (window.AndroidMCP && typeof window.AndroidMCP.updateDesktopPetSize === 'function') {
         try {
-          window.AndroidMCP.updateDesktopPetSize(parseInt(val)); // 同步更改真机物理悬浮窗尺寸
+          window.AndroidMCP.updateDesktopPetSize(parseInt(val));
         } catch(e) {
-          console.error("设置原生悬浮窗尺寸失败:", e);
+          console.error(e);
         }
       }
     },
 
-    // 全局控制开启与关闭（支持真机系统悬浮窗权限拦截申请）
+    // 独立角色的悬浮权限拦截申请
     togglePetActive: function(toggleEl) {
       const isEnabled = toggleEl.checked;
       if (isEnabled) {
@@ -489,49 +512,171 @@
               return;
             }
           } catch(e) {
-            console.error("检查真机悬浮窗权限异常:", e);
+            console.error(e);
           }
         }
-        
-        localStorage.setItem("settings-mcp-pet-enabled", "true");
-        this.renderPetToDesktop();
-        showToast("桌面悬浮桌宠已开启！");
-      } else {
-        localStorage.setItem("settings-mcp-pet-enabled", "false");
-        const container = document.getElementById("desktop-pet-container");
-        if (container) container.style.display = "none";
-        
-        if (window.AndroidMCP && typeof window.AndroidMCP.hideDesktopPet === 'function') {
-          try {
-            window.AndroidMCP.hideDesktopPet();
-          } catch(e) {
-            console.error("隐藏真机原生桌宠异常:", e);
-          }
-        }
-        showToast("桌宠已退出");
       }
+      
+      // 保存解耦配置 [1]
+      this.saveMcpUiSettings();
+      showToast(isEnabled ? "该角色桌面悬浮桌宠已开启！" : "该角色桌宠已退出");
     },
 
-    // 渲染 UI 面板设置初始回显
+    // 渲染 UI 面板设置初始回显 [1]
     loadMcpPanelState: function() {
       if (!this.currentPetConfig) return;
-
-      const isPetEnabled = localStorage.getItem("settings-mcp-pet-enabled") === "true";
-      const toggle = document.getElementById("settings-mcp-pet-toggle");
-      if (toggle) toggle.checked = isPetEnabled;
 
       const modeSelect = document.getElementById("mcp-pet-mode");
       if (modeSelect) modeSelect.value = this.currentPetConfig.mode || "custom";
 
       const sizeSlider = document.getElementById("mcp-pet-size-slider");
-      const size = localStorage.getItem("mcp-pet-size-slider") || "100";
+      const size = this.currentPetConfig.petSize || 100;
       if (sizeSlider) sizeSlider.value = size;
       const sizeVal = document.getElementById("mcp-pet-size-val");
       if (sizeVal) sizeVal.innerText = `${size}dp`;
 
+      // 解耦：独立回显当前活跃角色的主动发信开关及桌宠开关 [1]
+      const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
+      if (activeMsgToggle) activeMsgToggle.checked = !!this.currentPetConfig.activeMsgEnabled;
+
+      const activeMsgIntervalInput = document.getElementById("mcp-active-msg-interval");
+      if (activeMsgIntervalInput) activeMsgIntervalInput.value = this.currentPetConfig.activeMsgInterval || 10;
+
+      const petToggle = document.getElementById("settings-mcp-pet-toggle");
+      if (petToggle) petToggle.checked = !!this.currentPetConfig.petEnabled;
+
       this.onStateSelectChange();
+    },
+
+    // ==========================================
+    //  JS 独立高精度后台定时发信调度引擎 (彻底解决多角色时间分离) [1]
+    // ==========================================
+    // 原生 Timer 不具备 RAG、世界书、长效记忆等多态 Prompt 编译权限，
+    // 因此在 JS 层实现全自动化时间调度，再调用 popBubble 和 showSystemNotification
+    // ==========================================
+    triggerActiveMessageForChar: async function(charId) {
+      try {
+        const sessions = await db.sessions.where('charId').equals(Number(charId)).toArray();
+        if (sessions.length === 0) return;
+        const sess = sessions[0];
+
+        // 1. 联动桌宠气泡（有人冒泡）
+        if (this.activeCharId === charId && this.currentState !== 'sleep') {
+          this.popBubble("有人冒泡。");
+        }
+
+        // 2. 编译该角色在特定会话下的专属 RAG 记忆与世界书 Prompt
+        let systemPrompt = await buildGlobalSystemPrompt(sess.id);
+        
+        systemPrompt += `\n\n【重要指令（你正在主动发起对话）】：
+目前距离上一轮聊天已经过去了一段时间，用户现在处于闲置状态。现在是你主动开启话题、发微信消息打破尴尬的时候。
+请根据你当前的人设关系、世界书语境，发送一条极其自然、带有你特定情绪色彩的消息。控制在40字以内。
+表现得就像在真实的微信聊天中，你突然想跟对方聊天一样自然，严禁刻板套话。`;
+
+        // 加载历史会话
+        const history = await db.messages.where('sessionId').equals(sess.id).reverse().limit(10).toArray();
+        history.reverse();
+
+        const messagesToSend = [{ role: "system", content: systemPrompt }];
+        history.forEach(h => {
+          // 擦除指令标志以喂入上下文
+          let cleanContent = h.content;
+          if (typeof cleanContent === 'string') {
+            cleanContent = cleanContent.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+          }
+          messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: cleanContent });
+        });
+
+        // 查找 API Preset
+        const presetId = localStorage.getItem("global_api_preset_id");
+        if (!presetId) return;
+        const api = await db.api_presets.get(Number(presetId));
+        if (!api) return;
+
+        const response = await fetch(`${api.url}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+          body: JSON.stringify({
+            model: api.model,
+            messages: messagesToSend,
+            temperature: api.temperature
+          })
+        });
+
+        if (!response.ok) return;
+        const result = await response.json();
+        let reply = result.choices[0].message.content.trim();
+
+        // 清洗回复文本并入库
+        reply = reply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+
+        const newMsg = {
+          sessionId: sess.id,
+          senderType: 'char',
+          senderId: 0,
+          content: reply,
+          contentType: 'text',
+          timestamp: Date.now()
+        };
+        await db.messages.add(newMsg);
+
+        const char = await db.archives.get(charId);
+        const charName = sess.customCharName || char?.name || "对方";
+
+        // 如果刚好在这个角色的主聊天窗口，立即刷新上屏
+        if (typeof activeSessionId !== 'undefined' && activeSessionId === sess.id) {
+          if (typeof renderDialogMessages === 'function') {
+            await renderDialogMessages();
+          }
+        }
+
+        // 3. 真机通知系统
+        if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
+          window.AndroidMCP.showSystemNotification(charName, reply);
+        }
+
+        // 4. 联动桌宠气泡（有人来信）
+        if (this.activeCharId === charId) {
+          this.popBubble("有人来信。");
+        }
+
+      } catch(e) {
+        console.error(`角色 [CharId: ${charId}] 定时发信调度失败:`, e);
+      }
     }
   };
+
+  // 全局定时发信调度引擎 (每 30 秒执行一次时间扫描，达到解耦分离) [1]
+  if (!window.activeMsgSchedulerInterval) {
+    window.activeMsgSchedulerInterval = setInterval(async () => {
+      if (typeof db === 'undefined' || !db.desktop_pets) return;
+      try {
+        const allPets = await db.desktop_pets.toArray();
+        const now = Date.now();
+
+        for (let pet of allPets) {
+          if (pet.activeMsgEnabled) {
+            const interval = parseInt(pet.activeMsgInterval) || 10;
+            const lastTimeKey = `mcp_last_msg_time_${pet.charId}`;
+            const lastTrigger = parseInt(localStorage.getItem(lastTimeKey) || "0") || now;
+            
+            // 首次冷启动时间对齐，防止瞬间连环发信
+            if (!localStorage.getItem(lastTimeKey)) {
+              localStorage.setItem(lastTimeKey, now);
+              continue;
+            }
+
+            if (now - lastTrigger >= interval * 60 * 1000) {
+              localStorage.setItem(lastTimeKey, now);
+              await desktopPetSystem.triggerActiveMessageForChar(pet.charId);
+            }
+          }
+        }
+      } catch(e) {
+        console.error("主动发信调度引擎执行异常:", e);
+      }
+    }, 30000);
+  }
 
   window.desktopPetSystem = desktopPetSystem;
 
