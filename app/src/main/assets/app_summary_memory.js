@@ -447,13 +447,19 @@ async function renderSummariesList(sessionId, category = "all") {
   }
 
   if (list.length === 0) {
-    container.innerHTML = `<p style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">目前该分类下尚未生成任何阶段性对话总结。</p>`;
+    container.innerHTML = `<p style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">目前该分类下尚未生成任何碎片化时间流记忆。</p>`;
     return;
   }
 
+  // 按时间降序排列，最新生成的碎片放置于时间流最上方
   list.reverse().forEach(s => {
     const card = document.createElement("div");
-    card.className = "summary-item-card";
+    card.className = "timeline-item";
+    card.style.position = "relative";
+    card.style.paddingLeft = "20px";
+    card.style.borderLeft = "2px solid var(--border)";
+    card.style.marginLeft = "10px";
+    card.style.paddingBottom = "16px";
     
     let keywords = [];
     try { keywords = JSON.parse(s.keywords || "[]"); } catch(e){}
@@ -463,6 +469,11 @@ async function renderSummariesList(sessionId, category = "all") {
       ? `<span class="summary-source-tag deeptalk" style="background-color: #f1f5f9; color: #475569; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px; margin-left: 6px;">来自深谈</span>`
       : "";
 
+    // 向量化指示器状态渲染
+    const vectorBadge = s.vector 
+      ? `<span class="vector-badge" style="background-color: #e0f2fe; color: #0369a1; font-size: 9px; padding: 2px 6px; border-radius: 9999px; margin-left: 6px; font-weight: 700;">384D 向量化</span>` 
+      : `<span class="vector-badge" style="background-color: #f3f4f6; color: #6b7280; font-size: 9px; padding: 2px 6px; border-radius: 9999px; margin-left: 6px;">未向量化</span>`;
+
     const catMap = {
       'emotional': '情感需求',
       'factual': '事实记忆',
@@ -471,53 +482,35 @@ async function renderSummariesList(sessionId, category = "all") {
     const catLabel = catMap[s.category] || "碎片总结";
     const catColor = s.category === 'emotional' ? '#ec4899' : (s.category === 'core' ? '#ca8a04' : '#10b981');
 
+    // 提取格式化中文时间戳节点
+    const timeStr = new Date(s.timestamp).toLocaleString('zh-CN', {
+      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'
+    });
+
     card.innerHTML = `
-      <div class="summary-item-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-        <span style="font-size:11px; font-weight:700; color:${catColor}; display:flex; align-items:center; gap:6px;">
-          [${catLabel}] 轮次: ${s.startRound} - ${s.endRound} ${sourceBadge}
-        </span>
-        <div style="display:flex; gap:6px;">
-          <button class="btn-icon" style="color:#3b82f6; border:none; background:none; cursor:pointer;" onclick="editSummaryRecord(${s.id})" title="编辑">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
-          </button>
-          <button class="btn-icon" style="color:#ef4444; border:none; background:none; cursor:pointer;" onclick="deleteSummaryRecord(${s.id})" title="删除">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-          </button>
+      <!-- 垂直高保真流式时间线节点 -->
+      <span class="timeline-dot" style="position: absolute; left: -6px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background-color: ${catColor}; border: 2px solid #fff; box-shadow: 0 0 4px rgba(0,0,0,0.15);"></span>
+      <div class="summary-item-card" style="margin-top: 0; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; box-shadow: var(--shadow-sm);">
+        <div class="summary-item-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <span style="font-size:11px; font-weight:700; color:${catColor}; display:flex; align-items:center; flex-wrap:wrap; gap:4px;">
+            [${catLabel}] <span style="color:var(--text-secondary); margin-left:2px; font-weight:normal;">${timeStr}</span> ${vectorBadge} ${sourceBadge}
+          </span>
+          <div style="display:flex; gap:6px; flex-shrink:0;">
+            <button class="btn-icon" style="color:#3b82f6; border:none; background:none; cursor:pointer; padding:2px;" onclick="editSummaryRecord(${s.id})" title="编辑">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+            </button>
+            <button class="btn-icon" style="color:#ef4444; border:none; background:none; cursor:pointer; padding:2px;" onclick="deleteSummaryRecord(${s.id})" title="删除">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </button>
+          </div>
         </div>
+        <div style="font-size:13px; color:var(--text-primary); line-height:1.5; white-space:pre-wrap; margin-bottom:6px;">${s.content}</div>
+        <div class="summary-item-keywords">${tagsHtml}</div>
       </div>
-      <div style="font-size:13px; color:var(--text-primary); line-height:1.5; white-space:pre-wrap;">${s.content}</div>
-      <div class="summary-item-keywords">${tagsHtml}</div>
     `;
     container.appendChild(card);
   });
 }
-
-window.editSummaryRecord = async function(id) {
-  const summary = await db.summaries.get(id);
-  if (!summary) return;
-  const newContent = prompt("编辑此条碎片记忆:", summary.content);
-  if (newContent === null) return;
-  if (newContent.trim() === "") {
-    alert("记忆内容不能为空！");
-    return;
-  }
-  
-  const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
-  let updatedVector = summary.vector;
-  if (isVectorEnabled) {
-    updatedVector = await safeGetEmbedding(newContent.trim());
-  }
-  
-  await db.summaries.update(id, { 
-    content: newContent.trim(),
-    vector: updatedVector
-  });
-  alert("记忆碎片已更新！");
-  if (activeSessionId) {
-    const activeTab = document.querySelector(".summary-tab-btn.active")?.getAttribute("data-cat") || "all";
-    await renderSummariesList(activeSessionId, activeTab);
-  }
-};
 
 window.deleteSummaryRecord = async function(id) {
   if (confirm("确定要删除这一条碎片记忆吗？")) {

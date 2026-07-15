@@ -1101,6 +1101,35 @@
                       </div>
                     </div>
                     
+                    <div class="form-group">
+                      <label>总结系统提示词 (Prompt)</label>
+                      <textarea id="summary-system-prompt" rows="3" placeholder="以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。"></textarea>
+                    </div>
+                    <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 14px;">
+                      <label style="font-weight:700;">AI 记忆整合响应格式</label>
+                      <select id="summary-format-choice" style="width:100%; padding:8px; border:1.5px solid var(--border); border-radius:8px;">
+                        <option value="json">JSON 数组格式 (碎片分类)</option>
+                        <option value="text_tags">文字标签块格式 (自愈兼容)</option>
+                      </select>
+                    </div>
+                    <div class="form-actions" style="margin-top: 24px;">
+                      <button id="btn-save-summary-settings" class="btn btn-primary" style="width:100%;">保存并应用总结配置</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 注入：核心长久记忆面板 (完全收纳在 win-chat 内部，防止全局绝对定位与指针层级污染) -->
+                <div id="chat-memory-panel" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="document.getElementById('chat-memory-panel').classList.remove('active')">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>角色长久记忆库</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px; overflow-y: auto;">
+                    
+                    <!-- 1. 角色核心记忆 (Core Memory) -->
                     <div class="form-group" style="background:#fffcf0; padding:12px; border-radius:12px; border:1px solid #fef08a; margin-bottom:16px;">
                       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <h4 style="margin:0; font-size:14px; color:#a16207; font-weight:700;">🧠 角色核心记忆 (Core Memory)</h4>
@@ -1132,7 +1161,7 @@
                       <button id="btn-save-core-memory" class="btn btn-primary" style="width:100%; margin-top:10px; font-size:12px; background-color:#ca8a04; border:none; border-radius:8px;">保存核心记忆库</button>
                     </div>
 
-                    <!-- 向量检索配置面板 -->
+                    <!-- 2. 中间的向量记忆检索设置面板 -->
                     <div id="vector-config-panel" style="display:none; background:#f0fdf4; padding:12px; border-radius:12px; border:1px solid #bbf7d0; margin-bottom:16px;">
                       <h4 style="margin:0 0 10px 0; font-size:13px; color:#166534; font-weight:700; display:flex; align-items:center; gap:4px;">
                         <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
@@ -1163,69 +1192,17 @@
                       </div>
                     </div>
 
-                    <div class="form-group">
-                      <label style="font-weight:700; color:var(--text-primary); margin-bottom:10px; display:block;">📜 历史已生成事件总结</label>
-                      <div id="summary-category-tabs" style="display:flex; gap:6px; margin-bottom:10px; overflow-x:auto; padding-bottom:4px;">
+                    <!-- 3. 下方的总结条目（纵向向量化时间流结构） -->
+                    <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+                      <label style="font-weight:700; color:var(--text-primary); margin-bottom:10px; display:block;">📜 历史已生成事件碎片记忆</label>
+                      <div id="summary-category-tabs" style="display:flex; gap:6px; margin-bottom:14px; overflow-x:auto; padding-bottom:4px;">
                         <button class="btn btn-outline summary-tab-btn active" data-cat="all" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">全部</button>
                         <button class="btn btn-outline summary-tab-btn" data-cat="emotional" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">情感需求</button>
                         <button class="btn btn-outline summary-tab-btn" data-cat="factual" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">事实记忆</button>
                         <button class="btn btn-outline summary-tab-btn" data-cat="core" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">核心记忆</button>
                       </div>
-                      <div id="memory-summaries-list" style="display:flex; flex-direction:column; gap:12px;">
-                        <!-- 动态载入列表 -->
-                      </div>
-                    </div>
-                    <div class="form-actions" style="margin-top: 24px;">
-                      <button id="btn-save-summary-settings" class="btn btn-primary" style="width:100%;">保存并应用总结配置</button>
-                    </div>
-                  </div>
-                </div>
-
-                <!-- 注入：核心长久记忆面板 (完全收纳在 win-chat 内部，防止全局绝对定位与指针层级污染) -->
-                <div id="chat-memory-panel" class="chat-details-overlay">
-                  <header class="win-header">
-                    <button class="btn-icon" onclick="document.getElementById('chat-memory-panel').classList.remove('active')">
-                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-                    </button>
-                    <h3>角色长久记忆库</h3>
-                    <div style="width:40px;"></div>
-                  </header>
-                  <div class="win-body" style="padding: 16px; overflow-y: auto;">
-                    <div class="form-group" style="background:#fffcf0; padding:12px; border-radius:12px; border:1px solid #fef08a; margin-bottom:16px;">
-                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                        <h4 style="margin:0; font-size:14px; color:#a16207; font-weight:700;">🧠 角色核心记忆 (Core Memory)</h4>
-                        <button id="btn-generate-core-memory" class="btn btn-outline" style="padding:4px 8px; font-size:10px; border-color:#ca8a04; color:#ca8a04; border-radius:6px;">AI提炼核心记忆</button>
-                      </div>
-                      
-                      <div style="display:flex; flex-direction:column; gap:8px;">
-                        <div>
-                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的现状</label>
-                          <textarea id="memory-core-status" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我的性格现状、处境或当前生存状态..."></textarea>
-                        </div>
-                        <div>
-                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的目的</label>
-                          <textarea id="memory-core-purpose" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我的行为目的、对未来的渴望与核心愿景..."></textarea>
-                        </div>
-                        <div>
-                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的变化</label>
-                          <textarea id="memory-core-changes" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="从认识用户至今，我的深层态度与内心情感变化..."></textarea>
-                        </div>
-                        <div>
-                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色对用户认知] 我们的关系</label>
-                          <textarea id="memory-core-relationship" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我所界定的双方关系社交、利益 or 情感羁绊..."></textarea>
-                        </div>
-                        <div>
-                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色对用户认知] 在学眼里的用户</label>
-                          <textarea id="memory-core-userineyes" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="用户在我心里最客观最真实的看法与秘密印象..."></textarea>
-                        </div>
-                      </div>
-                      <button id="btn-save-core-memory" class="btn btn-primary" style="width:100%; margin-top:10px; font-size:12px; background-color:#ca8a04; border:none; border-radius:8px;">保存核心记忆库</button>
-                    </div>
-
-                    <div class="form-group">
-                      <label style="font-weight:700; color:var(--text-primary); margin-bottom:10px; display:block;">📜 历史已生成事件总结</label>
-                      <div id="memory-summaries-list" style="display:flex; flex-direction:column; gap:12px;">
-                        <!-- 动态载入列表 -->
+                      <div id="memory-summaries-list" style="display:flex; flex-direction:column; gap:2px; padding-left: 2px;">
+                        <!-- 纵向时间节点流式列表由 JS 注入 -->
                       </div>
                     </div>
                   </div>
