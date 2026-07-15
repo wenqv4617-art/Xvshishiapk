@@ -2073,6 +2073,46 @@
         </div>
       </div>
 
+      <!-- 记忆碎片编辑弹层 (微信级精致自适应居中卡片) -->
+      <div id="memory-edit-overlay" class="modal-overlay" style="z-index: 2000; align-items: center !important; justify-content: center !important;">
+        <div class="modal" style="max-width: 320px; border-radius: 16px; border: 1px solid #e2e8f0; background: #ffffff; position: relative; bottom: auto; transform: none; margin: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+          <header class="modal-header" style="border-bottom: none; padding: 16px 16px 8px 16px;">
+            <h4 style="font-weight: 700; color: #1e293b; font-size:15px; margin:0;">编辑碎片记忆</h4>
+            <button class="btn-icon" onclick="document.getElementById('memory-edit-overlay').classList.remove('active')">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+          <div class="win-body" style="padding: 0 16px 16px 16px;">
+            <input type="hidden" id="memory-edit-id">
+            <div class="form-group" style="margin-bottom:0;">
+              <textarea id="memory-edit-textarea" rows="6" style="width:100%; font-size:14px; padding:12px; border-radius:12px; border:1px solid var(--border); resize:none; box-sizing: border-box;" placeholder="输入修改后的碎片记忆内容..."></textarea>
+            </div>
+            <div class="form-actions" style="margin-top:20px; display:flex; gap:12px;">
+              <button onclick="document.getElementById('memory-edit-overlay').classList.remove('active')" class="btn-outline" style="flex:1; border-radius:8px; padding: 8px; font-size: 12px; border: 1.5px solid var(--border); background: none; cursor: pointer;">取消</button>
+              <button id="btn-save-memory-edit" class="btn-primary" style="flex:1; border-radius:8px; padding: 8px; font-size: 12px; background-color: var(--primary); border: none; color: #fff; cursor: pointer;">保存修改</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 记忆碎片删除确认弹层 (精致轻巧小气泡确认卡) -->
+      <div id="memory-delete-overlay" class="modal-overlay" style="z-index: 2000; align-items: center !important; justify-content: center !important;">
+        <div class="modal" style="max-width: 280px; border-radius: 16px; border: 1px solid #e2e8f0; background: #ffffff; position: relative; bottom: auto; transform: none; margin: auto; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+          <div class="win-body" style="padding: 24px 16px 16px 16px; text-align: center;">
+            <input type="hidden" id="memory-delete-id">
+            <div style="width: 44px; height: 44px; background: #fef2f2; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 12px auto;">
+              <svg viewBox="0 0 24 24" width="22" height="22" style="color: #ef4444;"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+            </div>
+            <h4 style="font-weight: 700; color: #1e293b; margin: 0 0 8px 0; font-size: 14px;">确认删除此条记忆？</h4>
+            <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 20px 0; line-height: 1.4;">删除后，对应的向量特征也将彻底被移出 AI 长期检索上下文，不可撤销。</p>
+            <div class="form-actions" style="display:flex; gap:12px;">
+              <button onclick="document.getElementById('memory-delete-overlay').classList.remove('active')" class="btn-outline" style="flex:1; border-radius:8px; padding: 10px; font-size: 12px; border: 1.5px solid var(--border); background: none; cursor: pointer;">取消</button>
+              <button id="btn-confirm-memory-delete" class="btn-primary" style="flex:1; border-radius:8px; padding: 10px; font-size: 12px; background-color: #ef4444; border: none; color: #fff; cursor: pointer;">立即删除</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 角色状态与内心深处卡片模态窗 (全面去 Emoji 升级为 SVG) -->
       <div id="status-card-overlay" class="modal-overlay">
         <div class="modal status-card-modal">

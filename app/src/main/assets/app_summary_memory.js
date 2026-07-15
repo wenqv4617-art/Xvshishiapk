@@ -579,14 +579,18 @@ async function renderSummariesList(sessionId, category = "all") {
   });
 }
 
-window.deleteSummaryRecord = async function(id) {
-  if (confirm("确定要删除这一条碎片记忆吗？")) {
-    await db.summaries.delete(id);
-    if (activeSessionId) {
-      const activeTab = document.querySelector(".summary-tab-btn.active")?.getAttribute("data-cat") || "all";
-      await renderSummariesList(activeSessionId, activeTab);
-    }
-  }
+window.editSummaryRecord = async function(id) {
+  const summary = await db.summaries.get(Number(id));
+  if (!summary) return;
+  
+  document.getElementById("memory-edit-id").value = id;
+  document.getElementById("memory-edit-textarea").value = summary.content;
+  document.getElementById("memory-edit-overlay").classList.add("active");
+};
+
+window.deleteSummaryRecord = function(id) {
+  document.getElementById("memory-delete-id").value = id;
+  document.getElementById("memory-delete-overlay").classList.add("active");
 };
 
 // 6. AI 深度提炼核心记忆
@@ -904,6 +908,55 @@ document.addEventListener("DOMContentLoaded", () => {
 
     pad.onmousedown = (e) => {
       if (e.target !== knob) handleDrag(e.clientX, e.clientY);
+    };
+  }
+
+  // 绑定微信级高精长卡片记忆碎片编辑保存事件 [1]
+  const btnSaveMemoryEdit = document.getElementById("btn-save-memory-edit");
+  if (btnSaveMemoryEdit) {
+    btnSaveMemoryEdit.onclick = async () => {
+      const id = Number(document.getElementById("memory-edit-id").value);
+      const newContent = document.getElementById("memory-edit-textarea").value.trim();
+      
+      if (!newContent) {
+        alert("记忆内容不能为空！");
+        return;
+      }
+      
+      const summary = await db.summaries.get(id);
+      if (!summary) return;
+      
+      const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+      let updatedVector = summary.vector;
+      if (isVectorEnabled) {
+        updatedVector = await safeGetEmbedding(newContent);
+      }
+      
+      await db.summaries.update(id, {
+        content: newContent,
+        vector: updatedVector
+      });
+      
+      document.getElementById("memory-edit-overlay").classList.remove("active");
+      if (activeSessionId) {
+        const activeTab = document.querySelector(".summary-tab-btn.active")?.getAttribute("data-cat") || "all";
+        await renderSummariesList(activeSessionId, activeTab);
+      }
+    };
+  }
+
+  // 绑定微信级精致小气泡记忆碎片删除确认事件 [1]
+  const btnConfirmMemoryDelete = document.getElementById("btn-confirm-memory-delete");
+  if (btnConfirmMemoryDelete) {
+    btnConfirmMemoryDelete.onclick = async () => {
+      const id = Number(document.getElementById("memory-delete-id").value);
+      await db.summaries.delete(id);
+      
+      document.getElementById("memory-delete-overlay").classList.remove("active");
+      if (activeSessionId) {
+        const activeTab = document.querySelector(".summary-tab-btn.active")?.getAttribute("data-cat") || "all";
+        await renderSummariesList(activeSessionId, activeTab);
+      }
     };
   }
 
