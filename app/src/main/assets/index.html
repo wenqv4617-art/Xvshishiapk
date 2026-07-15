@@ -390,11 +390,40 @@
 
           <!-- 二级：数据管理 -->
           <div id="settings-lv2-data" class="settings-lv2-panel" style="display:none;">
-            <div class="data-status-card">
-              <h4>本地存储状态</h4>
-              <p>总记录数: <span id="db-total-records">0</span></p>
-              <p>所有资源空间: <span id="db-total-bytes">0 KB</span></p>
-              <p>图片所占空间: <span id="db-image-bytes">0 KB</span></p>
+            <div class="data-status-card" style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:16px;">
+              <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700;">💾 存储多维统计与健康诊断</h4>
+              <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-secondary);">
+                <div style="display:flex; justify-content:space-between; border-bottom:1px dashed var(--border); padding-bottom:4px;">
+                  <span>🖼️ 图片、美化与表情包：</span>
+                  <span id="stat-beautify-bytes" style="font-weight:700; color:var(--text-primary);">0 KB</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px dashed var(--border); padding-bottom:4px;">
+                  <span>📂 角色档案库与关系：</span>
+                  <span id="stat-archives-bytes" style="font-weight:700; color:var(--text-primary);">0 KB</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px dashed var(--border); padding-bottom:4px;">
+                  <span>💬 线上/线下聊天消息：</span>
+                  <span id="stat-messages-bytes" style="font-weight:700; color:var(--text-primary);">0 KB</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px dashed var(--border); padding-bottom:4px;">
+                  <span>🧠 向量总结与长期记忆：</span>
+                  <span id="stat-summaries-bytes" style="font-weight:700; color:var(--text-primary);">0 KB</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding-top:4px; font-weight:700;">
+                  <span style="color:var(--text-primary);">✨ 系统总计占用空间：</span>
+                  <span id="stat-total-bytes" style="color:var(--primary);">0 KB</span>
+                </div>
+              </div>
+              
+              <!-- 核心优化控制台 -->
+              <div style="display:flex; gap:8px; margin-top:14px;">
+                <button id="btn-optimize-images" class="btn btn-outline" style="flex:1; padding:8px; font-size:11px; border-color:#10b981; color:#10b981; border-radius:8px; font-weight:700;">
+                  ⚡ 压缩图片/头像内存
+                </button>
+                <button id="btn-clean-redundant-avatars" class="btn btn-outline" style="flex:1; padding:8px; font-size:11px; border-color:#3b82f6; color:#3b82f6; border-radius:8px; font-weight:700;">
+                  🧼 清理冗余头像缓存
+                </button>
+              </div>
             </div>
             <div class="data-actions" style="display:flex; flex-direction:column; gap:8px;">
               <button id="btn-export-beautify" class="btn" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px;">

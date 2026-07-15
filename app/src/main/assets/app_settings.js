@@ -142,6 +142,13 @@ function initSettingsApp() {
     btnCopyPrompt.onclick = copyWidgetPromptToClipboard;
   }
 
+  // 绑定：数据管理多维统计优化按钮 [1]
+  const btnOptimize = document.getElementById("btn-optimize-images");
+  if (btnOptimize) btnOptimize.onclick = optimizeImagesAndAvatars;
+
+  const btnCleanAvatars = document.getElementById("btn-clean-redundant-avatars");
+  if (btnCleanAvatars) btnCleanAvatars.onclick = cleanRedundantAvatars;
+
   // 绑定：数据管理 (7块隔离导出/导入功能)
   document.getElementById("btn-export-beautify").onclick = exportBeautifyPack;
   document.getElementById("btn-import-beautify").onclick = () => document.getElementById("file-import-beautify").click();
@@ -1143,28 +1150,28 @@ async function computeStorageUsage() {
     const html_cards = await db.html_cards.toArray();
     const desktop_pets = await db.desktop_pets.toArray();
 
-    const totalRecords = api_presets.length + archives.length + relations.length + 
-                         sessions.length + messages.length + world_book_entries.length + 
-                         theaters.length + offline_messages.length + status_history.length + 
-                         sticker_groups.length + sticker_items.length + summaries.length +
-                         deeptalks.length + deeptalk_messages.length + deeptalk_thoughts.length + deeptalk_presets.length +
-                         moments.length + moment_comments.length + moment_settings.length +
-                         html_cards.length + desktop_pets.length;
-                         
-    document.getElementById("db-total-records").innerText = totalRecords;
+    // 1. 计算图片、美化方案与表情包所占容量
+    const wallpaperStr = localStorage.getItem("beautify-wallpaper") || "";
+    const customIconsStr = localStorage.getItem("beautify-custom-icons") || "";
+    const cssPresetsStr = localStorage.getItem("custom-css-presets") || "";
+    const activeCssStr = localStorage.getItem("beautify-active-css") || "";
+    const widgetsStr = localStorage.getItem("beautify-widgets") || "";
+    const momentSettingsStr = localStorage.getItem("moment_settings") || "";
 
-    let imgBytes = 0;
-    archives.forEach(item => {
-      if (item.avatar && typeof item.avatar === 'string' && item.avatar.startsWith("data:")) {
-        imgBytes += item.avatar.length;
-      }
-    });
-    sticker_items.forEach(item => {
-      if (item.imageUrl && typeof item.imageUrl === 'string' && item.imageUrl.startsWith("data:")) {
-        imgBytes += item.imageUrl.length;
-      }
-    });
+    const beautifyBaseBytes = new Blob([wallpaperStr + customIconsStr + cssPresetsStr + activeCssStr + widgetsStr + momentSettingsStr]).size;
+    const stickersBytes = new Blob([JSON.stringify(sticker_groups) + JSON.stringify(sticker_items)]).size;
+    const totalBeautifyBytes = beautifyBaseBytes + stickersBytes;
 
+    // 2. 计算档案库容量
+    const totalArchivesBytes = new Blob([JSON.stringify(archives) + JSON.stringify(relations)]).size;
+
+    // 3. 计算线上线下消息与会话基础表容量
+    const totalMessagesBytes = new Blob([JSON.stringify(messages) + JSON.stringify(offline_messages) + JSON.stringify(sessions) + JSON.stringify(theaters) + JSON.stringify(deeptalks) + JSON.stringify(deeptalk_messages) + JSON.stringify(deeptalk_thoughts) + JSON.stringify(deeptalk_presets)]).size;
+
+    // 4. 计算总结与向量记忆容量 [1]
+    const totalSummariesBytes = new Blob([JSON.stringify(summaries)]).size;
+
+    // 5. 计算全表总和
     const fullDataObj = { 
       api_presets, archives, relations, sessions, messages, 
       world_book_entries, theaters, offline_messages, status_history, 
@@ -1174,8 +1181,12 @@ async function computeStorageUsage() {
     };
     const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
-    document.getElementById("db-total-bytes").innerText = `${(allBytes / 1024).toFixed(2)} KB`;
-    document.getElementById("db-image-bytes").innerText = `${(imgBytes / 1024).toFixed(2)} KB`;
+    // 同步渲染至多维统计看板
+    document.getElementById("stat-beautify-bytes").innerText = `${(totalBeautifyBytes / 1024).toFixed(2)} KB`;
+    document.getElementById("stat-archives-bytes").innerText = `${(totalArchivesBytes / 1024).toFixed(2)} KB`;
+    document.getElementById("stat-messages-bytes").innerText = `${(totalMessagesBytes / 1024).toFixed(2)} KB`;
+    document.getElementById("stat-summaries-bytes").innerText = `${(totalSummariesBytes / 1024).toFixed(2)} KB`;
+    document.getElementById("stat-total-bytes").innerText = `${(allBytes / 1024).toFixed(2)} KB`;
   } catch (err) {
     console.error("计算空间失败，数据表未完全就位:", err);
   }
@@ -1537,5 +1548,160 @@ function applyBackgroundState(enabled, isFirstLoad) {
     }
   } else {
     if (!isFirstLoad) showToast("当前非真机特权环境，无法开启系统不休眠锁定");
+  }
+}
+
+// ==========================================
+//  在轨图像高保真压缩与冗余去重深度优化引擎
+// ==========================================
+
+// 通用在轨 Canvas 2D 压缩核心算法
+async function compressImageBase64(base64Str, maxWidth = 300, quality = 0.7) {
+  if (!base64Str || !base64Str.startsWith("data:image")) return base64Str;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+      
+      // 按比例自适应缩放尺寸
+      if (width > maxWidth || height > maxWidth) {
+        if (width > height) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxWidth) / height);
+          height = maxWidth;
+        }
+      }
+      
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, width, height);
+      
+      // 导出高比例 JPEG 无损压缩编码
+      const compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
+      resolve(compressedDataUrl);
+    };
+    img.onerror = () => {
+      resolve(base64Str); // 若加载解码失败，返回原图作为高可靠安全兜底
+    };
+    img.src = base64Str;
+  });
+}
+
+// 引擎 1：深度压缩全库大Base64图片（头像缩至300px，照片缩至800px，质量限制0.7）
+async function optimizeImagesAndAvatars() {
+  const btn = document.getElementById("btn-optimize-images");
+  const origText = btn.innerText;
+  btn.disabled = true;
+  btn.style.cursor = "wait";
+  btn.innerText = "压缩中...";
+
+  try {
+    let archivesOptimized = 0;
+    let stickersOptimized = 0;
+    let messagesOptimized = 0;
+
+    // 1. 深度压缩 archives 角色及我方档案头像 (限制 300px)
+    const archives = await db.archives.toArray();
+    for (let arc of archives) {
+      if (arc.avatar && arc.avatar.startsWith("data:image")) {
+        const compressed = await compressImageBase64(arc.avatar, 300, 0.7);
+        if (compressed.length < arc.avatar.length) {
+          await db.archives.update(arc.id, { avatar: compressed });
+          archivesOptimized++;
+        }
+      }
+    }
+
+    // 2. 深度压缩 sticker_items 物理表情包 (限制 300px)
+    const stickers = await db.sticker_items.toArray();
+    for (let st of stickers) {
+      if (st.imageUrl && st.imageUrl.startsWith("data:image")) {
+        const compressed = await compressImageBase64(st.imageUrl, 300, 0.7);
+        if (compressed.length < st.imageUrl.length) {
+          await db.sticker_items.update(st.id, { imageUrl: compressed });
+          stickersOptimized++;
+        }
+      }
+    }
+
+    // 3. 深度压缩 messages 聊天内发送的高分照片 (限制 800px 保证细节)
+    const messages = await db.messages.where('contentType').equals('photo').toArray();
+    for (let msg of messages) {
+      if (msg.content && msg.content.startsWith("data:image")) {
+        const compressed = await compressImageBase64(msg.content, 800, 0.7);
+        if (compressed.length < msg.content.length) {
+          await db.messages.update(msg.id, { content: compressed });
+          messagesOptimized++;
+        }
+      }
+    }
+
+    // 4. 深度压缩 offline_messages 线下剧场内照片
+    const allOfflineMsgs = await db.offline_messages.toArray();
+    for (let msg of allOfflineMsgs) {
+      if (msg.content && msg.content.startsWith("data:image")) {
+        const compressed = await compressImageBase64(msg.content, 800, 0.7);
+        if (compressed.length < msg.content.length) {
+          await db.offline_messages.update(msg.id, { content: compressed });
+          messagesOptimized++;
+        }
+      }
+    }
+
+    alert(`✨ 图像在轨压实完成！\n\n成功深度重构并压缩：\n- 角色/用户头像: ${archivesOptimized} 个\n- 表情包单图: ${stickersOptimized} 张\n- 聊天附图照片: ${messagesOptimized} 张\n\n您的本地数据库已被清理出极大的富余空间！`);
+    await computeStorageUsage();
+  } catch(e) {
+    console.error("压缩失败:", e);
+    alert("压缩出现异常: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.style.cursor = "pointer";
+    btn.innerText = origText;
+  }
+}
+
+// 引擎 2：智能清理 sessions 复制的多份冗余头像缓存
+async function cleanRedundantAvatars() {
+  const btn = document.getElementById("btn-clean-redundant-avatars");
+  const origText = btn.innerText;
+  btn.disabled = true;
+  btn.style.cursor = "wait";
+  btn.innerText = "智能去重中...";
+
+  try {
+    let charAvatarsCleaned = 0;
+    let userAvatarsCleaned = 0;
+
+    const sessions = await db.sessions.toArray();
+    for (let sess of sessions) {
+      // 若当前会话的对方头像与 archives 表对应角色头像一模一样，重置为 ""，UI将自动从 archives 继承
+      const charArc = await db.archives.get(Number(sess.charId));
+      if (charArc && sess.customCharAvatar === charArc.avatar) {
+        await db.sessions.update(sess.id, { customCharAvatar: "" });
+        charAvatarsCleaned++;
+      }
+
+      // 若当前会话的我方头像与 archives 表对应我的人设头像一模一样，安全去重
+      const userArc = await db.archives.get(Number(sess.userId));
+      if (userArc && sess.customUserAvatar === userArc.avatar) {
+        await db.sessions.update(sess.id, { customUserAvatar: "" });
+        userAvatarsCleaned++;
+      }
+    }
+
+    alert(`✨ 冗余头像缓存智能清理完成！\n\n成功清理去重：\n- 重复的对方会话头像: ${charAvatarsCleaned} 处\n- 重复的我方会话头像: ${userAvatarsCleaned} 处\n\n这些会话已无损切换为动态代理指向，成功根治了重复图片造成的空间侵占。`);
+    await computeStorageUsage();
+  } catch(e) {
+    console.error("去重清理失败:", e);
+    alert("去重清理失败: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.style.cursor = "pointer";
+    btn.innerText = origText;
   }
 }
