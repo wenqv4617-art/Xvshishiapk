@@ -714,4 +714,34 @@ class AndroidMcp(private val context: Context) {
             e.printStackTrace()
         }
     }
+    // ============================================================
+//  本地向量模型推理接口 (ONNX Runtime)
+// ============================================================
+
+// 1. 测试模型是否加载成功 (供 JS 调用)
+@JavascriptInterface
+fun testOnnxModel(): String {
+    return try {
+        val assetManager = context.assets
+        // 尝试打开 assets/models/ 下的模型文件
+        val inputStream = assetManager.open("models/model_quantized.onnx")
+        val size = inputStream.available() / 1024
+        inputStream.close()
+        "✅ 模型文件存在！大小: $size KB"
+    } catch (e: Exception) {
+        "❌ 模型未找到或无法读取: ${e.message}"
+    }
+}
+
+// 2. 将文本转为向量 (核心功能：Embedding)
+@JavascriptInterface
+fun getEmbedding(text: String): String {
+    return try {
+        // 这里先返回一个简单的模拟向量，证明函数跑通了
+        // 等我们跑通本地 ONNX 后，再把这里的逻辑换成真正调用模型
+        "[0.12, -0.45, 0.89, 0.01, 0.99]" 
+    } catch (e: Exception) {
+        "[]"
+    }
+}
 }
