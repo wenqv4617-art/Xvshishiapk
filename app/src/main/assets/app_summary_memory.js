@@ -472,6 +472,14 @@ async function loadCoreMemory(sessionId) {
     document.getElementById("weight-emo-cnt").innerText = emoCnt;
     document.getElementById("weight-fac-cnt").innerText = facCnt;
     document.getElementById("weight-cor-cnt").innerText = corCnt;
+
+    // 🌟 实时计算当前待补建向量的历史总结数 [1]
+    const allSums = await db.summaries.toArray();
+    const missingSums = allSums.filter(s => !s.vector);
+    const countEl = document.getElementById("missing-vectors-count");
+    if (countEl) {
+      countEl.innerText = `${missingSums.length} 条待补建`;
+    }
   }
 
   // 重设当前选中的 Summaries 历史碎片过滤标签
@@ -592,6 +600,48 @@ window.deleteSummaryRecord = function(id) {
   document.getElementById("memory-delete-id").value = id;
   document.getElementById("memory-delete-overlay").classList.add("active");
 };
+
+// 🌟 一键后台静默补建缺失向量特征函数 [1]
+async function rebuildMissingVectors() {
+  const btn = document.getElementById("btn-rebuild-vectors");
+  if (!btn) return;
+  const origText = btn.innerText;
+  btn.disabled = true;
+  btn.style.cursor = "wait";
+  btn.innerText = "正在批量构建中...";
+
+  try {
+    const allSummaries = await db.summaries.toArray();
+    const missing = allSummaries.filter(s => !s.vector);
+    
+    if (missing.length === 0) {
+      alert("您的所有历史总结记忆已 100% 绑定向量，无需重复构建！");
+      return;
+    }
+
+    let successCount = 0;
+    for (let s of missing) {
+      const vector = await safeGetEmbedding(s.content);
+      if (vector) {
+        await db.summaries.update(s.id, { vector: vector });
+        successCount++;
+      }
+    }
+
+    alert(`✨ 历史总结向量补建成功！\n\n成功为 ${successCount} 条未处理的总结碎片提取并绑定了 384 维向量特征。\n这些历史记忆现在已无损并入 AI 语义 RAG 检索模型中！`);
+    
+    if (activeSessionId) {
+      await loadCoreMemory(activeSessionId);
+    }
+  } catch (e) {
+    console.error("补建向量失败:", e);
+    alert("补建失败，原因: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.style.cursor = "pointer";
+    btn.innerText = origText;
+  }
+}
 
 // 6. AI 深度提炼核心记忆
 async function generateCoreMemoryFromAI(sessionId) {
@@ -958,6 +1008,12 @@ document.addEventListener("DOMContentLoaded", () => {
         await renderSummariesList(activeSessionId, activeTab);
       }
     };
+  }
+
+  // 绑定一键补建历史向量事件 [1]
+  const btnRebuild = document.getElementById("btn-rebuild-vectors");
+  if (btnRebuild) {
+    btnRebuild.onclick = rebuildMissingVectors;
   }
 
   // 绑定历史总结分类过滤器 Tabs 交互事件
