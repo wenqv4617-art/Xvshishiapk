@@ -689,7 +689,24 @@ async function triggerManualSummary(sessionId) {
 
 // 8. DOM 节点单次绑定绑定与生命周期挂载 [1]
 document.addEventListener("DOMContentLoaded", () => {
+  // DOM 元素仅声明一次，彻底绝迹 JS 语法编译冲突
   const btnSummary = document.getElementById("btn-chat-summary");
+  const btnMemory = document.getElementById("btn-chat-memory");
+  const btnSaveSummary = document.getElementById("btn-save-summary-settings");
+  const btnSaveCore = document.getElementById("btn-save-core-memory");
+  const btnGenerateCore = document.getElementById("btn-generate-core-memory");
+  const btnManualTrigger = document.getElementById("btn-summary-manual-trigger");
+
+  const topkSlider = document.getElementById("vector-topk");
+  const topkInputText = document.getElementById("vector-topk-input");
+  const thresholdInput = document.getElementById("vector-threshold");
+  const pad = document.getElementById("triangle-pad-wrapper");
+  const knob = document.getElementById("triangle-knob");
+
+  const xA = 110, yA = 24;  // 情感顶点坐标
+  const xB = 30, yB = 145;  // 事实左顶点坐标
+  const xC = 190, yC = 145; // 核心右顶点坐标
+
   if (btnSummary) {
     btnSummary.onclick = () => {
       if (!activeSessionId) {
@@ -702,7 +719,6 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  const btnMemory = document.getElementById("btn-chat-memory");
   if (btnMemory) {
     btnMemory.onclick = () => {
       if (!activeSessionId) {
@@ -715,28 +731,24 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  const btnSaveSummary = document.getElementById("btn-save-summary-settings");
   if (btnSaveSummary) {
     btnSaveSummary.onclick = () => {
       if (activeSessionId) saveSummarySettings(activeSessionId);
     };
   }
 
-  const btnSaveCore = document.getElementById("btn-save-core-memory");
   if (btnSaveCore) {
     btnSaveCore.onclick = () => {
       if (activeSessionId) saveCoreMemory(activeSessionId);
     };
   }
 
-  const btnGenerateCore = document.getElementById("btn-generate-core-memory");
   if (btnGenerateCore) {
     btnGenerateCore.onclick = () => {
       if (activeSessionId) generateCoreMemoryFromAI(activeSessionId);
     };
   }
 
-  const btnManualTrigger = document.getElementById("btn-summary-manual-trigger");
   if (btnManualTrigger) {
     btnManualTrigger.onclick = () => {
       if (activeSessionId) triggerManualSummary(activeSessionId);
@@ -744,178 +756,158 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 绑定向量检索设置交互机制与 Ticker 滑动保存 (支持 Top-K 输入框与滑块的双向实时同步) [1]
-      const topkSlider = document.getElementById("vector-topk");
-      const topkInputText = document.getElementById("vector-topk-input");
-      if (topkSlider && topkInputText) {
-        topkSlider.oninput = (e) => {
-          topkInputText.value = e.target.value;
-          localStorage.setItem("vector-topk", e.target.value);
-        };
-        topkInputText.oninput = (e) => {
-          let val = parseInt(e.target.value) || 3;
-          if (val < 3) val = 3;
-          if (val > 1000) val = 1000;
-          topkSlider.value = val;
-          localStorage.setItem("vector-topk", val);
-        };
-        topkInputText.onblur = (e) => {
-          let val = parseInt(e.target.value) || 3;
-          if (val < 3) val = 3;
-          if (val > 1000) val = 1000;
-          topkInputText.value = val;
-          topkSlider.value = val;
-          localStorage.setItem("vector-topk", val);
-        };
-      }
+  if (topkSlider && topkInputText) {
+    topkSlider.oninput = (e) => {
+      topkInputText.value = e.target.value;
+      localStorage.setItem("vector-topk", e.target.value);
+      updateRatiosLinkage();
+    };
+    topkInputText.oninput = (e) => {
+      let val = parseInt(e.target.value) || 3;
+      if (val < 3) val = 3;
+      if (val > 1000) val = 1000;
+      topkSlider.value = val;
+      localStorage.setItem("vector-topk", val);
+      updateRatiosLinkage();
+    };
+    topkInputText.onblur = (e) => {
+      let val = parseInt(e.target.value) || 3;
+      if (val < 3) val = 3;
+      if (val > 1000) val = 1000;
+      topkInputText.value = val;
+      topkSlider.value = val;
+      localStorage.setItem("vector-topk", val);
+      updateRatiosLinkage();
+    };
+  }
 
-      const thresholdInput = document.getElementById("vector-threshold");
-      if (thresholdInput) {
-        thresholdInput.oninput = (e) => {
-          document.getElementById("vector-threshold-val").innerText = e.target.value;
-          localStorage.setItem("vector-threshold", e.target.value);
-        };
-      }
+  if (thresholdInput) {
+    thresholdInput.oninput = (e) => {
+      document.getElementById("vector-threshold-val").innerText = e.target.value;
+      localStorage.setItem("vector-threshold", e.target.value);
+    };
+  }
 
-      // 绑定时间衰减系数按钮，采用原生 btn-primary 和 btn-outline 样式进行强视觉反馈切换 [1]
-      document.querySelectorAll(".vector-decay-btn").forEach(btn => {
-        btn.onclick = () => {
-          document.querySelectorAll(".vector-decay-btn").forEach(b => {
-            b.classList.remove("btn-primary");
-            b.classList.add("btn-outline");
-          });
-          btn.classList.remove("btn-outline");
-          btn.classList.add("btn-primary");
-          localStorage.setItem("vector-decay-type", btn.getAttribute("data-decay"));
-        };
+  // 绑定时间衰减系数按钮，采用原生 btn-primary 和 btn-outline 样式进行强视觉反馈切换 [1]
+  document.querySelectorAll(".vector-decay-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".vector-decay-btn").forEach(b => {
+        b.classList.remove("btn-primary");
+        b.classList.add("btn-outline");
       });
+      btn.classList.remove("btn-outline");
+      btn.classList.add("btn-primary");
+      localStorage.setItem("vector-decay-type", btn.getAttribute("data-decay"));
+    };
+  });
 
-      // === 重心坐标系三维偏好调节器 (Barycentric Drag System) ===
-      const pad = document.getElementById("triangle-pad-wrapper");
-      const knob = document.getElementById("triangle-knob");
-      
-      const xA = 110, yA = 24;  // 情感顶点坐标
-      const xB = 30, yB = 145;  // 事实左顶点坐标
-      const xC = 190, yC = 145; // 核心右顶点坐标
+  // === 重心坐标系数学计算模型 ===
+  function updateTriangleKnobAndWeights(x, y) {
+    const denom = (yB - yC) * (xA - xC) + (xC - xB) * (yA - yC);
+    let wA = ((yB - yC) * (x - xC) + (xC - xB) * (y - yC)) / denom;
+    let wB = ((yC - yA) * (x - xC) + (xA - xC) * (y - yC)) / denom;
+    let wC = 1 - wA - wB;
 
-      function updateTriangleKnobAndWeights(x, y) {
-        // 重心坐标系数学模型
-        const denom = (yB - yC) * (xA - xC) + (xC - xB) * (yA - yC);
-        let wA = ((yB - yC) * (x - xC) + (xC - xB) * (y - yC)) / denom;
-        let wB = ((yC - yA) * (x - xC) + (xA - xC) * (y - yC)) / denom;
-        let wC = 1 - wA - wB;
+    wA = Math.max(0, Math.min(1, wA));
+    wB = Math.max(0, Math.min(1, wB));
+    wC = Math.max(0, Math.min(1, wC));
 
-        // 边界夹逼计算 (Snapping boundary clamping)
-        wA = Math.max(0, Math.min(1, wA));
-        wB = Math.max(0, Math.min(1, wB));
-        wC = Math.max(0, Math.min(1, wC));
+    const sum = wA + wB + wC;
+    if (sum > 0) {
+      wA /= sum; wB /= sum; wC /= sum;
+    } else {
+      wA = 0.33; wB = 0.33; wC = 0.34;
+    }
 
-        const sum = wA + wB + wC;
-        if (sum > 0) {
-          wA /= sum; wB /= sum; wC /= sum;
-        } else {
-          wA = 0.33; wB = 0.33; wC = 0.34;
-        }
+    const knobX = wA * xA + wB * xB + wC * xC;
+    const knobY = wA * yA + wB * yB + wC * yC;
 
-        // 把计算完毕的坐标投射回物理 knob 位置上
-        const knobX = wA * xA + wB * xB + wC * xC;
-        const knobY = wA * yA + wB * yB + wC * yC;
+    if (knob) {
+      knob.style.left = knobX + "px";
+      knob.style.top = knobY + "px";
+    }
 
-        if (knob) {
-          knob.style.left = knobX + "px";
-          knob.style.top = knobY + "px";
-        }
+    localStorage.setItem("vector-weight-emotional", wA.toFixed(4));
+    localStorage.setItem("vector-weight-factual", wB.toFixed(4));
+    localStorage.setItem("vector-weight-core", wC.toFixed(4));
 
-        // 写入高精本地存储
-        localStorage.setItem("vector-weight-emotional", wA.toFixed(4));
-        localStorage.setItem("vector-weight-factual", wB.toFixed(4));
-        localStorage.setItem("vector-weight-core", wC.toFixed(4));
+    const topk = parseInt(localStorage.getItem("vector-topk") || "3");
+    const emoPct = Math.round(wA * 100);
+    const facPct = Math.round(wB * 100);
+    const corPct = 100 - emoPct - facPct;
 
-        // 换算百分比分配与 Top-K 配额条数展现 [1]
-        const topk = parseInt(localStorage.getItem("vector-topk") || "3");
-        const emoPct = Math.round(wA * 100);
-        const facPct = Math.round(wB * 100);
-        const corPct = 100 - emoPct - facPct;
+    const emoCnt = Math.round(wA * topk);
+    const facCnt = Math.round(wB * topk);
+    const corCnt = Math.max(0, topk - emoCnt - facCnt);
 
-        const emoCnt = Math.round(wA * topk);
-        const facCnt = Math.round(wB * topk);
-        const corCnt = Math.max(0, topk - emoCnt - facCnt);
+    document.getElementById("weight-emo-pct").innerText = emoPct + "%";
+    document.getElementById("weight-fac-pct").innerText = facPct + "%";
+    document.getElementById("weight-cor-pct").innerText = corPct + "%";
 
-        document.getElementById("weight-emo-pct").innerText = emoPct + "%";
-        document.getElementById("weight-fac-pct").innerText = facPct + "%";
-        document.getElementById("weight-cor-pct").innerText = corPct + "%";
+    document.getElementById("weight-emo-cnt").innerText = emoCnt;
+    document.getElementById("weight-fac-cnt").innerText = facCnt;
+    document.getElementById("weight-cor-cnt").innerText = corCnt;
+  }
 
-        document.getElementById("weight-emo-cnt").innerText = emoCnt;
-        document.getElementById("weight-fac-cnt").innerText = facCnt;
-        document.getElementById("weight-cor-cnt").innerText = corCnt;
+  // 联动逻辑
+  const updateRatiosLinkage = () => {
+    const wEmo = parseFloat(localStorage.getItem("vector-weight-emotional") || "0.33");
+    const wFac = parseFloat(localStorage.getItem("vector-weight-factual") || "0.33");
+    const wCor = parseFloat(localStorage.getItem("vector-weight-core") || "0.34");
+    updateTriangleKnobAndWeights(
+      wEmo * xA + wFac * xB + wCor * xC,
+      wEmo * yA + wFac * yB + wCor * yC
+    );
+  };
+
+  // 触屏与鼠标滑动绑定
+  if (pad && knob) {
+    let isDragging = false;
+
+    const handleDrag = (clientX, clientY) => {
+      const rect = pad.getBoundingClientRect();
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      updateTriangleKnobAndWeights(x, y);
+    };
+
+    knob.onmousedown = (e) => {
+      e.preventDefault();
+      isDragging = true;
+      document.body.style.cursor = "grabbing";
+    };
+
+    window.onmousemove = (e) => {
+      if (isDragging) handleDrag(e.clientX, e.clientY);
+    };
+
+    window.onmouseup = () => {
+      if (isDragging) {
+        isDragging = false;
+        document.body.style.cursor = "default";
       }
+    };
 
-      if (pad && knob) {
-        let isDragging = false;
+    knob.ontouchstart = (e) => {
+      isDragging = true;
+    };
 
-        const handleDrag = (clientX, clientY) => {
-          const rect = pad.getBoundingClientRect();
-          const x = clientX - rect.left;
-          const y = clientY - rect.top;
-          updateTriangleKnobAndWeights(x, y);
-        };
-
-        // 电脑鼠标拖拽绑定
-        knob.onmousedown = (e) => {
-          e.preventDefault();
-          isDragging = true;
-          document.body.style.cursor = "grabbing";
-        };
-
-        window.onmousemove = (e) => {
-          if (isDragging) handleDrag(e.clientX, e.clientY);
-        };
-
-        window.onmouseup = () => {
-          if (isDragging) {
-            isDragging = false;
-            document.body.style.cursor = "default";
-          }
-        };
-
-        // 移动端 Touch 触屏手势完美穿透绑定 (适配 APK/PWA)
-        knob.ontouchstart = (e) => {
-          isDragging = true;
-        };
-
-        window.ontouchmove = (e) => {
-          if (isDragging && e.touches.length > 0) {
-            handleDrag(e.touches[0].clientX, e.touches[0].clientY);
-          }
-        };
-
-        window.ontouchend = () => {
-          if (isDragging) isDragging = false;
-        };
-
-        // 轻击面板任意位置自动 Snaps 圆点跳转
-        pad.onmousedown = (e) => {
-          if (e.target !== knob) handleDrag(e.clientX, e.clientY);
-        };
+    window.ontouchmove = (e) => {
+      if (isDragging && e.touches.length > 0) {
+        handleDrag(e.touches[0].clientX, e.touches[0].clientY);
       }
+    };
 
-      // 如果召回数 Top-K 输入框发生变动，同步联动更新三维配额条数
-      const topkSlider = document.getElementById("vector-topk");
-      const topkInputText = document.getElementById("vector-topk-input");
-      if (topkSlider && topkInputText) {
-        const updateRatiosLinkage = () => {
-          const wEmo = parseFloat(localStorage.getItem("vector-weight-emotional") || "0.33");
-          const wFac = parseFloat(localStorage.getItem("vector-weight-factual") || "0.33");
-          const wCor = parseFloat(localStorage.getItem("vector-weight-core") || "0.34");
-          updateTriangleKnobAndWeights(
-            wEmo * xA + wFac * xB + wCor * xC,
-            wEmo * yA + wFac * yB + wCor * yC
-          );
-        };
-        topkSlider.addEventListener("input", updateRatiosLinkage);
-        topkInputText.addEventListener("input", updateRatiosLinkage);
-      }
+    window.ontouchend = () => {
+      if (isDragging) isDragging = false;
+    };
 
-      // 绑定历史总结分类过滤器 Tabs 交互事件
+    pad.onmousedown = (e) => {
+      if (e.target !== knob) handleDrag(e.clientX, e.clientY);
+    };
+  }
+
+  // 绑定历史总结分类过滤器 Tabs 交互事件
   document.querySelectorAll(".summary-tab-btn").forEach(btn => {
     btn.onclick = () => {
       document.querySelectorAll(".summary-tab-btn").forEach(b => b.classList.remove("active"));
