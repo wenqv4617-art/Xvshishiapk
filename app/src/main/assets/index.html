@@ -1183,7 +1183,7 @@
                           <button class="btn btn-outline vector-decay-btn" data-decay="low" style="flex:1; padding:6px; font-size:10px; border-radius:6px; text-align:center;">看重久远记忆</button>
                         </div>
                       </div>
-                      <div class="form-group" style="margin-bottom:0;">
+                      <div class="form-group" style="margin-bottom:12px;">
                         <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:4px; display:flex; justify-content:space-between;">
                           <span>3. 最低相似度阈值</span>
                           <span id="vector-threshold-val">0.55</span>
@@ -1192,6 +1192,27 @@
                         <div style="display:flex; justify-content:space-between; font-size:9px; color:#15803d; margin-top:2px;">
                           <span>发散 (0.3)</span>
                           <span>精确 (0.8)</span>
+                        </div>
+                      </div>
+                      
+                      <!-- 4. 重心坐标三维记忆召回比例微调 -->
+                      <div class="form-group" style="margin-top:14px; border-top:1px dashed #bbf7d0; padding-top:10px;">
+                        <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:8px; display:block;">4. 记忆召回偏好分配 (拖拽绿点微调)</label>
+                        
+                        <div id="triangle-pad-wrapper" style="position:relative; width:220px; height:180px; margin:0 auto; background:#fff; border-radius:12px; border:1.5px solid #bbf7d0; overflow:hidden;">
+                          <svg width="220" height="180" style="position:absolute; left:0; top:0; pointer-events:none;">
+                            <polygon points="110,24 30,145 190,145" fill="#f0fdf4" stroke="#86efac" stroke-width="2" stroke-dasharray="2,2" />
+                            <text x="110" y="14" fill="#ec4899" font-size="9" font-weight="700" text-anchor="middle">情感需求 (Emotional)</text>
+                            <text x="25" y="158" fill="#10b981" font-size="9" font-weight="700" text-anchor="start">事实记忆 (Factual)</text>
+                            <text x="195" y="158" fill="#ca8a04" font-size="9" font-weight="700" text-anchor="end">核心记忆 (Core)</text>
+                          </svg>
+                          <div id="triangle-knob" style="position:absolute; left:110px; top:85px; width:16px; height:16px; margin-left:-8px; margin-top:-8px; background:#15803d; border:2px solid #fff; border-radius:50%; cursor:grab; box-shadow:0 2px-6px rgba(0,0,0,0.3); z-index:10; transition: transform 0.05s ease;"></div>
+                        </div>
+                        
+                        <div id="triangle-ratios-log" style="display:flex; justify-content:space-between; font-size:10px; color:#15803d; font-weight:700; margin-top:8px; text-align:center;">
+                          <span style="color:#ec4899; flex:1;">情感: <span id="weight-emo-pct">33%</span> (<span id="weight-emo-cnt">0</span>条)</span>
+                          <span style="color:#10b981; flex:1;">事实: <span id="weight-fac-pct">33%</span> (<span id="weight-fac-cnt">0</span>条)</span>
+                          <span style="color:#ca8a04; flex:1;">核心: <span id="weight-cor-pct">34%</span> (<span id="weight-cor-cnt">0</span>条)</span>
                         </div>
                       </div>
                     </div>

@@ -86,7 +86,20 @@ async function retrieveSummaries(sessionId, latestUserMessageText) {
     const threshold = parseFloat(localStorage.getItem("vector-threshold") || "0.55");
     const topk = parseInt(localStorage.getItem("vector-topk") || "3");
 
-    const scoredSummaries = [];
+    // 读取三角形重心偏好参数
+    const wEmo = parseFloat(localStorage.getItem("vector-weight-emotional") || "0.33");
+    const wFac = parseFloat(localStorage.getItem("vector-weight-factual") || "0.33");
+    const wCor = parseFloat(localStorage.getItem("vector-weight-core") || "0.34");
+
+    // 计算各维度的最大召回限额
+    const limitEmo = Math.max(0, Math.round(wEmo * topk));
+    const limitFac = Math.max(0, Math.round(wFac * topk));
+    const limitCor = Math.max(0, Math.round(wCor * topk));
+
+    const emoGroup = [];
+    const facGroup = [];
+    const corGroup = [];
+
     otherSummaries.forEach(s => {
       if (s.vector) {
         const sim = cosineSimilarity(queryVector, s.vector);
@@ -95,13 +108,25 @@ async function retrieveSummaries(sessionId, latestUserMessageText) {
         const score = sim * decayFactor;
 
         if (score >= threshold) {
-          scoredSummaries.push({ s, score });
+          const item = { s, score };
+          if (s.category === 'emotional') emoGroup.push(item);
+          else if (s.category === 'core') corGroup.push(item);
+          else facGroup.push(item); // factual 事实及降级分类
         }
       }
     });
 
-    scoredSummaries.sort((a, b) => b.score - a.score);
-    matchedSummaries = scoredSummaries.slice(0, topk).map(item => item.s);
+    // 各大分类独立执行降序排列
+    emoGroup.sort((a, b) => b.score - a.score);
+    facGroup.sort((a, b) => b.score - a.score);
+    corGroup.sort((a, b) => b.score - a.score);
+
+    // 精确拉取对应配额的 Top-K 向量记忆片
+    const slicedEmo = emoGroup.slice(0, limitEmo).map(item => item.s);
+    const slicedFac = facGroup.slice(0, limitFac).map(item => item.s);
+    const slicedCor = corGroup.slice(0, limitCor).map(item => item.s);
+
+    matchedSummaries = [...slicedEmo, ...slicedFac, ...slicedCor];
   } else if (latestUserMessageText && otherSummaries.length > 0) {
     // 兜底降级：执行原有关键词模糊匹配
     const cleanedInput = latestUserMessageText.toLowerCase();
@@ -410,6 +435,41 @@ async function loadCoreMemory(sessionId) {
       btn.classList.toggle("btn-primary", isActive);
       btn.classList.toggle("btn-outline", !isActive);
     });
+
+    // 载入三角形重心坐标及圆点物理位置还原 [1]
+    const wEmo = parseFloat(localStorage.getItem("vector-weight-emotional") || "0.33");
+    const wFac = parseFloat(localStorage.getItem("vector-weight-factual") || "0.33");
+    const wCor = parseFloat(localStorage.getItem("vector-weight-core") || "0.34");
+
+    const xA = 110, yA = 24;
+    const xB = 30, yB = 145;
+    const xC = 190, yC = 145;
+
+    const knobX = wEmo * xA + wFac * xB + wCor * xC;
+    const knobY = wEmo * yA + wFac * yB + wCor * yC;
+
+    const knob = document.getElementById("triangle-knob");
+    if (knob) {
+      knob.style.left = knobX + "px";
+      knob.style.top = knobY + "px";
+    }
+    
+    // 刷新三大项具体的条数换算分配
+    const emoPct = Math.round(wEmo * 100);
+    const facPct = Math.round(wFac * 100);
+    const corPct = 100 - emoPct - facPct;
+
+    const emoCnt = Math.round(wEmo * topk);
+    const facCnt = Math.round(wFac * topk);
+    const corCnt = Math.max(0, topk - emoCnt - facCnt);
+
+    document.getElementById("weight-emo-pct").innerText = emoPct + "%";
+    document.getElementById("weight-fac-pct").innerText = facPct + "%";
+    document.getElementById("weight-cor-pct").innerText = corPct + "%";
+
+    document.getElementById("weight-emo-cnt").innerText = emoCnt;
+    document.getElementById("weight-fac-cnt").innerText = facCnt;
+    document.getElementById("weight-cor-cnt").innerText = corCnt;
   }
 
   // 重设当前选中的 Summaries 历史碎片过滤标签
@@ -718,23 +778,133 @@ document.addEventListener("DOMContentLoaded", () => {
         };
       });
 
-  const thresholdInput = document.getElementById("vector-threshold");
-  if (thresholdInput) {
-    thresholdInput.oninput = (e) => {
-      document.getElementById("vector-threshold-val").innerText = e.target.value;
-      localStorage.setItem("vector-threshold", e.target.value);
-    };
-  }
+      // === 重心坐标系三维偏好调节器 (Barycentric Drag System) ===
+      const pad = document.getElementById("triangle-pad-wrapper");
+      const knob = document.getElementById("triangle-knob");
+      
+      const xA = 110, yA = 24;  // 情感顶点坐标
+      const xB = 30, yB = 145;  // 事实左顶点坐标
+      const xC = 190, yC = 145; // 核心右顶点坐标
 
-  document.querySelectorAll(".vector-decay-btn").forEach(btn => {
-    btn.onclick = () => {
-      document.querySelectorAll(".vector-decay-btn").forEach(b => b.classList.remove("active"));
-      btn.classList.add("active");
-      localStorage.setItem("vector-decay-type", btn.getAttribute("data-decay"));
-    };
-  });
+      function updateTriangleKnobAndWeights(x, y) {
+        // 重心坐标系数学模型
+        const denom = (yB - yC) * (xA - xC) + (xC - xB) * (yA - yC);
+        let wA = ((yB - yC) * (x - xC) + (xC - xB) * (y - yC)) / denom;
+        let wB = ((yC - yA) * (x - xC) + (xA - xC) * (y - yC)) / denom;
+        let wC = 1 - wA - wB;
 
-  // 绑定历史总结分类过滤器 Tabs 交互事件
+        // 边界夹逼计算 (Snapping boundary clamping)
+        wA = Math.max(0, Math.min(1, wA));
+        wB = Math.max(0, Math.min(1, wB));
+        wC = Math.max(0, Math.min(1, wC));
+
+        const sum = wA + wB + wC;
+        if (sum > 0) {
+          wA /= sum; wB /= sum; wC /= sum;
+        } else {
+          wA = 0.33; wB = 0.33; wC = 0.34;
+        }
+
+        // 把计算完毕的坐标投射回物理 knob 位置上
+        const knobX = wA * xA + wB * xB + wC * xC;
+        const knobY = wA * yA + wB * yB + wC * yC;
+
+        if (knob) {
+          knob.style.left = knobX + "px";
+          knob.style.top = knobY + "px";
+        }
+
+        // 写入高精本地存储
+        localStorage.setItem("vector-weight-emotional", wA.toFixed(4));
+        localStorage.setItem("vector-weight-factual", wB.toFixed(4));
+        localStorage.setItem("vector-weight-core", wC.toFixed(4));
+
+        // 换算百分比分配与 Top-K 配额条数展现 [1]
+        const topk = parseInt(localStorage.getItem("vector-topk") || "3");
+        const emoPct = Math.round(wA * 100);
+        const facPct = Math.round(wB * 100);
+        const corPct = 100 - emoPct - facPct;
+
+        const emoCnt = Math.round(wA * topk);
+        const facCnt = Math.round(wB * topk);
+        const corCnt = Math.max(0, topk - emoCnt - facCnt);
+
+        document.getElementById("weight-emo-pct").innerText = emoPct + "%";
+        document.getElementById("weight-fac-pct").innerText = facPct + "%";
+        document.getElementById("weight-cor-pct").innerText = corPct + "%";
+
+        document.getElementById("weight-emo-cnt").innerText = emoCnt;
+        document.getElementById("weight-fac-cnt").innerText = facCnt;
+        document.getElementById("weight-cor-cnt").innerText = corCnt;
+      }
+
+      if (pad && knob) {
+        let isDragging = false;
+
+        const handleDrag = (clientX, clientY) => {
+          const rect = pad.getBoundingClientRect();
+          const x = clientX - rect.left;
+          const y = clientY - rect.top;
+          updateTriangleKnobAndWeights(x, y);
+        };
+
+        // 电脑鼠标拖拽绑定
+        knob.onmousedown = (e) => {
+          e.preventDefault();
+          isDragging = true;
+          document.body.style.cursor = "grabbing";
+        };
+
+        window.onmousemove = (e) => {
+          if (isDragging) handleDrag(e.clientX, e.clientY);
+        };
+
+        window.onmouseup = () => {
+          if (isDragging) {
+            isDragging = false;
+            document.body.style.cursor = "default";
+          }
+        };
+
+        // 移动端 Touch 触屏手势完美穿透绑定 (适配 APK/PWA)
+        knob.ontouchstart = (e) => {
+          isDragging = true;
+        };
+
+        window.ontouchmove = (e) => {
+          if (isDragging && e.touches.length > 0) {
+            handleDrag(e.touches[0].clientX, e.touches[0].clientY);
+          }
+        };
+
+        window.ontouchend = () => {
+          if (isDragging) isDragging = false;
+        };
+
+        // 轻击面板任意位置自动 Snaps 圆点跳转
+        pad.onmousedown = (e) => {
+          if (e.target !== knob) handleDrag(e.clientX, e.clientY);
+        };
+      }
+
+      // 如果召回数 Top-K 输入框发生变动，同步联动更新三维配额条数
+      const topkSlider = document.getElementById("vector-topk");
+      const topkInputText = document.getElementById("vector-topk-input");
+      if (topkSlider && topkInputText) {
+        const updateRatiosLinkage = () => {
+          const wEmo = parseFloat(localStorage.getItem("vector-weight-emotional") || "0.33");
+          const wFac = parseFloat(localStorage.getItem("vector-weight-factual") || "0.33");
+          const wCor = parseFloat(localStorage.getItem("vector-weight-core") || "0.34");
+          updateTriangleKnobAndWeights(
+            wEmo * xA + wFac * xB + wCor * xC,
+            wEmo * yA + wFac * yB + wCor * yC
+          );
+        };
+        topkSlider.addEventListener("input", updateRatiosLinkage);
+        topkInputText.addEventListener("input", updateRatiosLinkage);
+      }
+
+      // 绑定历史总结分类过滤器 Tabs 交互事件
   document.querySelectorAll(".summary-tab-btn").forEach(btn => {
     btn.onclick = () => {
       document.querySelectorAll(".summary-tab-btn").forEach(b => b.classList.remove("active"));
