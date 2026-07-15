@@ -157,6 +157,15 @@ function initSettingsApp() {
 
   document.getElementById("btn-clear-all-data").onclick = clearAllAppData;
 
+  // 绑定：本地向量记忆检索总开关
+  const vectorGlobalToggle = document.getElementById("api-vector-enabled-toggle");
+  if (vectorGlobalToggle) {
+    vectorGlobalToggle.checked = localStorage.getItem("settings-vector-enabled") === "true";
+    vectorGlobalToggle.onchange = (e) => {
+      localStorage.setItem("settings-vector-enabled", e.target.checked ? "true" : "false");
+    };
+  }
+
   // 绑定：强更新开关状态维护
   const forceToggle = document.getElementById("force-update-toggle");
   if (forceToggle) {

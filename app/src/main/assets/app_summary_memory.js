@@ -2,6 +2,33 @@
  * app_summary_memory.js - 对话自动/手动总结与核心记忆关联召回系统
  */
 
+// 向量检索基础余弦相似度算法及 native 绑定桥 [1]
+function cosineSimilarity(vecA, vecB) {
+  if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+async function safeGetEmbedding(text) {
+  if (window.AndroidMCP && typeof window.AndroidMCP.getEmbedding === 'function') {
+    try {
+      const res = window.AndroidMCP.getEmbedding(text);
+      if (res) return JSON.parse(res);
+    } catch(e) {
+      console.error("生成本地 ONNX 向量失败:", e);
+    }
+  }
+  return null;
+}
+
 // 1. 提取对话轮次列表算法 (一轮 = user连续发言段 + char连续回复段)
 function getRoundsList(messages) {
   let rounds = [];
@@ -31,20 +58,52 @@ function getRoundsList(messages) {
   return rounds;
 }
 
-// 2. 核心：检索召回机制 (固定带入最近5轮，通过最新的输入模糊匹配其它，若超过20轮则均匀提取)
+// 2. 核心：检索召回机制 (支持传统关键词匹配，以及升级后的本地向量高精检索及衰减时间 λ) [1]
 async function retrieveSummaries(sessionId, latestUserMessageText) {
   const allSummaries = await db.summaries.where('sessionId').equals(sessionId).sortBy('startRound');
   if (allSummaries.length === 0) return [];
 
-  // 固定携带最近的 5 轮总结
+  // 固定优先包含最后生成的 5 条碎片总结，保留基本上下文
   const recentSummaries = allSummaries.slice(-5);
   const recentIds = new Set(recentSummaries.map(s => s.id));
 
-  // 剩余的总结用于检索匹配
   const otherSummaries = allSummaries.filter(s => !recentIds.has(s.id));
   let matchedSummaries = [];
 
-  if (latestUserMessageText && otherSummaries.length > 0) {
+  const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  let queryVector = null;
+
+  if (isVectorEnabled && latestUserMessageText) {
+    queryVector = await safeGetEmbedding(latestUserMessageText);
+  }
+
+  if (queryVector && otherSummaries.length > 0) {
+    const decayType = localStorage.getItem("vector-decay-type") || "medium";
+    let lambda = 0.05; // 默认新旧平衡衰减系数
+    if (decayType === "high") lambda = 0.5; // 看重近期记忆
+    else if (decayType === "low") lambda = 0.001; // 看重久远记忆
+
+    const threshold = parseFloat(localStorage.getItem("vector-threshold") || "0.55");
+    const topk = parseInt(localStorage.getItem("vector-topk") || "3");
+
+    const scoredSummaries = [];
+    otherSummaries.forEach(s => {
+      if (s.vector) {
+        const sim = cosineSimilarity(queryVector, s.vector);
+        const daysAgo = (Date.now() - s.timestamp) / (1000 * 60 * 60 * 24);
+        const decayFactor = Math.exp(-lambda * daysAgo);
+        const score = sim * decayFactor;
+
+        if (score >= threshold) {
+          scoredSummaries.push({ s, score });
+        }
+      }
+    });
+
+    scoredSummaries.sort((a, b) => b.score - a.score);
+    matchedSummaries = scoredSummaries.slice(0, topk).map(item => item.s);
+  } else if (latestUserMessageText && otherSummaries.length > 0) {
+    // 兜底降级：执行原有关键词模糊匹配
     const cleanedInput = latestUserMessageText.toLowerCase();
     otherSummaries.forEach(s => {
       let keywords = [];
@@ -55,27 +114,25 @@ async function retrieveSummaries(sessionId, latestUserMessageText) {
         matchedSummaries.push(s);
       }
     });
-  }
-
-  // 限制召回数最高为 20。若命中 > 20 轮，则均匀提取
-  let selectedMatched = [];
-  if (matchedSummaries.length <= 20) {
-    selectedMatched = matchedSummaries;
-  } else {
-    for (let j = 0; j < 20; j++) {
-      const index = Math.floor(j * matchedSummaries.length / 20);
-      selectedMatched.push(matchedSummaries[index]);
+    
+    if (matchedSummaries.length > 20) {
+      const selected = [];
+      for (let j = 0; j < 20; j++) {
+        const index = Math.floor(j * matchedSummaries.length / 20);
+        selected.push(matchedSummaries[index]);
+      }
+      matchedSummaries = selected;
     }
   }
 
-  const combined = [...recentSummaries, ...selectedMatched];
+  const combined = [...recentSummaries, ...matchedSummaries];
   const uniqueMap = new Map();
   combined.forEach(s => uniqueMap.set(s.id, s));
   
   return Array.from(uniqueMap.values()).sort((a,b) => a.startRound - b.startRound);
 }
 
-// 3. AI总结生成器 (提取总结与核心关键词，以 JSON 格式捕获)
+// 3. AI 总结碎片生成器 (升级为双响应协议，高自愈性多模块解析及向量写入通道) [1]
 async function generateSummaryForRounds(sessionId, startRound, endRound, customPrompt) {
   const presetId = localStorage.getItem("global_api_preset_id");
   const api = await db.api_presets.get(Number(presetId));
@@ -91,18 +148,44 @@ async function generateSummaryForRounds(sessionId, startRound, endRound, customP
     dialogText += `[轮次 ${i+1}]\n用户: ${rounds[i].userMsgContent}\n对方: ${rounds[i].charMsgContent}\n\n`;
   }
 
-  const prompt = customPrompt || "以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。";
+  const formatChoice = localStorage.getItem("summary-format-choice") || "json";
+  let systemPrompt = "";
 
-  const systemPrompt = `请对以下发生的对话轮次进行严格事件总结，并提取最核心的核心词（不超过3个）。
-【重要输出要求】：请直接且仅返回符合以下 JSON 格式的内容，严禁包含任何 Markdown 代码块（如 \`\`\`json）：
-{
-  "summary": "${prompt}",
-  "keywords": ["关键字1", "关键字2"]
-}
+  if (formatChoice === "json") {
+    systemPrompt = `你是一个长周期记忆整合引擎。请对以下发生的对话轮次进行碎片化总结，并严格归入以下三个模块分类：
+- "emotional": 情感需求（角色或用户在对话中表现出的深层情感渴望、心理脆弱点或防御机制，不超过80字）
+- "factual": 事实记忆（发生的重要事件细节、提及的时间、数字、物理背景，不超过80字）
+- "core": 核心记忆（涉及长线关系转变、核心认知改变、重大转折性共识，不超过80字）
+
+【输出格式控制】：请直接且仅返回以下格式的 JSON 数组（不要包含任何 Markdown 标识符如 \`\`\`json 块）：
+[
+  {"category": "emotional", "content": "情感碎片内容", "keywords": ["词1", "词2"]},
+  {"category": "factual", "content": "事实碎片内容", "keywords": ["词1"]},
+  {"category": "core", "content": "核心碎片内容", "keywords": ["词1"]}
+]
 
 ---
 对话原文：
 ${dialogText}`;
+  } else {
+    systemPrompt = `你是一个长周期记忆整合引擎。请对以下发生的对话轮次进行碎片化总结，并严格归入以下三个模块分类（如果没有对应分类内容可省略该块）。请直接按照以下文字标签块格式输出（不要包含 Markdown 代码块）：
+
+[情感需求]
+内容：情感需求具体总结描述（不超过80字）
+关键词：词1, 词2
+
+[事实记忆]
+内容：事实事件具体总结描述（不超过80字）
+关键词：词1, 词2
+
+[核心记忆]
+内容：核心转变具体总结描述（不超过80字）
+关键词：词1, 词2
+
+---
+对话原文：
+${dialogText}`;
+  }
 
   const response = await fetch(`${api.url}/chat/completions`, {
     method: "POST",
@@ -114,27 +197,110 @@ ${dialogText}`;
     })
   });
 
-  if (!response.ok) throw new Error("API 调用总结失败");
+  if (!response.ok) throw new Error("API 调用整合总结失败");
   const result = await response.json();
   let rawText = result.choices[0].message.content.trim();
-  rawText = rawText.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
 
-  let parsed = { summary: "", keywords: [] };
-  try {
-    parsed = JSON.parse(rawText);
-  } catch(e) {
-    parsed.summary = rawText;
-    parsed.keywords = ["日常", "事件"];
+  let items = [];
+
+  if (formatChoice === "json") {
+    try {
+      let cleaned = rawText.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
+      try {
+        items = JSON.parse(cleaned);
+      } catch (err) {
+        // 括号与结构破损自愈性解析
+        cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
+        if (!cleaned.startsWith('[') && cleaned.includes('{')) cleaned = '[' + cleaned;
+        if (!cleaned.endsWith(']') && cleaned.includes('}')) cleaned = cleaned + ']';
+        items = JSON.parse(cleaned);
+      }
+    } catch (e) {
+      // 正则强制匹配提取有效的 JSON 节点片段
+      try {
+        let cleaned = rawText.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
+        const regex = /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([^"]+)"(?:\s*,\s*"keywords"\s*:\s*(\[[^\]]*\]))?\s*\}/gi;
+        let match;
+        while ((match = regex.exec(cleaned)) !== null) {
+          const category = match[1];
+          const content = match[2];
+          let keywords = [];
+          if (match[3]) {
+            try { keywords = JSON.parse(match[3]); } catch(err) {}
+          }
+          items.push({ category, content, keywords });
+        }
+      } catch (regexErr) {
+        console.error("JSON 与正则提取自愈解析完全失败:", regexErr);
+      }
+    }
+  } else {
+    // 文字标签快自愈性解析 (兼容全角/半角)
+    try {
+      const normalized = rawText
+        .replace(/【/g, '[').replace(/】/g, ']')
+        .replace(/［/g, '[').replace(/］/g, ']')
+        .replace(/：/g, ':')
+        .replace(/，/g, ',');
+      
+      const sections = normalized.split(/\[(情感需求|事实记忆|核心记忆)\]/gi);
+      for (let i = 1; i < sections.length; i += 2) {
+        const catName = sections[i].trim();
+        const block = sections[i + 1] || "";
+        
+        let category = 'factual';
+        if (catName.includes('情感')) category = 'emotional';
+        else if (catName.includes('核心')) category = 'core';
+        
+        let content = "";
+        let keywords = [];
+        
+        const contentMatch = block.match(/内容\s*:\s*([^\n]+)/i);
+        if (contentMatch) content = contentMatch[1].trim();
+        
+        const kwMatch = block.match(/关键词\s*:\s*([^\n]+)/i);
+        if (kwMatch) {
+          keywords = kwMatch[1].split(',').map(k => k.trim()).filter(Boolean);
+        }
+        
+        if (content) {
+          items.push({ category, content, keywords });
+        }
+      }
+    } catch (textErr) {
+      console.error("文字标签块自愈性解析失败:", textErr);
+    }
   }
 
-  await db.summaries.add({
-    sessionId: sessionId,
-    startRound: startRound,
-    endRound: endRound,
-    content: parsed.summary,
-    keywords: JSON.stringify(parsed.keywords || []),
-    timestamp: Date.now()
-  });
+  // 如果双重解析格式最终皆无法捕获，则直接一股脑塞进事实分类，保证数据 100% 不丢损 [1]
+  if (!Array.isArray(items) || items.length === 0) {
+    items = [{
+      category: 'factual',
+      content: rawText,
+      keywords: ["日常", "事件"]
+    }];
+  }
+
+  const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+
+  // 依次将分类纸条异步入库并提取 Embedding
+  for (let item of items) {
+    let vector = null;
+    if (isVectorEnabled) {
+      vector = await safeGetEmbedding(item.content);
+    }
+
+    await db.summaries.add({
+      sessionId: sessionId,
+      startRound: startRound,
+      endRound: endRound,
+      content: item.content,
+      category: item.category || 'factual',
+      keywords: JSON.stringify(item.keywords || []),
+      timestamp: Date.now(),
+      vector: vector
+    });
+  }
 }
 
 // 4. 自动总结拦截触发器 (在每次 AI 回复完成后，若符合条件且出了缓冲区则自动执行总结)
@@ -164,7 +330,7 @@ async function checkAndTriggerAutoSummary(sessionId) {
   }
 }
 
-// 5. 记忆面板：加载总结配置与核心记忆
+// 5. 记忆面板：加载总结配置与核心记忆 [1]
 async function loadSummarySettings(sessionId) {
   const sess = await db.sessions.get(sessionId);
   if (!sess) return;
@@ -173,6 +339,10 @@ async function loadSummarySettings(sessionId) {
   document.getElementById("summary-auto-interval").value = sess.autoSummaryInterval || 10;
   document.getElementById("summary-buffer-rounds").value = sess.bufferRounds || 5;
   document.getElementById("summary-system-prompt").value = sess.summarySystemPrompt || "以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。";
+  
+  const formatChoice = localStorage.getItem("summary-format-choice") || "json";
+  const choiceEl = document.getElementById("summary-format-choice");
+  if (choiceEl) choiceEl.value = formatChoice;
 
   const rawMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
   const rounds = getRoundsList(rawMsgs);
@@ -196,6 +366,12 @@ async function saveSummarySettings(sessionId) {
     bufferRounds: buffer,
     summarySystemPrompt: prompt
   });
+
+  const choiceEl = document.getElementById("summary-format-choice");
+  if (choiceEl) {
+    localStorage.setItem("summary-format-choice", choiceEl.value);
+  }
+
   alert("总结配置已成功保存并在此会话中全局应用！");
 }
 
@@ -209,7 +385,35 @@ async function loadCoreMemory(sessionId) {
   document.getElementById("memory-core-relationship").value = sess.coreRelationship || "";
   document.getElementById("memory-core-userineyes").value = sess.coreUserInEyes || "";
 
-  await renderSummariesList(sessionId);
+  // 加载本地 ONNX 向量微调设置
+  const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  const vectorPanel = document.getElementById("vector-config-panel");
+  if (vectorPanel) {
+    vectorPanel.style.display = isVectorEnabled ? "block" : "none";
+  }
+
+  if (isVectorEnabled) {
+    const topk = localStorage.getItem("vector-topk") || "3";
+    const decay = localStorage.getItem("vector-decay-type") || "medium";
+    const threshold = localStorage.getItem("vector-threshold") || "0.55";
+
+    document.getElementById("vector-topk").value = topk;
+    document.getElementById("vector-topk-val").innerText = topk;
+
+    document.getElementById("vector-threshold").value = threshold;
+    document.getElementById("vector-threshold-val").innerText = threshold;
+
+    document.querySelectorAll(".vector-decay-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.getAttribute("data-decay") === decay);
+    });
+  }
+
+  // 重设当前选中的 Summaries 历史碎片过滤标签
+  document.querySelectorAll(".summary-tab-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.getAttribute("data-cat") === "all");
+  });
+
+  await renderSummariesList(sessionId, "all");
 }
 
 async function saveCoreMemory(sessionId) {
@@ -229,14 +433,21 @@ async function saveCoreMemory(sessionId) {
   alert("核心记忆库已保存！");
 }
 
-async function renderSummariesList(sessionId) {
+async function renderSummariesList(sessionId, category = "all") {
   const container = document.getElementById("memory-summaries-list");
   if (!container) return;
   container.innerHTML = "";
 
-  const list = await db.summaries.where('sessionId').equals(sessionId).sortBy('startRound');
+  let list = [];
+  if (category === "all") {
+    list = await db.summaries.where('sessionId').equals(sessionId).sortBy('startRound');
+  } else {
+    list = await db.summaries.where('sessionId').equals(sessionId).filter(s => s.category === category).toArray();
+    list.sort((a, b) => a.startRound - b.startRound);
+  }
+
   if (list.length === 0) {
-    container.innerHTML = `<p style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">目前尚未生成任何阶段性对话总结。</p>`;
+    container.innerHTML = `<p style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">目前该分类下尚未生成任何阶段性对话总结。</p>`;
     return;
   }
 
@@ -248,17 +459,31 @@ async function renderSummariesList(sessionId) {
     try { keywords = JSON.parse(s.keywords || "[]"); } catch(e){}
     const tagsHtml = keywords.map(k => `<span class="summary-keyword-tag"># ${k}</span>`).join(" ");
 
-    // 显式判定并生成极简风格的“来自深谈”标签，而不混杂在文本内 [1]
     const sourceBadge = s.source === 'deeptalk' 
       ? `<span class="summary-source-tag deeptalk" style="background-color: #f1f5f9; color: #475569; padding: 2px 6px; border-radius: 4px; font-weight: 700; font-size: 10px; margin-left: 6px;">来自深谈</span>`
       : "";
 
+    const catMap = {
+      'emotional': '情感需求',
+      'factual': '事实记忆',
+      'core': '核心记忆'
+    };
+    const catLabel = catMap[s.category] || "碎片总结";
+    const catColor = s.category === 'emotional' ? '#ec4899' : (s.category === 'core' ? '#ca8a04' : '#10b981');
+
     card.innerHTML = `
-      <div class="summary-item-header">
-        <span style="display:flex; align-items:center;">轮次区间: ${s.startRound} - ${s.endRound} ${sourceBadge}</span>
-        <button class="btn-icon" style="color:#ef4444; border:none; background:none; cursor:pointer;" onclick="deleteSummaryRecord(${s.id})">
-          <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
-        </button>
+      <div class="summary-item-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span style="font-size:11px; font-weight:700; color:${catColor}; display:flex; align-items:center; gap:6px;">
+          [${catLabel}] 轮次: ${s.startRound} - ${s.endRound} ${sourceBadge}
+        </span>
+        <div style="display:flex; gap:6px;">
+          <button class="btn-icon" style="color:#3b82f6; border:none; background:none; cursor:pointer;" onclick="editSummaryRecord(${s.id})" title="编辑">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+          </button>
+          <button class="btn-icon" style="color:#ef4444; border:none; background:none; cursor:pointer;" onclick="deleteSummaryRecord(${s.id})" title="删除">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+          </button>
+        </div>
       </div>
       <div style="font-size:13px; color:var(--text-primary); line-height:1.5; white-space:pre-wrap;">${s.content}</div>
       <div class="summary-item-keywords">${tagsHtml}</div>
@@ -267,11 +492,39 @@ async function renderSummariesList(sessionId) {
   });
 }
 
+window.editSummaryRecord = async function(id) {
+  const summary = await db.summaries.get(id);
+  if (!summary) return;
+  const newContent = prompt("编辑此条碎片记忆:", summary.content);
+  if (newContent === null) return;
+  if (newContent.trim() === "") {
+    alert("记忆内容不能为空！");
+    return;
+  }
+  
+  const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  let updatedVector = summary.vector;
+  if (isVectorEnabled) {
+    updatedVector = await safeGetEmbedding(newContent.trim());
+  }
+  
+  await db.summaries.update(id, { 
+    content: newContent.trim(),
+    vector: updatedVector
+  });
+  alert("记忆碎片已更新！");
+  if (activeSessionId) {
+    const activeTab = document.querySelector(".summary-tab-btn.active")?.getAttribute("data-cat") || "all";
+    await renderSummariesList(activeSessionId, activeTab);
+  }
+};
+
 window.deleteSummaryRecord = async function(id) {
-  if (confirm("确定要删除这一轮生成的总结吗？")) {
+  if (confirm("确定要删除这一条碎片记忆吗？")) {
     await db.summaries.delete(id);
     if (activeSessionId) {
-      await renderSummariesList(activeSessionId);
+      const activeTab = document.querySelector(".summary-tab-btn.active")?.getAttribute("data-cat") || "all";
+      await renderSummariesList(activeSessionId, activeTab);
     }
   }
 };
@@ -374,7 +627,7 @@ async function triggerManualSummary(sessionId) {
   }
 }
 
-// 8. DOM 节点单次绑定绑定与生命周期挂载
+// 8. DOM 节点单次绑定绑定与生命周期挂载 [1]
 document.addEventListener("DOMContentLoaded", () => {
   const btnSummary = document.getElementById("btn-chat-summary");
   if (btnSummary) {
@@ -421,4 +674,41 @@ document.addEventListener("DOMContentLoaded", () => {
       if (activeSessionId) triggerManualSummary(activeSessionId);
     };
   }
+
+  // 绑定向量检索设置交互机制与 Ticker 滑动保存
+  const topkInput = document.getElementById("vector-topk");
+  if (topkInput) {
+    topkInput.oninput = (e) => {
+      document.getElementById("vector-topk-val").innerText = e.target.value;
+      localStorage.setItem("vector-topk", e.target.value);
+    };
+  }
+
+  const thresholdInput = document.getElementById("vector-threshold");
+  if (thresholdInput) {
+    thresholdInput.oninput = (e) => {
+      document.getElementById("vector-threshold-val").innerText = e.target.value;
+      localStorage.setItem("vector-threshold", e.target.value);
+    };
+  }
+
+  document.querySelectorAll(".vector-decay-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".vector-decay-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      localStorage.setItem("vector-decay-type", btn.getAttribute("data-decay"));
+    };
+  });
+
+  // 绑定历史总结分类过滤器 Tabs 交互事件
+  document.querySelectorAll(".summary-tab-btn").forEach(btn => {
+    btn.onclick = () => {
+      document.querySelectorAll(".summary-tab-btn").forEach(b => b.classList.remove("active"));
+      btn.classList.add("active");
+      const category = btn.getAttribute("data-cat");
+      if (activeSessionId) {
+        renderSummariesList(activeSessionId, category);
+      }
+    };
+  });
 });

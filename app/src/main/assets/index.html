@@ -179,6 +179,13 @@
               <label>模型温度 (Temperature: <span id="temp-val">0.7</span>)</label>
               <input type="range" id="api-temp" min="0" max="2" step="0.1" value="0.7">
             </div>
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label style="margin-bottom:0; font-weight:700;">开启本地向量记忆检索</label>
+              <label class="switch">
+                <input type="checkbox" id="api-vector-enabled-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
             <div class="form-actions">
               <button id="btn-test-api" class="btn btn-outline">测试连接</button>
               <button id="btn-save-preset" class="btn">保存预设</button>
@@ -1094,9 +1101,79 @@
                       </div>
                     </div>
                     
+                    <div class="form-group" style="background:#fffcf0; padding:12px; border-radius:12px; border:1px solid #fef08a; margin-bottom:16px;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h4 style="margin:0; font-size:14px; color:#a16207; font-weight:700;">🧠 角色核心记忆 (Core Memory)</h4>
+                        <button id="btn-generate-core-memory" class="btn btn-outline" style="padding:4px 8px; font-size:10px; border-color:#ca8a04; color:#ca8a04; border-radius:6px;">AI提炼核心记忆</button>
+                      </div>
+                      
+                      <div style="display:flex; flex-direction:column; gap:8px;">
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的现状</label>
+                          <textarea id="memory-core-status" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我的性格现状、处境 or 当前生存状态..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的目的</label>
+                          <textarea id="memory-core-purpose" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我的行为目的、对未来的渴望与核心愿景..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色自我认知] 我的变化</label>
+                          <textarea id="memory-core-changes" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="从认识用户至今，我的深层态度与内心情感变化..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色对用户认知] 我们的关系</label>
+                          <textarea id="memory-core-relationship" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="我所界定的双方关系社交、利益 or 情感羁绊..."></textarea>
+                        </div>
+                        <div>
+                          <label style="font-size:10px; color:#a16207; font-weight:700;">[角色对用户认知] 在学眼里的用户</label>
+                          <textarea id="memory-core-userineyes" rows="2" style="font-size:12px; border-radius:6px; border:1px solid #fef08a;" placeholder="用户在我心里最客观最真实的看法与秘密印象..."></textarea>
+                        </div>
+                      </div>
+                      <button id="btn-save-core-memory" class="btn btn-primary" style="width:100%; margin-top:10px; font-size:12px; background-color:#ca8a04; border:none; border-radius:8px;">保存核心记忆库</button>
+                    </div>
+
+                    <!-- 向量检索配置面板 -->
+                    <div id="vector-config-panel" style="display:none; background:#f0fdf4; padding:12px; border-radius:12px; border:1px solid #bbf7d0; margin-bottom:16px;">
+                      <h4 style="margin:0 0 10px 0; font-size:13px; color:#166534; font-weight:700; display:flex; align-items:center; gap:4px;">
+                        <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H7c0-2.76 2.24-5 5-5s5 2.24 5 5c0 1.04-.42 1.99-1.07 2.75z"/></svg>
+                        向量检索参数设置
+                      </h4>
+                      <div class="form-group" style="margin-bottom:10px;">
+                        <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:4px; display:block;">1. 记忆召回数量 (Top-K: <span id="vector-topk-val">3</span> 条)</label>
+                        <input type="range" id="vector-topk" min="1" max="10" value="3" style="width:100%;">
+                      </div>
+                      <div class="form-group" style="margin-bottom:10px;">
+                        <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:6px; display:block;">2. 时间衰减系数 (λ)</label>
+                        <div style="display:flex; gap:6px;">
+                          <button class="btn btn-outline vector-decay-btn active" data-decay="high" style="flex:1; padding:6px; font-size:10px; border-radius:6px; text-align:center;">看重近期记忆</button>
+                          <button class="btn btn-outline vector-decay-btn" data-decay="medium" style="flex:1; padding:6px; font-size:10px; border-radius:6px; text-align:center;">新旧平衡</button>
+                          <button class="btn btn-outline vector-decay-btn" data-decay="low" style="flex:1; padding:6px; font-size:10px; border-radius:6px; text-align:center;">看重久远记忆</button>
+                        </div>
+                      </div>
+                      <div class="form-group" style="margin-bottom:0;">
+                        <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:4px; display:flex; justify-content:space-between;">
+                          <span>3. 最低相似度阈值</span>
+                          <span id="vector-threshold-val">0.55</span>
+                        </label>
+                        <input type="range" id="vector-threshold" min="0.3" max="0.8" step="0.05" value="0.55" style="width:100%;">
+                        <div style="display:flex; justify-content:space-between; font-size:9px; color:#15803d; margin-top:2px;">
+                          <span>发散 (0.3)</span>
+                          <span>精确 (0.8)</span>
+                        </div>
+                      </div>
+                    </div>
+
                     <div class="form-group">
-                      <label>总结系统提示词 (Prompt)</label>
-                      <textarea id="summary-system-prompt" rows="3" placeholder="以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。"></textarea>
+                      <label style="font-weight:700; color:var(--text-primary); margin-bottom:10px; display:block;">📜 历史已生成事件总结</label>
+                      <div id="summary-category-tabs" style="display:flex; gap:6px; margin-bottom:10px; overflow-x:auto; padding-bottom:4px;">
+                        <button class="btn btn-outline summary-tab-btn active" data-cat="all" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">全部</button>
+                        <button class="btn btn-outline summary-tab-btn" data-cat="emotional" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">情感需求</button>
+                        <button class="btn btn-outline summary-tab-btn" data-cat="factual" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">事实记忆</button>
+                        <button class="btn btn-outline summary-tab-btn" data-cat="core" style="padding:6px 10px; font-size:11px; border-radius:6px; white-space:nowrap; cursor:pointer;">核心记忆</button>
+                      </div>
+                      <div id="memory-summaries-list" style="display:flex; flex-direction:column; gap:12px;">
+                        <!-- 动态载入列表 -->
+                      </div>
                     </div>
                     <div class="form-actions" style="margin-top: 24px;">
                       <button id="btn-save-summary-settings" class="btn btn-primary" style="width:100%;">保存并应用总结配置</button>

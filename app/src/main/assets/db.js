@@ -1,8 +1,8 @@
 // db.js - 初始化本地 IndexedDB 数据库
 const db = new Dexie("StoryPhoneDatabase");
 
-// 声明表结构 (升级至 Version 11 增加独立多状态悬浮桌宠系统)
-db.version(11).stores({
+// 声明表结构 (升级至 Version 12 增加高能本地向量分类记忆检索)
+db.version(12).stores({
   api_presets: 'id++, name, protocol, url, key, model, temperature',
   archives: 'id++, type, name, avatar, remark, group, persona, parentId', 
   relations: 'id++, fromId, toId, relation',
@@ -21,8 +21,8 @@ db.version(11).stores({
   sticker_groups: 'id++, name, sortOrder',
   sticker_items: 'id++, groupId, sortOrder, imageUrl, caption',
 
-  // 总结记录表 (支持会话、轮次索引定位与热词存储)
-  summaries: 'id++, sessionId, startRound, endRound, content, keywords, timestamp',
+  // 总结记录表 (支持分类检索与热词存储)
+  summaries: 'id++, sessionId, startRound, endRound, content, keywords, timestamp, category',
 
   // 深谈主记录表 (支持面具/我的人设隔离、状态控制与时间索引)
   deeptalks: 'id++, sessionId, userId, charId, topic, status, createdAt',
