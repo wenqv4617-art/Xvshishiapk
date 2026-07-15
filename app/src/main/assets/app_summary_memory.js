@@ -358,7 +358,8 @@ async function checkAndTriggerAutoSummary(sessionId) {
 
 // 5. 记忆面板：加载总结配置与核心记忆 [1]
 async function loadSummarySettings(sessionId) {
-  const sess = await db.sessions.get(sessionId);
+  if (!sessionId) return; // 🌟 熔断防区：防止未开启会话时 Dexie 抛 DataError
+  const sess = await db.sessions.get(Number(sessionId));
   if (!sess) return;
 
   document.getElementById("summary-auto-toggle").checked = sess.autoSummaryToggle === 1;
@@ -370,10 +371,10 @@ async function loadSummarySettings(sessionId) {
   const choiceEl = document.getElementById("summary-format-choice");
   if (choiceEl) choiceEl.value = formatChoice;
 
-  const rawMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
+  const rawMsgs = await db.messages.where('sessionId').equals(Number(sessionId)).sortBy('timestamp');
   const rounds = getRoundsList(rawMsgs);
 
-  const existingSummaries = await db.summaries.where('sessionId').equals(sessionId).toArray();
+  const existingSummaries = await db.summaries.where('sessionId').equals(Number(sessionId)).toArray();
   const maxEndRound = existingSummaries.reduce((max, s) => Math.max(max, s.endRound || 0), 0);
 
   document.getElementById("summary-stat-summarized").innerText = maxEndRound;
@@ -402,7 +403,8 @@ async function saveSummarySettings(sessionId) {
 }
 
 async function loadCoreMemory(sessionId) {
-  const sess = await db.sessions.get(sessionId);
+  if (!sessionId) return; // 🌟 熔断防区：防止未开启会话时 Dexie 抛 DataError
+  const sess = await db.sessions.get(Number(sessionId));
   if (!sess) return;
 
   document.getElementById("memory-core-status").value = sess.coreSelfStatus || "";
@@ -498,15 +500,16 @@ async function saveCoreMemory(sessionId) {
 }
 
 async function renderSummariesList(sessionId, category = "all") {
+  if (!sessionId) return; // 🌟 熔断防区：防止未开启会话时 Dexie 抛 DataError
   const container = document.getElementById("memory-summaries-list");
   if (!container) return;
   container.innerHTML = "";
 
   let list = [];
   if (category === "all") {
-    list = await db.summaries.where('sessionId').equals(sessionId).sortBy('startRound');
+    list = await db.summaries.where('sessionId').equals(Number(sessionId)).sortBy('startRound');
   } else {
-    list = await db.summaries.where('sessionId').equals(sessionId).filter(s => s.category === category).toArray();
+    list = await db.summaries.where('sessionId').equals(Number(sessionId)).filter(s => s.category === category).toArray();
     list.sort((a, b) => a.startRound - b.startRound);
   }
 
@@ -689,6 +692,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnSummary = document.getElementById("btn-chat-summary");
   if (btnSummary) {
     btnSummary.onclick = () => {
+      if (!activeSessionId) {
+        alert("请先选择或开启一个会话以使用总结配置功能！");
+        return;
+      }
       document.getElementById("chat-expand-panel").classList.remove("active");
       document.getElementById("chat-summary-panel").classList.add("active");
       loadSummarySettings(activeSessionId);
@@ -698,6 +705,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const btnMemory = document.getElementById("btn-chat-memory");
   if (btnMemory) {
     btnMemory.onclick = () => {
+      if (!activeSessionId) {
+        alert("请先选择或开启一个会话以查看记忆库！");
+        return;
+      }
       document.getElementById("chat-expand-panel").classList.remove("active");
       document.getElementById("chat-memory-panel").classList.add("active");
       loadCoreMemory(activeSessionId);
