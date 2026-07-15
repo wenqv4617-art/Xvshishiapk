@@ -282,25 +282,26 @@ ${dialogText}`;
   }
 
   const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+      const summaryTimestamp = rounds[endRound - 1]?.timestamp || Date.now();
 
-  // 依次将分类纸条异步入库并提取 Embedding
-  for (let item of items) {
-    let vector = null;
-    if (isVectorEnabled) {
-      vector = await safeGetEmbedding(item.content);
-    }
+      // 依次将分类纸条异步入库并提取 Embedding
+      for (let item of items) {
+        let vector = null;
+        if (isVectorEnabled) {
+          vector = await safeGetEmbedding(item.content);
+        }
 
-    await db.summaries.add({
-      sessionId: sessionId,
-      startRound: startRound,
-      endRound: endRound,
-      content: item.content,
-      category: item.category || 'factual',
-      keywords: JSON.stringify(item.keywords || []),
-      timestamp: Date.now(),
-      vector: vector
-    });
-  }
+        await db.summaries.add({
+          sessionId: sessionId,
+          startRound: startRound,
+          endRound: endRound,
+          content: item.content,
+          category: item.category || 'factual',
+          keywords: JSON.stringify(item.keywords || []),
+          timestamp: summaryTimestamp,
+          vector: vector
+        });
+      }
 }
 
 // 4. 自动总结拦截触发器 (在每次 AI 回复完成后，若符合条件且出了缓冲区则自动执行总结)
@@ -398,13 +399,16 @@ async function loadCoreMemory(sessionId) {
     const threshold = localStorage.getItem("vector-threshold") || "0.55";
 
     document.getElementById("vector-topk").value = topk;
-    document.getElementById("vector-topk-val").innerText = topk;
+    const topkInputText = document.getElementById("vector-topk-input");
+    if (topkInputText) topkInputText.value = topk;
 
     document.getElementById("vector-threshold").value = threshold;
     document.getElementById("vector-threshold-val").innerText = threshold;
 
     document.querySelectorAll(".vector-decay-btn").forEach(btn => {
-      btn.classList.toggle("active", btn.getAttribute("data-decay") === decay);
+      const isActive = btn.getAttribute("data-decay") === decay;
+      btn.classList.toggle("btn-primary", isActive);
+      btn.classList.toggle("btn-outline", !isActive);
     });
   }
 
@@ -668,14 +672,51 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
-  // 绑定向量检索设置交互机制与 Ticker 滑动保存
-  const topkInput = document.getElementById("vector-topk");
-  if (topkInput) {
-    topkInput.oninput = (e) => {
-      document.getElementById("vector-topk-val").innerText = e.target.value;
-      localStorage.setItem("vector-topk", e.target.value);
-    };
-  }
+  // 绑定向量检索设置交互机制与 Ticker 滑动保存 (支持 Top-K 输入框与滑块的双向实时同步) [1]
+      const topkSlider = document.getElementById("vector-topk");
+      const topkInputText = document.getElementById("vector-topk-input");
+      if (topkSlider && topkInputText) {
+        topkSlider.oninput = (e) => {
+          topkInputText.value = e.target.value;
+          localStorage.setItem("vector-topk", e.target.value);
+        };
+        topkInputText.oninput = (e) => {
+          let val = parseInt(e.target.value) || 3;
+          if (val < 3) val = 3;
+          if (val > 1000) val = 1000;
+          topkSlider.value = val;
+          localStorage.setItem("vector-topk", val);
+        };
+        topkInputText.onblur = (e) => {
+          let val = parseInt(e.target.value) || 3;
+          if (val < 3) val = 3;
+          if (val > 1000) val = 1000;
+          topkInputText.value = val;
+          topkSlider.value = val;
+          localStorage.setItem("vector-topk", val);
+        };
+      }
+
+      const thresholdInput = document.getElementById("vector-threshold");
+      if (thresholdInput) {
+        thresholdInput.oninput = (e) => {
+          document.getElementById("vector-threshold-val").innerText = e.target.value;
+          localStorage.setItem("vector-threshold", e.target.value);
+        };
+      }
+
+      // 绑定时间衰减系数按钮，采用原生 btn-primary 和 btn-outline 样式进行强视觉反馈切换 [1]
+      document.querySelectorAll(".vector-decay-btn").forEach(btn => {
+        btn.onclick = () => {
+          document.querySelectorAll(".vector-decay-btn").forEach(b => {
+            b.classList.remove("btn-primary");
+            b.classList.add("btn-outline");
+          });
+          btn.classList.remove("btn-outline");
+          btn.classList.add("btn-primary");
+          localStorage.setItem("vector-decay-type", btn.getAttribute("data-decay"));
+        };
+      });
 
   const thresholdInput = document.getElementById("vector-threshold");
   if (thresholdInput) {

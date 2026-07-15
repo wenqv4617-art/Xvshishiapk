@@ -1168,8 +1168,12 @@
                         向量检索参数设置
                       </h4>
                       <div class="form-group" style="margin-bottom:10px;">
-                        <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:4px; display:block;">1. 记忆召回数量 (Top-K: <span id="vector-topk-val">3</span> 条)</label>
-                        <input type="range" id="vector-topk" min="1" max="10" value="3" style="width:100%;">
+                        <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:4px; display:block;">1. 记忆召回数量 (Top-K)</label>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                          <input type="range" id="vector-topk" min="3" max="1000" value="3" style="flex:1;">
+                          <input type="number" id="vector-topk-input" min="3" max="1000" value="3" style="width:64px; text-align:center; padding:4px; border:1.5px solid var(--border); border-radius:6px; font-weight:700; font-size:12px;">
+                          <span style="font-size:11px; color:#15803d; font-weight:700; flex-shrink:0;">条</span>
+                        </div>
                       </div>
                       <div class="form-group" style="margin-bottom:10px;">
                         <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:6px; display:block;">2. 时间衰减系数 (λ)</label>
