@@ -17,6 +17,7 @@
   <link rel="stylesheet" href="desktop_pet.css">
   <link rel="stylesheet" href="reader.css">
   <link rel="stylesheet" href="focus.css">
+  <link rel="stylesheet" href="check_phone.css">
   <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
   <style>
     /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
@@ -866,7 +867,7 @@
                 </div>
                 <!-- 第二页：剧场、辅助功能与记忆回写、总结 (绑定特定事件触发通道) -->
                 <div class="expand-page">
-                  <div class="expand-item">
+                  <div class="expand-item" id="btn-chat-check-phone" style="cursor: pointer;">
                     <div class="expand-icon-wrapper">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
@@ -1858,7 +1859,87 @@
       <div id="focus-poke-bubble-text" style="font-size: 13px; color: #ffffff; line-height: 1.4; text-align: justify; word-break: break-all; font-weight:500;">...</div>
     </div>
   </div>
-</div> <!-- 聊天应用(win-chat)结束 -->
+<!-- === 查手机功能窗口 (物理嵌套于 win-chat 内部，防层级穿透与点击异常) === -->
+      <div id="win-check-phone" class="check-phone-overlay" style="display:none;">
+        <div class="check-phone-container">
+          <!-- 顶部状态栏/导航栏 (带有一级页头全局一键刷新生成按钮) -->
+          <header class="check-phone-header">
+            <button class="btn-icon-check" id="btn-check-phone-back">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="12" x2="6" y2="12"></line><polyline points="12 18 6 12 12 6"></polyline></svg>
+            </button>
+            <h3 id="check-phone-title">智能设备查阅</h3>
+            <button class="btn-icon-check" id="btn-check-phone-global-refresh" title="一键并行全同步/生成所有应用秘密信息">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            </button>
+          </header>
+          
+          <!-- 查手机内部桌面/网格 -->
+          <div class="check-phone-body">
+            <!-- 桌面网格首页大容器 (包含时间组件区) -->
+            <div id="check-phone-desktop" class="check-phone-desktop-grid-container">
+              <!-- 顶部时间日历/设备状态小组件 (Widget Area) -->
+              <div class="check-phone-widgets">
+                <div class="widget-clock">
+                  <div id="phone-widget-time">12:00</div>
+                  <div id="phone-widget-date">7月16日 星期四</div>
+                </div>
+                <div class="widget-status">
+                  <div class="widget-status-title">5G 信号良好</div>
+                  <div class="widget-status-detail">系统续航：91%</div>
+                </div>
+              </div>
+
+              <!-- 应用网络列表 -->
+              <div class="check-phone-desktop-grid">
+                <div class="check-phone-app-icon" data-app="communication" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></div>
+                  <span>通讯</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="album" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg></div>
+                  <span>相册</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="notes" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></div>
+                  <span>备忘录</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="forum" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 3a10.9 10.9 0 0 1-3.14 1.53 4.48 4.48 0 0 0-7.86 3v1A10.66 10.66 0 0 1 3 4s-4 9 5 13a11.64 11.64 0 0 1-7 2c9 5 20 0 20-11.5a4.5 4.48 0 0 0-.08-.83A7.72 7.72 0 0 0 23 3z"/></svg></div>
+                  <span>论坛</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="browser" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></div>
+                  <span>浏览器</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="settings" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></div>
+                  <span>设置</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="remote" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><circle cx="12" cy="17" r="1"/></svg></div>
+                  <span>遥控器</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="diary" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 4z"/></svg></div>
+                  <span>日记</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="shopping" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg></div>
+                  <span>购物</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="music" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+                  <span>音乐</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 独占式各应用渲染容器 (全屏卡片模式) -->
+            <div id="check-phone-app-screen" class="check-phone-app-screen" style="display:none;"></div>
+          </div>
+        </div>
+      </div>
+    </div> <!-- 聊天应用(win-chat)结束 -->
 
       <!-- === 4.5 独立深谈应用 (win-deeptalk) === -->
       <div id="win-deeptalk" class="app-window" style="background-color: #fafbfc;">
@@ -2862,6 +2943,7 @@
   <script src="app_desktop_pet.js"></script>
   <script src="app_reader.js"></script>
   <script src="app_chat_focus.js"></script>
+  <script src="app_chat_check_phone.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {

@@ -1,8 +1,8 @@
 // db.js - 初始化本地 IndexedDB 数据库
 const db = new Dexie("StoryPhoneDatabase");
 
-// 声明表结构 (升级至 Version 14 建立阅读多段复合索引通道)
-db.version(14).stores({
+// 声明表结构 (升级至 Version 15 建立设备数据长期持久化和阅读多段复合索引通道)
+db.version(15).stores({
   api_presets: 'id++, name, protocol, url, key, model, temperature',
   archives: 'id++, type, name, avatar, remark, group, persona, parentId', 
   relations: 'id++, fromId, toId, relation',
@@ -51,5 +51,8 @@ db.version(14).stores({
   reader_books: 'id++, title, author, summary, coverUrl, isImported, fileType, currentChapterId, collected',
   reader_chapters: 'id++, [bookId+chapterNum], bookId, chapterNum, title, content, summary',
   reader_presets: 'id++, name, prompt',
-  reader_tags: 'id++, name'
+  reader_tags: 'id++, name',
+
+  // === Version 15 新增：查手机设备数据长期持久化存储表 ===
+  check_phone_states: 'sessionId'
 });

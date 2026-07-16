@@ -22,6 +22,12 @@ const ASSETS = [
   './chat_html.css',         // HTML 互动舱样式
   './app_chat_html_widget.js',// HTML 互动舱逻辑
   './app_chat_plot_engine.js',// 剧情引擎逻辑 (新注册)
+  './app_chat_mcp.js',
+  './app_desktop_pet.js',
+  './app_reader.js',
+  './app_chat_focus.js',
+  './app_chat_check_phone.js',
+  './check_phone.css',
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js'

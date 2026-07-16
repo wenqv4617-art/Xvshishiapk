@@ -952,6 +952,7 @@ async function clearAllAppData() {
       await db.reader_chapters.clear();
       await db.reader_presets.clear();
       await db.reader_tags.clear();
+      await db.check_phone_states.clear();
       
       localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1158,6 +1159,7 @@ async function computeStorageUsage() {
     const reader_chapters = await db.reader_chapters.toArray();
     const reader_presets = await db.reader_presets.toArray();
     const reader_tags = await db.reader_tags.toArray();
+    const check_phone_states = await db.check_phone_states.toArray();
 
     // 1. 计算图片、美化方案与表情包所占容量
     const wallpaperStr = localStorage.getItem("beautify-wallpaper") || "";
@@ -1187,7 +1189,8 @@ async function computeStorageUsage() {
       sticker_groups, sticker_items, summaries,
       deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
       moments, moment_comments, moment_settings, html_cards, desktop_pets,
-      reader_books, reader_chapters, reader_presets, reader_tags
+      reader_books, reader_chapters, reader_presets, reader_tags,
+      check_phone_states
     };
     const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
@@ -1300,6 +1303,7 @@ async function exportBackup() {
       reader_chapters: await db.reader_chapters.toArray(),
       reader_presets: await db.reader_presets.toArray(),
       reader_tags: await db.reader_tags.toArray(),
+      check_phone_states: await db.check_phone_states.toArray(),
       localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1373,7 +1377,8 @@ async function importBackup(e) {
         db.sticker_groups, db.sticker_items, db.summaries,
         db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
         db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets,
-        db.reader_books, db.reader_chapters, db.reader_presets, db.reader_tags // 增加全部 25 张物理表的 rw 锁，防止因事务漏锁引起闪退 [1]
+        db.reader_books, db.reader_chapters, db.reader_presets, db.reader_tags,
+        db.check_phone_states // 在 rw 事务列表中安全追加查手机物理表，彻底根治死锁 [2.2]
       ], async () => {
         if (data.api_presets) {
           await db.api_presets.clear();
@@ -1474,6 +1479,10 @@ async function importBackup(e) {
         if (data.reader_tags) {
           await db.reader_tags.clear();
           await db.reader_tags.bulkAdd(data.reader_tags);
+        }
+        if (data.check_phone_states) {
+          await db.check_phone_states.clear();
+          await db.check_phone_states.bulkAdd(data.check_phone_states);
         }
       });
       
