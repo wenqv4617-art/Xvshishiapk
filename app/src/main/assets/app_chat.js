@@ -415,16 +415,16 @@ let isOfflineChatAppEventsBound = false;
   window.showCustomPrompt = function(title, defaultValue, callback) {
     const overlay = document.createElement("div");
     overlay.className = "pwa-modal-overlay";
-    overlay.innerHTML = '<div class="pwa-modal-card">' +
+    overlay.innerHTML = '<div class="pwa-modal-card" style="width: 320px;">' +
       '<div class="pwa-modal-title">' + escapeHtml(title) + '</div>' +
-      '<input type="text" class="pwa-modal-input" value="' + escapeHtml(defaultValue) + '">' +
+      '<textarea class="pwa-modal-input" style="width: 100%; height: 110px; padding: 10px; border-radius: 8px; border: 1.5px solid var(--border); font-size: 13px; resize: none; outline: none; margin-bottom: 16px; box-sizing: border-box; font-family: inherit; line-height: 1.4;">' + escapeHtml(defaultValue) + '</textarea>' +
       '<div class="pwa-modal-buttons">' +
         '<button class="btn-pwa-modal cancel">取消</button>' +
         '<button class="btn-pwa-modal confirm">确定</button>' +
       '</div>' +
     '</div>';
     document.body.appendChild(overlay);
-    
+
     const input = overlay.querySelector(".pwa-modal-input");
     input.focus();
     input.select();

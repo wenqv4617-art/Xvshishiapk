@@ -105,6 +105,7 @@ function initSettingsApp() {
       else if (appId === "world_book") appName = "世界书";
       else if (appId === "chat") appName = "聊天";
       else if (appId === "deeptalk") appName = "深谈";
+      else if (appId === "reader") appName = "阅读";
 
       alert(`应用「${appName}」图标已重置为系统默认。`);
       if (window.loadDesktopLayout) window.loadDesktopLayout();
@@ -544,8 +545,8 @@ function loadBeautifyForm() {
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
   if (enterSendInput) enterSendInput.checked = enterSend;
 
-  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk"];
+  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -595,8 +596,8 @@ async function saveBeautifyConfig() {
     localStorage.setItem("settings-enter-send", enterSendInput.checked ? "true" : "false");
   }
 
-  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk"];
+  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -637,7 +638,7 @@ function resetBeautifyConfig() {
     localStorage.removeItem("settings-enter-send");
     document.getElementById("beautify-bg-url").value = "";
     
-    const apps = ["settings", "archive", "world_book", "chat", "deeptalk"];
+    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
     apps.forEach(appId => {
       const input = document.getElementById(`beautify-icon-url-${appId}`);
       if (input) input.value = "";
@@ -947,6 +948,10 @@ async function clearAllAppData() {
       await db.moment_settings.clear();
       await db.html_cards.clear();
       await db.desktop_pets.clear();
+      await db.reader_books.clear();
+      await db.reader_chapters.clear();
+      await db.reader_presets.clear();
+      await db.reader_tags.clear();
       
       localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1149,6 +1154,10 @@ async function computeStorageUsage() {
     const moment_settings = await db.moment_settings.toArray();
     const html_cards = await db.html_cards.toArray();
     const desktop_pets = await db.desktop_pets.toArray();
+    const reader_books = await db.reader_books.toArray();
+    const reader_chapters = await db.reader_chapters.toArray();
+    const reader_presets = await db.reader_presets.toArray();
+    const reader_tags = await db.reader_tags.toArray();
 
     // 1. 计算图片、美化方案与表情包所占容量
     const wallpaperStr = localStorage.getItem("beautify-wallpaper") || "";
@@ -1177,7 +1186,8 @@ async function computeStorageUsage() {
       world_book_entries, theaters, offline_messages, status_history, 
       sticker_groups, sticker_items, summaries,
       deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
-      moments, moment_comments, moment_settings, html_cards, desktop_pets
+      moments, moment_comments, moment_settings, html_cards, desktop_pets,
+      reader_books, reader_chapters, reader_presets, reader_tags
     };
     const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
@@ -1286,6 +1296,10 @@ async function exportBackup() {
       moment_settings: await db.moment_settings.toArray(),
       html_cards: await db.html_cards.toArray(),
       desktop_pets: await db.desktop_pets.toArray(),
+      reader_books: await db.reader_books.toArray(),
+      reader_chapters: await db.reader_chapters.toArray(),
+      reader_presets: await db.reader_presets.toArray(),
+      reader_tags: await db.reader_tags.toArray(),
       localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1358,7 +1372,8 @@ async function importBackup(e) {
         db.world_book_entries, db.theaters, db.offline_messages, db.status_history,
         db.sticker_groups, db.sticker_items, db.summaries,
         db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
-        db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets // 增加全部 21 张物理表的 rw 锁，防止因事务漏锁引起闪退 [1]
+        db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets,
+        db.reader_books, db.reader_chapters, db.reader_presets, db.reader_tags // 增加全部 25 张物理表的 rw 锁，防止因事务漏锁引起闪退 [1]
       ], async () => {
         if (data.api_presets) {
           await db.api_presets.clear();
@@ -1443,6 +1458,22 @@ async function importBackup(e) {
         if (data.desktop_pets) {
           await db.desktop_pets.clear();
           await db.desktop_pets.bulkAdd(data.desktop_pets);
+        }
+        if (data.reader_books) {
+          await db.reader_books.clear();
+          await db.reader_books.bulkAdd(data.reader_books);
+        }
+        if (data.reader_chapters) {
+          await db.reader_chapters.clear();
+          await db.reader_chapters.bulkAdd(data.reader_chapters);
+        }
+        if (data.reader_presets) {
+          await db.reader_presets.clear();
+          await db.reader_presets.bulkAdd(data.reader_presets);
+        }
+        if (data.reader_tags) {
+          await db.reader_tags.clear();
+          await db.reader_tags.bulkAdd(data.reader_tags);
         }
       });
       

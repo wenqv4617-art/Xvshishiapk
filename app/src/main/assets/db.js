@@ -1,8 +1,8 @@
 // db.js - 初始化本地 IndexedDB 数据库
 const db = new Dexie("StoryPhoneDatabase");
 
-// 声明表结构 (升级至 Version 12 增加高能本地向量分类记忆检索)
-db.version(12).stores({
+// 声明表结构 (升级至 Version 14 建立阅读多段复合索引通道)
+db.version(14).stores({
   api_presets: 'id++, name, protocol, url, key, model, temperature',
   archives: 'id++, type, name, avatar, remark, group, persona, parentId', 
   relations: 'id++, fromId, toId, relation',
@@ -45,5 +45,11 @@ db.version(12).stores({
   html_cards: 'id++, sessionId, timestamp',
 
   // === Version 11 新增：独立悬浮多状态桌宠存储表 ===
-  desktop_pets: 'charId, mode'
+  desktop_pets: 'charId, mode',
+
+  // === Version 13 新增：阅读应用专属物理数据表 ===
+  reader_books: 'id++, title, author, summary, coverUrl, isImported, fileType, currentChapterId, collected',
+  reader_chapters: 'id++, [bookId+chapterNum], bookId, chapterNum, title, content, summary',
+  reader_presets: 'id++, name, prompt',
+  reader_tags: 'id++, name'
 });

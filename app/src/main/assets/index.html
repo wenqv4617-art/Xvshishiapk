@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="deeptalk.css">
   <link rel="stylesheet" href="chat_html.css">
   <link rel="stylesheet" href="desktop_pet.css">
+  <link rel="stylesheet" href="reader.css">
   <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
   <style>
     /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
@@ -284,6 +285,18 @@
                     <div style="display: flex; gap: 6px;">
                       <button class="btn btn-outline btn-icon-upload-trigger" data-app="deeptalk" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
                       <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="deeptalk" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 阅读 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-reader" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">阅读</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-reader" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="reader" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="reader" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
                     </div>
                   </div>
                 </div>
@@ -2326,18 +2339,262 @@
             </div>
           </div>
         </div>
-      </div>
+      </div> <!-- 补全闭合标签，彻底关闭图片模态窗，保障 DOM 树健康 [1] -->
 
-    </div> <!-- app-window-container 结束 -->
+      <!-- === 4.8 独立阅读应用 (win-reader) === -->
+      <div id="win-reader" class="app-window" style="background-color: #fafbfc; overflow: hidden;">
+          <header class="win-header" style="background-color: #ffffff; border-bottom: 1px solid var(--border);">
+            <button class="btn-icon" onclick="closeApp('reader')">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3 id="reader-main-title">书架</h3>
+            <div style="width:40px;"></div>
+          </header>
 
-    <!-- 桌面翻页指示器 -->
+          <div class="win-body" style="padding: 0; position: relative;">
+            <!-- 1. 书架主签 -->
+            <section id="reader-tab-bookshelf" class="reader-tab-panel active">
+              <div class="bookshelf-container">
+                <div class="bookshelf-grid" id="bookshelf-grid-container">
+                  <!-- 由 JS 渲染已收藏的图书网格 -->
+                </div>
+                <!-- 物理隐藏的本地文件导入元素 -->
+                <input type="file" id="reader-file-importer" accept=".txt,.doc,.docx,.pdf" style="display:none;" onchange="readerSystem.handleLocalFileImport(this)">
+              </div>
+            </section>
+
+            <!-- 2. 书城主签 -->
+            <section id="reader-tab-bookstore" class="reader-tab-panel">
+              <div class="bookstore-container">
+                <!-- 搜索横栏，轻触唤醒覆盖抽屉 -->
+                <div class="bookstore-search-bar" onclick="readerSystem.openReaderSearch()">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <span>搜索你感兴趣的角色故事...</span>
+                </div>
+
+                <!-- 搜索榜单 -->
+                <div class="bookstore-section-title">
+                  <span>热门追更榜单</span>
+                  <button class="refresh-trigger-btn" onclick="readerSystem.refreshTrendingBoard()">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                    刷新
+                  </button>
+                </div>
+                <div class="book-list-row" id="store-trending-container"></div>
+
+                <!-- 分类标签 -->
+                <div class="bookstore-section-title">
+                  <span>个性标签分类</span>
+                  <button class="refresh-trigger-btn" onclick="readerSystem.triggerAddTagDialog()">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    新增标签
+                  </button>
+                </div>
+                <div class="category-tags-grid" id="store-tags-grid"></div>
+
+                <!-- 分类图书展示区 -->
+                <div class="bookstore-section-title">
+                  <span>标签推荐图书</span>
+                </div>
+                <div class="book-list-row" id="store-category-list-container">
+                  <p style="text-align:center; font-size:11px; color:#94a3b8; padding:10px 0;">轻触上方分类标签加载推荐书籍</p>
+                </div>
+              </div>
+            </section>
+
+            <!-- 3. 我的页主签 -->
+            <section id="reader-tab-mine" class="reader-tab-panel">
+              <div class="reader-mine-header">
+                <!-- 同步我的人设信息 -->
+                <div class="reader-persona-sync-box">
+                  <img id="reader-mine-active-avatar" src="" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; background: #cbd5e1;">
+                  <div style="text-align: left;">
+                    <div id="reader-mine-active-name" style="font-size:15px; font-weight:700; color:#1e293b;">未选择人设</div>
+                    <div id="reader-mine-active-remark" style="font-size:11px; color:#64748b; margin-top:2px;">同步主聊天</div>
+                  </div>
+                </div>
+
+                <!-- 时长统计 -->
+                <div class="reader-mine-stats">
+                  <div class="reader-stat-card">
+                    <div class="reader-stat-label">今日阅读</div>
+                    <div class="reader-stat-num" id="reader-stat-today-val">0秒</div>
+                  </div>
+                  <div class="reader-stat-card">
+                    <div class="reader-stat-label">本周累计</div>
+                    <div class="reader-stat-num" id="reader-stat-week-val">0秒</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 写书提示词预设管理器 -->
+              <div style="padding: 0 16px;">
+                <div class="bookstore-section-title" style="margin-top:0;">
+                  <span>写书提示词预设</span>
+                  <button class="refresh-trigger-btn" onclick="readerSystem.triggerAddReaderPresetDialog()">
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    增加
+                  </button>
+                </div>
+                <div class="me-menu" id="reader-presets-container" style="background:#fff; border-radius:12px; border:1px solid var(--border); overflow:hidden;"></div>
+              </div>
+            </section>
+          </div>
+
+          <footer class="win-footer chat-tabs" style="background-color: #ffffff; border-top: 1px solid var(--border);">
+            <button class="tab-item active" data-tab="bookshelf">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 4z"></path></svg>
+              <span>书架</span>
+            </button>
+            <button class="tab-item" data-tab="bookstore">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/></svg>
+              <span>书城</span>
+            </button>
+            <button class="tab-item" data-tab="mine">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              <span>我的</span>
+            </button>
+          </footer>
+
+          <!-- 书城专属搜索覆盖层抽屉 -->
+          <div id="reader-search-overlay" class="reader-search-overlay">
+            <header class="win-header" style="background-color: #ffffff; border-bottom: 1px solid var(--border);">
+              <button class="btn-icon" onclick="readerSystem.closeReaderSearch()">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+              </button>
+              <h3>搜索定制图书</h3>
+              <div style="width:40px;"></div>
+            </header>
+            <div class="search-options-scroll">
+              <div class="form-group">
+                <label>额外要求 (如：在雨天重逢、带有一些宿命感)</label>
+                <textarea id="search-extra-requirement" rows="2" placeholder="输入特殊走向或剧情诉求..."></textarea>
+              </div>
+              <div class="form-group">
+                <label>选择提示词预设</label>
+                <select id="search-preset-select"></select>
+              </div>
+              <div class="form-group">
+                <label>选择故事主角 (对方 Char)</label>
+                <div class="reader-character-select-grid" id="search-char-select-grid"></div>
+              </div>
+              <div class="form-group">
+                <label>题材关键词 (如：仙侠、都市虐恋)</label>
+                <input type="text" id="search-keyword-input" placeholder="输入题材词">
+              </div>
+              <button class="btn btn-primary" id="btn-trigger-reader-search" onclick="readerSystem.triggerReaderAIBookSearch()" style="width:100%; height:44px; margin-top:16px; background-color:#0f766e; border:none; font-weight:700;">开始检索定制图书</button>
+
+              <!-- 搜索结果书籍列表 -->
+              <div class="bookstore-section-title" style="margin-top:20px;">
+                <span>推演结果</span>
+              </div>
+              <div class="book-list-row" id="search-results-list">
+                <p style="text-align:center; font-size:11px; color:#94a3b8; padding:10px 0;">配置好上方主角设定后，点击开始检索</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- 书籍详情弹层 -->
+          <div id="reader-details-overlay" class="book-details-overlay">
+            <header class="win-header" style="background-color: #ffffff; border-bottom: 1px solid var(--border);">
+              <button class="btn-icon" onclick="readerSystem.closeBookDetails()">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+              </button>
+              <h3>书籍详情</h3>
+              <div style="width:40px;"></div>
+            </header>
+            <div class="win-body" style="padding:20px;">
+              <div style="display:flex; flex-direction:column; align-items:center; text-align:center;">
+                <div style="width:100px; height:130px; background:#94a3b8; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); margin-bottom:14px; display:flex; align-items:center; justify-content:center; color:white; font-weight:700; font-size:16px;">书籍</div>
+                <h2 id="detail-book-title" style="font-size:18px; font-weight:700; color:#1e293b;">书名</h2>
+                <p id="detail-book-author" style="font-size:12px; color:#64748b; margin-top:4px;">作者：</p>
+              </div>
+              <div style="margin-top:24px; border-top:1px solid var(--border); padding-top:16px;">
+                <h4 style="font-size:12px; font-weight:700; color:#475569; margin-bottom:8px;">精彩简介</h4>
+                <p id="detail-book-summary" style="font-size:12.5px; line-height:1.6; color:#334155; text-align:justify;">简介载入中...</p>
+              </div>
+              <div class="form-actions" style="margin-top:40px; display:flex; gap:10px;">
+                <button class="btn btn-outline" id="btn-detail-collect" onclick="readerSystem.collectTempBookToShelf()" style="flex:1; height:44px; font-weight:700;">加入书架</button>
+                <button class="btn btn-primary" onclick="readerSystem.startReadingRoom()" style="flex:1; height:44px; background-color:#0f766e; border:none; font-weight:700;">立即阅读</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 阅读排版视图房间 -->
+          <div id="win-reading-room" class="reading-room-overlay">
+            <!-- 顶部轻触栏 -->
+            <header class="win-header" style="background-color: transparent; border-bottom: none; position:absolute; top:0; left:0; width:100%; z-index:125;">
+              <button class="btn-icon" onclick="exitReadingRoom()" style="background:rgba(255,255,255,0.8); border-radius:50%; margin-left:10px; width:34px; height:34px;">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+              </button>
+              <h3 id="reading-room-title" style="display:none;"></h3> <!-- 补齐书籍标题承载节点，采用物理隐藏，完美契合浸入式极简阅读环境并防止 JS 写入空指针闪退 [1] -->
+              <div style="flex:1;"></div>
+              <!-- 右上角伴读齿轮 -->
+              <button class="btn-icon" id="btn-companion-toggle-indicator" onclick="readerSystem.openCompanionSelector()" style="background:rgba(255,255,255,0.8); border-radius:50%; margin-right:10px; width:34px; height:34px; color:#64748b;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+              </button>
+            </header>
+
+            <!-- 阅读核心流动排版内容区 -->
+            <div class="reading-flow-body" id="reading-content-container" onclick="readerSystem.toggleReadingMenuBar(event)">
+              <!-- 动态章节渲染 -->
+            </div>
+
+            <!-- 底部控制设置栏 -->
+          <div class="reading-menu-bar" id="reading-menu-bar">
+            <!-- 快捷按钮行 -->
+            <div class="reading-menu-row">
+              <button class="btn btn-outline" style="padding:6px; font-size:11px; flex:1;" id="btn-reader-prev-chapter" onclick="if(currentReadingChapterNum > 1){currentReadingChapterNum--; loadChapter(currentReadingChapterNum);}">上一章</button>
+              <button class="btn btn-outline" style="padding:6px; font-size:11px; flex:1;" onclick="readerSystem.openReadingDirectory()">目录</button>
+              <button class="btn btn-outline" style="padding:6px; font-size:11px; flex:1;" id="btn-reader-next-chapter" onclick="currentReadingChapterNum++; loadChapter(currentReadingChapterNum);">下一章</button>
+            </div>
+            <!-- 背景主题调整 -->
+            <div class="reading-menu-row" style="border-top:1px solid #cbd5e1; padding-top:10px; margin-top:10px;">
+              <span style="font-size:11px; color:#64748b; font-weight:700;">背景主题：</span>
+              <div style="display:flex; gap:10px;">
+                <div class="theme-color-dot" data-theme="light_green" style="background-color:#f0fdf4;" onclick="readerSystem.selectReadingThemeColor('light_green')"></div>
+                <div class="theme-color-dot" data-theme="light_blue" style="background-color:#f0f9ff;" onclick="readerSystem.selectReadingThemeColor('light_blue')"></div>
+                <div class="theme-color-dot" data-theme="light_yellow" style="background-color:#fefcf0;" onclick="readerSystem.selectReadingThemeColor('light_yellow')"></div>
+                <div class="theme-color-dot" data-theme="beige" style="background-color:#faf0e6;" onclick="readerSystem.selectReadingThemeColor('beige')"></div>
+                <div class="theme-color-dot" data-theme="white" style="background-color:#ffffff;" onclick="readerSystem.selectReadingThemeColor('white')"></div>
+              </div>
+            </div>
+            <!-- 文字颜色自定义 -->
+            <div class="reading-menu-row">
+              <span style="font-size:11px; color:#64748b; font-weight:700;">文字自定义色值：</span>
+              <button class="btn btn-outline" style="padding:4px 8px; font-size:10px;" onclick="readerSystem.selectReadingTextCustomColor()">调色盘</button>
+            </div>
+          </div>
+
+            </div> <!-- 关闭 win-reading-room -->
+
+          <!-- 目录抽屉及其遮罩 (提取为独立子面板，防止由于父容器 translateX 产生的坐标位移叠加重叠) -->
+          <div class="reading-directory-drawer-mask" id="reading-directory-mask" onclick="readerSystem.closeReadingDirectory()"></div>
+          <div class="reading-directory-drawer" id="reading-directory-drawer">
+            <header class="win-header" style="background-color:#ffffff; border-bottom:1px solid var(--border); flex-shrink:0;">
+              <h3 style="font-size:14px; font-weight:700;">书籍目录</h3>
+            </header>
+            <div class="win-body" id="reading-directory-list" style="overflow-y:auto; flex:1;">
+              <!-- 动态目录行 -->
+            </div>
+          </div>
+
+        </div> <!-- 阅读应用(win-reader)结束 -->
+
+      </div> <!-- app-window-container 结束 -->
+
+      <!-- 桌面翻页指示器 -->
     <div id="desktop-page-indicator"></div>
 
-    <!-- 底部 Dock 栏 -->
-    <footer id="dock">
-      <div class="dock-container" id="dock-grid"></div>
-    </footer>
-  </div> <!-- phone-container 结束 -->
+<!-- 底部 Dock 栏 -->
+        <footer id="dock">
+          <div class="dock-container" id="dock-grid"></div>
+        </footer>
+
+      </div> <!-- phone-container 结束 -->
 
   <script src="db.js"></script>
   <script src="app_prompts.js"></script>
@@ -2358,6 +2615,7 @@
   <script src="app_chat_plot_engine.js"></script>
   <script src="app_chat_mcp.js"></script>
   <script src="app_desktop_pet.js"></script>
+  <script src="app_reader.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {
