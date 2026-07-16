@@ -1,251 +1,978 @@
-# 叙事诗小手机 开发与架构参考手册 (2026年修订版)
+# 叙事诗小手机 开发与安卓 APK 特权架构参考手册 (2026年解耦特权版)
 
-本手册是“叙事诗小手机”系统的核心开发和维护指南。本系统是一个完全运行在客户端（Client-Side）的仿移动端操作系统 PWA 扮演应用。系统采用 **HTML5 + CSS3 + 纯原生 JavaScript** 构建，底层依赖 **Dexie.js (IndexedDB)** 保证数据的事务级存储与持久化，并通过大语言模型提供拟真社交、多媒体交互、内心世界窥探、线下白描、长周期记忆库、专属空间深谈以及高约束交互卡片组件与剧本引导功能。
+本手册是“叙事诗小手机”系统的核心开发和维护指南。本系统是一个通过 **Android Native Shell (Kotlin) + Core Web View (HTML5)** 混合开发（Hybrid）封装而成的真机级 **Android 原生特权 App**。项目前端采用 **HTML5 + CSS3 + 纯原生 JavaScript** 构建，底层依赖 **Dexie.js (IndexedDB)** 保证数据的事务级持久化，并利用 **Model Context Protocol (MCP)** 硬件级联动协议打破沙箱，实现了真机定位、实时气象、物理马达震动、系统物理闹钟直写、本地歌单后台锁屏放歌、本地大二进制文件极速导入、伴读自愈性文本编码解析以及数据一键本地物理导出等深度系统级特权功能。
 
 ---
 
 ## 目录
-1. **核心重构组件深度剖析**
-   - 1.1 系统设置与工具组件 (`app_settings.js`)
-   - 1.2 桌面网格与容器控制 (`app_desktop.js`)
-   - 1.3 社交聊天与剧场交互 (`app_chat.js`)
-   - 1.4 消息滑动引用引擎 (`app_chat_quote.js`)
-   - 1.5 微信账务随动与多态隔离引擎 (`app_wallet.js`)
-   - 1.6 朋友圈社交反应链与定时自发动态系统 (`app_moments.js`)
-2. **其它协同组件明细索引**
-   - 2.1 会话总结与长久记忆库 (`app_summary_memory.js`)
-   - 2.2 深度对话剖析空间 (`app_deeptalk.js`)
-   - 2.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js` & `chat_html.css`)
-   - 2.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
-3. **Dexie 数据库设计规范 (Version 10)**
-4. **长周期记忆 RAG 检索与深谈闪念提取数据流向**
-   - 4.1 长周期记忆 RAG 检索召回
-   - 4.2 深谈思想闪念截获
-   - 4.3 HTML 互动卡片生成与零写入清洗流
-   - 4.4 主线剧情引擎剧本引导流
-   - 4.5 自研 PWA 视觉提示、自定义 Dialog 与 API 请求中断控制流
-5. **无限拓展开发蓝图（Where & How to Add Features）**
-   - 蓝图 A：添加新数据库表 / 字段 (数据持久层拓展)
-   - 蓝图 B：在桌面添加一个新应用图标/弹出窗口 (UI & 桌面层拓展)
-   - 蓝图 C：在聊天底栏展开项加号中增加一个交互功能 (聊天应用层拓展)
-   - 蓝图 D：在 Service Worker 中增加离线资源缓存 (PWA 线程层拓展)
-6. **叙事诗小手机 逐文件技术功能详解 (Version 10 & 最新核心扩充)**
+1. **PWA 混合 App 物理目录结构**
+2. **核心配置文件及底端 Kotlin 代码全文汇编**
+   - 2.1 `.github/workflows/build-apk.yml` (自动云打包)
+   - 2.2 `settings.gradle.kts` (多模块注册)
+   - 2.3 `build.gradle.kts` (根项目编译)
+   - 2.4 `app/build.gradle.kts` (应用模块编译)
+   - 2.5 `app/proguard-rules.pro` (混淆保护白名单)
+   - 2.6 `app/src/main/AndroidManifest.xml` (系统高特权清单)
+   - 2.7 `app/src/main/res/layout/activity_main.xml` (视图布局)
+   - 2.8 `app/src/main/java/com/story/phone/MainActivity.kt` (主 Activity 容器)
+   - 2.9 `app/src/main/java/com/story/phone/AndroidMcp.kt` (高特权原生接口)
+3. **Dexie 数据库设计规范 (Version 12 综合升级版)**
+4. **悬浮多状态桌宠与真机系统级交互机制**
+   - 4.1 角色跟随与配置隔离 (IndexedDB 状态存储)
+   - 4.2 桌宠 9 种多动作状态定义
+   - 4.3 自定义对话模式 (台词加权随机)
+   - 4.4 实时生成模式 (大模型动作控制)
+   - 4.5 真机系统级双击手势与跨进程反向唤醒
+5. **JS 独立高精度后台定时发信调度引擎**
+   - 5.1 WebView 后台冷冻局限与保活心跳
+   - 5.2 独立发信时间片轮询算法
+   - 5.3 携带世界书与长 RAG 记忆的高质量后台 Prompt 编译
+   - 5.4 联动真机通知与桌面冒泡的气泡可视链
+6. **网页/原生避让与防区双生桌宠消减机制**
+   - 6.1 “双生桌宠”视觉重叠痛点
+   - 6.2 网页 DOM 节点物理级拦截与销毁
+7. **长周期记忆、深谈空间与协同组件剖析**
+   - 7.1 会话总结与长久记忆库 (`app_summary_memory.js`)
+   - 7.2 深度对话剖析空间 (`app_deeptalk.js`)
+   - 7.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js` & `chat_html.css`)
+   - 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
+   - 7.5 沉浸式旋转专注中枢与伴随音频流（`app_chat_focus.js` & `focus.css`）
+   - 7.6 自闭环 AI 伴读书城与多编码自愈引擎（`app_reader.js` & `reader.css`）
+8. **无限拓展开发蓝图 (Where & How to Add Features)**
 
 ---
 
-## 1. 核心重构组件深度剖析
+## 1. PWA 混合 App 物理目录结构
 
-### 1.1 系统设置与工具组件 (`app_settings.js`)
+请确保您本地的仓库目录结构与下方结构保持一致。所有前端网页资产、图标、音频等文件，必须存放在 `app/src/main/assets/` 路径下，以便打包进 APK 资源内部。
 
-#### 概述
-`app_settings.js` 承担整个虚拟手机的控制中枢职能，负责大模型 API 预设（CRUD、网络连接测试与模型在线拉取）、桌面主题美化（壁纸与多应用图标 Blob/Base64 持久化）、自定义全局 CSS 编译生效、代码组件工坊、各模块数据分区隔离导出/导入以及离线线程缓存强更新等功能。
-
-```
-                    ┌──> IndexedDB [api_presets] (API 协议/Key/模型列表)
-                    ├──> LocalStorage [beautify-wallpaper] (Base64壁纸数据)
-[设置控制器 (settings)] ───┼──> LocalStorage [beautify-custom-icons] (应用自定图标，包含 deeptalk)
-                    ├──> LocalStorage [beautify-active-css] (注入自定义样式)
-                    ├──> LocalStorage [beautify-widgets] (小部件 HTML 代码库)
-                    └──> IndexedDB [html_cards] (备份、格式化与 RW 事务锁)
-```
-
-#### 内部关键变量
-*   `isSettingsInitialized` (*Boolean*)：防重锁，确保 PWA 设置页初始化事件绑定在生命周期内仅执行一次。
-*   `tempBgBlob` (*Blob/File*)：临时物理指针，保存用户最新选择尚未应用保存的本地桌面背景壁纸文件。
-*   `activeCustomizingAppId` (*String*)：记录当前正在上传自定义图标的应用 ID（如 `'settings'`、`'deeptalk'` 等）。
-
-#### 关键函数与接口解析
-*   `initSettingsApp()`
-    *   **功能**：设置页初始化主入口，挂载壁纸选择、自定义图标文件通道、CSS 预设切换、组件工坊编译、深谈预设设置、强更新等 DOM 事件。
-*   `loadPresetsList()`
-    *   **功能**：从 `db.api_presets` 读取全表重新装载 API 预设，并根据 LocalStorage 的 `'global_api_preset_id'` 激活默认连接。
-*   `computeStorageUsage()`
-    *   **功能**：容量计算。异步查询所有 IndexedDB 物理表的数据总数（含 `html_cards`、深谈及朋友圈相关表），并遍历 `archives` 的头像及 `sticker_items` 的大二进制 Base64 数据，输出精确的字节占用。
-*   `serializeRecord(obj)` / `deserializeRecord(obj)`
-    *   **功能**：无损序列化层。由于 IndexedDB 支持直接存储原生 Blob 实例而 JSON 标准不支持，此函数负责在导出时将原生 Blob 实例编码为带标志的 Base64 容器 `{ __type: "Blob", data: "..." }`，导入时逆向解码还原为物理二进制 Blob，防止备份损坏。
-*   `exportBackup()` / `importBackup(e)`
-    *   **功能**：全局全量级完整备份导出/导入。导入时利用 Dexie 的事务特性，声明 RW 事务锁（包含新追加的 `html_cards` 表锁），清空并物理重写 18 张 IndexedDB 物理表，并恢复 LocalStorage。
-
----
-
-### 1.2 桌面网格与容器控制 (`app_desktop.js`)
-
-#### 概述
-`app_desktop.js` 负责桌面及底部快捷 Dock 栏的网格宿主排版、编辑状态切换、动态增删应用/代码小部件。此外，该文件承载了触控/鼠标 Pointer 级手势拖拽引擎，并注册了全站 PWA Service Worker。
-
-```
-                      ┌──> 检查 placed-widgets-desktop / -dock (小部件代码)
-[网格排版渲染 (layout)] ──┼──> 检查 desktop-layout-v3 / dock-layout-v3 (应用图标)
-                      └──> 编辑状态下：输出 "+" (应用/小部件添加) 或 "×" (删除)
-```
-
-#### 关键函数与接口解析
-*   `loadDesktopLayout()`
-    *   **功能**：桌面整体初始化。从 LocalStorage 读取高吸附性 `'desktop-layout-v3'`（20网格槽）及 `'dock-layout-v3'`（4网格槽）排版映射。若为空则将 `deeptalk` 默认编排至桌面第 4 个格子。
-*   `renderLayout(container, layoutArray, slotClass)`
-    *   **功能**：物理网格去挤兑排版渲染。如果网格索引被代码小部件占用，则根据设定的 `widthSpan` 和 `heightSpan` 合理占用格子，自动隐藏下属被覆盖的物理 slot 槽位。
-*   `initDragEvents()`
-    *   **功能**：Pointer Events 触控拖放手势。
-    *   **隔离原则**：由于 Dock 栏应用了 `-webkit-backdrop-filter` 模糊，其会强制形成一个 Containing Block 导致子元素绝对定位偏移。拖放手势在 `pointermove` 阶段，**直接将正在拖拽的 `activeIcon` 节点物理剪切挂载到 `document.body` 顶层层级**，并将 `pointerEvents` 设为 `"none"`。结束拖放时，调用 `document.elementFromPoint` 探测下方坐标槽位，进行吸附与重新落盘。
-
----
-
-### 1.3 社交聊天与剧场交互 (`app_chat.js`)
-
-#### 概述
-本系统的主体。提供微信式多页签路由，仿真的对话消息渲染（含普通消息、表情包、转账及红包等），大模型回复处理，拟真的时序级联分句上屏。此外，它支持线下约会（赴约模式）和独立剧场，可在断开连接时进行白描文本交互。
-
-#### 关键函数与接口解析
-*   `renderDialogMessages()`
-    *   **功能**：对单聊内的全量消息（含普通文本、多媒体、红包/转账及滑动引用）进行渲染。红包和转账卡片双击后变灰半透明，并在领取后通过 `pointer-events: none` 防止二次刷钱。
-*   `btnReply.onclick` (在线大模型回复)
-    *   **核心逻辑**：
-        1. API 发送前，自动扫描会话中对方发送且当前处于 `'pending'` 状态的红包/转账，改变其状态。
-        2. 向 API 提示词追加收钱语境。
-        3. 大模型生成回复后，利用宽容正则 `transactionRegex` 捕获代词指令。若检测到转账/红包/语音/图片指令，调用 `db.messages.add` 在数据库中为其**独立创建一条对应的 contentType 记录，并直接追加渲染（append）到屏幕上**。
-        4. 擦除回复中已被解析的交易指令后，通过 `setTimeout` 时序延迟队列将对白递归调用渲染上屏，实现打字机级联。
-        5. 在最后句渲染完成后，调用自动总结钩子 `checkAndTriggerAutoSummary(activeSessionId)`。
-*   `endAppointment()` (结束线下赴约)
-    *   **功能**：获取线下赴约期间产生的卡片记录，向 AI 申请生成一段不带 emoji、以第三人称总结的约会经历，以 `[来自深谈总结]` 或 `source: 'deeptalk'` 的形式写入长期记忆，并清空线下记录，实现记忆的无缝回写。
-
----
-
-### 1.4 消息滑动引用引擎 (`app_chat_quote.js`)
-
-#### 概述
-这是一个自闭环的独立交互引擎。它通过注入样式和事件代理，为线上聊天气泡挂载 QQ 风格的“向左滑动”引动指令。它能够解析带有特定 ID 指令的文本，在对话气泡内部渲染出精致的引用预览。
-
-#### 核心函数与接口解析
-*   `QuoteSystem` (*Class*)
-    *   `setQuote(msgId)`：将 `activeQuoteMsgId` 设置为对应 ID，读取被引用消息，转换消息类型，动态拼装 DOM 插入到输入框头部。
-    *   `initGestureListener()`：挂载触摸手势。监听气泡的 `touchstart`、`touchmove` 和 `touchend`。当确定为向左横滑时，调用 `e.preventDefault()` 阻止父级容器滚动。
-    *   `parseQuote(content)`：对微信引用语法做检测。若检测到 `[QUOTE: ID]` 或全角 `【QUOTE: ID】`，提取 ID，读取原消息对应的发送端姓名并渲染。
-
----
-
-### 1.5 微信账务随动与多态隔离引擎 (`app_wallet.js`)
-
-#### 概述
-提供完全不依赖浏览器底层原生 `prompt()` 的卡片式零钱充值、提现 Dialog 账单交互面板。同时支持基于当前人设身份（`active_me_id`）的数据随动与财务隔离，保障不同面具之间的资产、明细相互独立不交叉。
-
-```
-                         ┌──> 获取 active_me_id ──> 拼接 wallet_balance_v1_[id] (财务随动)
-[钱包零钱中心 (Wallet)] ───┼──> 提供 showCustomPrompt 进行卡片式充值与提现数字录入
-                         └──> 拦截 [TRANSFER] / [RED_ENVELOPE] 变动，在 Ledger 中追加入账明细
-```
-
-#### 关键接口与实现
-*   `getBalance()` / `setBalance(num)`
-    *   **功能**：多态资产读取。根据内存中当前面具 ID 动态定位到专属 LocalStorage 键名进行资产维护，防止面具切换产生坏账。
-*   `claimTransfer(msgId)` / `claimRedEnvelope(msgId)`
-    *   **功能**：资金安全网关。在领取对方款项时，实时抓取该单聊会话中对方角色（Char）的真实备注名并记入零钱明细。点击后通过 `statusClass` 改变卡片透明度，并在物理层级上卸载该气泡后续的点击事件，彻底防范二次刷钱和逻辑穿透。
-
----
-
-### 1.6 朋友圈社交反应链与定时自发动态系统 (`app_moments.js`)
-
-#### 概述
-模拟朋友圈发布、可见人限制，并基于大语言模型提供极具张力的群友（Char）评论、点赞反应，提供 1:N 深度级联反应网。同时搭载无痕定时器巡航系统，模拟好友自发性、时间跨度级发朋友圈的行为。
-
-#### 关键接口与实现
-*   `openSettingsModal()`
-    *   **功能**：朋友圈巡航开关。提供活跃角色池勾选卡片。利用物理穿透防护机制（pointer-events: none），保障多选卡片在按压瞬间即时高亮。
-*   `triggerAIsFeedbacksOnPost(momentId, charIds)`
-    *   **功能**：动态自反应网。当用户发表新朋友圈后，可见范围内的 AI 角色（Char）会利用 `fetch` 时序级联队列（每隔 3.5秒）自发性地进行性格化评赞反应。
-*   `triggerAIReactionsOnComment(momentId, commentId)`
-    *   **功能**：级联社交链。当朋友圈产生新的二级回复时，可见的好友会继续以此为上下文产生二级回复或点赞，构建多级嵌套反应网络。
-*   `startBackgroundTimer()`
-    *   **功能**：后台定时器。每 60 秒轮询检测。在开启定时发动态后，系统将计算上条朋友圈与当前的时差，一旦超过时差限制，则随机抽取打勾角色调用大模型自发一条白描图文朋友圈，重绘 Feed 流。
-
----
-
-## 2. 其它协同组件明细索引
-
-本系统功能高度模块化，各模块文件功能和接口的定义如下：
-
-### 2.1 会话总结与长久记忆库 (`app_summary_memory.js`)
-
-#### 概述
-这是主聊天系统的长效记忆支撑层。它不使用任何全局污染的变量，负责对话轮次提取、静默自动/手动范围事件总结、AI 长周期核心记忆库（我的现状、目的、变化、关系、在眼里的用户）的 synthesis 提炼，以及基于关键词模糊匹配的长效记忆 RAG 检索召回。
-
-```
-                       ┌──> 1. 固定携带最近的 5 轮总结 (recentSummaries)
-[记忆检索召回 (RAG)] ───┼──> 2. 扫描最近用户输入，模糊匹配 summaries.keywords
-                       └──> 3. 若命中多于 20 轮，则随机但均匀地按轮数提取 20 轮带入
-```
-
-#### 关键接口与函数
-*   `getRoundsList(messages)`
-    *   **功能**：轮次提取算法。将 `messages` 数组按“一轮 = 1段用户连续发言 + 1段角色连续回复”归入 `{ userMsgContent, charMsgContent, timestamp }`。
-*   `retrieveSummaries(sessionId, latestUserMessageText)`
-    *   **功能**：核心 RAG 检索。返回用于注入到 System Prompt 中的记忆数组。固定携带最近的 5 轮总结。其余总结在扣除这 5 轮后，通过用户最新输入的文本进行关键词模糊匹配。如果命中超出 20 轮，通过均匀跨度间隔对匹配结果执行均匀随机抽样抽取 20 轮，最后按时间正序排列返回。
-*   `checkAndTriggerAutoSummary(sessionId)`
-    *   **功能**：AI 回复结束后静默执行。如果当前未总结轮次大于 `autoSummaryInterval`且排除了最新的 `bufferRounds`（缓冲轮数，确保 AI 保持近期对话上下文语感），则自动触发 AI 总结。
-
----
-
-### 2.2 深度对话剖析空间 (`app_deeptalk.js`)
-
-#### 概述
-“深谈”是一个服务于单个面具的闭环空间，用于挖掘和剥离角色的内心深层自白。提供“择选”和“小宇宙”两页式双签切换。“择选”继承聊天列表并在新建时进行深度与氛围设定，卡片式左右切换展示，通过在回复末尾追加 `[THOUGHT]思想内容[/THOUGHT]` 提取短暂思想切片存入“小宇宙”。
-
-#### 绝对定位层级隔离原则（重要安全设计约束）
-为了杜绝由于层叠上下文混乱而导致的“在档案库保存角色时会跳转 to 记忆/深谈详情中”或“按钮点击被底层穿透”等 Bug，**深谈与 HTML 舱中产生的所有绝对定位滑块面板（如 `#html-repair-overlay`、`#chat-summary-panel`、`#chat-memory-panel`、`#win-deeptalk-details` 等）必须严格在物理上作为子节点（Nesting）套袋收纳在对应的应用父窗口（如 `#win-chat`、`#win-deeptalk`）内部。**
-
----
-
-### 2.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js` & `chat_html.css`)
-
-#### 概述
-“HTML 互动舱”是会话专属的独立代码容器组件，允许用户向 API 请求根据上下文、世界书以及核心心智，编译输出完全独立、高度交互的单文件 HTML/CSS/JS 代码卡片，实现会话组件的无障碍生成。
-
-```
-[HTML构建请求] ──> 获取 Global System Prompt ──> 注入 PROMPT_TEMPLATES.HTML_WIDGET_INSTRUCTION 
-                                                     │
-                                                     ▼
-                                        AI 产出原生 HTML/CSS/JS 代码
-                                                     │
-                                                     ▼
-                                       入库 db.html_cards (原始备份)
-```
-
-#### 核心设计机制
-1.  **无损视图双态切换（运行时状态机）**：
-    *   脚本在内存中建立一个 `cleanedCardIds: new Set()`。点击“一键清洗”按钮时，**绝不物理篡改数据库**，仅在运行时进行双态视图切换。
-    *   激活时，提取 `extractCleanHtml()` 正则清洗后的高度纯净 HTML 代码，直接写入 Iframe 沙盒；未激活时加载 AI 原始返回文本。
-2.  **代码维修舱二级空间**：
-    *   二级工作区 `#html-repair-overlay` 动态注入于 `#win-chat` 底部，始终加载 IndexedDB 中存储的 100% 原始 AI 纯代码，并监听输入执行 300ms 防抖的实时沙盒渲染。点击“保存”时才会真实执行物理覆写。
-3.  **零依赖安全沙盘**：
-    *   使用原生的 `iframe` 与 `sandbox="allow-scripts"` 属性，配合 `srcdoc` 写入，构建起一道双向安全屏障，防止代码污染虚拟手机主进程。
-
----
-
-### 2.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
-
-#### 概述
-“剧情引擎”是控制会话主线大方向的引导中枢，提供一个现代极简、浅色调的模态操作面板。用户写入的要求会被作为高优先级故事大纲实时拼装注入系统提示词链，在对话中引导大模型的态度演进和剧情。
-
-#### 数据流向与编译
-```
-[点击载入走向] ──> 写入 db.sessions.plotRequirement
-                               │
-                               ▼
-               buildGlobalSystemPrompt(sessionId) 
-                               │
-               检查 plotRequirement ──> 命中 ──> 封装高优最高指令 
-                               │
-                               ▼
-               segments.push({ depth: -480, content: 剧情剧本走向 }) ──> 拼入 System Prompt 
+```text
+(您的项目根目录)
+├── .github/
+│   └── workflows/
+│       └── build-apk.yml           # GitHub Actions 自动云打包配置文件
+├── app/
+│   ├── src/
+│   │   └── main/
+│   │       ├── assets/             # 📂 放入当前所有的前端平铺资源文件
+│   │       │   ├── index.html
+│   │       │   ├── style.css
+│   │       │   ├── app_chat.js
+│   │       │   ├── app_desktop_pet.js # 🧸 升级版独立多状态悬浮桌宠逻辑
+│   │       │   ├── desktop_pet.css    # 🎨 悬浮桌宠与真机仿真气泡样式
+│   │       │   ├── app_chat_mcp.js    # MCP 物理联动前端逻辑
+│   │       │   ├── app_chat_focus.js  # 专注空间物理控制中枢
+│   │       │   ├── focus.css          # 专注简美玻璃磨砂样式
+│   │       │   ├── app_reader.js      # 独立自闭环阅读书城应用
+│   │       │   ├── reader.css         # 书城多端自适应布局样式
+│   │       │   └── (其他所有的前端资源：.js, .css, .json, .png等)
+│   │       ├── java/com/story/phone/
+│   │       │   ├── MainActivity.kt        # 安卓原生主 Activity 代码
+│   │       │   └── AndroidMcp.kt          # 安卓原生高特权接口桥接代码
+│   │       ├── res/
+│   │       │   ├── drawable/
+│   │       │   │   └── ic_launcher.png    # 桌面自定义正方形 PNG 图标
+│   │       │   └── layout/
+│   │       │       └── activity_main.xml  # 安卓界面 WebView 视图布局
+│   │       └── AndroidManifest.xml        # 安卓系统功能清单
+│   ├── build.gradle.kts                               # App 编译配置脚本
+│   └── proguard-rules.pro                             # 混淆器防剥离规则
+├── build.gradle.kts                                   # 根项目编译脚本
+└── settings.gradle.kts                                 # 项目根设置
 ```
 
 ---
 
-## 3. Dexie 数据库设计规范 (Version 10)
+## 2. 核心配置文件及底端 Kotlin 代码全文汇编
 
-系统数据库包含 18 张物理表。执行任何二次开发和结构拓展时必须在此基础上进行升级：
+### 2.1 云端自动化签名打包管线：`.github/workflows/build-apk.yml`
+```yaml
+name: Generate Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 通过锁定并持久化缓存 ~/.android 密钥目录，确保后续编译的所有 APK 共享同一个数字证书，避免真机覆盖安装时的数字证书冲突
+      - name: Cache Android Keystore
+        uses: actions/cache@v4
+        with:
+          path: ~/.android
+          key: ${{ runner.os }}-android-keystore
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.5 # 自动在云端加载 Gradle 8.5
+
+      - name: Build APK with Gradle
+        run: gradle assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StoryPhone-Android-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+```
+
+### 2.2 项目根设置：`settings.gradle.kts`
+```kotlin
+rootProject.name = "StoryPhone"
+include(":app")
+```
+
+### 2.3 根项目编译脚本：`build.gradle.kts` (根目录级别)
+```kotlin
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath("com.android.tools.build:gradle:8.2.2")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:1.9.22")
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+```
+
+### 2.4 子模块编译配置：`app/build.gradle.kts`
+```kotlin
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+android {
+    namespace = "com.story.phone"
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = "com.story.phone"
+        minSdk = 26 // 安卓 8.0，保障完美兼容通知监听、硬件马达与无障碍接口
+        targetSdk = 34
+        versionCode = 3
+        versionName = "1.2.0"
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.12.0")
+    implementation("androidx.appcompat:appcompat:1.6.1")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("androidx.webkit:webkit:1.10.0")
+}
+```
+
+### 2.5 代码混淆白名单规则：`app/proguard-rules.pro`
+```proguard
+-keepattributes *Annotation*
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class com.story.phone.AndroidMcp { *; }
+```
+
+### 2.6 物理系统配置文件：`app/src/main/AndroidManifest.xml`
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒、上层悬浮窗等安卓硬件权限 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    
+    <!-- 读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="叙事诗小手机"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"
+        android:usesCleartextTraffic="true"
+        android:requestLegacyExternalStorage="true">
+        
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:screenOrientation="portrait"
+            android:configChanges="orientation|screenSize"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+    </application>
+
+</manifest>
+```
+
+### 2.7 安卓界面 WebView 视图布局：`app/src/main/res/layout/activity_main.xml`
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <android.webkit.WebView
+        android:id="@+id/webview"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+</FrameLayout>
+```
+
+### 2.8 窗口容器生命周期控制：`app/src/main/java/com/story/phone/MainActivity.kt`
+```kotlin
+package com.story.phone
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.webkit.GeolocationPermissions
+import android.webkit.ValueCallback
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+
+class MainActivity : AppCompatActivity() {
+
+    private lateinit var webView: WebView
+    private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+    private val FILE_CHOOSER_RESULT_CODE = 101
+    private val PERMISSIONS_REQUEST_CODE = 102
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        webView = findViewById(R.id.webview)
+        
+        webView.webViewClient = object : WebViewClient() {
+            @Suppress("DEPRECATION")
+            override fun shouldOverrideUrlLoading(view: WebView?, url: String?): Boolean {
+                return false
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: android.webkit.WebResourceRequest?
+            ): Boolean {
+                return false
+            }
+        }
+
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onGeolocationPermissionsShowPrompt(
+                origin: String?,
+                callback: GeolocationPermissions.Callback?
+            ) {
+                callback?.invoke(origin, true, false)
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                @Suppress("UNCHECKED_CAST")
+                (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(null)
+                fileUploadCallback = filePathCallback
+
+                val intent = fileChooserParams?.createIntent() ?: return false
+                try {
+                    startActivityForResult(intent, FILE_CHOOSER_RESULT_CODE)
+                } catch (e: ActivityNotFoundException) {
+                    fileUploadCallback = null
+                    return false
+                }
+                return true
+            }
+        }
+
+        val settings: WebSettings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.databaseEnabled = true
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+        settings.geolocationEnabled = true
+
+        // 禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动播放歌曲的特权！
+        settings.mediaPlaybackRequiresUserGesture = false
+
+        // 注入 window.AndroidMCP 原生接口并注册主 Activity 句柄，支持后台双击跨端唤醒
+        AndroidMcp.mainActivity = this
+        webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
+
+        webView.loadUrl("file:///android_asset/index.html")
+
+        requestAppPermissions()
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == FILE_CHOOSER_RESULT_CODE) {
+            if (fileUploadCallback == null) return
+            val results = WebChromeClient.FileChooserParams.parseResult(resultCode, data)
+            
+            @Suppress("UNCHECKED_CAST")
+            (fileUploadCallback as? ValueCallback<Array<Uri>?>)?.onReceiveValue(results)
+            fileUploadCallback = null
+        }
+    }
+
+    private fun requestAppPermissions() {
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.READ_MEDIA_AUDIO)
+        } else {
+            @Suppress("DEPRECATION")
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+            @Suppress("DEPRECATION")
+            permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+
+        val listToRequest = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (listToRequest.isNotEmpty()) {
+            ActivityCompat.requestPermissions(
+                this,
+                listToRequest.toTypedArray(),
+                PERMISSIONS_REQUEST_CODE
+            )
+        }
+    }
+
+    override fun onBackPressed() {
+        if (webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
+        }
+    }
+}
+```
+
+### 2.9 原生特权硬件接口：`app/src/main/java/com/story/phone/AndroidMcp.kt`
+```kotlin
+package com.story.phone
+
+import android.content.Context
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.view.Gravity
+import android.view.MotionEvent
+import android.view.View
+import android.view.WindowManager
+import android.webkit.JavascriptInterface
+import android.widget.ImageView
+import android.widget.TextView
+import android.util.Base64
+import android.graphics.BitmapFactory
+import android.os.Environment
+import android.media.MediaPlayer
+import android.util.Log
+import java.io.File
+import java.io.FileWriter
+import org.json.JSONArray
+import org.json.JSONObject
+
+class AndroidMcp(private val context: Context) {
+
+    companion object {
+        private const val TAG = "AndroidMcp"
+        var mainActivity: MainActivity? = null
+    }
+
+    private var mediaPlayer: MediaPlayer? = null
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var bgPollTimer: java.util.Timer? = null
+    
+    // 悬浮窗原生节点引用
+    private var floatPetView: View? = null
+    private var petImageView: ImageView? = null
+    private var bubbleTextView: TextView? = null
+    private var hideBubbleRunnable: Runnable? = null
+
+    @JavascriptInterface
+    fun toggleBackgroundWakeLock(enabled: Boolean) {
+        Log.d(TAG, "toggleBackgroundWakeLock() called, enabled=$enabled")
+        try {
+            val serviceIntent = Intent(context, McpForegroundService::class.java)
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            if (enabled) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    context.startForegroundService(serviceIntent)
+                } else {
+                    context.startService(serviceIntent)
+                }
+                if (wakeLock == null) {
+                    wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "StoryPhone::BackgroundWakeLock")
+                }
+                if (wakeLock?.isHeld == false) {
+                    wakeLock?.acquire()
+                }
+            } else {
+                context.stopService(serviceIntent)
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+                wakeLock = null
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun showSystemNotification(title: String, message: String) {
+        Log.d(TAG, "showSystemNotification() called, title=$title, message=${message.take(50)}...")
+        try {
+            val channelId = "story_phone_bg_channel"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                var channel = notificationManager.getNotificationChannel(channelId)
+                if (channel == null) {
+                    channel = android.app.NotificationChannel(channelId, "叙事诗后台通知", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+                        description = "用于接收后台聊天消息通知"
+                    }
+                    notificationManager.createNotificationChannel(channel)
+                }
+            }
+
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                context, 0, intent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+            )
+
+            val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(R.drawable.ic_launcher)
+                .setContentTitle(title)
+                .setContentText(message)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    init {
+        try {
+            getDownloadDir()
+            getMusicDir()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun getDownloadDir(): File {
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Storypoem")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    private fun getMusicDir(): File {
+        val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC), "Storypoem")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    @JavascriptInterface
+    fun saveBackupFile(jsonString: String, fileName: String): Boolean {
+        Log.d(TAG, "saveBackupFile() called, fileName=$fileName, data.length=${jsonString.length}")
+        return try {
+            val targetFile = File(getDownloadDir(), fileName)
+            val writer = FileWriter(targetFile)
+            writer.write(jsonString)
+            writer.close()
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun scanLocalMusicFolder(): String {
+        Log.d(TAG, "scanLocalMusicFolder() called")
+        val jsonArray = JSONArray()
+        try {
+            val musicDir = getMusicDir()
+            val files = musicDir.listFiles { _, name ->
+                name.endsWith(".mp3", true) || name.endsWith(".wav", true) || name.endsWith(".m4a", true)
+            }
+            files?.forEach { file ->
+                jsonArray.put(file.name)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return jsonArray.toString()
+    }
+
+    @JavascriptInterface
+    fun playNativeMusic(songName: String): Boolean {
+        Log.d(TAG, "playNativeMusic() called, songName=$songName")
+        return try {
+            val musicFile = File(getMusicDir(), songName)
+            if (!musicFile.exists()) return false
+
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(musicFile.absolutePath)
+                isLooping = true
+                prepare()
+                start()
+            }
+            true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    @JavascriptInterface
+    fun pauseNativeMusic() {
+        Log.d(TAG, "pauseNativeMusic() called")
+        try {
+            if (mediaPlayer?.isPlaying == true) {
+                mediaPlayer?.pause()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun stopNativeMusic() {
+        Log.d(TAG, "stopNativeMusic() called")
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun triggerHardwareVibrator(milliseconds: Long) {
+        Log.d(TAG, "triggerHardwareVibrator() called, milliseconds=$milliseconds")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+                vibratorManager.defaultVibrator.vibrate(VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+                vibrator.vibrate(VibrationEffect.createOneShot(milliseconds, VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun requestNotificationPermission() {
+        Log.d(TAG, "requestNotificationPermission() called")
+        try {
+            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun requestAccessibilityPermission() {
+        Log.d(TAG, "requestAccessibilityPermission() called")
+        try {
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @JavascriptInterface
+    fun setAndroidSystemAlarm(hour: Int, minute: Int, message: String) {
+        Log.d(TAG, "setAndroidSystemAlarm() called, hour=$hour, minute=$minute, message=$message")
+        try {
+            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(android.provider.AlarmClock.EXTRA_HOUR, hour)
+                putExtra(android.provider.AlarmClock.EXTRA_MINUTES, minute)
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, message)
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun getWebView(): WebView? {
+        return (context as? MainActivity)?.findViewById(R.id.webview)
+    }
+
+    // ============================================================
+    //  悬浮窗特权检查与系统申请
+    // ============================================================
+
+    @JavascriptInterface
+    fun checkOverlayPermission(): Boolean {
+        val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            Settings.canDrawOverlays(context)
+        } else {
+            true
+        }
+        Log.d(TAG, "checkOverlayPermission() called, returning $result")
+        return result
+    }
+
+    @JavascriptInterface
+    fun requestOverlayPermission() {
+        Log.d(TAG, "requestOverlayPermission() called")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val intent = Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION).apply {
+                data = android.net.Uri.parse("package:${context.packageName}")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        }
+    }
+
+    // ============================================================
+    //  真机系统级悬浮复合窗（带 TextView 原生气泡、双击手势、不退焦静默交互）
+    // ============================================================
+
+    @JavascriptInterface
+    fun showDesktopPet(base64Str: String, sizeDp: Int) {
+        Log.d(TAG, "showDesktopPet() called, sizeDp=$sizeDp, base64.length=${base64Str.length}")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val density = context.resources.displayMetrics.density
+                val sizePx = (sizeDp * density).toInt()
+
+                if (floatPetView == null) {
+                    val layout = android.widget.FrameLayout(context)
+
+                    // 1. 动态构建白底圆角描边的系统气泡 TextView
+                    val bubble = TextView(context).apply {
+                        visibility = View.GONE
+                        setTextColor(android.graphics.Color.BLACK)
+                        setPadding((12 * density).toInt(), (8 * density).toInt(), (12 * density).toInt(), (8 * density).toInt())
+                        textSize = 12f
+                        maxWidth = (160 * density).toInt()
+                        
+                        val shape = android.graphics.drawable.GradientDrawable().apply {
+                            setColor(android.graphics.Color.WHITE)
+                            cornerRadius = 24f
+                            setStroke(2, android.graphics.Color.parseColor("#e2e8f0"))
+                        }
+                        background = shape
+                    }
+                    val bubbleParams = android.widget.FrameLayout.LayoutParams(
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                        android.widget.FrameLayout.LayoutParams.WRAP_CONTENT
+                    ).apply {
+                        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                        bottomMargin = sizePx + (10 * density).toInt()
+                    }
+                    layout.addView(bubble, bubbleParams)
+                    bubbleTextView = bubble
+
+                    // 2. 动态构建桌宠 ImageView
+                    val imageView = ImageView(context).apply {
+                        scaleType = ImageView.ScaleType.FIT_CENTER
+                    }
+                    val petParams = android.widget.FrameLayout.LayoutParams(sizePx, sizePx).apply {
+                        gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    }
+                    layout.addView(imageView, petParams)
+                    petImageView = imageView
+
+                    val layoutParamsType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WindowManager.LayoutParams.TYPE_PHONE
+                    }
+
+                    val params = WindowManager.LayoutParams(
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        WindowManager.LayoutParams.WRAP_CONTENT,
+                        layoutParamsType,
+                        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                        PixelFormat.TRANSLUCENT
+                    ).apply {
+                        gravity = Gravity.TOP or Gravity.START
+                        x = 100
+                        y = 500
+                    }
+
+                    // 绑定高动态滑动拖动与双击探测
+                    bindOverlayTouchListener(layout, params, windowManager)
+
+                    windowManager.addView(layout, params)
+                    floatPetView = layout
+                } else {
+                    petImageView?.layoutParams = petImageView?.layoutParams?.apply {
+                        width = sizePx
+                        height = sizePx
+                    }
+                    bubbleTextView?.layoutParams = (bubbleTextView?.layoutParams as? android.widget.FrameLayout.LayoutParams)?.apply {
+                        bottomMargin = sizePx + (10 * density).toInt()
+                    }
+                    floatPetView?.let {
+                        windowManager.updateViewLayout(it, it.layoutParams)
+                    }
+                }
+
+                val cleanBase64 = base64Str.substringAfter("base64,")
+                val decodedBytes = android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+                val bitmap = BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+                petImageView?.setImageBitmap(bitmap)
+
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun showDesktopPetBubble(text: String, durationMs: Long) {
+        Log.d(TAG, "showDesktopPetBubble() called, text=$text, durationMs=$durationMs")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                if (bubbleTextView == null) return@post
+                bubbleTextView?.text = text
+                bubbleTextView?.visibility = View.VISIBLE
+
+                hideBubbleRunnable?.let { handler.removeCallbacks(it) }
+                val runnable = Runnable {
+                    bubbleTextView?.visibility = View.GONE
+                }
+                hideBubbleRunnable = runnable
+                handler.postDelayed(runnable, durationMs)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun updateDesktopPetSize(sizeDp: Int) {
+        Log.d(TAG, "updateDesktopPetSize() called, sizeDp=$sizeDp")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                val view = floatPetView ?: return@post
+                val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                val density = context.resources.displayMetrics.density
+                val sizePx = (sizeDp * density).toInt()
+
+                petImageView?.layoutParams = petImageView?.layoutParams?.apply {
+                    width = sizePx
+                    height = sizePx
+                }
+                bubbleTextView?.layoutParams = (bubbleTextView?.layoutParams as? android.widget.FrameLayout.LayoutParams)?.apply {
+                    bottomMargin = sizePx + (10 * density).toInt()
+                }
+
+                val params = view.layoutParams as WindowManager.LayoutParams
+                windowManager.updateViewLayout(view, params)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    @JavascriptInterface
+    fun hideDesktopPet() {
+        Log.d(TAG, "hideDesktopPet() called")
+        val handler = Handler(Looper.getMainLooper())
+        handler.post {
+            try {
+                if (floatPetView != null) {
+                    val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                    windowManager.removeView(floatPetView)
+                    floatPetView = null
+                    petImageView = null
+                    bubbleTextView = null
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    private fun bindOverlayTouchListener(view: View, params: WindowManager.LayoutParams, windowManager: WindowManager) {
+        view.setOnTouchListener(object : View.OnTouchListener {
+            private var lastAction: Int = 0
+            private var initialX: Int = 0
+            private var initialY: Int = 0
+            private var initialTouchX: Float = 0f
+            private var initialTouchY: Float = 0f
+            private var lastClickTime: Long = 0
+
+            override fun onTouch(v: View, event: MotionEvent?): Boolean {
+                if (event == null) return false
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialX = params.x
+                        initialY = params.y
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        lastAction = event.action
+                        return true
+                    }
+                    MotionEvent.ACTION_UP -> {
+                        val diffX = event.rawX - initialTouchX
+                        val diffY = event.rawY - initialTouchY
+                        
+                        if (Math.abs(diffX) < 15 && Math.abs(diffY) < 15) {
+                            val clickTime = System.currentTimeMillis()
+                            if (clickTime - lastClickTime < 350) {
+                                onOverlayDoubleClick() // 双击执行跨进程程序后台安全评价 JS
+                            }
+                            lastClickTime = clickTime
+                        }
+                        lastAction = event.action
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        params.x = initialX + (event.rawX - initialTouchX).toInt()
+                        params.y = initialY + (event.rawY - initialTouchY).toInt()
+                        try {
+                            windowManager.updateViewLayout(view, params)
+                        } catch (e: Exception) {}
+                        lastAction = event.action
+                        return true
+                    }
+                }
+                return false
+            }
+        })
+    }
+
+    private fun onOverlayDoubleClick() {
+        Log.d(TAG, "onOverlayDoubleClick() called, executing JS quietly in background")
+        try {
+            mainActivity?.runOnUiThread {
+                getWebView()?.evaluateJavascript(
+                    "javascript:if(window.desktopPetSystem) { window.desktopPetSystem.handleDoubleClickBackground(); }",
+                    null
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+}
+```
+
+---
+
+## 3. Dexie 数据库设计规范 (Version 12 综合升级版)
+
+系统数据库包含 24 张物理表。为了在打通**独立多状态悬浮桌宠**与**自动发信解耦控制**的同时，无缝支撑全新的**“自闭环 AI 伴读书城”**、**“刻度转盘专注时空”**配置，数据库全量对齐至 **Version 12**。
 
 ```javascript
-db.version(10).stores({
+db.version(12).stores({
   // 1. 大模型 API 预设表
   api_presets: 'id++, name, protocol, url, key, model, temperature',
 
@@ -255,11 +982,11 @@ db.version(10).stores({
   // 3. 社会关系映射表 (连接 character 与 user)
   relations: 'id++, fromId, toId, relation',
 
-  // 4. 会话配置与偏好设置表 (支持动态非索引字段 plotRequirement 的无损写入)
+  // 4. 会话配置与偏好设置表 (包含伴随环境音 focusAmbientSounds 数组等隐式扩展属性)
   sessions: 'id++, userId, charId, customCharName, customCharAvatar, customCharPersona, customUserAvatar, customUserPersona, lastMessageTime, mountedEntryIds, offlineMinWordCount, offlineMaxWordCount, offlineAutoSummaryCount, offlineMountedEntryIds, stickerMountedGroupIds, autoSummaryToggle, autoSummaryInterval, bufferRounds, summarySystemPrompt, coreSelfStatus, coreSelfPurpose, coreSelfChanges, coreRelationship, coreUserInEyes',
 
   // 5. 线上对话消息全纪录表
-  messages: 'id++, sessionId, senderType, senderId, content, contentType, timestamp, isFavorite',
+  messages: 'id++, sessionId, senderType, senderId, content, contentType, timestamp, isBlocked, isFavorite',
 
   // 6. 世界书词条库
   world_book_entries: 'id++, group, title, content, depth, isActive',
@@ -294,396 +1021,179 @@ db.version(10).stores({
   // 16. 全局深谈附加提示词预设表
   deeptalk_presets: 'id++, name',
 
-  // 17. === Version 9 朋友圈系统专属数据表 ===
+  // 17. 朋友圈系统主动态表
   moments: 'id++, userId, senderType, senderId, timestamp',
+
+  // 18. 朋友圈评论与点赞表
   moment_comments: 'id++, momentId, senderType, senderId, timestamp',
+
+  // 19. 朋友圈时间流与巡航控制表
   moment_settings: 'id++, userId',
 
-  // 18. === Version 10 新增 HTML 互动卡片存储表 ===
-  html_cards: 'id++, sessionId, timestamp'
+  // 20. HTML 互动卡片存储表
+  html_cards: 'id++, sessionId, timestamp',
+
+  // 21. === 独立悬浮多状态桌宠存储表 ===
+  desktop_pets: 'charId, mode',
+
+  // 22. === 阅读书城主书本表 (新增) ===
+  reader_books: 'id++, title, author, summary, coverUrl, isImported, fileType, currentChapterId, collected',
+
+  // 23. === 书城定制章节表 (新增) ===
+  reader_chapters: 'id++, bookId, chapterNum, [bookId+chapterNum]',
+
+  // 24. === 书籍分类个性标签表 (新增) ===
+  reader_tags: 'id++, name',
+
+  // 25. === 智能写书提示词模板预设表 (新增) ===
+  reader_presets: 'id++, name, prompt'
 });
 ```
 
 ---
 
-## 4. 长周期记忆 RAG 检索与深谈闪念提取数据流向
+## 4. 悬浮多状态桌宠与真机系统级交互机制
 
-### 4.1 长周期记忆 RAG 检索召回
-```
-[用户在主聊天发送消息] ──> 获取其文本 latestUserMsgText
-                               │
-                               ▼
-                    retrieveSummaries(sessionId, latestUserMessageText)
-                               │
-                               ├──> 1. 读取最后 5 条总结
-                               └──> 2. 匹配 s.keywords，若 >20 轮则均匀 RAG 跨度抽取 20 条
-                               │
-                               ▼
-                    [合并并转为 Text 格式]
-                               │
-                               ▼
-               segments.push({ depth: -600, content: 记忆总结 }) ──> 拼入 Global System Prompt
-```
+### 4.1 角色跟随与配置隔离 (IndexedDB 状态存储)
+*   **设计原则**：每个角色拥有专属的桌宠动作图组和行为配置。桌宠的状态读取以 IndexedDB 中的 `desktop_pets` 表作为唯一媒介，**彻底弃用 LocalStorage 的 5MB 受限配额**，避免多角色图片 Base64 堆叠引发的溢出崩溃。
+*   **激活逻辑**：系统只允许一个桌宠在桌面上处于活跃状态。当开启 A 角色的桌宠时，B 角色桌宠被自动设置为不启用状态；即使在应用内切换至其他角色的聊天页面，**A 角色的真机悬浮窗依然平稳悬浮在系统桌面和 launcher 之上**，实现了彻底的激活态开关隔离。
 
-### 4.2 深谈思想闪念截获
-```
-[深谈空间 AI 回复] ──> 正则匹配 /\[THOUGHT\]([\s\S]*?)\[\/THOUGHT\]/i
-                             │
-                             ├──> 命中的思想内容：直接写入 db.deeptalk_thoughts (小宇宙)
-                             │
-                             ▼
-                    将 [THOUGHT] 标识符从文本中替换抹除 ──> 写入 db.deeptalk_messages
-                             │
-                             ▼
-                    重绘卡片 (deeptalk-card 只渲染纯净内心剖白文本)
-```
+### 4.2 桌宠 9 种多动作状态定义
+系统内置并强制对齐以下 9 种典型的二次元/拟真动作状态：
+1. `default` (初始化)：无动作或平稳呼吸。
+2. `happy` (开心)：大喜、雀跃状态。
+3. `sad` (难过)：失落、低头。
+4. `angry` (生气)：赌气、叉腰。
+5. `hesitant` (犹豫)：疑惑、歪头。
+6. `wash` (洗漱)：刷牙、梳妆。
+7. `eat` (吃饭)：吞咽、下午茶。
+8. `sleep` (睡觉)：闭眼、吐泡泡。
+9. `watch` (看着你)：注视、凝望。
 
-### 4.3 HTML 互动卡片生成与零写入清洗流
-```
-[HTML构建请求] ──> 提取 Global System Prompt + HTML编译专有提示词 
-                        │
-                        ▼
-           大模型返回带有多余Conversational说明的源码
-                        │
-                        ▼
-           1. 原始数据 100% 完整保留入库 [db.html_cards] (防损坏备份)
-           2. 运行时清洗 [cleanedCardIds.add(id)] ──> extractCleanHtml() ──> Iframe.srcdoc 
-```
+### 4.3 自定义对话模式 (台词加权随机)
+在自定义模式下，用户可为 9 种状态分配 `0-100` 的**出现概率权重**，并在每个状态下方配置多行专属台词。桌宠在双击或空闲触发时，会采用高动态随机加权算法选定一种状态切换图片，并随机抓取该状态下的一行台词通过原生 TextView 气泡展现。
 
-### 4.4 主线剧情引擎剧本引导流
+### 4.4 实时生成模式 (大模型动作控制)
+当设定为实时生成模式，悬浮窗在双击时会展示“思考中...”，并在后台静默对 API 预设发起 completions 请求。大语言模型会扮演当前桌宠的性格背景，并在回复的最后一行强制追加状态标记：
+```text
+(对白内容...)
+[PET_STATE]状态名称
 ```
-[输入框填入环境约束] ──> sessions.update(plotRequirement)
-                              │
-                              ▼
-           buildGlobalSystemPrompt(sessionId) [提示词汇集期]
-                              │
-               -480 深度优先注入大纲 ──> 合并输出 System Prompt
-                              │
-                              ▼
-           大模型回复顺从此大纲约束 ──> 平滑演进
-```
+大手机前端拦截器捕获该标志后，会瞬时完成文字气泡展现和桌宠图片状态的物理跳转。
 
-### 4.5 自研 PWA 视觉提示、自定义 Dialog 与 API 请求中断控制流
-
-#### PWA 自研对话框设计
-为了彻底剥离浏览器自带的 `alert`、`confirm` 和 `prompt` 灰色弹窗对 PWA 扮演应用沉浸感的破坏，系统在 `app_chat.js` 中构建了一套高发光、微发散的轻量卡片式 Dialog 以及 Toast 提示机制。
-
-#### 接口定义：
-*   `showToast(msg, duration)`: 在底部 120px 处，渲染具有半透明磨砂质感（`rgba(0,0,0,0.8)`）的悬浮提示条，动画结束会自动卸载。
-*   `showCustomAlert(title, message, callback)`: 生成全屏淡入遮罩，展示具体的故障及操作提醒，附带单确定按钮。
-*   `showCustomConfirm(title, message, onConfirm, onCancel)`: 自定义卡片确认框。
-*   `showCustomPrompt(title, defaultValue, callback)`: 卡片式数值输入对话框，常用于钱包充值与提现。
-
-#### AbortController 中断网络与状态切换流：
-```
-[点击获取回复 (✨)] ──> 创建 AbortController ──> 注入 fetch(..., { signal }) 
-                             │
-                             ├──> 1. 按钮图标切换为浅红停止方块
-                             └──> 2. 页头显示 header-typing 正在打字中...
-                             │
-[再次点击(点击停止)] ──> 执行 onlineAbortController.abort() 
-                             │
-                             ├──> 1. 瞬时切断 Fetch 网络请求
-                             ├──> 2. 中断页头 typing，按钮还原为闪烁星
-                             └──> 3. 拦截 AbortError 错误并抛出 Toast「当前请求已终止」
-```
-
-#### 两阶段长按弹性反馈手势流：
-为了提供真实的物理回弹与按压深度反馈，长按手势（Bubble Long-press）采用如下双定时器方案：
-```
-[手指按住气泡 (touchstart)] ──> 启动 bubbleScaleTimer (1000ms) ──> 启动 bubbleLongPressTimer (1300ms)
-                                     │                                      │
-                                     ▼                                      ▼
-                        [达 1000ms：气泡缩紧]                     [达 1300ms：触发完成]
-                        添加 .bubble-longpressing class         还原气泡大小，弹出 Emoji 贴图选择器
-                        (scale 0.95 平滑回弹动效)
-                                     │
-                        [按压不足 1000ms 松手 (touchend)]
-                                     │
-                                     ▼
-                        直接 clearTimeout 两个定时器，气泡无变化，响应正常双击
-```
+### 4.5 真机系统级双击手势与跨进程反向唤醒
+*   **手势位移过滤算法**：为了防止手指拖拽悬浮窗时误触发双击，在 Kotlin `bindOverlayTouchListener` 中计算了按下（Down）与抬起（Up）之间的坐标位移差。**只有位移差小于 15px 且两次点击间隔小于 350ms 时**，才确认为双击交互。
+*   **不打扰静默执行**：用户在手机系统桌面上双击桌宠时，App 不需要频繁强行蹦到前台（这会造成极不连贯的跳出感）。原生端通过 `evaluateJavascript` **直接在后台静默执行 JS 引擎逻辑**，实现完美的后台放歌、气泡冒泡和 AI 计算交互。
 
 ---
 
-## 5. 无限拓展开发蓝图（Where & How to Add Features）
+## 5. JS 独立高精度后台定时发信调度引擎
 
-### 蓝图 A：添加新数据库表 / 字段 (数据持久层拓展)
+### 5.1 WebView 后台冷冻局限与保活心跳
+由于 Android OS 深度的省电和隐私策略，当 App 进入后台时，WebView 的 CPU 分配会被严厉降频，甚至使 `setInterval` 定时器彻底处于冻结状态。
+*   **特权破沙箱方案**：在后台主动发信开启时，通过 Kotlin 调起 **`McpForegroundService` 前台服务**，并在真机上显示低能耗的“叙事诗保活通知”。这会强行将 App 的优先级提高到前台，阻止 OS 对 WebView 的冷冻，保障 JS 心跳线程即使在息屏、锁屏状态下依然能够精准跳动。
 
-#### 开发诉求
-我想在数据库里新增一个表（例如 `favorites_folder`），或者给 `sessions` 会话表新增一个属性。
-
-#### 开发路径
-1.  **修改数据库 schema**：
-    打开 `db.js`。将版本号升级（如 `db.version(11)`），并在 stores 里定义您的新表结构。
-2.  **防止备份损坏 (极其重要！)**：
-    任何新增的数据库表**必须手动在备份体系中注册**。
-    打开 `app_settings.js`：
-    *   在 `computeStorageUsage()` 函数的 `totalRecords` 累加和 `fullDataObj` 中**加入新表**，避免容量统计遗漏。
-    *   在 `exportBackup()` 导出的 `rawBackup` 结构体中，加入新表的导出逻辑：
-        ```javascript
-        favorites_folder: await db.favorites_folder.toArray(),
-        ```
-    *   在 `importBackup()` 导入还原时的事务拦截区中，加入清空并写入新表的事务。**不加入的话，事务在检测到未声明表时会抛出空指针，导致数据还原彻底假死**：
-        ```javascript
-        await db.transaction('rw', [
-          db.api_presets, ..., db.favorites_folder // 声明 RW 锁，包含所有相关表
-        ], async () => {
-          if (data.favorites_folder) {
-            await db.favorites_folder.clear();
-            await db.favorites_folder.bulkAdd(data.favorites_folder);
-          }
-        });
-        ```
-
----
-
-### 蓝图 B：在桌面添加一个新应用图标/弹出窗口 (UI & 桌面层拓展)
-
-#### 开发诉求
-我想增加一个“日记本”应用，点击图标后，屏幕从下方弹出一个属于它的二级滑入日记本窗口。
-
-#### 开发路径
-1.  **在配置表注册应用**：
-    打开 `app_desktop.js`。在 `DESKTOP_APPS_CONFIG` 变量中追加应用 ID 与默认 SVG 图标代码。同时在 `openAddSelector()` 的 `appsList` 数组中写入应用 ID，以允许在长按添加面板中能正确重新添加。
-2.  **在 HTML 中编写应用 DOM 窗口**：
-    打开 `index.html` 的 `#app-window-container` 内部，追加应用全屏弹出窗 HTML 结构。其 ID 必须符合 `win-[appId]` 的规范，以便桌面引擎调用 `openApp` 自动捕获：
-    ```html
-    <div id="win-diary" class="app-window">
-      <header class="win-header">
-        <button class="btn-icon" onclick="closeApp('diary')">
-          <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
-        </button>
-        <h3 style="position: absolute; left: 50%; transform: translateX(-50%); font-size: 16px; font-weight: 700; pointer-events: none;">我的日记</h3>
-        <div style="width:40px;"></div>
-      </header>
-      <div class="win-body">
-        <!-- 编写应用自己的内容 -->
-      </div>
-    </div>
-    ```
-3.  **隔离原则规范（极高优先级）**：
-    日记本内部若有独立的绝对定位遮罩或详情侧滑面板，**绝对不能写在 `index.html` 根节点的 body 底部**！它们必须作为子节点放置在 `#win-diary` 这个主要的 App 容器内部。
-4.  **初始化事件绑定**：
-    新建一个独立的 `app_diary.js` 文件，并在 `index.html` 底部引入。在 `app_desktop.js` 的 `openApp` 里挂载初始化生命周期：
-    ```javascript
-    // app_desktop.js -> openApp()
-    if (app === 'diary' && typeof initDiaryApp === 'function') initDiaryApp(); // 懒加载初始化事件
-    ```
-
----
-
-### 蓝图 C：在聊天底栏展开项加号中增加一个交互功能 (聊天应用层拓展)
-
-#### 开发诉求
-我想在聊天加号面板上加一个“投掷硬币（Coin Flip）”按键，点击后发送一轮投掷硬币的交互。
-
-#### 开发路径
-1.  **在 HTML 面板中增加按钮**：
-    打开 `index.html` 的加号常用功能分页区（`#chat-expand-panel` 内的 `.expand-page` 中），追加按键 DOM。为新功能分配唯一的 `id`（例如：`id="btn-chat-coin"`）。
-    *   *排版优化注意*：第二页底部的小圆点指示器必须在 `DOMContentLoaded` 时绑定点击跳转监听，确保 PC 鼠标操作能顺畅点按页码。
-2.  **创建闭环自注册脚本**：
-    新建 `app_chat_coin.js`，通过双层自注册机制防御性地在脚本就位时即时监听点击。**禁止将交互窗口写在全局 body 底端，必须嵌套收纳于 win-chat 容器中**。
-3.  **在大模型对齐中注册提示词分支**：
-    在 `app_prompts.js` 的 `PROMPT_TEMPLATES` 线上聊天规则中写入对硬币结果类型的识别说明，让 AI 能够针对投掷出的正反面展开合乎人设的对白反馈。
-
----
-
-### 蓝图 D：在 Service Worker 中增加离线资源缓存 (PWA 线程层拓展)
-
-#### 开发诉求
-我新增了一个脚本或样式文件，需要应用在完全离线模式下能够正常开启并渲染。
-
-#### 开发路径
-打开 `sw.js` 文件，找到其缓存资源列表 `ASSETS`，将资源路径以 `./` 相对路径写入该数组。同时，为了强制让现役浏览器卸载旧版的 Service Worker 缓存，必须手动向上递增并升级 `CACHE_NAME` 版本标识符：
-
+### 5.2 独立发信时间片轮询算法
+系统在 JavaScript 端运行一个每 30 秒执行一次的**高精度全局发信调度器（Ticker）**：
 ```javascript
-// sw.js 
-const CACHE_NAME = 'story-phone-v13'; // 升级版本号，强推热更新
-
-const ASSETS = [
-  './index.html',
-  ...
-  './app_chat_plot_engine.js', // 必须写入 ASSETS 中，浏览器安装（install）时才会拉取此资源写入离线 Cache 容器
-  './chat_html.css'
-];
+const lastTrigger = parseInt(localStorage.getItem(`mcp_last_msg_time_${charId}`));
+if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
 ```
+调度器逐个检索配置了自动发信的角色，**各角色发信间隔完全物理分离，互不干扰**（如角色 A 设置 10 分钟，角色 B 设置 2 分钟）。相比之前 Kotlin 层的单一硬编码轮询，该方案完美满足了多角色社交拟真深度要求。
+
+### 5.3 携带世界书与长 RAG 记忆的高质量后台 Prompt 编译
+*   **智能编译升级**：之前 Kotlin 直接发送 HTTP 请求无法调用复杂的 JS 数据。重构后的 JS 后台发信引擎，能够**完全读取并调用大手机最核心的 RAG 召回机制、记忆提炼模型与世界书词条挂载**。
+*   **指令注入**：调度器在触发自动发信时，会静默拼装深度为 `-490` 的主动开启话题指令，让大模型产生极其自然、富有生活感和思念意味的主动攀谈信息，彻底告别公式化的问候。
+
+### 5.4 联动真机通知与桌面冒泡的气泡可视链
+为了给用户提供完全无死角的“自动发信状态可视排查”，系统打通了完整的联动气泡链：
+*   **第一步：定时器启动** $\rightarrow$ 当前活跃的桌面桌宠头上会瞬时冒出 `“有人冒泡。”` 的系统气泡，代表 JS 调度已经就绪并正在向 API 发送网络请求，**直观排除了定时器冷冻或失效问题**。
+*   **第二步：消息生成并收到** $\rightarrow$ 此时若 App 处于后台，Kotlin 会直接向真机状态栏直推标准的**系统悬浮通知**（如：`A：“你睡了吗？”`），同时桌面桌宠头上的气泡会瞬间切换提示：`“有人来信。”`，构建起流畅而极其逼真的真机扮演闭环。
 
 ---
 
-## 6. 叙事诗小手机 逐文件技术功能详解 (Version 10 & 最新核心扩充)
+## 6. 网页/原生避让与防区双生桌宠消减机制
+
+### 6.1 “双生桌宠”视觉重叠痛点
+在 Hybrid (混合) App 中，如果系统悬浮窗（Native Window）处于显示状态，它会盖在所有应用程序（包括 PWA 自身）的头部。如果此时网页 DOM 也生成了 `#desktop-pet-container` 节点，用户就会在 App 的主界面上**同时看到两个重叠在一起的桌宠**，其中一个不可点击，体验极差。
+
+### 6.2 网页 DOM 节点物理级拦截与销毁
+大手机采取了**“彻底拔除网页 DOM”**的消减策略：
+*   **入口拦截**：在 `app_desktop_pet.js` 的 `createDomElements` 初始化阶段，进行环境嗅探。若检测到 `window.AndroidMCP` 存在（即运行在真机 APK 壳中），直接 `return`，在物理层面上根本不创建该 HTML 节点。
+*   **运行时销毁**：在 `renderPetToDesktop` 执行阶段，增加强防区判定。如发现任何因 WebView 异步延迟导致漏网创建的 DOM 桌宠，执行：
+    ```javascript
+    const container = document.getElementById("desktop-pet-container");
+    if (container) container.remove(); // 强制拔除销毁
+    ```
+    将所有渲染、手势拖拽、气泡冒泡权限 100% 交予真机系统窗口托管，彻底消除了双生重合的显示故障。
 
 ---
 
-### 6.1 数据库定义与网关：`db.js`
+## 7. 长周期记忆、深谈空间与协同组件剖析
 
-#### 6.1.1 文件职责
-*   系统本地持久化存储（IndexedDB）的总入口。利用 Dexie.js 建立事务级读写连接，声明数据库结构，在 **Version 10** 中增加了自动总结、深谈对话、小宇宙闪念、深谈全局预设、朋友圈组件，以及全新的 `html_cards` 物理表。
+### 7.1 会话总结与长久记忆库 (`app_summary_memory.js`)
+*   **长周期记忆提炼**：通过后台静默扫描，大手机会自动切割对话轮次。在对话达到阈值（如 10 轮）且排除最后 5 轮（保护当前短期语境）后，向大模型发起合成总结。
+*   **RAG 模糊检索召回**：提炼出的总结记录（带 Keywords 热词）会持久化在 `summaries` 表中。在主聊天用户输入新消息时，系统会执行 RAG 检索，将匹配到的历史总结平铺成长期记忆并注入 System Prompt 深度 `-600` 位置，赋予角色长周期的稳定记忆力。
 
----
+### 7.2 深度对话剖析空间 (`app_deeptalk.js`)
+*   **内心质询舱**：深谈是独立于主会话的剖析空间，采用优雅的 `scroll-snap` 强吸附卡片排版。用户可以配置“择选”对立执念，在对话中彻底剥离角色的社交面具。
+*   **内心闪念拦截**：深谈中 AI 的回复会包含特有的情绪标志：
+    ```text
+    [THOUGHT]真实的内心剖白和潜意识挣扎[/THOUGHT]
+    ```
+    前端引擎拦截此标签，将其替换抹除后，将纯净的台词上屏，而把 [THOUGHT] 中的短暂内心潜意识闪念写入 `deeptalk_thoughts`（小宇宙）中永久封存。
 
-### 6.2 全局提示词编译器：`app_prompts.js`
+### 7.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js`)
+*   **全功能组件生成**：支持根据会话语境，让 AI 编写出高度交互、带样式与完整 JS 交互的单文件 HTML 卡片（如迷你游戏、心率雷达图）。
+*   **零写入清洗视图**：支持一键在“原始文本视图”和“清洗后运行视图（Iframe 沙盒）”之间进行零写入双态切换。
+*   **代码维修舱**：在主会话下方注入 `#html-repair-overlay` 隔离空间。维修舱可载入 100% 原始代码并在输入时进行防抖实时沙盒渲染。
 
-#### 6.2.1 文件职责
-*   负责拼装、编译大模型的 System Prompt。将用户与角色的背景、关系描述、常驻/挂载世界书、时间流逝引擎、**核心长久记忆库（Core Memory）**以及**长周期 RAG 检索总结**，按照物理深度从低到高（由小到大）合并排序输出。
+### 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
+*   **最高优先级大纲控制**：剧情引导舱允许用户输入任意故事走向大纲。该大纲会作为高优控制指令，在 System Prompt 的深度 `-480` 原子化拼入模型头部，驱使大模型往特定矛盾冲突或态度演进方向推进。
 
-#### 6.2.2 核心函数
-*   `buildGlobalSystemPrompt(sessionId)`
-    *   **逻辑**：
-        1. 获取最近一条用户的线上发言文本，传入 `retrieveSummaries()` 提取长周期 RAG 记忆。
-        2. 获取 `sessions` 表中该会话绑定的核心长久记忆字段，转化为文本段落。
-        3. **主线剧情引擎拦截**：在深度 `-480` 原子化拼装 `sess.plotRequirement` 要求。
-        4. 进行时间随动（模拟或物理时间）计算。
-        5. 排序所有挂载的世界书条目并合并（深度低优先）。
+### 7.5 沉浸式旋转专注中枢与伴随音频流（`app_chat_focus.js` & `focus.css`）
+*   **Conic 指针物理旋转仪**：专注时钟摒弃了原生滑条，采用纯 Pointer Tracking 跟踪指针极角，平滑完成 $5\sim120$ 分钟的阻尼感微调，并将 Emojis 彻底重构为精致高透的 SVG 矢量图标。
+*   **真机伴随白噪音存储**：导入的 MP3 背景音乐和伴奏通过 Dexie 原生 Blob 直接关联到会话行中，绕过 Android 沙箱本地路径权限阻碍。并在 `visibilitychange: hidden` 切屏发生时直接暂停伴奏并弹出“继续”按钮，切回后实现静默恢复。
 
----
-
-### 6.3 桌面与拖拽物理手势引擎：`app_desktop.js`
-
-#### 6.3.1 文件职责
-*   桌面及 Dock 栏的网格排版渲染，代码小部件（Widget）的初始化执行与容灾注销。通过 Pointer Capture 技术构建不粘连、无阻滞的跟手拖拽引擎。
-
-#### 6.3.2 核心函数
-*   `initDragEvents()`
-    *   **逻辑**：基于 Pointer 物理手势监听。在 `pointermove` 趋势建立后，**将图标剪切挂载到 `document.body` 顶层层级**，彻底击穿 Dock 栏 backdrop-filter 导致的 Containing Block 偏移限制。通过 `elementFromPoint` 进行网格槽悬停探测，在 `pointerup` 阶段将图标移入新位置并自动存盘。
+### 7.6 自闭环 AI 伴读书城与多编码自愈引擎（`app_reader.js` & `reader.css`）
+*   **GBK 乱码自适应检测检测机制**：本地书籍导入置入了乱码字节探测，一旦前导译码发现 UTF-8 替代占位符 `\uFFFD`，立即强制中断并降级回退至 `GBK` 重新加载，实现自愈导入。
+*   **多维伴读书评气球 (Paragraph Reviews)**：双击正文段落可让真机悬浮窗绑定的 AI 角色越过沙盒界限，直接对书籍中的文字进行 50 字以内的第一人称暖心/毒舌吐槽评点，通过 TextView 气泡弹性展示。
 
 ---
 
-### 6.4 系统设置与高级备份：`app_settings.js`
+## 8. 无限拓展开发蓝图 (Where & How to Add Features)
 
-#### 6.4.1 文件职责
-*   配置中心。负责 API 渠道调测与模型在线获取、桌面背景壁纸上传与预览更新、不透明度控制、全局 CSS 热注入、组件工坊编译，以及数据无损大二进制 Base64 分区导入/导出。
+### 蓝图 A：新增高特权 Android 系统接口 (如操控真机摄像头拍照)
+1. **静态清单声明**：
+   在 `AndroidManifest.xml` 中追加物理权限申请：
+   ```xml
+   <uses-permission android:name="android.permission.CAMERA" />
+   ```
+2. **Activity 运行时授权申请**：
+   在 `MainActivity.kt` 的 `requestAppPermissions` 数组中并入：
+   ```kotlin
+   Manifest.permission.CAMERA
+   ```
+3. **编写 Kotlin 桥接方法**：
+   在 `AndroidMcp.kt` 中添加高特权 JavaScript 注入方法：
+   ```kotlin
+   @JavascriptInterface
+   fun takeSilentPhoto() {
+       // 控制 CameraX 在后台进行无快门声静默拍照并转为 Base64
+   }
+   ```
+4. **前端 JS 驱动与自愈防崩保护**：
+   在前端 JS 中通过非空判定进行调用，保障非真机 APK 环境下也能完美兼容防崩：
+   ```javascript
+   if (window.AndroidMCP && typeof window.AndroidMCP.takeSilentPhoto === 'function') {
+       window.AndroidMCP.takeSilentPhoto();
+   } else {
+       showToast("当前非真机环境，无法使用镜头拍照特权。");
+   }
+   ```
 
----
-
-### 6.5 档案库管理器：`app_archive.js`
-
-#### 6.5.1 文件职责
-*   用户、角色、NPC档案及双端社会关系网（Relations）的 CRUD 维护。通过内存对象 ObjectURL 避免 Base64 引起的内存阻塞，支持文件拖放/截图粘贴快速加载头像。
-
----
-
-### 6.6 世界书控制器：`app_world_book.js`
-
-#### 6.6.1 文件职责
-*   全局设定背景条目的 CRUD 管理。常驻分组词条提供滑动开关，开关状态将原子化即时同步至 `db.world_book_entries` 表中，以此决定是否参与 System Prompt 的编译注入。
-
----
-
-### 6.7 聊天消息与时序级联引擎：`app_chat.js`
-
-#### 6.7.1 文件职责
-*   微信式对话列表加载、仿真多媒体消息（语音/场景画面图片）与微信红包/转账卡片生成和领取逻辑。配合 `app_prompts.js` 的时间流逝，处理大模型防掉格式指令解析和时序分句级联打字上屏。集成两阶段长按缩紧回弹动效与 AbortController 实时 API 请求中断控制。
-
----
-
-### 6.8 HTML 互动舱与安全沙盒：`app_chat_html_widget.js`
-
-#### 6.8.1 文件职责
-*   **交互卡片组件中枢**。允许用户基于当前的对话上下文、世界书以及核心心智，编译输出完全独立、高度交互运行的单文件 HTML/CSS/JS 卡片。支持一键重绘清洗和源码维修舱二级物理阻隔空间。
-
----
-
-### 6.9 HTML 互动舱护眼样式：`chat_html.css`
-
-#### 6.9.1 文件职责
-*   **HTML 互动舱与代码维修舱专属样式**。采用护眼深石墨灰+优雅靛蓝科技感方案。将卡片的时间脚标移至卡片右下角，提供清爽规整的排版空间。
-
----
-
-### 6.10 主线剧情引导引擎：`app_chat_plot_engine.js`
-
-#### 6.10.1 文件职责
-*   **主线剧本控制中心**。提供剧情引导弹窗，将用户输入的走向约束写入 `db.sessions`。
-
----
-
-### 6.11 会话总结与长久记忆系统：`app_summary_memory.js`
-
-#### 6.11.1 文件职责
-*   **总结、记忆模块**。独立于主聊天逻辑，负责对长周期对话事件进行切割提炼，管理角色的核心记忆库，并在大模型请求前，执行基于关键词匹配与跨度采样平铺的长效记忆 RAG 召回。
-
----
-
-### 6.12 深度对话剖析空间：`app_deeptalk.js`
-
-#### 6.12.1 文件职责
-*   **深谈应用**。提供独立的全屏深谈探究空间，支持面具多角色无缝切换与数据隔离。集成卡片弹性回溯重回、手动闪念提取等核心机制。
-
----
-
-### 6.13 消息滑动引用引擎：`app_chat_quote.js`
-
-#### 6.13.1 文件职责
-*   为线上微信气泡提供 QQ 风格的“左滑引用”操作。
-
----
-
-### 6.14 心声与窥密组件：`app_status.js`
-
-#### 6.14.1 文件职责
-*   内心窥密自白卡片控制器。
-
----
-
-### 6.15 表情包挂载器：`app_sticker.js`
-
-#### 6.15.1 文件职责
-*   表情包单图/批量上传与词典映射管理。
-
----
-
-### 6.16 微信账务与交易网关：`app_wallet.js`
-
-#### 6.16.1 文件职责
-*   微信钱包零钱、消费账单的多态隔离维护，提现充值卡片 Dialog 模拟器生成，转账与红包的领取记账与防刷防穿透安全保护。
-
----
-
-### 6.17 PWA 离线线程：`sw.js` (Version 12 升级)
-
-#### 6.17.1 文件职责
-*   Service Worker 离线网络静态资源拦截层。支持离线资源的强制拉取、旧缓存彻底卸载、Origin 绕过等。
-
----
-
-### 6.18 界面样式矩阵：CSS 文件详解
-
-#### 6.18.1 系统主面板样式：`style.css`
-*   全面屏视口约束，自动适配异形屏和底部横条（iOS Home indicator）。
-
-#### 6.18.2 窗口与模态动画：`app.css`
-*   磨砂 `.active` 激活态三维阻尼缓动。
-
-#### 6.18.3 聊天与切签样式：`chat.css`
-*   微信仿真气泡、双击右键操作项展示、底栏极简网格。
-
-#### 6.18.4 深谈物理卡片样式：`deeptalk.css`
-*   深谈空间横向滑块容器 `scroll-snap` 强吸附对齐特性定义。
-
-#### 6.18.5 心声窥密样式：`status.css`
-*   脑电波跳跃、内心想法及暗黑隐藏心声渐变色块定义。
-
-#### 6.18.6 表情包管理：`sticker.css`
-*   表情包选择器触摸滚动层定义。
-
----
-
-### 6.19 主页面承载：`index.html`
-
-#### 6.19.1 文件职责
-*   全应用唯一主视图承载。包含了桌面的网格结构 `#desktop-grid`、底部小工具面板滑动页指示器圆点，以及所有二级 App 窗口，完成了电脑端点击导航圆点（Pagination Dots）的指针兼容。
-
----
-
-### 6.20 离线入口：`manifest.json`
-
-#### 6.20.1 文件职责
-*   声明 PWA 标准元数据，锁定竖屏（portrait）及强制剥离浏览器地址栏（standalone）。
-
----
-
-### 6.21 朋友圈业务控制器：`app_moments.js`
-
-#### 6.21.1 文件职责
-*   **朋友圈核心中枢**。承载朋友圈 Feed 流绘制、评论长按高亮、多级级联 AI 性格评赞反应、转发朋友圈卡片至单聊等全套微信社交链路，内置定时朋友圈自发巡航后台任务系统。
+### 蓝图 B：向 Dexie 中追加新物理表
+1. 打开 `db.js`。
+2. 将版本号升级（如从 `db.version(12)` 升级至 `db.version(13)`），并在 stores 里定义您的新表索引字段。
+3. **防止备份损坏**：任何新增的表，必须手动在 `app_settings.js` 的 `computeStorageUsage()` 记录累加、`exportBackup()` 的导出字段映射、以及 `importBackup()` 还原清空时的事务 RW 锁列表中进行同步声明，否则在进行 PWA 数据大备份还原时会遭遇事务空指针，引发页面假死。
+```

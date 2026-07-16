@@ -930,6 +930,22 @@ async function renderSessionList() {
 }
 
 // 展开单聊
+// 动态更新输入框锁定遮罩状态
+function updateChatInputLockState(sess) {
+  const normalInputRow = document.getElementById("normal-input-row");
+  const blockedByUserBar = document.getElementById("blocked-by-user-bar");
+  
+  if (!normalInputRow || !blockedByUserBar) return;
+  
+  if (sess && sess.isBlockedByUser === 1) {
+    normalInputRow.style.display = "none";
+    blockedByUserBar.style.display = "flex";
+  } else {
+    normalInputRow.style.display = "flex";
+    blockedByUserBar.style.display = "none";
+  }
+}
+
 async function openWeChatDialog(sessionId) {
   activeSessionId = sessionId;
   const sess = await db.sessions.get(sessionId);
@@ -945,6 +961,7 @@ async function openWeChatDialog(sessionId) {
   updateThemeColor("#ededed");
 
   exitMultiSelectMode();
+  updateChatInputLockState(sess);
   renderDialogMessages();
 }
 
@@ -1251,12 +1268,23 @@ async function renderDialogMessages() {
 
     const avatarUrl = m.senderType === 'user' ? userAvatarUrl : charAvatarUrl;
 
+    const blockedIconHtml = m.isBlocked === 1 ? `
+      <div class="msg-blocked-icon" style="color: #ef4444; display: flex; align-items: center; justify-content: center; margin: 0 4px; align-self: center; flex-shrink: 0;" title="消息未送达/对方已拒收">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10" fill="#fff" stroke="#ef4444"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </div>
+    ` : "";
+
     bubble.innerHTML = `
       <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'};">
         <input type="checkbox" class="msg-checkbox" data-msg-id="${m.id}" onchange="updateSelectedCount()">
       </div>
       <img class="msg-avatar" src="${avatarUrl}">
       ${contentHtml}
+      ${blockedIconHtml}
     `;
     fragment.appendChild(bubble);
   }
@@ -1561,12 +1589,23 @@ async function appendMessageToDOM(msg) {
     finalContentHtml = contentHtml.replace('class="msg-text"', 'class="msg-text" style="position: relative;"').replace('class="msg-sticker-alone-wrapper"', 'class="msg-sticker-alone-wrapper" style="position: relative;"') + emojiHtml;
   }
 
+  const blockedIconHtml = msg.isBlocked === 1 ? `
+    <div class="msg-blocked-icon" style="color: #ef4444; display: flex; align-items: center; justify-content: center; margin: 0 4px; align-self: center; flex-shrink: 0;" title="消息未送达/对方已拒收">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="10" fill="#fff" stroke="#ef4444"/>
+        <line x1="12" y1="8" x2="12" y2="12"/>
+        <line x1="12" y1="16" x2="12.01" y2="16"/>
+      </svg>
+    </div>
+  ` : "";
+
   bubble.innerHTML = `
     <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'};">
       <input type="checkbox" class="msg-checkbox" data-msg-id="${msg.id}" onchange="updateSelectedCount()">
     </div>
     <img class="msg-avatar" src="${avatarUrl}">
     ${finalContentHtml}
+    ${blockedIconHtml}
   `;
   container.appendChild(bubble);
   container.scrollTop = container.scrollHeight;
@@ -1758,6 +1797,96 @@ function bindChatAppEvents() {
   if (isChatAppEventsBound) return;
   isChatAppEventsBound = true;
 
+  // 绑定快捷封锁警告栏操作按钮
+  const btnUnblockDirect = document.getElementById("btn-unblock-char-direct");
+  if (btnUnblockDirect) {
+    btnUnblockDirect.onclick = async () => {
+      await db.sessions.update(activeSessionId, { isBlockedByUser: 0, blockByUserReason: "" });
+      showToast("已解除拉黑");
+      const updatedSess = await db.sessions.get(activeSessionId);
+      updateChatInputLockState(updatedSess);
+      
+      const btnDetailsBlockChar = document.getElementById("btn-details-block-char");
+      if (btnDetailsBlockChar) btnDetailsBlockChar.innerText = "拉黑对方";
+    };
+  }
+
+  const btnForceReplyDirect = document.getElementById("btn-force-reply-direct");
+  if (btnForceReplyDirect) {
+    btnForceReplyDirect.onclick = () => {
+      const btnReply = document.getElementById("btn-dialog-reply");
+      if (btnReply) btnReply.click();
+    };
+  }
+
+  // 专属设置页底端三大破坏性功能按钮事件绑定
+  const btnDetailsClearRecords = document.getElementById("btn-details-clear-records");
+  if (btnDetailsClearRecords) {
+    btnDetailsClearRecords.onclick = () => {
+      showCustomConfirm("清空记录", "确定要清空该对话下的所有内容吗？\n\n这将彻底抹除本单聊下的所有线上消息、线下对白、阶段总结、历史约会存档，操作不可恢复！", async () => {
+        await db.messages.where('sessionId').equals(activeSessionId).delete();
+        await db.offline_messages.where('sessionId').equals(activeSessionId).delete();
+        await db.summaries.where('sessionId').equals(activeSessionId).delete();
+        await db.sessions.update(activeSessionId, {
+          coreSelfStatus: "",
+          coreSelfPurpose: "",
+          coreSelfChanges: "",
+          coreRelationship: "",
+          coreUserInEyes: "",
+          isBlockedByUser: 0,
+          blockByUserReason: "",
+          isBlockedByChar: 0,
+          blockByCharReason: ""
+        });
+        
+        showToast("该会话下的所有物理关联数据已彻底抹除");
+        closeChatDetails();
+        renderDialogMessages();
+        const updatedSess = await db.sessions.get(activeSessionId);
+        updateChatInputLockState(updatedSess);
+      });
+    };
+  }
+
+  const btnDetailsDeleteSession = document.getElementById("btn-details-delete-session");
+  if (btnDetailsDeleteSession) {
+    btnDetailsDeleteSession.onclick = () => {
+      showCustomConfirm("删除对话", "确定要彻底删除该对话及其中包含的所有对白消息与环境设定吗？此操作不可逆！", async () => {
+        await db.messages.where('sessionId').equals(activeSessionId).delete();
+        await db.offline_messages.where('sessionId').equals(activeSessionId).delete();
+        await db.summaries.where('sessionId').equals(activeSessionId).delete();
+        await db.sessions.delete(activeSessionId);
+        
+        showToast("对话已成功彻底注销并抹除");
+        closeChatDetails();
+        closeChatDialog();
+      });
+    };
+  }
+
+  const btnDetailsBlockChar = document.getElementById("btn-details-block-char");
+  if (btnDetailsBlockChar) {
+    btnDetailsBlockChar.onclick = async () => {
+      const sess = await db.sessions.get(activeSessionId);
+      if (sess.isBlockedByUser === 1) {
+        await db.sessions.update(activeSessionId, { isBlockedByUser: 0, blockByUserReason: "" });
+        btnDetailsBlockChar.innerText = "拉黑对方";
+        showToast("已成功解除对对方的拉黑状态");
+        const updatedSess = await db.sessions.get(activeSessionId);
+        updateChatInputLockState(updatedSess);
+      } else {
+        showCustomPrompt("请输入拉黑对方的具体原因", "对方频繁无理取闹，暂时拉黑处理", async (reason) => {
+          if (!reason) return;
+          await db.sessions.update(activeSessionId, { isBlockedByUser: 1, blockByUserReason: reason });
+          btnDetailsBlockChar.innerText = "解除拉黑";
+          showToast("已成功将对方拉黑");
+          const updatedSess = await db.sessions.get(activeSessionId);
+          updateChatInputLockState(updatedSess);
+        });
+      }
+    };
+  }
+
   // 绑定自定义消息编辑框控制
   const btnCloseEditModal = document.getElementById("btn-close-edit-modal");
   const btnCancelEditModal = document.getElementById("btn-cancel-edit-modal");
@@ -1784,6 +1913,38 @@ function bindChatAppEvents() {
       }
       closeCustomEditModal();
     };
+  }
+
+  const btnFocusTrigger = document.getElementById("btn-chat-focus");
+  if (btnFocusTrigger) {
+    // 彻底清空常规 onclick，防范单点事件冲突
+    btnFocusTrigger.onclick = null;
+
+    // 使用捕获模式（true）抢先拦截，斩断外部通用监听器冒泡
+    btnFocusTrigger.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      console.log("专注中枢事件截获成功，正在唤起面板...");
+
+      const expandPanel = document.getElementById("chat-expand-panel");
+      if (expandPanel) expandPanel.classList.remove("active");
+
+      const setupWin = document.getElementById("win-focus-setup");
+      if (setupWin) {
+        setupWin.classList.add("active");
+        if (window.focusSpaceSystem && typeof window.focusSpaceSystem.loadSetupScreen === 'function') {
+          window.focusSpaceSystem.loadSetupScreen();
+        } else {
+          console.warn("专注空间主系统尚未载入完毕，执行100ms延时自愈启动...");
+          setTimeout(() => {
+            if (window.focusSpaceSystem && typeof window.focusSpaceSystem.loadSetupScreen === 'function') {
+              window.focusSpaceSystem.loadSetupScreen();
+            }
+          }, 100);
+        }
+      }
+    }, true);
   }
 
   const btnNewChat = document.getElementById("btn-new-chat");
@@ -1998,6 +2159,31 @@ function bindChatAppEvents() {
 
         // 核心消除：自动擦除大模型在对白中误编或幻觉出来的 [MSG_ID: xxx] 标签
         rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+
+        // === 智能高精拉黑与解除拉黑指令高自愈性解析器（全/半角英文或中文括号均可） ===
+        const charBlockRegex = /(\[|【)(BLOCK|拉黑)\s*[:：]\s*([^\]】\n]+)(\]|】)/i;
+        const charUnblockRegex = /(\[|【)(UNBLOCK|解除拉黑)(\]|】)/i;
+
+        const blockMatch = rawReply.match(charBlockRegex);
+        if (blockMatch) {
+          const reason = blockMatch[3].trim();
+          await db.sessions.update(activeSessionId, {
+            isBlockedByChar: 1,
+            blockByCharReason: reason
+          });
+          rawReply = rawReply.replace(charBlockRegex, "").trim();
+          showToast(`对方（${originalTitle}）拉黑了你。原因：${reason}`);
+        }
+
+        const unblockMatch = rawReply.match(charUnblockRegex);
+        if (unblockMatch) {
+          await db.sessions.update(activeSessionId, {
+            isBlockedByChar: 0,
+            blockByCharReason: ""
+          });
+          rawReply = rawReply.replace(charUnblockRegex, "").trim();
+          showToast(`对方（${originalTitle}）已解除对你的拉黑`);
+        }
 
         // === Char (AI) 撤回消息处理 ===
         const recallRegex = /[\[【](RECALL|撤回|撤回消息)(?:\s*:\s*(\d+))?[\]】]/i;
@@ -2541,6 +2727,13 @@ if (btnDialogDetails) {
       document.getElementById("details-multimedia-toggle").checked = !!sess.multimediaToggle;
       document.getElementById("details-allow-recall-toggle").checked = !!sess.allowCharRecall;
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
+      document.getElementById("details-allow-char-block").checked = !!sess.allowCharToBlock;
+
+      // 更新拉黑状态按钮文本
+      const btnDetailsBlockChar = document.getElementById("btn-details-block-char");
+      if (btnDetailsBlockChar) {
+        btnDetailsBlockChar.innerText = sess.isBlockedByUser === 1 ? "解除拉黑" : "拉黑对方";
+      }
       
       const timeToggle = document.getElementById("details-time-toggle");
       // 核心修复：用 !== 0 表达式，精准阻断 0 的宽松映射，锁定详情页自定义关闭状态
@@ -2635,6 +2828,7 @@ if (btnSaveDetails) {
     const timePerceptionToggle = document.getElementById("details-time-toggle").checked;
     const allowCharRecall = document.getElementById("details-allow-recall-toggle").checked;
     const allowCharReaction = document.getElementById("details-allow-reaction-toggle").checked;
+    const allowCharToBlock = document.getElementById("details-allow-char-block").checked;
 
     const timeData = {
       year: parseInt(document.getElementById("details-time-year").value) || 2026,
@@ -2657,6 +2851,7 @@ if (btnSaveDetails) {
       timePerceptionToggle: timePerceptionToggle ? 1 : 0,
       allowCharRecall: allowCharRecall ? 1 : 0,
       allowCharReaction: allowCharReaction ? 1 : 0,
+      allowCharToBlock: allowCharToBlock ? 1 : 0,
       customTimeData: JSON.stringify(timeData),
       customTimeSavedAt: Date.now() // 核心写入：场景自定义时间的物理起始基准时间戳
     });
@@ -2673,13 +2868,16 @@ if (btnSaveDetails) {
 }
 
 async function saveAndRenderMessage(senderType, content, contentType = 'text') {
+  const sess = await db.sessions.get(activeSessionId);
+  const isBlocked = (senderType === 'user' && sess?.isBlockedByChar === 1) || (senderType === 'char' && sess?.isBlockedByUser === 1) ? 1 : 0;
   const msg = {
     sessionId: activeSessionId,
     senderType,
     senderId: senderType === 'user' ? Number(activeUserPersonaId) : 0,
     content,
     contentType,
-    timestamp: Date.now()
+    timestamp: Date.now(),
+    isBlocked: isBlocked
   };
   msg.id = await db.messages.add(msg);
   await appendMessageToDOM(msg);
@@ -3288,12 +3486,76 @@ async function saveOfflineDetails() {
   closeOfflineDetails();
 }
 
+// 高自愈格式化多维度文本标签或 JSON 块解析提取器
+function parseClassificationText(rawText, formatChoice) {
+  let items = [];
+  if (formatChoice === "json") {
+    try {
+      let cleaned = rawText.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
+      try {
+        items = JSON.parse(cleaned);
+      } catch (err) {
+        cleaned = cleaned.replace(/,\s*([\]}])/g, '$1');
+        if (!cleaned.startsWith('[') && cleaned.includes('{')) cleaned = '[' + cleaned;
+        if (!cleaned.endsWith(']') && cleaned.includes('}')) cleaned = cleaned + ']';
+        items = JSON.parse(cleaned);
+      }
+    } catch (e) {
+      try {
+        let cleaned = rawText.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
+        const regex = /\{\s*"category"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*"([^"]+)"(?:\s*,\s*"keywords"\s*:\s*(\[[^\]]*\]))?\s*\}/gi;
+        let match;
+        while ((match = regex.exec(cleaned)) !== null) {
+          const category = match[1];
+          const content = match[2];
+          let keywords = [];
+          if (match[3]) {
+            try { keywords = JSON.parse(match[3]); } catch(err) {}
+          }
+          items.push({ category, content, keywords });
+        }
+      } catch (regexErr) {}
+    }
+  } else {
+    try {
+      const normalized = rawText
+        .replace(/【/g, '[').replace(/】/g, ']')
+        .replace(/［/g, '[').replace(/］/g, ']')
+        .replace(/：/g, ':')
+        .replace(/，/g, ',');
+      const sections = normalized.split(/\[(情感需求|事实记忆|核心记忆)\]/gi);
+      for (let i = 1; i < sections.length; i += 2) {
+        const catName = sections[i].trim();
+        const block = sections[i + 1] || "";
+        let category = 'factual';
+        if (catName.includes('情感')) category = 'emotional';
+        else if (catName.includes('核心')) category = 'core';
+        let content = "";
+        let keywords = [];
+        const contentMatch = block.match(/内容\s*:\s*([^\n]+)/i);
+        if (contentMatch) content = contentMatch[1].trim();
+        const kwMatch = block.match(/关键词\s*:\s*([^\n]+)/i);
+        if (kwMatch) {
+          keywords = kwMatch[1].split(',').map(k => k.trim()).filter(Boolean);
+        }
+        if (content) {
+          items.push({ category, content, keywords });
+        }
+      }
+    } catch (textErr) {}
+  }
+  if (!Array.isArray(items) || items.length === 0) {
+    items = [{ category: 'factual', content: rawText, keywords: ["线下约会", "见面回顾"] }];
+  }
+  return items;
+}
+
 // 结束赴约模式 (赴约模式专属记忆回写与长效记忆库存储同步)
 async function endAppointment() {
-  showCustomConfirm("结束赴约", "确定要结束当前的线下赴约吗？\n\n系统将自动根据当前的总结系统提示词生成一段经历总结，并无缝注入角色心智，成为后续长效记忆的一部分。", async () => {
+  showCustomConfirm("结束赴约", "确定要结束当前的线下赴约吗？\n\n系统将自动根据当前的总结系统提示词与分类协议进行多维度总结，并无缝注入角色心智，成为后续长效记忆的一部分。", async () => {
     const header = document.getElementById("offline-chat-title");
     header.classList.add("header-typing");
-    header.innerText = "正在记忆同步中...";
+    header.innerText = "正在多维总结中...";
 
     try {
       const presetId = localStorage.getItem("global_api_preset_id");
@@ -3322,57 +3584,112 @@ async function endAppointment() {
         dialogText += `[${sender}]: ${m.content}\n`;
       });
 
-      const summaryPromptTemplate = sess.summarySystemPrompt || "以第三人称视角，按照时间顺序总结发生的所有事件，不允许有任何感情色彩，不超过150字。";
+      const formatChoice = localStorage.getItem("summary-format-choice") || "json";
+      let systemPrompt = "";
 
-      const summaryPrompt = `请对以下发生的线下约会场景与白描对话经历进行深度、简练的总结。
-  总结要求：
-  1. 依照规范执行总结："${summaryPromptTemplate}"
-  2. 此总结将被永久保留在该角色的“长久记忆库”中，供后续检索召回。
+      if (formatChoice === "json") {
+        systemPrompt = `你是一个长周期记忆整合引擎。请对以下发生的线下对话/白描轮次进行碎片化总结，并严格归入以下三个模块分类：
+- "emotional": 情感需求（角色或用户在对话中表现出的深层情感渴望、心理脆弱点或防御机制，不超过80字）
+- "factual": 事实记忆（发生的重要事件细节、提及的时间、数字、物理背景，不超过80字）
+- "core": 核心记忆（涉及长线关系转变、核心认知改变、重大转折性共识，不超过80字）
 
-  ---
-  线下对话原文：
-  ${dialogText}
-  ---`;
+【输出格式控制】：请直接且仅返回以下格式的 JSON 数组（不要包含任何 Markdown 标识符如 \`\`\`json 块）：
+[
+  {"category": "emotional", "content": "情感碎片内容", "keywords": ["词1", "词2"]},
+  {"category": "factual", "content": "事实碎片内容", "keywords": ["词1"]},
+  {"category": "core", "content": "核心碎片内容", "keywords": ["词1"]}
+]
+
+---
+线下对话原文：
+${dialogText}`;
+      } else {
+        systemPrompt = `你是一个长周期记忆整合引擎。请对以下发生的线下对话/白描轮次进行碎片化总结，并严格归入以下三个模块分类（如果没有对应分类内容可省略该块）。请直接按照以下文字标签块格式输出（不要包含 Markdown 代码块）：
+
+[情感需求]
+内容：情感需求具体总结描述（不超过80字）
+关键词：词1, 词2
+
+[事实记忆]
+内容：事实事件具体总结描述（不超过80字）
+关键词：词1, 词2
+
+[核心记忆]
+内容：核心转变具体总结描述（不超过80字）
+关键词：词1, 词2
+
+---
+线下对话原文：
+${dialogText}`;
+      }
 
       const response = await fetch(`${api.url}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
         body: JSON.stringify({
           model: api.model,
-          messages: [{ role: "user", content: summaryPrompt }],
-          temperature: 0.5
+          messages: [{ role: "user", content: systemPrompt }],
+          temperature: 0.3
         })
       });
 
       if (!response.ok) throw new Error("API 总结调用失败");
 
       const result = await response.json();
-      const summaryContent = result.choices[0].message.content.trim();
+      const rawSummaryText = result.choices[0].message.content.trim();
+
+      // 解析生成碎片集合
+      const items = parseClassificationText(rawSummaryText, formatChoice);
 
       // 1. 无缝回写长期角色记忆
       const currentPersona = sess.customCharPersona || char?.persona || "";
-      const updatedPersona = `${currentPersona}\n\n【线下共同经历记忆（结束赴约时同步注入）：\n${summaryContent}】`;
+      let summariesMemo = "";
+      items.forEach(item => {
+        summariesMemo += `\n- [线下经历-${item.category}]: ${item.content}`;
+      });
+      const updatedPersona = `${currentPersona}\n\n【线下共同经历多维记忆（结束赴约时同步注入）：${summariesMemo}\n】`;
 
       await db.sessions.update(activeSessionId, {
         customCharPersona: updatedPersona
       });
 
-      // 2. 将线下总结无缝写入 summaries 记忆数据库中，支持长周期模糊召回！
-      await db.summaries.add({
-        sessionId: activeSessionId,
-        startRound: 1,
-        endRound: msgs.length,
-        content: `[线下赴约共同经历记忆]：` + summaryContent,
-        keywords: JSON.stringify(["线下见面", "赴约约会", charName]),
-        timestamp: Date.now()
-      });
+      // 2. 存储原始只读消息数据作为存档
+      const archiveMsgData = msgs.map(m => ({
+        senderType: m.senderType,
+        content: m.content,
+        timestamp: m.timestamp
+      }));
+
+      // 按时间戳进行归档对齐
+      const summaryTimestamp = Date.now();
+      const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+
+      for (let item of items) {
+        let vector = null;
+        if (isVectorEnabled) {
+          vector = await safeGetEmbedding(item.content);
+        }
+
+        await db.summaries.add({
+          sessionId: activeSessionId,
+          startRound: 1,
+          endRound: msgs.length,
+          content: item.content,
+          category: item.category,
+          keywords: JSON.stringify(item.keywords || []),
+          timestamp: summaryTimestamp,
+          source: 'appointment_archive',
+          rawMessages: JSON.stringify(archiveMsgData),
+          vector: vector
+        });
+      }
 
       await db.offline_messages
         .where('sessionId').equals(activeSessionId)
         .and(m => m.isTheater === 0)
         .delete();
 
-      showCustomAlert("记忆同步成功", `赴约已圆满结束！\n\n线下经历总结已成功载入至角色的“长久记忆库”和脑海中：\n\n${summaryContent}`);
+      showCustomAlert("记忆同步成功", "赴约已圆满结束！多维经历记忆已经同步注入心智，原对白也已成功录入历史回顾舱。");
       
       closeOfflineDetails();
       exitOfflineChat();
@@ -3385,6 +3702,277 @@ async function endAppointment() {
       header.innerText = "线下见面";
     }
   });
+}
+
+// === 历史赴约存档选择与只读回顾业务功能 ===
+async function openAppointmentArchives() {
+  const archiveWin = document.getElementById("win-appointment-archive");
+  if (archiveWin) {
+    archiveWin.classList.add("active");
+    await renderAppointmentArchives();
+  }
+}
+
+async function renderAppointmentArchives() {
+  const container = document.getElementById("appointment-archive-list");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!activeSessionId) {
+    container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">当前无活跃会话</p>`;
+    return;
+  }
+
+  const list = await db.summaries
+    .where('sessionId').equals(activeSessionId)
+    .and(s => s.source === 'appointment_archive')
+    .toArray();
+
+  if (list.length === 0) {
+    container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">当前会话尚未产生任何历史赴约存盘</p>`;
+    return;
+  }
+
+  // 根据共享时间戳将分散的分类记忆片重新聚合归档
+  const grouped = {};
+  list.forEach(arc => {
+    const key = arc.timestamp;
+    if (!grouped[key]) {
+      grouped[key] = {
+        timestamp: arc.timestamp,
+        rawMessages: arc.rawMessages,
+        categories: []
+      };
+    }
+    grouped[key].categories.push(arc);
+  });
+
+  const sortedKeys = Object.keys(grouped).sort((a, b) => b - a);
+
+  sortedKeys.forEach(key => {
+    const g = grouped[key];
+    const card = document.createElement("div");
+    card.className = "archive-card";
+    card.style.cssText = "background: #ffffff; border: 1.5px solid var(--border); border-radius: 12px; padding: 12px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; box-shadow: var(--shadow-sm); margin-bottom:2px;";
+    
+    const timeStr = new Date(Number(g.timestamp)).toLocaleString();
+    
+    // 合并展示前 2 条记忆片做为列表摘要
+    let summarySummary = "";
+    g.categories.slice(0, 2).forEach(c => {
+      const catMap = { 'emotional': '情感', 'factual': '事实', 'core': '核心' };
+      summarySummary += `[${catMap[c.category] || '事实'}] ${c.content} `;
+    });
+
+    card.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; border-bottom: 1px dashed var(--border); padding-bottom: 6px;">
+        <span style="font-size: 11px; color: var(--text-secondary); font-weight:700;">赴约时间：${timeStr}</span>
+        <span style="font-size: 11px; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; font-weight:700;">只读 Review</span>
+      </div>
+      <div style="font-size: 13px; color: var(--text-primary); line-height: 1.5; font-weight: 500; text-align: justify; word-break: break-all;">
+        ${escapeHtml(summarySummary)} ${g.categories.length > 2 ? '...' : ''}
+      </div>
+    `;
+    card.onclick = () => openArchiveDetail(g.timestamp);
+    container.appendChild(card);
+  });
+}
+
+async function openArchiveDetail(timestampKey) {
+  const list = await db.summaries
+    .where('sessionId').equals(activeSessionId)
+    .and(s => s.timestamp === Number(timestampKey))
+    .toArray();
+
+  if (list.length === 0) return;
+  const masterArc = list[0];
+
+  const detailWin = document.getElementById("win-appointment-archive-detail");
+  const summaryBox = document.getElementById("archive-detail-summary-box");
+  const flowBox = document.getElementById("archive-detail-messages-flow");
+
+  if (!detailWin || !summaryBox || !flowBox) return;
+
+  // 渲染多维分类侧边指示彩色气泡
+  summaryBox.innerHTML = "";
+  list.forEach(item => {
+    const catMap = { 'emotional': '情感需求', 'factual': '事实记忆', 'core': '核心记忆' };
+    const catColor = item.category === 'emotional' ? '#ec4899' : (item.category === 'core' ? '#ca8a04' : '#10b981');
+    const div = document.createElement("div");
+    div.style.cssText = `margin-bottom: 8px; border-left: 3px solid ${catColor}; padding-left: 8px; font-size:12.5px; line-height: 1.5; text-align: justify;`;
+    div.innerHTML = `<span style="font-weight:700; color:${catColor};">[${catMap[item.category] || '事实'}]</span> ${escapeHtml(item.content)}`;
+    summaryBox.appendChild(div);
+  });
+
+  // 渲染对白（只读模式）
+  flowBox.innerHTML = "";
+  let rawMsgs = [];
+  try {
+    rawMsgs = JSON.parse(masterArc.rawMessages || "[]");
+  } catch(e) {
+    console.error(e);
+  }
+
+  if (rawMsgs.length === 0) {
+    flowBox.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:12px;padding:20px 0;">该存盘中未捕获任何具体发言细节</p>`;
+  } else {
+    const sess = await db.sessions.get(activeSessionId);
+    const char = await db.archives.get(sess.charId);
+    const user = await db.archives.get(sess.userId);
+    const charName = sess.customCharName || char?.name || "对方";
+    const userName = sess.customUserName || user?.name || "我";
+
+    const fragment = document.createDocumentFragment();
+    rawMsgs.forEach(m => {
+      const card = document.createElement("div");
+      card.className = `offline-card ${m.senderType === 'user' ? 'user' : 'char'}`;
+      const senderLabel = m.senderType === 'user' ? userName : charName;
+      const timeStr = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      card.innerHTML = `
+        <div class="offline-card-header">
+          <span>${senderLabel}</span>
+          <span>${timeStr}</span>
+        </div>
+        <div class="offline-card-body">${escapeHtml(m.content)}</div>
+      `;
+      fragment.appendChild(card);
+    });
+    flowBox.appendChild(fragment);
+  }
+
+  // 绑定重新总结
+  const reSumBtn = document.getElementById("btn-re-summarize-archive");
+  if (reSumBtn) {
+    reSumBtn.onclick = async () => {
+      reSumBtn.disabled = true;
+      summaryBox.innerHTML = "<div style='font-size:12px; color:var(--text-secondary);'>正在重新多维分析并提炼存档记忆中...</div>";
+      try {
+        await regenerateArchiveSummary(timestampKey);
+        await openArchiveDetail(timestampKey); // 重新加载视图
+        await renderAppointmentArchives(); // 刷新父列表摘要
+        showToast("多维总结重新提炼成功，并已完成对齐重写！");
+      } catch(err) {
+        console.error(err);
+        showCustomAlert("重新提炼失败", err.message);
+      } finally {
+        reSumBtn.disabled = false;
+      }
+    };
+  }
+
+  detailWin.classList.add("active");
+}
+
+async function regenerateArchiveSummary(timestampKey) {
+  const list = await db.summaries
+    .where('sessionId').equals(activeSessionId)
+    .and(s => s.timestamp === Number(timestampKey))
+    .toArray();
+
+  if (list.length === 0) throw new Error("未找到对应时间戳的记忆碎片");
+  const masterArc = list[0];
+  if (!masterArc.rawMessages) throw new Error("该存盘对白已损坏，无法重新提炼");
+
+  const presetId = localStorage.getItem("global_api_preset_id");
+  const api = await db.api_presets.get(Number(presetId));
+  if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置’中配置！");
+
+  const sess = await db.sessions.get(activeSessionId);
+  const char = await db.archives.get(sess.charId);
+  const user = await db.archives.get(sess.userId);
+  const charName = sess.customCharName || char?.name || "对方";
+  const userName = sess.customUserName || user?.name || "我";
+
+  let dialogText = "";
+  const rawMsgs = JSON.parse(masterArc.rawMessages);
+  rawMsgs.forEach(m => {
+    const sender = m.senderType === 'user' ? userName : charName;
+    dialogText += `[${sender}]: ${m.content}\n`;
+  });
+
+  const formatChoice = localStorage.getItem("summary-format-choice") || "json";
+  let systemPrompt = "";
+
+  if (formatChoice === "json") {
+    systemPrompt = `你是一个长周期记忆整合引擎。请对以下发生的线下对话/白描轮次进行碎片化总结，并严格归入以下三个模块分类：
+- "emotional": 情感需求（角色或用户在对话中表现出的深层情感渴望、心理脆弱点或防御机制，不超过80字）
+- "factual": 事实记忆（发生的重要事件细节、提及的时间、数字、物理背景，不超过80字）
+- "core": 核心记忆（涉及长线关系转变、核心认知改变、重大转折性共识，不超过80字）
+
+【输出格式控制】：请直接且仅返回以下格式的 JSON 数组（不要包含任何 Markdown 标识符如 \`\`\`json 块）：
+[
+  {"category": "emotional", "content": "情感碎片内容", "keywords": ["词1", "词2"]},
+  {"category": "factual", "content": "事实碎片内容", "keywords": ["词1"]},
+  {"category": "core", "content": "核心碎片内容", "keywords": ["词1"]}
+]
+
+---
+线下对话原文：
+${dialogText}`;
+  } else {
+    systemPrompt = `你是一个长周期记忆整合引擎。请对以下发生的线下对话/白描轮次进行碎片化总结，并严格归入以下三个模块分类（如果没有对应分类内容可省略该块）。请直接按照以下文字标签块格式输出（不要包含 Markdown 代码块）：
+
+[情感需求]
+内容：情感需求具体总结描述（不超过80字）
+关键词：词1, 词2
+
+[事实记忆]
+内容：事实事件具体总结描述（不超过80字）
+关键词：词1, 词2
+
+[核心记忆]
+内容：核心转变具体总结描述（不超过80字）
+关键词：词1, 词2
+
+---
+线下对话原文：
+${dialogText}`;
+  }
+
+  const response = await fetch(`${api.url}/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+    body: JSON.stringify({
+      model: api.model,
+      messages: [{ role: "user", content: systemPrompt }],
+      temperature: 0.3
+    })
+  });
+
+  if (!response.ok) throw new Error("API 总结调用失败");
+
+  const result = await response.json();
+  const rawSummaryText = result.choices[0].message.content.trim();
+
+  const items = parseClassificationText(rawSummaryText, formatChoice);
+
+  // 清理老旧碎片的同一时间戳对齐记录
+  for (let s of list) {
+    await db.summaries.delete(s.id);
+  }
+
+  // 写入新生成的碎片
+  const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  for (let item of items) {
+    let vector = null;
+    if (isVectorEnabled) {
+      vector = await safeGetEmbedding(item.content);
+    }
+
+    await db.summaries.add({
+      sessionId: activeSessionId,
+      startRound: 1,
+      endRound: rawMsgs.length,
+      content: item.content,
+      category: item.category,
+      keywords: JSON.stringify(item.keywords || []),
+      timestamp: Number(timestampKey),
+      source: 'appointment_archive',
+      rawMessages: masterArc.rawMessages,
+      vector: vector
+    });
+  }
 }
 
 // 安全收拢事件监听注册，防范 DOM null 崩溃并在生命周期内强制单次绑定限制 [1]

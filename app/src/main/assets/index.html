@@ -16,6 +16,7 @@
   <link rel="stylesheet" href="chat_html.css">
   <link rel="stylesheet" href="desktop_pet.css">
   <link rel="stylesheet" href="reader.css">
+  <link rel="stylesheet" href="focus.css">
   <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
   <style>
     /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
@@ -780,6 +781,14 @@
               </button>
             </div>
 
+            <div class="block-action-bar" id="blocked-by-user-bar" style="display: none; padding: 8px 12px; background: #fff1f2; border-top: 1px solid #fecdd3; align-items: center; justify-content: space-between; gap: 10px; width: 100%; box-sizing: border-box;">
+              <div style="font-size: 12px; color: #e11d48; font-weight: 700; flex: 1;">🚫 对方已被您拉黑</div>
+              <div style="display: flex; gap: 8px; flex-shrink: 0;">
+                <button class="btn btn-outline" id="btn-unblock-char-direct" style="padding: 6px 12px; font-size: 11px; border-color: #fda4af; color: #e11d48; background: #fff; border-radius: 8px; font-weight: 700; cursor: pointer;">解除拉黑</button>
+                <button class="btn btn-primary" id="btn-force-reply-direct" style="padding: 6px 12px; font-size: 11px; background: #e11d48; border: none; color: #fff; border-radius: 8px; font-weight: 700; cursor: pointer;">查看对方消息</button>
+              </div>
+            </div>
+
             <div class="multi-select-action-bar" id="multi-select-bar" style="display: none;">
               <button id="btn-multi-delete" class="btn btn-danger-outline" style="flex:1;">删除选中 (<span id="selected-count">0</span>)</button>
               <button id="btn-multi-cancel" class="btn" style="flex:1;">退出多选</button>
@@ -1055,6 +1064,21 @@
               </label>
             </div>
 
+            <!-- 新增：允许对方情绪化拉黑你开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+                允许对方情绪化拉黑你
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-allow-char-block">
+                <span class="slider"></span>
+              </label>
+            </div>
+
             <!-- 新增：自定义模拟时间设定卡片 -->
             <div class="form-group" id="details-custom-time-container" style="display:none; padding: 10px; background: #f8fafc; border-radius: 8px; border: 1.5px solid var(--border); margin-top: -6px; margin-bottom: 12px;">
               <label style="margin-bottom: 8px; font-weight: 700; font-size:11px;">设置虚拟场景模拟时间</label>
@@ -1096,11 +1120,14 @@
                 <button id="btn-details-sticker-mount" class="btn btn-outline" type="button" style="padding:8px 12px;flex-shrink:0;font-size:12px;">选择</button>
               </div>
             </div>
-            <div class="form-actions" style="margin-top: 24px;">
-                      <button id="btn-save-details" class="btn btn-primary" style="width:100%;">保存当前会话配置</button>
-                    </div>
-                  </div>
-                </div>
+            <div class="form-actions" style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
+              <button id="btn-save-details" class="btn btn-primary" style="width:100%;">保存当前会话配置</button>
+              <button id="btn-details-block-char" class="btn btn-outline" style="width:100%; color: #ef4444; border-color: #fca5a5; font-weight: 700;">拉黑对方</button>
+              <button id="btn-details-clear-records" class="btn btn-outline" style="width:100%; color: #b45309; border-color: #fde68a; font-weight: 700;">清空该会话所有记录</button>
+              <button id="btn-details-delete-session" class="btn btn-outline" style="width:100%; color: #991b1b; border-color: #fca5a5; background-color: #fef2f2; font-weight: 700;">删除此对话</button>
+            </div>
+          </div>
+        </div>
 
                 <!-- 注入：会话总结面板 (完全收纳在 win-chat 内部，防止全局绝对定位与指针层级污染) -->
                 <div id="chat-summary-panel" class="chat-details-overlay">
@@ -1653,7 +1680,185 @@
       <button class="btn-primary" onclick="momentSystem.submitForwardDialog()" style="flex: 1; padding: 8px; font-size: 12px; background-color: #576b95; border: none; color:#fff; border-radius: 8px; cursor: pointer;">转发</button>
     </div>
   </div>
-</div>              </div> <!-- 聊天应用(win-chat)结束 -->
+</div>
+
+  <!-- 历史且不污染全局的专注空间 UI 面板 -->
+<!-- 专注设置主面板 (滑入层级) -->
+  <div id="win-focus-setup" class="chat-details-overlay" style="z-index: 1000; background: #f8fafc;">
+    <header class="win-header">
+      <button class="btn-icon" onclick="document.getElementById('win-focus-setup').classList.remove('active')">
+        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+      </button>
+      <h3>专注中枢</h3>
+      <button class="btn-icon" id="btn-focus-ambient-sound" title="环境白噪音">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+          <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+        </svg>
+      </button>
+      <input type="file" id="file-focus-ambient" accept="audio/*" style="display:none;">
+    </header>
+    <div class="win-body" style="padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;">
+      
+      <!-- 统计展示卡片 -->
+      <div class="mcp-card">
+        <h4 style="margin:0; font-size:13px; color:var(--text-secondary); font-weight:700; display:flex; align-items:center; gap:6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+          多维专注时空统计
+        </h4>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px;">
+          <div style="background: #fdf2f8; border-radius: 12px; padding: 10px; text-align: center; border: 1px solid #fbcfe8; box-sizing: border-box;">
+            <div style="font-size: 10px; color: #db2777; font-weight:600;">今日专注</div>
+            <div id="focus-stat-today" style="font-size: 15px; font-weight: 800; color: #9d174d; margin: 4px 0;">0 分钟</div>
+            <div id="focus-stat-today-diff" style="font-size: 9px; color: #c2185b;">比昨日 --</div>
+          </div>
+          <div style="background: #eff6ff; border-radius: 12px; padding: 10px; text-align: center; border: 1px solid #bfdbfe; box-sizing: border-box;">
+            <div style="font-size: 10px; color: #2563eb; font-weight:600;">本周累计</div>
+            <div id="focus-stat-week" style="font-size: 15px; font-weight: 800; color: #1e40af; margin: 4px 0;">0 分钟</div>
+            <div id="focus-stat-week-diff" style="font-size: 9px; color: #1d4ed8;">比上周 --</div>
+          </div>
+        </div>
+        <div style="text-align: center; padding: 8px 0 0 0; border-top: 1px dashed var(--border); font-size: 12px; font-weight:700; color: var(--text-primary); margin-top: 10px;">
+          总专注时长：<span id="focus-stat-total" style="color: var(--primary);">0 分钟</span>
+        </div>
+      </div>
+
+      <!-- 每日目标进度卡片 -->
+      <div class="mcp-card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <label style="font-weight: 700; font-size:13px; color: var(--text-primary); margin:0; display:flex; align-items:center; gap:6px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #ef4444;"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            今日目标 (分钟)
+          </label>
+          <input type="number" id="focus-target-input" value="60" style="width: 60px; padding: 4px 8px; text-align: center; border: 1.5px solid var(--border); border-radius: 8px; font-size:12px; font-weight:700;">
+        </div>
+        <div style="width: 100%; height: 10px; background: #e2e8f0; border-radius: 5px; overflow: hidden; position: relative; margin-top: 10px;">
+          <div id="focus-target-progressbar" style="width: 0%; height: 100%; background: #07c160; transition: width 0.3s ease;"></div>
+        </div>
+        <div id="focus-target-progress-text" style="font-size: 11px; color: var(--text-secondary); text-align: right; font-weight:700; margin-top: 6px;">进度：0 / 60 分钟 (0%)</div>
+      </div>
+
+      <!-- 专注环境配置 -->
+      <div class="mcp-card">
+        <h4 style="margin:0 0 12px 0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary);"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          专注环境配置
+        </h4>
+        <div class="form-group">
+          <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">1. 专注背景立绘</label>
+          <div style="display: flex; gap: 8px;">
+            <input type="text" id="focus-config-avatar" placeholder="输入立绘 URL / 本地文件路径" style="flex: 1; font-size:12px;">
+            <button class="btn btn-outline" type="button" id="btn-upload-focus-avatar" style="padding: 8px 12px; flex-shrink: 0; font-size:11px;">本地图</button>
+            <input type="file" id="file-focus-avatar" accept="image/*" style="display: none;">
+          </div>
+        </div>
+
+        <!-- 物理刻度转盘控制容器 -->
+        <div class="form-group" style="text-align:center;">
+          <label style="font-size:11px; color:var(--text-secondary); font-weight:700; margin-bottom: 2px; display:block;">2. 专注时长 (拨动下方圆盘微调设定)</label>
+          <div class="focus-dial-container">
+            <div id="focus-dial-wheel" class="focus-dial-wheel"></div>
+            <div class="focus-dial-center">
+              <span id="focus-config-duration-val" style="font-size: 24px; font-weight: 800; color: #1e293b; line-height:1;">25</span>
+              <span style="font-size: 10px; color: var(--text-secondary); font-weight:700; margin-top:2px;">MINUTES</span>
+            </div>
+          </div>
+          <input type="hidden" id="focus-config-duration" value="25">
+        </div>
+
+        <div style="display: flex; gap: 10px;">
+          <div style="flex: 1;">
+            <label style="font-size:11px; color:var(--text-secondary); font-weight:700; display:block; margin-bottom:4px;">3. 专注基调</label>
+            <select id="focus-config-category" style="width:100%; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;">
+              <option value="工作">工作</option>
+              <option value="学习" selected>学习</option>
+              <option value="冥想">冥想</option>
+              <option value="运动">运动</option>
+              <option value="外出">外出</option>
+            </select>
+          </div>
+          <div style="flex: 1;">
+            <label style="font-size:11px; color:var(--text-secondary); font-weight:700; display:block; margin-bottom:4px;">4. 专注模式</label>
+            <select id="focus-config-mode" style="width:100%; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;">
+              <option value="严格监督">严格监督</option>
+              <option value="宽泛执行">宽泛执行</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-group" style="margin-top:10px;">
+          <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">5. 伴随环境音</label>
+          <select id="focus-config-ambient" style="width:100%; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;"></select>
+        </div>
+
+        <button class="btn btn-primary" id="btn-save-focus-config" style="width: 100%; font-size:12px; padding: 10px; border-radius:10px; background-color: var(--primary); border: none; cursor:pointer;">保存当前配置</button>
+      </div>
+
+      <!-- 历史记录列表 -->
+      <div class="mcp-card">
+        <div id="focus-history-toggle-header" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer; user-select:none;">
+          <h4 style="margin:0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: #059669;"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+            专注成长轨迹
+          </h4>
+          <span id="focus-history-toggle-arrow" style="font-size:12px; color:var(--text-secondary); display:flex; align-items:center; transition: transform 0.2s ease;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </span>
+        </div>
+        <div id="focus-history-list" style="display:none; flex-direction:column; gap:8px; max-height: 240px; overflow-y:auto; padding-right:2px; margin-top:10px;">
+          <!-- 专注历史 -->
+        </div>
+      </div>
+
+      <!-- 开启专注按钮 -->
+      <button class="btn btn-primary" id="btn-start-focus-session" style="width:100%; height:44px; font-size:14px; font-weight:700; background: #07c160; border: none; border-radius:12px; box-shadow: 0 4px 12px rgba(7,193,96,0.3); margin-top:10px; cursor: pointer;">
+        进入专注空间
+      </button>
+    </div>
+  </div>
+
+  <!-- 沉浸式专注大屏面 (全屏遮罩级) -->
+  <div id="win-focus-active" style="display:none; position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 2000; background: #000; overflow: hidden; font-family: inherit;">
+    <!-- 音频伴奏节点 -->
+    <audio id="focus-ambient-player" loop></audio>
+    <!-- 背景立绘 (全屏平铺) -->
+    <div id="focus-active-bg" style="position: absolute; top:0; left:0; width: 100%; height: 100%; background-size: cover; background-position: center; transition: background-image 0.5s ease;"></div>
+    <!-- 暗色遮罩 -->
+    <div style="position: absolute; top:0; left:0; width: 100%; height: 100%; background: rgba(0,0,0,0.3); pointer-events: none;"></div>
+
+    <!-- 可拖拽毛玻璃时间进度控制圈 -->
+    <div id="focus-active-knob-container" style="position: absolute; left: 50%; top: 35%; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2010;">
+      <div id="focus-draggable-circle" style="width: 200px; height: 200px; border-radius: 50%; background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(20px) saturate(180%); -webkit-backdrop-filter: blur(20px) saturate(180%); border: 1.5px solid rgba(255, 255, 255, 0.25); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: grab; box-shadow: 0 8px 32px rgba(0,0,0,0.3); transition: transform 0.1s ease; user-select: none;">
+        <!-- SVG 环形进度条 -->
+        <svg width="200" height="200" style="position: absolute; top: 0; left: 0; transform: rotate(-90deg); pointer-events: none;">
+          <circle cx="100" cy="100" r="90" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="4"/>
+          <circle id="focus-progress-svg-bar" cx="100" cy="100" r="90" fill="none" stroke="#ffffff" stroke-width="4" stroke-dasharray="565.48" stroke-dashoffset="565.48" stroke-linecap="round" style="transition: stroke-dashoffset 0.3s linear;"/>
+        </svg>
+        <div id="focus-active-category" style="font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.85); letter-spacing: 2px; margin-bottom: 4px;">学习中</div>
+        <div id="focus-active-timer" style="font-size: 32px; font-weight: 900; color: #ffffff; letter-spacing: 1px;">00:00</div>
+        <div id="focus-active-ratio" style="font-size: 10px; color: rgba(255,255,255,0.7); margin-top: 4px; font-weight:600;">已进行 0%</div>
+        <div id="focus-active-resume-btn" style="display: none; margin-top: 4px; padding: 4px 12px; background: rgba(255,255,255,0.25); border-radius: 999px; font-size: 10px; color: #fff; border: 1.5px solid rgba(255,255,255,0.4); cursor: pointer; pointer-events: auto; z-index: 2025; font-weight:700; align-items:center; gap:4px;">
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" style="display:inline-block; vertical-align:middle; margin-right:2px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>继续
+        </div>
+      </div>
+      <!-- 戳一戳互动说明 -->
+      <div style="margin-top: 14px; font-size: 10px; color: rgba(255,255,255,0.6); background: rgba(0,0,0,0.4); padding: 4px 10px; border-radius: 999px; backdrop-filter: blur(10px); pointer-events:none;">
+        轻触屏幕任意位置可以“戳一戳”交流
+      </div>
+    </div>
+
+    <!-- 退出按钮 -->
+    <button class="btn" id="btn-focus-active-exit" style="position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); width: 140px; height: 40px; border-radius: 20px; font-size: 13px; font-weight: 700; background: rgba(255,255,255,0.2); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1.5px solid rgba(255,255,255,0.3); color: #ffffff; z-index: 2020; cursor: pointer;">
+      退出专注
+    </button>
+
+    <!-- 戳一戳短消息浮动栏 (10秒自动淡出) -->
+    <div id="focus-poke-bubble" style="position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%) translateY(20px); width: 85%; max-width: 320px; background: rgba(255, 255, 255, 0.15); backdrop-filter: blur(25px) saturate(180%); -webkit-backdrop-filter: blur(25px) saturate(180%); border: 1.5px solid rgba(255,255,255,0.25); border-radius: 16px; padding: 12px 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.25); z-index: 2015; text-align: left; opacity: 0; pointer-events: none; transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);">
+      <div id="focus-poke-bubble-sender" style="font-size: 11px; font-weight: 800; color: rgba(255,255,255,0.9); margin-bottom: 4px;">对方</div>
+      <div id="focus-poke-bubble-text" style="font-size: 13px; color: #ffffff; line-height: 1.4; text-align: justify; word-break: break-all; font-weight:500;">...</div>
+    </div>
+  </div>
+</div> <!-- 聊天应用(win-chat)结束 -->
 
       <!-- === 4.5 独立深谈应用 (win-deeptalk) === -->
       <div id="win-deeptalk" class="app-window" style="background-color: #fafbfc;">
@@ -2096,7 +2301,47 @@
           </div>
           <div class="form-actions" style="margin-top: 30px; display:flex; flex-direction:column; gap:12px;">
             <button id="btn-save-offline-details" class="btn btn-primary" style="width:100%;">保存线下配置</button>
+            <button id="btn-view-appointment-archives" class="btn btn-outline" style="width:100%;" onclick="openAppointmentArchives()">查看历史赴约存档</button>
             <button id="btn-end-appointment" class="btn btn-danger-outline" style="width:100%; display:none;">结束赴约 (并将经历记忆回写线上人设)</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 历史赴约存档面板 (滑入层级) -->
+      <div id="win-appointment-archive" class="chat-details-overlay" style="z-index: 1000; background: #f5f6f8;">
+        <header class="win-header">
+          <button class="btn-icon" onclick="document.getElementById('win-appointment-archive').classList.remove('active')">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3>历史赴约存档</h3>
+          <div style="width:40px;"></div>
+        </header>
+        <div class="win-body" style="padding: 16px; overflow-y: auto;">
+          <div id="appointment-archive-list" style="display:flex; flex-direction:column; gap:12px;">
+            <!-- 由 JS 渲染已归档的赴约记录列表 -->
+          </div>
+        </div>
+      </div>
+
+      <!-- 历史赴约详情只读查看面板 (高级回顾层级) -->
+      <div id="win-appointment-archive-detail" class="chat-details-overlay" style="z-index: 1100; background: #f5f6f8;">
+        <header class="win-header">
+          <button class="btn-icon" onclick="document.getElementById('win-appointment-archive-detail').classList.remove('active')">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+          </button>
+          <h3 id="archive-detail-title">赴约回顾</h3>
+          <button class="btn-icon" id="btn-re-summarize-archive" style="color: var(--primary);" title="重新生成总结">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+          </button>
+        </header>
+        <div class="win-body" style="padding: 16px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto;">
+          <div class="form-group">
+            <label style="font-weight:700;">AI 性格化总结</label>
+            <div id="archive-detail-summary-box" style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px; font-size:13px; line-height:1.6; max-height: 180px; overflow-y: auto; color: var(--text-primary);"></div>
+          </div>
+          <div class="form-group" style="flex: 1; display: flex; flex-direction: column; min-height: 250px;">
+            <label style="font-weight:700; margin-bottom: 6px;">对话回顾 (只读)</label>
+            <div id="archive-detail-messages-flow" class="offline-messages-container" style="flex: 1; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; overflow-y: auto; max-height: 350px;"></div>
           </div>
         </div>
       </div>
@@ -2616,6 +2861,7 @@
   <script src="app_chat_mcp.js"></script>
   <script src="app_desktop_pet.js"></script>
   <script src="app_reader.js"></script>
+  <script src="app_chat_focus.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {
