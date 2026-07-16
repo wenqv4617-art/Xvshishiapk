@@ -1,6 +1,6 @@
 # 叙事诗小手机 开发与安卓 APK 特权架构参考手册 (2026年解耦特权版)
 
-本手册是“叙事诗小手机”系统的核心开发和维护指南。本系统是一个通过 **Android Native Shell (Kotlin) + Core Web View (HTML5)** 混合开发（Hybrid）封装而成的真机级 **Android 原生特权 App** [1]。项目前端采用 **HTML5 + CSS3 + 纯原生 JavaScript** 构建，底层依赖 **Dexie.js (IndexedDB)** 保证数据的事务级持久化，并利用 **Model Context Protocol (MCP)** 硬件级联动协议打破沙箱，实现了真机定位、实时气象、物理马达震动、系统物理闹钟直写、本地歌单后台锁屏放歌、数据一键本地物理导出等深度系统级特权功能 [1]。
+本手册是“叙事诗小手机”系统的核心开发和维护指南。本系统是一个通过 **Android Native Shell (Kotlin) + Core Web View (HTML5)** 混合开发（Hybrid）封装而成的真机级 **Android 原生特权 App**。项目前端采用 **HTML5 + CSS3 + 纯原生 JavaScript** 构建，底层依赖 **Dexie.js (IndexedDB)** 保证数据的事务级持久化，并利用 **Model Context Protocol (MCP)** 硬件级联动协议打破沙箱，实现了真机定位、实时气象、物理马达震动、系统物理闹钟直写、本地歌单后台锁屏放歌、本地大二进制文件极速导入、伴读自愈性文本编码解析以及数据一键本地物理导出等深度系统级特权功能。
 
 ---
 
@@ -16,7 +16,7 @@
    - 2.7 `app/src/main/res/layout/activity_main.xml` (视图布局)
    - 2.8 `app/src/main/java/com/story/phone/MainActivity.kt` (主 Activity 容器)
    - 2.9 `app/src/main/java/com/story/phone/AndroidMcp.kt` (高特权原生接口)
-3. **Dexie 数据库设计规范 (Version 11 升级版)**
+3. **Dexie 数据库设计规范 (Version 12 综合升级版)**
 4. **悬浮多状态桌宠与真机系统级交互机制**
    - 4.1 角色跟随与配置隔离 (IndexedDB 状态存储)
    - 4.2 桌宠 9 种多动作状态定义
@@ -36,13 +36,15 @@
    - 7.2 深度对话剖析空间 (`app_deeptalk.js`)
    - 7.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js` & `chat_html.css`)
    - 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
+   - 7.5 沉浸式旋转专注中枢与伴随音频流（`app_chat_focus.js` & `focus.css`）
+   - 7.6 自闭环 AI 伴读书城与多编码自愈引擎（`app_reader.js` & `reader.css`）
 8. **无限拓展开发蓝图 (Where & How to Add Features)**
 
 ---
 
 ## 1. PWA 混合 App 物理目录结构
 
-请确保您本地的仓库目录结构与下方结构保持一致。所有前端网页资产、图标、音频等文件，必须存放在 `app/src/main/assets/` 路径下，以便打包进 APK 资源内部 [2]。
+请确保您本地的仓库目录结构与下方结构保持一致。所有前端网页资产、图标、音频等文件，必须存放在 `app/src/main/assets/` 路径下，以便打包进 APK 资源内部。
 
 ```text
 (您的项目根目录)
@@ -52,13 +54,17 @@
 ├── app/
 │   ├── src/
 │   │   └── main/
-│   │       ├── assets/             # 📂 放入您当前所有的前端平铺文件 [2]
+│   │       ├── assets/             # 📂 放入当前所有的前端平铺资源文件
 │   │       │   ├── index.html
 │   │       │   ├── style.css
 │   │       │   ├── app_chat.js
 │   │       │   ├── app_desktop_pet.js # 🧸 升级版独立多状态悬浮桌宠逻辑
 │   │       │   ├── desktop_pet.css    # 🎨 悬浮桌宠与真机仿真气泡样式
 │   │       │   ├── app_chat_mcp.js    # MCP 物理联动前端逻辑
+│   │       │   ├── app_chat_focus.js  # 专注空间物理控制中枢
+│   │       │   ├── focus.css          # 专注简美玻璃磨砂样式
+│   │       │   ├── app_reader.js      # 独立自闭环阅读书城应用
+│   │       │   ├── reader.css         # 书城多端自适应布局样式
 │   │       │   └── (其他所有的前端资源：.js, .css, .json, .png等)
 │   │       ├── java/com/story/phone/
 │   │       │   ├── MainActivity.kt        # 安卓原生主 Activity 代码
@@ -68,7 +74,7 @@
 │   │       │   │   └── ic_launcher.png    # 桌面自定义正方形 PNG 图标
 │   │       │   └── layout/
 │   │       │       └── activity_main.xml  # 安卓界面 WebView 视图布局
-│   │       └── AndroidManifest.xml                    # 安卓系统功能清单
+│   │       └── AndroidManifest.xml        # 安卓系统功能清单
 │   ├── build.gradle.kts                               # App 编译配置脚本
 │   └── proguard-rules.pro                             # 混淆器防剥离规则
 ├── build.gradle.kts                                   # 根项目编译脚本
@@ -355,7 +361,7 @@ class MainActivity : AppCompatActivity() {
         settings.loadWithOverviewMode = true
         settings.geolocationEnabled = true
 
-        // 禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动播放歌的特权！ [1]
+        // 禁用媒体播放必须物理手势触发的限制，彻底解锁 AI 在后台静默自动播放歌曲的特权！
         settings.mediaPlaybackRequiresUserGesture = false
 
         // 注入 window.AndroidMCP 原生接口并注册主 Activity 句柄，支持后台双击跨端唤醒
@@ -418,8 +424,6 @@ class MainActivity : AppCompatActivity() {
 ```
 
 ### 2.9 原生特权硬件接口：`app/src/main/java/com/story/phone/AndroidMcp.kt`
-（该完整 Kotlin 代码已升级，增加了带有气泡 TextView 渲染的 FrameLayout 悬浮容器、点击位移过滤手势算法、以及跨进程反向通过 JS 唤醒灵魂质询的后台评估引擎 [1]）
-
 ```kotlin
 package com.story.phone
 
@@ -729,7 +733,7 @@ class AndroidMcp(private val context: Context) {
     }
 
     // ============================================================
-    //  真机系统级悬浮复合窗（带 TextView 原生气泡、双击手势、不退焦静默交互） [1]
+    //  真机系统级悬浮复合窗（带 TextView 原生气泡、双击手势、不退焦静默交互）
     // ============================================================
 
     @JavascriptInterface
@@ -963,12 +967,12 @@ class AndroidMcp(private val context: Context) {
 
 ---
 
-## 3. Dexie 数据库设计规范 (Version 11 升级版)
+## 3. Dexie 数据库设计规范 (Version 12 综合升级版)
 
-系统数据库包含 19 张物理表。为了打通**独立多状态悬浮桌宠**以及**自动发信解耦控制**，数据库升级至 **Version 11** [1]，新增了 `desktop_pets` 物理表，用以按角色（`charId`）高度隔离桌宠图片、触发概率和自动发信阈值 [1]。
+系统数据库包含 24 张物理表。为了在打通**独立多状态悬浮桌宠**与**自动发信解耦控制**的同时，无缝支撑全新的**“自闭环 AI 伴读书城”**、**“刻度转盘专注时空”**配置，数据库全量对齐至 **Version 12**。
 
 ```javascript
-db.version(11).stores({
+db.version(12).stores({
   // 1. 大模型 API 预设表
   api_presets: 'id++, name, protocol, url, key, model, temperature',
 
@@ -978,11 +982,11 @@ db.version(11).stores({
   // 3. 社会关系映射表 (连接 character 与 user)
   relations: 'id++, fromId, toId, relation',
 
-  // 4. 会话配置与偏好设置表 (支持动态非索引字段 plotRequirement 的无损写入)
+  // 4. 会话配置与偏好设置表 (包含伴随环境音 focusAmbientSounds 数组等隐式扩展属性)
   sessions: 'id++, userId, charId, customCharName, customCharAvatar, customCharPersona, customUserAvatar, customUserPersona, lastMessageTime, mountedEntryIds, offlineMinWordCount, offlineMaxWordCount, offlineAutoSummaryCount, offlineMountedEntryIds, stickerMountedGroupIds, autoSummaryToggle, autoSummaryInterval, bufferRounds, summarySystemPrompt, coreSelfStatus, coreSelfPurpose, coreSelfChanges, coreRelationship, coreUserInEyes',
 
   // 5. 线上对话消息全纪录表
-  messages: 'id++, sessionId, senderType, senderId, content, contentType, timestamp, isFavorite',
+  messages: 'id++, sessionId, senderType, senderId, content, contentType, timestamp, isBlocked, isFavorite',
 
   // 6. 世界书词条库
   world_book_entries: 'id++, group, title, content, depth, isActive',
@@ -1003,7 +1007,7 @@ db.version(11).stores({
   sticker_items: 'id++, groupId, sortOrder, imageUrl, caption',
 
   // 12. 阶段性会话总结记录表
-  summaries: 'id++, sessionId, startRound, endRound, content, keywords, timestamp',
+  summaries: 'id++, sessionId, startRound, endRound, content, keywords, source, timestamp',
 
   // 13. 深谈记录主表
   deeptalks: 'id++, sessionId, userId, charId, topic, status, createdAt',
@@ -1017,18 +1021,32 @@ db.version(11).stores({
   // 16. 全局深谈附加提示词预设表
   deeptalk_presets: 'id++, name',
 
-  // 17. 朋友圈系统主表
+  // 17. 朋友圈系统主动态表
   moments: 'id++, userId, senderType, senderId, timestamp',
 
-  // 18. 朋友圈二级评论表
+  // 18. 朋友圈评论与点赞表
   moment_comments: 'id++, momentId, senderType, senderId, timestamp',
+
+  // 19. 朋友圈时间流与巡航控制表
   moment_settings: 'id++, userId',
 
-  // 19. HTML 互动卡片存储表
+  // 20. HTML 互动卡片存储表
   html_cards: 'id++, sessionId, timestamp',
 
-  // === Version 11 新增：独立悬浮多状态桌宠存储表 ===
-  desktop_pets: 'charId, mode'
+  // 21. === 独立悬浮多状态桌宠存储表 ===
+  desktop_pets: 'charId, mode',
+
+  // 22. === 阅读书城主书本表 (新增) ===
+  reader_books: 'id++, title, author, summary, coverUrl, isImported, fileType, currentChapterId, collected',
+
+  // 23. === 书城定制章节表 (新增) ===
+  reader_chapters: 'id++, bookId, chapterNum, [bookId+chapterNum]',
+
+  // 24. === 书籍分类个性标签表 (新增) ===
+  reader_tags: 'id++, name',
+
+  // 25. === 智能写书提示词模板预设表 (新增) ===
+  reader_presets: 'id++, name, prompt'
 });
 ```
 
@@ -1037,8 +1055,8 @@ db.version(11).stores({
 ## 4. 悬浮多状态桌宠与真机系统级交互机制
 
 ### 4.1 角色跟随与配置隔离 (IndexedDB 状态存储)
-*   **设计原则**：每个角色拥有专属的桌宠动作图组和行为配置。桌宠的状态读取以 IndexedDB 中的 `desktop_pets` 表作为唯一媒介，**彻底弃用 LocalStorage 的 5MB 受限配额**，避免多角色图片 Base64 堆叠引发的溢出崩溃 [1]。
-*   **激活逻辑**：系统只允许一个桌宠在桌面上处于活跃状态。当开启 A 角色的桌宠时，B 角色桌宠被自动设置为不启用状态 [1]；即使在应用内切换至其他角色的聊天页面，**A 角色的真机悬浮窗依然平稳悬浮在系统桌面和 launcher 之上**，实现了彻底的激活态开关隔离 [1]。
+*   **设计原则**：每个角色拥有专属的桌宠动作图组和行为配置。桌宠的状态读取以 IndexedDB 中的 `desktop_pets` 表作为唯一媒介，**彻底弃用 LocalStorage 的 5MB 受限配额**，避免多角色图片 Base64 堆叠引发的溢出崩溃。
+*   **激活逻辑**：系统只允许一个桌宠在桌面上处于活跃状态。当开启 A 角色的桌宠时，B 角色桌宠被自动设置为不启用状态；即使在应用内切换至其他角色的聊天页面，**A 角色的真机悬浮窗依然平稳悬浮在系统桌面和 launcher 之上**，实现了彻底的激活态开关隔离。
 
 ### 4.2 桌宠 9 种多动作状态定义
 系统内置并强制对齐以下 9 种典型的二次元/拟真动作状态：
@@ -1048,7 +1066,7 @@ db.version(11).stores({
 4. `angry` (生气)：赌气、叉腰。
 5. `hesitant` (犹豫)：疑惑、歪头。
 6. `wash` (洗漱)：刷牙、梳妆。
-7. `eat` (吃饭)：咀嚼、下午茶。
+7. `eat` (吃饭)：吞咽、下午茶。
 8. `sleep` (睡觉)：闭眼、吐泡泡。
 9. `watch` (看着你)：注视、凝望。
 
@@ -1056,7 +1074,7 @@ db.version(11).stores({
 在自定义模式下，用户可为 9 种状态分配 `0-100` 的**出现概率权重**，并在每个状态下方配置多行专属台词。桌宠在双击或空闲触发时，会采用高动态随机加权算法选定一种状态切换图片，并随机抓取该状态下的一行台词通过原生 TextView 气泡展现。
 
 ### 4.4 实时生成模式 (大模型动作控制)
-当设定为实时生成模式，悬浮窗在双击时会展示“思考中...”，并在后台静默对 API 预设发起 completions 请求 [1]。大语言模型会扮演当前桌宠的性格背景，并在回复的最后一行强制追加状态标记：
+当设定为实时生成模式，悬浮窗在双击时会展示“思考中...”，并在后台静默对 API 预设发起 completions 请求。大语言模型会扮演当前桌宠的性格背景，并在回复的最后一行强制追加状态标记：
 ```text
 (对白内容...)
 [PET_STATE]状态名称
@@ -1064,8 +1082,8 @@ db.version(11).stores({
 大手机前端拦截器捕获该标志后，会瞬时完成文字气泡展现和桌宠图片状态的物理跳转。
 
 ### 4.5 真机系统级双击手势与跨进程反向唤醒
-*   **手势位移过滤算法**：为了防止手指拖拽悬浮窗时误触发双击，在 Kotlin `bindOverlayTouchListener` 中计算了按下（Down）与抬起（Up）之间的坐标位移差。**只有位移差小于 15px 且两次点击间隔小于 350ms 时**，才确认为双击交互 [1]。
-*   **不打扰静默执行**：用户在手机系统桌面上双击桌宠时，App 不需要频繁强行蹦到前台（这会造成极不连贯的跳出感）。原生端通过 `evaluateJavascript` **直接在后台静默执行 JS 引擎逻辑**，实现完美的后台放歌、气泡冒泡和 AI 计算交互 [1]。
+*   **手势位移过滤算法**：为了防止手指拖拽悬浮窗时误触发双击，在 Kotlin `bindOverlayTouchListener` 中计算了按下（Down）与抬起（Up）之间的坐标位移差。**只有位移差小于 15px 且两次点击间隔小于 350ms 时**，才确认为双击交互。
+*   **不打扰静默执行**：用户在手机系统桌面上双击桌宠时，App 不需要频繁强行蹦到前台（这会造成极不连贯的跳出感）。原生端通过 `evaluateJavascript` **直接在后台静默执行 JS 引擎逻辑**，实现完美的后台放歌、气泡冒泡和 AI 计算交互。
 
 ---
 
@@ -1073,7 +1091,7 @@ db.version(11).stores({
 
 ### 5.1 WebView 后台冷冻局限与保活心跳
 由于 Android OS 深度的省电和隐私策略，当 App 进入后台时，WebView 的 CPU 分配会被严厉降频，甚至使 `setInterval` 定时器彻底处于冻结状态。
-*   **特权破沙箱方案**：在后台主动发信开启时，通过 Kotlin 调起 **`McpForegroundService` 前台服务**，并在真机上显示低能耗的“叙事诗保活通知” [1]。这会强行将 App 的优先级提高到前台，阻止 OS 对 WebView 的冷冻，保障 JS 心跳线程即使在息屏、锁屏状态下依然能够精准跳动 [1]。
+*   **特权破沙箱方案**：在后台主动发信开启时，通过 Kotlin 调起 **`McpForegroundService` 前台服务**，并在真机上显示低能耗的“叙事诗保活通知”。这会强行将 App 的优先级提高到前台，阻止 OS 对 WebView 的冷冻，保障 JS 心跳线程即使在息屏、锁屏状态下依然能够精准跳动。
 
 ### 5.2 独立发信时间片轮询算法
 系统在 JavaScript 端运行一个每 30 秒执行一次的**高精度全局发信调度器（Ticker）**：
@@ -1081,33 +1099,33 @@ db.version(11).stores({
 const lastTrigger = parseInt(localStorage.getItem(`mcp_last_msg_time_${charId}`));
 if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
 ```
-调度器逐个检索配置了自动发信的角色，**各角色发信间隔完全物理分离，互不干扰** [1]（如角色 A 设置 10 分钟，角色 B 设置 2 分钟 [1]）。相比之前 Kotlin 层的单一硬编码轮询，该方案完美满足了多角色社交拟真深度要求 [1]。
+调度器逐个检索配置了自动发信的角色，**各角色发信间隔完全物理分离，互不干扰**（如角色 A 设置 10 分钟，角色 B 设置 2 分钟）。相比之前 Kotlin 层的单一硬编码轮询，该方案完美满足了多角色社交拟真深度要求。
 
 ### 5.3 携带世界书与长 RAG 记忆的高质量后台 Prompt 编译
-*   **智能编译升级**：之前 Kotlin 直接发送 HTTP 请求无法调用复杂的 JS 数据。重构后的 JS 后台发信引擎，能够**完全读取并调用大手机最核心的 RAG 召回机制、记忆提炼模型与世界书词条挂载** [1]。
-*   **指令注入**：调度器在触发自动发信时，会静默拼装深度为 `-490` 的主动开启话题指令，让大模型产生极其自然、富有生活感和思念意味的主动攀谈信息，彻底告别公式化的问候 [1]。
+*   **智能编译升级**：之前 Kotlin 直接发送 HTTP 请求无法调用复杂的 JS 数据。重构后的 JS 后台发信引擎，能够**完全读取并调用大手机最核心的 RAG 召回机制、记忆提炼模型与世界书词条挂载**。
+*   **指令注入**：调度器在触发自动发信时，会静默拼装深度为 `-490` 的主动开启话题指令，让大模型产生极其自然、富有生活感和思念意味的主动攀谈信息，彻底告别公式化的问候。
 
 ### 5.4 联动真机通知与桌面冒泡的气泡可视链
 为了给用户提供完全无死角的“自动发信状态可视排查”，系统打通了完整的联动气泡链：
-*   **第一步：定时器启动** $\rightarrow$ 当前活跃的桌面桌宠头上会瞬时冒出 `“有人冒泡。”` 的系统气泡 [1]，代表 JS 调度已经就绪并正在向 API 发送网络请求，**直观排除了定时器冷冻或失效问题**。
-*   **第二步：消息生成并收到** $\rightarrow$ 此时若 App 处于后台，Kotlin 会直接向真机状态栏直推标准的**系统悬浮通知** [1]（如：`A：“你睡了吗？”`），同时桌面桌宠头上的气泡会瞬间切换提示：`“有人来信。”` [1]，构建起流畅而极其逼真的真机扮演闭环 [1]。
+*   **第一步：定时器启动** $\rightarrow$ 当前活跃的桌面桌宠头上会瞬时冒出 `“有人冒泡。”` 的系统气泡，代表 JS 调度已经就绪并正在向 API 发送网络请求，**直观排除了定时器冷冻或失效问题**。
+*   **第二步：消息生成并收到** $\rightarrow$ 此时若 App 处于后台，Kotlin 会直接向真机状态栏直推标准的**系统悬浮通知**（如：`A：“你睡了吗？”`），同时桌面桌宠头上的气泡会瞬间切换提示：`“有人来信。”`，构建起流畅而极其逼真的真机扮演闭环。
 
 ---
 
 ## 6. 网页/原生避让与防区双生桌宠消减机制
 
 ### 6.1 “双生桌宠”视觉重叠痛点
-在 Hybrid (混合) App 中，如果系统悬浮窗（Native Window）处于显示状态，它会盖在所有应用程序（包括 PWA 自身）的头部 [1]。如果此时网页 DOM 也生成了 `#desktop-pet-container` 节点，用户就会在 App 的主界面上**同时看到两个重叠在一起的桌宠**，其中一个不可点击，体验极差 [1]。
+在 Hybrid (混合) App 中，如果系统悬浮窗（Native Window）处于显示状态，它会盖在所有应用程序（包括 PWA 自身）的头部。如果此时网页 DOM 也生成了 `#desktop-pet-container` 节点，用户就会在 App 的主界面上**同时看到两个重叠在一起的桌宠**，其中一个不可点击，体验极差。
 
 ### 6.2 网页 DOM 节点物理级拦截与销毁
-大手机采取了**“彻底拔除网页 DOM”**的消减策略 [1]：
-*   **入口拦截**：在 `app_desktop_pet.js` 的 `createDomElements` 初始化阶段，进行环境嗅探。若检测到 `window.AndroidMCP` 存在（即运行在真机 APK 壳中），直接 `return`，在物理层面上根本不创建该 HTML 节点 [1]。
+大手机采取了**“彻底拔除网页 DOM”**的消减策略：
+*   **入口拦截**：在 `app_desktop_pet.js` 的 `createDomElements` 初始化阶段，进行环境嗅探。若检测到 `window.AndroidMCP` 存在（即运行在真机 APK 壳中），直接 `return`，在物理层面上根本不创建该 HTML 节点。
 *   **运行时销毁**：在 `renderPetToDesktop` 执行阶段，增加强防区判定。如发现任何因 WebView 异步延迟导致漏网创建的 DOM 桌宠，执行：
     ```javascript
     const container = document.getElementById("desktop-pet-container");
     if (container) container.remove(); // 强制拔除销毁
     ```
-    将所有渲染、手势拖拽、气泡冒泡权限 100% 交予真机系统窗口托管，彻底消除了双生重合的显示故障 [1]。
+    将所有渲染、手势拖拽、气泡冒泡权限 100% 交予真机系统窗口托管，彻底消除了双生重合的显示故障。
 
 ---
 
@@ -1133,6 +1151,14 @@ if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
 ### 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
 *   **最高优先级大纲控制**：剧情引导舱允许用户输入任意故事走向大纲。该大纲会作为高优控制指令，在 System Prompt 的深度 `-480` 原子化拼入模型头部，驱使大模型往特定矛盾冲突或态度演进方向推进。
 
+### 7.5 沉浸式旋转专注中枢与伴随音频流（`app_chat_focus.js` & `focus.css`）
+*   **Conic 指针物理旋转仪**：专注时钟摒弃了原生滑条，采用纯 Pointer Tracking 跟踪指针极角，平滑完成 $5\sim120$ 分钟的阻尼感微调，并将 Emojis 彻底重构为精致高透的 SVG 矢量图标。
+*   **真机伴随白噪音存储**：导入的 MP3 背景音乐和伴奏通过 Dexie 原生 Blob 直接关联到会话行中，绕过 Android 沙箱本地路径权限阻碍。并在 `visibilitychange: hidden` 切屏发生时直接暂停伴奏并弹出“继续”按钮，切回后实现静默恢复。
+
+### 7.6 自闭环 AI 伴读书城与多编码自愈引擎（`app_reader.js` & `reader.css`）
+*   **GBK 乱码自适应检测检测机制**：本地书籍导入置入了乱码字节探测，一旦前导译码发现 UTF-8 替代占位符 `\uFFFD`，立即强制中断并降级回退至 `GBK` 重新加载，实现自愈导入。
+*   **多维伴读书评气球 (Paragraph Reviews)**：双击正文段落可让真机悬浮窗绑定的 AI 角色越过沙盒界限，直接对书籍中的文字进行 50 字以内的第一人称暖心/毒舌吐槽评点，通过 TextView 气泡弹性展示。
+
 ---
 
 ## 8. 无限拓展开发蓝图 (Where & How to Add Features)
@@ -1157,7 +1183,7 @@ if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
    }
    ```
 4. **前端 JS 驱动与自愈防崩保护**：
-   在前端 JS 中通过非空判定进行调用，保障非真机 APK 环境下也能完美兼容防崩 [1]：
+   在前端 JS 中通过非空判定进行调用，保障非真机 APK 环境下也能完美兼容防崩：
    ```javascript
    if (window.AndroidMCP && typeof window.AndroidMCP.takeSilentPhoto === 'function') {
        window.AndroidMCP.takeSilentPhoto();
@@ -1168,5 +1194,6 @@ if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
 
 ### 蓝图 B：向 Dexie 中追加新物理表
 1. 打开 `db.js`。
-2. 将版本号升级（如从 `db.version(11)` 升级至 `db.version(12)`），并在 stores 里定义您的新表索引字段。
-3. **防止备份损坏**：任何新增的表，必须手动在 `app_settings.js` 的 `computeStorageUsage()` 记录累加、`exportBackup()` 的导出字段映射、以及 `importBackup()` 还原清空时的事务 RW 锁列表中进行同步声明，否则在进行 PWA 数据大备份还原时会遭遇事务空指针，引发页面假死 [1]。
+2. 将版本号升级（如从 `db.version(12)` 升级至 `db.version(13)`），并在 stores 里定义您的新表索引字段。
+3. **防止备份损坏**：任何新增的表，必须手动在 `app_settings.js` 的 `computeStorageUsage()` 记录累加、`exportBackup()` 的导出字段映射、以及 `importBackup()` 还原清空时的事务 RW 锁列表中进行同步声明，否则在进行 PWA 数据大备份还原时会遭遇事务空指针，引发页面假死。
+```
