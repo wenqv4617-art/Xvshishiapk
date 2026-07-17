@@ -114,15 +114,16 @@ async function forumRenderConversations() {
 async function forumRenderFollows() {
   const container = document.getElementById("forum-follows-list");
   if (!container) return;
+  container.innerHTML = "";
 
-  // 1. 强制转换为 Number 进行全量预拉取
+  // 强制转换为 Number 进行匹配，解决由于 ActiveAccountId 类型不同导致通讯录不显示的物理缺陷
   const follows = await db.forum_follows.where('followerId').equals(Number(forumActiveAccountId)).toArray();
   if (follows.length === 0) {
     container.innerHTML = `<p style="text-align:center; color:#64748b; font-size:12px; padding:40px 0;">通讯录空旷，快去主页关注有共鸣的角色吧</p>`;
     return;
   }
 
-  // 预装全部 NPC 用于内存匹配 [1]
+  // 预装全部 NPC 用于内存匹配
   const allNpcs = await db.forum_npc_accounts.toArray();
   const fragment = document.createDocumentFragment();
 
@@ -145,7 +146,7 @@ async function forumRenderFollows() {
     fragment.appendChild(div);
   }
 
-  // 2. 同步交换上屏，解决私信-关注页签返回时的闪变缺陷 [2]
+  // 同步交换上屏，解决私信-关注页签返回时的闪变缺陷
   container.innerHTML = "";
   container.appendChild(fragment);
 }
@@ -169,7 +170,7 @@ async function forumStartPrivateChat(peerNpcId) {
   }
 }
 
-// === 14. 私信气泡对话房间 (增加了 bottom: 80px 物理安全区，防止被底栏覆盖) ===
+// === 14. 私信气泡对话房间 (增加了 bottom: 80px 物理安全区 + 物理级联多选底栏) ===
 function forumGetChatRoomTemplate() {
   return `
     <header class="win-header" style="background-color: #ffffff; border-bottom: 1px solid #eff3f4;">
@@ -180,7 +181,7 @@ function forumGetChatRoomTemplate() {
       <div style="width:40px;"></div>
     </header>
     
-    <!-- 通过 padding-bottom 注入 80px 底部安全区，杜绝最新私信气泡被键盘和输入底栏盖住的缺陷 [3] -->
+    <!-- 通过 padding-bottom 注入 80px 底部安全区，杜绝最新私信气泡被键盘和输入底栏盖住的缺陷 -->
     <div class="win-body" style="padding: 16px 16px 80px 16px; overflow-y: auto; background-color: #ffffff; display:flex; flex-direction:column; gap:14px; height: calc(100% - 110px);" id="forum-chat-messages-flow"></div>
     
     <div class="dialog-input-container" style="background-color: #ffffff; border-top: 1px solid #eff3f4; position: absolute; bottom: 0; left: 0; width: 100%; box-sizing: border-box; padding: 10px 16px; display: flex !important; flex-direction: row !important; align-items: center !important; justify-content: space-between !important; gap: 8px !important; z-index: 100; height: 58px; flex-wrap: nowrap !important;">
@@ -193,12 +194,23 @@ function forumGetChatRoomTemplate() {
       <input type="text" id="forum-chat-input" placeholder="输入私信对白..." style="flex: 1 !important; height: 38px !important; border: 1px solid #eff3f4 !important; border-radius: 20px !important; padding: 0 16px !important; font-size: 14px !important; outline: none !important; background-color: #f7f9f9 !important; color: #0f1419 !important; min-width: 0 !important; margin: 0 !important; box-sizing: border-box !important;">
       
       <div style="display: flex !important; flex-direction: row !important; align-items: center !important; gap: 8px !important; flex-shrink: 0 !important; flex-wrap: nowrap !important;">
+        <!-- 上屏发送按钮 (纯纸飞机) -->
         <button class="btn-icon" id="forum-chat-send-btn" style="width: 38px !important; height: 38px !important; border-radius: 50% !important; background: #1d9bf0 !important; color: #ffffff !important; display: flex !important; align-items: center !important; justify-content: center !important; border: none !important; cursor: pointer !important; padding: 0 !important; margin: 0 !important;" title="上屏发送 (不对接AI)">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
         </button>
+        <!-- 获取AI伙伴跟手回复按钮 (小星星) -->
         <button class="btn-icon" id="forum-chat-ai-btn" style="width: 38px !important; height: 38px !important; border-radius: 50% !important; background: #f7f9f9 !important; color: #1d9bf0 !important; display: flex !important; align-items: center !important; justify-content: center !important; border: 1px solid #eff3f4 !important; cursor: pointer !important; padding: 0 !important; margin: 0 !important;" title="使对方产生应答 (AI)">
           <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>
         </button>
+      </div>
+    </div>
+
+    <!-- 浮动式级联多选操作栏，完全遮盖输入框保证时序隔离 -->
+    <div id="forum-multi-select-bar" style="display: none; background: #fff1f2; border-top: 1px solid #fecdd3; position: absolute; bottom: 0; left: 0; width: 100%; height: 58px; box-sizing: border-box; padding: 10px 16px; align-items: center; justify-content: space-between; gap: 8px; z-index: 101;">
+      <span style="font-size: 13px; font-weight: 700; color: #ef4444; font-family: sans-serif;">已选中 <span id="forum-select-count" style="font-weight:900;">0</span> 条时空私信</span>
+      <div style="display: flex; gap: 8px; flex-shrink: 0;">
+        <button onclick="forumBatchDeleteMsgs()" style="height: 38px; border-radius: 19px; font-size: 12.5px; padding: 0 16px; background-color: #ef4444; border: none; color: #fff; cursor: pointer; font-weight: 700;">删除选中</button>
+        <button onclick="forumExitMultiSelect()" style="height: 38px; border-radius: 19px; font-size: 12.5px; padding: 0 16px; border: 1px solid #e2e8f0; background: #ffffff; color: #334155; cursor: pointer; font-weight: 700;">取消</button>
       </div>
     </div>
 
@@ -278,11 +290,11 @@ async function forumInitChatRoomPage(convId) {
   }
 }
 
-// === 21. 超强宽限、容噪、全角半角双轨多媒体转账卡片正则编译器 [1] ===
+// === 21. 超强宽限、高容噪、[分分]第一优先级、标点硬切分编译器 ===
 function forumParseMessageToCard(content, isSelf, peerNickname) {
   const text = content || "";
   
-  // 规范化多模中括号和标点符号，防止大模型抽风输入全角符号 [1]
+  // 规范化多模中括号和标点符号，防止大模型抽风输入全角符号
   let normalized = text.replace(/［/g, "[").replace(/］/g, "]").replace(/【/g, "[").replace(/】/g, "]");
   normalized = normalized.replace(/（/g, "(").replace(/）/g, ")");
 
@@ -319,7 +331,7 @@ function forumParseMessageToCard(content, isSelf, peerNickname) {
     `;
   }
 
-  // 3. 正则编译：[转账: 金额 (留言)] (完美适配中英文空格及 optional 括注留言) [1]
+  // 3. 正则编译：[转账: 金额 (留言)] (针对 optional 括注留言和中英文空格进行超级容错)
   const txRegex = /\[转账\s*[\s：:]\s*([\d\.]+)\s*(?:\(\s*([^\]\)]+)\s*\))?\s*\]/i;
   const txMatch = normalized.match(txRegex);
   if (txMatch) {
@@ -372,7 +384,7 @@ async function forumLoadPrivateMessages() {
   const container = document.getElementById("forum-chat-messages-flow");
   if (!container) return;
 
-  // 先拉取数据库私信列表，彻底解决退出/发送时由于未阻塞产生的白屏闪动 [1]
+  // 先拉取数据库私信列表，彻底解决退出/发送时由于未阻塞产生的白屏闪动
   const messages = await db.forum_messages.where('conversationId').equals(activeForumConvId).sortBy('createdAt');
   
   const currentAcc = await db.forum_accounts.get(forumActiveAccountId);
@@ -397,6 +409,9 @@ async function forumLoadPrivateMessages() {
       check.onchange = () => {
         if (check.checked) forumSelectedMsgIds.add(m.id);
         else forumSelectedMsgIds.delete(m.id);
+        // 实时同步更新多选计数器 DOM 属性，达成物理上屏 [1]
+        const countEl = document.getElementById("forum-select-count");
+        if (countEl) countEl.innerText = forumSelectedMsgIds.size;
       };
       row.appendChild(check);
     }
@@ -429,10 +444,74 @@ async function forumLoadPrivateMessages() {
     fragment.appendChild(row);
   });
 
-  // 同步重绘，自愈闪烁 [2]
+  // 同步重绘，自愈闪烁
   container.innerHTML = "";
   container.appendChild(fragment);
   container.scrollTop = container.scrollHeight;
+}
+
+// === 23. 高性能多模私信对白分发切片器 (多气泡对齐、[分分]第一优先级，标点硬分句底牌) ===
+function splitAiResponse(responseText) {
+  const text = responseText.trim();
+  if (!text) return [];
+
+  // 规范化大模型输出，防止大模型抽风全英文中括号
+  let normalized = text.replace(/［/g, "[").replace(/］/g, "]").replace(/【/g, "[").replace(/】/g, "]");
+  normalized = normalized.replace(/（/g, "(").replace(/）/g, ")");
+
+  // 1. 第一优先级：优先检测并执行大模型主动划分的 [分分] 分气泡标识符 [2]
+  if (normalized.includes("[分分]")) {
+    let chunks = normalized.split(/\[分分\]/).map(c => c.trim()).filter(Boolean);
+    let finalChunks = [];
+    for (let chunk of chunks) {
+      // 在每一个分句中，如果包含多媒体指令，我们将其提取成独立气泡消息，杜绝跟普通文本混在一起被截断
+      const regex = /(\[[^\]]+\])/g;
+      const parts = chunk.split(regex).map(p => p.trim()).filter(Boolean);
+      finalChunks.push(...parts);
+    }
+    return finalChunks.filter(Boolean);
+  }
+
+  // 2. 第二优先级：如果大模型没有使用 [分分]，则自适应硬性切分多媒体卡片和标点
+  const regex = /(\[[^\]]+\])/g;
+  const parts = normalized.split(regex).map(p => p.trim()).filter(Boolean);
+  
+  let finalChunks = [];
+  for (let part of parts) {
+    if (part.startsWith("[") && part.endsWith("]")) {
+      finalChunks.push(part);
+    } else {
+      // 依据中英文标点、惊叹号等进行硬性拆分
+      let subChunks = part.split(/[\n。！!？?；;]+/).map(c => c.trim()).filter(Boolean);
+      
+      // 若只有一句话，尝试在逗号处执行第二阶段强切
+      if (subChunks.length === 1) {
+        if (subChunks[0].includes("，")) {
+          const commaChunks = subChunks[0].split(/，+/).map(c => c.trim()).filter(Boolean);
+          if (commaChunks.length >= 2) {
+            subChunks = [commaChunks[0] + "，", commaChunks.slice(1).join("，")];
+          }
+        } else if (subChunks[0].includes(",")) {
+          const commaChunks = subChunks[0].split(/,+/).map(c => c.trim()).filter(Boolean);
+          if (commaChunks.length >= 2) {
+            subChunks = [commaChunks[0] + ",", commaChunks.slice(1).join(",")];
+          }
+        }
+      }
+      finalChunks.push(...subChunks);
+    }
+  }
+
+  // 3. 强制保底：若仍只有1段长文本，强制中折
+  if (finalChunks.length === 1 && !finalChunks[0].startsWith("[")) {
+    const rawStr = finalChunks[0];
+    if (rawStr.length > 15) {
+      const half = Math.floor(rawStr.length / 2);
+      finalChunks = [rawStr.substring(0, half), rawStr.substring(half)];
+    }
+  }
+
+  return finalChunks.filter(Boolean);
 }
 
 // === 15. NPC 性格化私信对白自动生成 (深度阅读对话上下文 + 零 OOC 严苛人设规则约束) ===
@@ -451,15 +530,28 @@ async function forumTriggerNpcDMReply(convId, npcId) {
     const recentPosts = userPosts.slice(0, 3).map(p => `【标题】:${p.title} 【内容】:${p.content}`).join("\n");
 
     const msgs = await db.forum_messages.where('conversationId').equals(convId).sortBy('createdAt');
-    const lastHistory = msgs.slice(-8); // 增加历史长度，深度呼应上下文
+    
+    // 首序载入机制：永久加载最开头的 20 条消息，保留扮演初衷契机；结合最后 20 条消息拉满最新聊天语境
+    let contextMsgs = [];
+    if (msgs.length <= 40) {
+      contextMsgs = msgs;
+    } else {
+      const first20 = msgs.slice(0, 20);
+      const last20 = msgs.slice(-20);
+      contextMsgs = [...first20, { isSeparator: true }, ...last20];
+    }
     
     let historyText = "";
-    for (let h of lastHistory) {
+    for (let h of contextMsgs) {
+      if (h.isSeparator) {
+        historyText += `\n... [时空折叠：此处因超出最大记忆容量，已自动省略中间 ${msgs.length - 40} 条历史私信] ...`;
+        continue;
+      }
       const senderName = (!h.isNpc && Number(h.senderId) === Number(forumActiveAccountId)) ? "用户" : npc.nickname;
       historyText += `\n[${senderName}]: ${h.content}`;
     }
 
-    const userPrompt = `你当前扮演NPC角色：${npc.nickname}
+    const userPrompt = `你现在必须完全代入NPC角色：${npc.nickname}
 
 【绝对人设硬性底线（绝对不准脱离人设/不准OOC）】：
 官方背景人设设定底牌：${char ? char.persona : "暂无"}
@@ -475,6 +567,11 @@ ${historyText || "无历史对话"}
 ${recentPosts || "无最近发帖"}
 
 请仔细研读上述【上下文私信记录】，根据对方上一句说话的具体意思，给出逻辑极其顺承、情感逻辑极其连贯、语气完全符合你官方背景设定的私信回应。
+
+【NPC 多气泡连发指令（极其重要）】：
+为了模拟真实的微信聊天习惯，在本次私信应答中，你必须发出 2 条或以上的多段短消息气泡。
+请在气泡与气泡之间用 [分分] 隔开（例如：你今天过得怎么样？ [分分] 要注意保暖啊 [分分] [语音:早点休息(5)] ）。你可以在你的回复中自由穿插 [分分] 来指示客户端进行气泡切割！
+
 【NPC 多媒体交互权限指令】：
 如果你需要在对白中：
 1. 回应转账，请输出类似 [对方已收款] 消息，或者回赠转账：[转账:金额(回款言辞)] (例如 [转账:20(给你买糖)])。
@@ -485,16 +582,22 @@ ${recentPosts || "无最近发帖"}
 
     const aiRes = await forumCallAI(systemPrompt, userPrompt);
     
-    await db.forum_messages.add({
-      conversationId: convId,
-      senderId: Number(npcId),
-      isNpc: true,
-      content: aiRes,
-      contentType: 'text',
-      createdAt: Date.now()
-    });
+    // 利用自研切片器切割生成多条微对白
+    const chunks = splitAiResponse(aiRes);
+    
+    // 依次级联落库，时间上给予 100ms 物理拉开，确保按正常时序流畅滚动呈现
+    for (let i = 0; i < chunks.length; i++) {
+      await db.forum_messages.add({
+        conversationId: convId,
+        senderId: Number(npcId),
+        isNpc: true,
+        content: chunks[i],
+        contentType: 'text',
+        createdAt: Date.now() + i * 100
+      });
+    }
 
-    await db.forum_conversations.update(convId, { lastMessageTime: Date.now() });
+    await db.forum_conversations.update(convId, { lastMessageTime: Date.now() + chunks.length * 100 });
     
     if (activeForumConvId === convId) {
       await forumLoadPrivateMessages();
@@ -546,20 +649,33 @@ async function forumContextRerollMsg() {
   const target = await db.forum_messages.get(forumSelectedMsgId);
   if (!target) return;
 
-  // 级联回溯删除：删除目标私信以及其后发生的所有对话节点
-  const followingMsgs = await db.forum_messages
+  // 1. 读取本条信息之上、最近的一条 User（isNpc === false）消息 [2]
+  const prevUserMsg = await db.forum_messages
     .where('conversationId').equals(forumSelectedConvId)
-    .filter(m => m.createdAt >= target.createdAt)
+    .filter(m => m.createdAt <= target.createdAt && !m.isNpc)
+    .reverse() // 按时间戳降序
+    .first();
+
+  let rollbackTime = target.createdAt;
+  if (prevUserMsg) {
+    // 如果找到了上一条 User 消息，以该 User 消息的时间戳作为回溯分水岭 [2]
+    rollbackTime = prevUserMsg.createdAt;
+  }
+
+  // 2. 将该 User 消息时间戳之后的所有发言全部粉碎删除，实现级联回溯 [2]
+  const toDelete = await db.forum_messages
+    .where('conversationId').equals(forumSelectedConvId)
+    .filter(m => m.createdAt > rollbackTime)
     .toArray();
 
-  for (let m of followingMsgs) {
+  for (let m of toDelete) {
     await db.forum_messages.delete(m.id);
   }
 
   forumCloseContextModal();
   await forumLoadPrivateMessages();
 
-  // 重新请求 AI 伙伴根据前序对白演练心流
+  // 3. 重新向 API 发起请求，基于回溯后的 User 消息演练新心流 [2]
   const conv = await db.forum_conversations.get(forumSelectedConvId);
   const peerId = Number(conv.user2Id);
   showToast("正在执行时空回溯对白 Reroll...");
@@ -570,6 +686,14 @@ function forumContextMultiSelect() {
   forumCloseContextModal();
   forumMultiSelectMode = true;
   forumSelectedMsgIds.clear();
+  
+  // 激活级联多选悬浮状态栏 [1]
+  const bar = document.getElementById("forum-multi-select-bar");
+  if (bar) {
+    bar.style.display = "flex";
+    document.getElementById("forum-select-count").innerText = 0;
+  }
+
   forumLoadPrivateMessages();
   showToast("级联多选已就绪，双击任意处退出");
   
@@ -577,12 +701,34 @@ function forumContextMultiSelect() {
   const flow = document.getElementById("forum-chat-messages-flow");
   if (flow) {
     flow.ondblclick = () => {
-      forumMultiSelectMode = false;
-      flow.ondblclick = null;
-      forumLoadPrivateMessages();
+      forumExitMultiSelect();
       showToast("多选模式已关闭");
     };
   }
+}
+
+// 物理删除多选选中的全部私信记录 [1]
+async function forumBatchDeleteMsgs() {
+  if (forumSelectedMsgIds.size === 0) {
+    showToast("请先在左侧勾选您想要粉碎的私信气泡");
+    return;
+  }
+  showCustomConfirm("确认批量删除", `您确定要彻底粉碎选中的这 ${forumSelectedMsgIds.size} 条私信记录吗？该操作不可撤销。`, async () => {
+    for (let id of forumSelectedMsgIds) {
+      await db.forum_messages.delete(id);
+    }
+    showToast("时空私信已成功批量粉碎！");
+    forumExitMultiSelect();
+  });
+}
+
+// 退出多选模式还原输入底栏 [1]
+function forumExitMultiSelect() {
+  forumMultiSelectMode = false;
+  forumSelectedMsgIds.clear();
+  const bar = document.getElementById("forum-multi-select-bar");
+  if (bar) bar.style.display = "none";
+  forumLoadPrivateMessages();
 }
 
 // === 22. 加号多媒体面板与转账系统实现 ===
@@ -644,7 +790,7 @@ function forumSendTransferMsg() {
       return;
     }
     
-    // 纯玩家发起，已彻底移除 timeout 自动应答回复 [2]
+    // 纯玩家发起，已彻底移除 timeout 自动应答回复
     await db.forum_messages.add({
       conversationId: activeForumConvId,
       senderId: Number(forumActiveAccountId),

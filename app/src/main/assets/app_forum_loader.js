@@ -863,7 +863,10 @@ function forumGetPostDetailTemplate() {
         <svg viewBox="0 0 24 24" style="color: #0f1419;"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
       </button>
       <h3>帖子详情</h3>
-      <div style="width:40px;"></div>
+      <!-- 右上角小小的红色 SVG 删除帖子按钮 -->
+      <button class="btn-icon" onclick="forumDeletePostDirectly()" style="color: #ef4444;" title="删除这条帖子">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+      </button>
     </header>
     <div class="win-body" style="padding: 16px; overflow-y: auto; background-color: #f8fafc;">
       <div id="forum-post-detail-content"></div>
@@ -1128,6 +1131,10 @@ async function forumSwitchProfileSubTab(tab) {
     posts.forEach(p => {
       const card = document.createElement("div");
       card.className = "forum-post-card";
+      card.style.cursor = "pointer";
+      // 点击个人空间的帖子，直接层推跳转入详情页
+      card.onclick = () => forumPushLayer('post-detail', p.id);
+
       const timeStr = new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       card.innerHTML = `
         <h4 class="forum-post-title">${escapeHtml(p.title)}</h4>
@@ -1140,12 +1147,21 @@ async function forumSwitchProfileSubTab(tab) {
       container.appendChild(card);
     });
   } else if (tab === 'likes') {
-    const allPosts = await db.forum_posts.toArray();
-    const likedPosts = allPosts.filter(p => p.likesCount > 0).slice(0, 10);
+    // 强制使用物理 liked 表过滤提取该 viewed 账户真实点赞过的帖子记录，规避无厘头随机呈现
+    const myLikes = (await db.forum_likes.toArray()).filter(l => Number(l.userId) === Number(currentProfileViewId) && l.targetType === 'post');
+    const likedPostIds = myLikes.map(l => l.targetId);
+
+    const likedPosts = [];
+    for (let id of likedPostIds) {
+      const p = await db.forum_posts.get(id);
+      if (p) likedPosts.push(p);
+    }
+
     if (likedPosts.length === 0) {
-      container.innerHTML = `<p style="text-align:center; color:#64748b; font-size:12px; padding:40px 0;">暂无赞过的动态卡片记录</p>`;
+      container.innerHTML = `<p style="text-align:center; color:#64748b; font-size:12px; padding:40px 0;">暂无真实点赞过的动态记录</p>`;
       return;
     }
+
     for (let p of likedPosts) {
       let authorName = "匿名成员";
       const npc = await db.forum_npc_accounts.get(p.authorId);
@@ -1159,8 +1175,12 @@ async function forumSwitchProfileSubTab(tab) {
       }
       const card = document.createElement("div");
       card.className = "forum-post-card";
+      card.style.cursor = "pointer";
+      // 支持从点赞列表点击直接穿透到对应的帖子详情
+      card.onclick = () => forumPushLayer('post-detail', p.id);
+
       card.innerHTML = `
-        <div style="font-size:11px; color:#64748b; margin-bottom:4px;">赞了 @${escapeHtml(authorName)} 的动态</div>
+        <div style="font-size:11.5px; color:#1d9bf0; margin-bottom:4px; font-weight:700;">赞了 @${escapeHtml(authorName)} 的随笔</div>
         <h4 class="forum-post-title">${escapeHtml(p.title)}</h4>
         <p class="forum-post-body">${escapeHtml(p.content)}</p>
       `;
@@ -1380,6 +1400,26 @@ async function forumUnfollowNpcFromSettings(npcId) {
     showToast("已成功取消关注");
     await forumInitNpcsPage();
   }
+}
+
+// 物理删除本帖及所有子跟评记录 (自愈式刷新 Timeline) [1]
+async function forumDeletePostDirectly() {
+  if (!activePostDetailId) return;
+  showCustomConfirm("确认删除动态", "您确定要彻底删除这条发帖记录以及它下属的所有评论回复树吗？此操作不可逆。", async () => {
+    await db.forum_posts.delete(activePostDetailId);
+    
+    // 级联粉碎此帖子下的全部跟评
+    const comments = await db.forum_comments.where('postId').equals(activePostDetailId).toArray();
+    for (let c of comments) {
+      await db.forum_comments.delete(c.id);
+    }
+    
+    showToast("动态卡片已成功粉碎删除");
+    forumPopLayer(); // 关闭详情层
+    if (typeof forumLoadPostsFeed === "function") {
+      forumLoadPostsFeed(); // 回退刷新主 Feed 时间线
+    }
+  });
 }
 
 // === 19. 私信列表刷新封装 (真实对接 API 心流探测机制，及多渠道融合) ===

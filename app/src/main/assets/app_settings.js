@@ -1300,7 +1300,32 @@ function deserializeRecord(obj) {
   return obj;
 }
 
-// 备份数据导出逻辑 (支持 PWA 与真机物理直写 /Download/Storypoem/) [1]
+// === 在轨动态加载 JSZip 内核与 YYYYMMDD_HHMM 拟真时戳算法 ===
+function loadJSZip() {
+  return new Promise((resolve, reject) => {
+    if (typeof JSZip !== 'undefined') {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("加载 JSZip 压缩组件失败，请检查网络连接后重试"));
+    document.head.appendChild(script);
+  });
+}
+
+function getFormattedTimestamp() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  const hh = String(now.getHours()).padStart(2, '0');
+  const min = String(now.getMinutes()).padStart(2, '0');
+  return `${yyyy}${mm}${dd}_${hh}${min}`;
+}
+
+// 备份数据导出逻辑 (支持 PWA-Zip 压实与真机物理直写 /Download/Storypoem/ 无损 JSON 隔离) [1]
 async function exportBackup() {
   try {
     const rawBackup = {
@@ -1361,252 +1386,277 @@ async function exportBackup() {
     
     const backup = await serializeRecord(rawBackup);
     const jsonStr = JSON.stringify(backup, null, 2);
-    const fileName = `story_phone_all_backup_${Date.now()}.json`;
+    const timestampStr = getFormattedTimestamp();
 
-    // 优先执行真机物理直写 [2]
+    // 优先执行真机物理直写 (保存为纯文本无损 JSON，防止 AndroidMCP 无法解压二进制 ZIP) [2]
     if (window.AndroidMCP && typeof window.AndroidMCP.saveBackupFile === 'function') {
-      const success = window.AndroidMCP.saveBackupFile(jsonStr, fileName);
+      const fileNameJson = `story_phone_all_backup_${timestampStr}.json`;
+      const success = window.AndroidMCP.saveBackupFile(jsonStr, fileNameJson);
       if (success) {
-        showToast(`全量数据成功物理备份至：/Download/Storypoem/${fileName}`);
+        showToast(`全量数据成功物理备份至：/Download/Storypoem/${fileNameJson}`);
       } else {
         showToast("物理备份失败，请检查存储读写权限。");
       }
       return;
     }
 
-    // PWA 降级下载
-    const blob = new Blob([jsonStr], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
+    // PWA 降级下载：启动在轨动态 ZIP 压实，将 40MB 数据流压制至 3MB 左右
+    showToast("正在通过内存神经网压缩在轨备份中...");
+    await loadJSZip();
+    const zip = new JSZip();
+    zip.file("backup_data.json", jsonStr);
+    const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 9 } });
+
+    const fileNameZip = `story_phone_all_backup_${timestampStr}.zip`;
+    const url = URL.createObjectURL(zipBlob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = fileName;
+    a.download = fileNameZip;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    showToast("全量备份（高压缩率 .zip 文件）导出完成！");
   } catch (error) {
     console.error(error);
     showToast("完整数据备份失败: " + error.message);
   }
 }
 
-// 备份数据还原导入逻辑
+// 统一数据底层写入逻辑 (RAG 解耦保护)
+async function performImportTransaction(rawData) {
+  const data = deserializeRecord(rawData);
+  await db.transaction('rw', [
+    db.api_presets, db.archives, db.relations, db.sessions, db.messages, 
+    db.world_book_entries, db.theaters, db.offline_messages, db.status_history,
+    db.sticker_groups, db.sticker_items, db.summaries,
+    db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
+    db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets,
+    db.reader_books, db.reader_chapters, db.reader_presets, db.reader_tags,
+    db.check_phone_states,
+    db.forum_accounts, db.forum_posts, db.forum_comments, db.forum_likes, db.forum_forwards,
+    db.forum_notifications, db.forum_conversations, db.forum_messages, db.forum_follows,
+    db.forum_presets, db.forum_npc_accounts
+  ], async () => {
+    if (data.api_presets) {
+      await db.api_presets.clear();
+      await db.api_presets.bulkAdd(data.api_presets);
+    }
+    if (data.archives) {
+      await db.archives.clear();
+      await db.archives.bulkAdd(data.archives);
+    }
+    if (data.relations) {
+      await db.relations.clear();
+      await db.relations.bulkAdd(data.relations);
+    }
+    if (data.sessions) {
+      await db.sessions.clear();
+      await db.sessions.bulkAdd(data.sessions);
+    }
+    if (data.messages) {
+      await db.messages.clear();
+      await db.messages.bulkAdd(data.messages);
+    }
+    if (data.world_book_entries) {
+      await db.world_book_entries.clear();
+      await db.world_book_entries.bulkAdd(data.world_book_entries);
+    }
+    if (data.theaters) {
+      await db.theaters.clear();
+      await db.theaters.bulkAdd(data.theaters);
+    }
+    if (data.offline_messages) {
+      await db.offline_messages.clear();
+      await db.offline_messages.bulkAdd(data.offline_messages);
+    }
+    if (data.status_history) {
+      await db.status_history.clear();
+      await db.status_history.bulkAdd(data.status_history);
+    }
+    if (data.sticker_groups) {
+      await db.sticker_groups.clear();
+      await db.sticker_groups.bulkAdd(data.sticker_groups);
+    }
+    if (data.sticker_items) {
+      await db.sticker_items.clear();
+      await db.sticker_items.bulkAdd(data.sticker_items);
+    }
+    if (data.summaries) {
+      await db.summaries.clear();
+      await db.summaries.bulkAdd(data.summaries);
+    }
+    if (data.deeptalks) {
+      await db.deeptalks.clear();
+      await db.deeptalks.bulkAdd(data.deeptalks);
+    }
+    if (data.deeptalk_messages) {
+      await db.deeptalk_messages.clear();
+      await db.deeptalk_messages.bulkAdd(data.deeptalk_messages);
+    }
+    if (data.deeptalk_thoughts) {
+      await db.deeptalk_thoughts.clear();
+      await db.deeptalk_thoughts.bulkAdd(data.deeptalk_thoughts);
+    }
+    if (data.deeptalk_presets) {
+      await db.deeptalk_presets.clear();
+      await db.deeptalk_presets.bulkAdd(data.deeptalk_presets);
+    }
+    if (data.moments) {
+      await db.moments.clear();
+      await db.moments.bulkAdd(data.moments);
+    }
+    if (data.moment_comments) {
+      await db.moment_comments.clear();
+      await db.moment_comments.bulkAdd(data.moment_comments);
+    }
+    if (data.moment_settings) {
+      await db.moment_settings.clear();
+      await db.moment_settings.bulkAdd(data.moment_settings);
+    }
+    if (data.html_cards) {
+      await db.html_cards.clear();
+      await db.html_cards.bulkAdd(data.html_cards);
+    }
+    if (data.desktop_pets) {
+      await db.desktop_pets.clear();
+      await db.desktop_pets.bulkAdd(data.desktop_pets);
+    }
+    if (data.reader_books) {
+      await db.reader_books.clear();
+      await db.reader_books.bulkAdd(data.reader_books);
+    }
+    if (data.reader_chapters) {
+      await db.reader_chapters.clear();
+      await db.reader_chapters.bulkAdd(data.reader_chapters);
+    }
+    if (data.reader_presets) {
+      await db.reader_presets.clear();
+      await db.reader_presets.bulkAdd(data.reader_presets);
+    }
+    if (data.reader_tags) {
+      await db.reader_tags.clear();
+      await db.reader_tags.bulkAdd(data.reader_tags);
+    }
+    if (data.check_phone_states) {
+      await db.check_phone_states.clear();
+      await db.check_phone_states.bulkAdd(data.check_phone_states);
+    }
+    if (data.forum_accounts) {
+      await db.forum_accounts.clear();
+      await db.forum_accounts.bulkAdd(data.forum_accounts);
+    }
+    if (data.forum_posts) {
+      await db.forum_posts.clear();
+      await db.forum_posts.bulkAdd(data.forum_posts);
+    }
+    if (data.forum_comments) {
+      await db.forum_comments.clear();
+      await db.forum_comments.bulkAdd(data.forum_comments);
+    }
+    if (data.forum_likes) {
+      await db.forum_likes.clear();
+      await db.forum_likes.bulkAdd(data.forum_likes);
+    }
+    if (data.forum_forwards) {
+      await db.forum_forwards.clear();
+      await db.forum_forwards.bulkAdd(data.forum_forwards);
+    }
+    if (data.forum_notifications) {
+      await db.forum_notifications.clear();
+      await db.forum_notifications.bulkAdd(data.forum_notifications);
+    }
+    if (data.forum_conversations) {
+      await db.forum_conversations.clear();
+      await db.forum_conversations.bulkAdd(data.forum_conversations);
+    }
+    if (data.forum_messages) {
+      await db.forum_messages.clear();
+      await db.forum_messages.bulkAdd(data.forum_messages);
+    }
+    if (data.forum_follows) {
+      await db.forum_follows.clear();
+      await db.forum_follows.bulkAdd(data.forum_follows);
+    }
+    if (data.forum_presets) {
+      await db.forum_presets.clear();
+      await db.forum_presets.bulkAdd(data.forum_presets);
+    }
+    if (data.forum_npc_accounts) {
+      await db.forum_npc_accounts.clear();
+      await db.forum_npc_accounts.bulkAdd(data.forum_npc_accounts);
+    }
+  });
+  
+  if (data.localStorage) {
+    const map = {
+      desktopLayout: "desktop-layout-v3",
+      dockLayout: "dock-layout-v3",
+      beautifyWallpaper: "beautify-wallpaper",
+      customIcons: "beautify-custom-icons",
+      activeCss: "beautify-active-css",
+      cssPresets: "custom-css-presets",
+      placedWidgetsDesktop: "placed-widgets-desktop",
+      placedWidgetsDock: "placed-widgets-dock",
+      widgets: "beautify-widgets",
+      dockOpacity: "beautify-dock-opacity"
+    };
+
+    Object.keys(data.localStorage).forEach(k => {
+      const lKey = map[k] || k;
+      if (data.localStorage[k] !== null && data.localStorage[k] !== undefined) {
+        localStorage.setItem(lKey, data.localStorage[k]);
+      }
+    });
+  }
+}
+
+// 备份数据自愈性多态还原导入逻辑 (自动支持 .zip 压缩包与历史遗留 .json 导入)
 async function importBackup(e) {
   const file = e.target.files[0];
   if (!file) return;
   
-  const reader = new FileReader();
-  reader.onload = async (event) => {
-    try {
-      const rawData = JSON.parse(event.target.result);
-      if (!rawData || typeof rawData !== 'object') {
-        throw new Error("无效的 JSON 备份数据结构");
-      }
-      
-      const confirmImport = confirm("导入完整备份将覆盖所有的本地数据、人设、聊天记录以及美化配置！确定要继续吗？");
-      if (!confirmImport) return;
-      
-      const data = deserializeRecord(rawData);
-      
-      await db.transaction('rw', [
-        db.api_presets, db.archives, db.relations, db.sessions, db.messages, 
-        db.world_book_entries, db.theaters, db.offline_messages, db.status_history,
-        db.sticker_groups, db.sticker_items, db.summaries,
-        db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
-        db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets,
-        db.reader_books, db.reader_chapters, db.reader_presets, db.reader_tags,
-        db.check_phone_states,
-        db.forum_accounts, db.forum_posts, db.forum_comments, db.forum_likes, db.forum_forwards,
-        db.forum_notifications, db.forum_conversations, db.forum_messages, db.forum_follows,
-        db.forum_presets, db.forum_npc_accounts
-      ], async () => {
-        if (data.api_presets) {
-          await db.api_presets.clear();
-          await db.api_presets.bulkAdd(data.api_presets);
-        }
-        if (data.archives) {
-          await db.archives.clear();
-          await db.archives.bulkAdd(data.archives);
-        }
-        if (data.relations) {
-          await db.relations.clear();
-          await db.relations.bulkAdd(data.relations);
-        }
-        if (data.sessions) {
-          await db.sessions.clear();
-          await db.sessions.bulkAdd(data.sessions);
-        }
-        if (data.messages) {
-          await db.messages.clear();
-          await db.messages.bulkAdd(data.messages);
-        }
-        if (data.world_book_entries) {
-          await db.world_book_entries.clear();
-          await db.world_book_entries.bulkAdd(data.world_book_entries);
-        }
-        if (data.theaters) {
-          await db.theaters.clear();
-          await db.theaters.bulkAdd(data.theaters);
-        }
-        if (data.offline_messages) {
-          await db.offline_messages.clear();
-          await db.offline_messages.bulkAdd(data.offline_messages);
-        }
-        if (data.status_history) {
-          await db.status_history.clear();
-          await db.status_history.bulkAdd(data.status_history);
-        }
-        if (data.sticker_groups) {
-          await db.sticker_groups.clear();
-          await db.sticker_groups.bulkAdd(data.sticker_groups);
-        }
-        if (data.sticker_items) {
-          await db.sticker_items.clear();
-          await db.sticker_items.bulkAdd(data.sticker_items);
-        }
-        if (data.summaries) {
-          await db.summaries.clear();
-          await db.summaries.bulkAdd(data.summaries);
-        }
-        if (data.deeptalks) {
-          await db.deeptalks.clear();
-          await db.deeptalks.bulkAdd(data.deeptalks);
-        }
-        if (data.deeptalk_messages) {
-          await db.deeptalk_messages.clear();
-          await db.deeptalk_messages.bulkAdd(data.deeptalk_messages);
-        }
-        if (data.deeptalk_thoughts) {
-          await db.deeptalk_thoughts.clear();
-          await db.deeptalk_thoughts.bulkAdd(data.deeptalk_thoughts);
-        }
-        if (data.deeptalk_presets) {
-          await db.deeptalk_presets.clear();
-          await db.deeptalk_presets.bulkAdd(data.deeptalk_presets);
-        }
-        if (data.moments) {
-          await db.moments.clear();
-          await db.moments.bulkAdd(data.moments);
-        }
-        if (data.moment_comments) {
-          await db.moment_comments.clear();
-          await db.moment_comments.bulkAdd(data.moment_comments);
-        }
-        if (data.moment_settings) {
-          await db.moment_settings.clear();
-          await db.moment_settings.bulkAdd(data.moment_settings);
-        }
-        if (data.html_cards) {
-          await db.html_cards.clear();
-          await db.html_cards.bulkAdd(data.html_cards);
-        }
-        if (data.desktop_pets) {
-          await db.desktop_pets.clear();
-          await db.desktop_pets.bulkAdd(data.desktop_pets);
-        }
-        if (data.reader_books) {
-          await db.reader_books.clear();
-          await db.reader_books.bulkAdd(data.reader_books);
-        }
-        if (data.reader_chapters) {
-          await db.reader_chapters.clear();
-          await db.reader_chapters.bulkAdd(data.reader_chapters);
-        }
-        if (data.reader_presets) {
-          await db.reader_presets.clear();
-          await db.reader_presets.bulkAdd(data.reader_presets);
-        }
-        if (data.reader_tags) {
-          await db.reader_tags.clear();
-          await db.reader_tags.bulkAdd(data.reader_tags);
-        }
-        if (data.check_phone_states) {
-          await db.check_phone_states.clear();
-          await db.check_phone_states.bulkAdd(data.check_phone_states);
-        }
-        if (data.forum_accounts) {
-          await db.forum_accounts.clear();
-          await db.forum_accounts.bulkAdd(data.forum_accounts);
-        }
-        if (data.forum_posts) {
-          await db.forum_posts.clear();
-          await db.forum_posts.bulkAdd(data.forum_posts);
-        }
-        if (data.forum_comments) {
-          await db.forum_comments.clear();
-          await db.forum_comments.bulkAdd(data.forum_comments);
-        }
-        if (data.forum_likes) {
-          await db.forum_likes.clear();
-          await db.forum_likes.bulkAdd(data.forum_likes);
-        }
-        if (data.forum_forwards) {
-          await db.forum_forwards.clear();
-          await db.forum_forwards.bulkAdd(data.forum_forwards);
-        }
-        if (data.forum_notifications) {
-          await db.forum_notifications.clear();
-          await db.forum_notifications.bulkAdd(data.forum_notifications);
-        }
-        if (data.forum_conversations) {
-          await db.forum_conversations.clear();
-          await db.forum_conversations.bulkAdd(data.forum_conversations);
-        }
-        if (data.forum_messages) {
-          await db.forum_messages.clear();
-          await db.forum_messages.bulkAdd(data.forum_messages);
-        }
-        if (data.forum_follows) {
-          await db.forum_follows.clear();
-          await db.forum_follows.bulkAdd(data.forum_follows);
-        }
-        if (data.forum_presets) {
-          await db.forum_presets.clear();
-          await db.forum_presets.bulkAdd(data.forum_presets);
-        }
-        if (data.forum_npc_accounts) {
-          await db.forum_npc_accounts.clear();
-          await db.forum_npc_accounts.bulkAdd(data.forum_npc_accounts);
-        }
-      });
-      
-      if (data.localStorage) {
-        const keys = [
-          "global_api_preset_id", "active_me_id", "desktop-layout-v3", "dock-layout-v3",
-          "wallet_balance_v1", "wallet_ledger_v1", "beautify-wallpaper", "beautify-custom-icons",
-          "beautify-active-css", "custom-css-presets", "placed-widgets-desktop", "placed-widgets-dock",
-          "beautify-widgets", "beautify-dock-opacity"
-        ];
-        // 映射恢复
-        const map = {
-          desktopLayout: "desktop-layout-v3",
-          dockLayout: "dock-layout-v3",
-          beautifyWallpaper: "beautify-wallpaper",
-          customIcons: "beautify-custom-icons",
-          activeCss: "beautify-active-css",
-          cssPresets: "custom-css-presets",
-          placedWidgetsDesktop: "placed-widgets-desktop",
-          placedWidgetsDock: "placed-widgets-dock",
-          widgets: "beautify-widgets",
-          dockOpacity: "beautify-dock-opacity"
-        };
+  const confirmImport = confirm("导入完整备份将覆盖所有的本地数据、人设、聊天记录以及美化配置！确定要继续吗？");
+  if (!confirmImport) return;
 
-        Object.keys(data.localStorage).forEach(k => {
-          const lKey = map[k] || k;
-          if (data.localStorage[k] !== null && data.localStorage[k] !== undefined) {
-            localStorage.setItem(lKey, data.localStorage[k]);
-          }
-        });
+  const reader = new FileReader();
+
+  if (file.name.endsWith(".zip")) {
+    reader.onload = async (event) => {
+      try {
+        await loadJSZip();
+        const zip = await JSZip.loadAsync(event.target.result);
+        const jsonFile = zip.file("backup_data.json");
+        if (!jsonFile) {
+          throw new Error("压缩包格式损坏：未找到核心 backup_data.json 数据库备份文件");
+        }
+        const jsonText = await jsonFile.async("string");
+        const rawData = JSON.parse(jsonText);
+        await performImportTransaction(rawData);
+        
+        alert("全量压缩数据包导入解压成功！系统即将自动重载。");
+        location.reload();
+      } catch (err) {
+        console.error(err);
+        alert("导入压缩备份包失败，详细原因: " + err.message);
       }
-      
-      alert("全量数据导入成功！系统即将自动重载。");
-      location.reload();
-    } catch (error) {
-      console.error(error);
-      alert("导入备份失败: " + error.message);
-    }
-  };
-  reader.readAsText(file);
+    };
+    reader.readAsArrayBuffer(file); // ZIP 读取必须走二进制 ArrayBuffer
+  } else {
+    reader.onload = async (event) => {
+      try {
+        const rawData = JSON.parse(event.target.result);
+        await performImportTransaction(rawData);
+        
+        alert("全量 JSON 数据导入成功！系统即将自动重载。");
+        location.reload();
+      } catch (error) {
+        console.error(error);
+        alert("导入 JSON 备份失败，详细原因: " + error.message);
+      }
+    };
+    reader.readAsText(file);
+  }
 }
 
 // === 新增：自适应 PWA/APK 移动端调试控制台 (vConsole) 动态开关管理 ===
@@ -1729,10 +1779,10 @@ async function optimizeImagesAndAvatars() {
     let stickersOptimized = 0;
     let messagesOptimized = 0;
 
-    // 1. 深度压缩 archives 角色及我方档案头像 (限制 300px)
+    // 1. 深度压缩 archives 角色及我方档案头像 (前置校验 typeof 绕过二进制 Blob 碰撞，防止 Syntax 崩溃) [2]
     const archives = await db.archives.toArray();
     for (let arc of archives) {
-      if (arc.avatar && arc.avatar.startsWith("data:image")) {
+      if (arc.avatar && typeof arc.avatar === 'string' && arc.avatar.startsWith("data:image")) {
         const compressed = await compressImageBase64(arc.avatar, 300, 0.7);
         if (compressed.length < arc.avatar.length) {
           await db.archives.update(arc.id, { avatar: compressed });
@@ -1741,10 +1791,10 @@ async function optimizeImagesAndAvatars() {
       }
     }
 
-    // 2. 深度压缩 sticker_items 物理表情包 (限制 300px)
+    // 2. 深度压缩 sticker_items 物理表情包 (过滤 Blob)
     const stickers = await db.sticker_items.toArray();
     for (let st of stickers) {
-      if (st.imageUrl && st.imageUrl.startsWith("data:image")) {
+      if (st.imageUrl && typeof st.imageUrl === 'string' && st.imageUrl.startsWith("data:image")) {
         const compressed = await compressImageBase64(st.imageUrl, 300, 0.7);
         if (compressed.length < st.imageUrl.length) {
           await db.sticker_items.update(st.id, { imageUrl: compressed });
@@ -1753,10 +1803,10 @@ async function optimizeImagesAndAvatars() {
       }
     }
 
-    // 3. 深度压缩 messages 聊天内发送的高分照片 (限制 800px 保证细节)
+    // 3. 深度压缩 messages 聊天内发送的高分照片 (过滤 Blob)
     const messages = await db.messages.where('contentType').equals('photo').toArray();
     for (let msg of messages) {
-      if (msg.content && msg.content.startsWith("data:image")) {
+      if (msg.content && typeof msg.content === 'string' && msg.content.startsWith("data:image")) {
         const compressed = await compressImageBase64(msg.content, 800, 0.7);
         if (compressed.length < msg.content.length) {
           await db.messages.update(msg.id, { content: compressed });
@@ -1765,10 +1815,10 @@ async function optimizeImagesAndAvatars() {
       }
     }
 
-    // 4. 深度压缩 offline_messages 线下剧场内照片
+    // 4. 深度压缩 offline_messages 线下剧场内照片 (过滤 Blob)
     const allOfflineMsgs = await db.offline_messages.toArray();
     for (let msg of allOfflineMsgs) {
-      if (msg.content && msg.content.startsWith("data:image")) {
+      if (msg.content && typeof msg.content === 'string' && msg.content.startsWith("data:image")) {
         const compressed = await compressImageBase64(msg.content, 800, 0.7);
         if (compressed.length < msg.content.length) {
           await db.offline_messages.update(msg.id, { content: compressed });

@@ -50,7 +50,10 @@ async function forumLoadPostsFeed() {
     return;
   }
 
-  // 使用内存片段拼装，规避返回时的瞬间闪动
+  // 物理检查当前登录 User 是否真实点赞过这些动态 [1]
+  const myLikes = (await db.forum_likes.toArray()).filter(l => Number(l.userId) === Number(forumActiveAccountId) && l.targetType === 'post');
+
+  // 使用内存片段拼装，规避返回时的瞬间闪动 [2]
   const fragment = document.createDocumentFragment();
 
   for (let p of posts) {
@@ -96,6 +99,7 @@ async function forumLoadPostsFeed() {
       `;
     }
 
+    const isLikedByMe = myLikes.some(l => l.targetId === p.id);
     const timeStr = new Date(p.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     card.innerHTML = `
@@ -121,7 +125,7 @@ async function forumLoadPostsFeed() {
             <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M21.99 4c0-1.1-.89-2-1.99-2H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h14l4 4-.01-18zM18 14H6v-2h12v2zm0-3H6V9h12v2zm0-3H6V6h12v2z"/></svg>
             <span>${p.commentsCount || 0}</span>
           </button>
-          <button class="forum-action-btn" onclick="forumToggleLike(${p.id}, this)">
+          <button class="forum-action-btn ${isLikedByMe ? 'active' : ''}" onclick="forumToggleLike(${p.id}, this)">
             <svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
             <span>${p.likesCount || 0}</span>
           </button>
@@ -139,6 +143,42 @@ async function forumLoadPostsFeed() {
   container.innerHTML = "";
   container.appendChild(fragment);
 }
+
+// 补齐被意外遗漏的点赞控制器并绑定全局作用域，确保 100% 点击上屏与 liked 物理库同步 [1]
+async function forumToggleLike(postId, btn) {
+  const isLiked = btn.classList.contains("active");
+  const post = await db.forum_posts.get(postId);
+  if (!post) return;
+
+  if (isLiked) {
+    btn.classList.remove("active");
+    const newCount = Math.max(0, (post.likesCount || 0) - 1);
+    await db.forum_posts.update(postId, { likesCount: newCount });
+    btn.querySelector("span").innerText = newCount;
+
+    // 级联删除真实的 liked 点赞历史记录
+    const likeRecord = (await db.forum_likes.toArray()).find(l => Number(l.userId) === Number(forumActiveAccountId) && l.targetId === postId && l.targetType === 'post');
+    if (likeRecord) {
+      await db.forum_likes.delete(likeRecord.id);
+    }
+  } else {
+    btn.classList.add("active");
+    const newCount = (post.likesCount || 0) + 1;
+    await db.forum_posts.update(postId, { likesCount: newCount });
+    btn.querySelector("span").innerText = newCount;
+
+    // 添加真实的 liked 点赞历史记录 [1]
+    await db.forum_likes.add({
+      userId: Number(forumActiveAccountId),
+      targetId: postId,
+      targetType: 'post',
+      createdAt: Date.now()
+    });
+  }
+}
+
+// 显式挂载到全局作用域
+window.forumToggleLike = forumToggleLike;
 
 async function forumInitPostDetailPage(postId) {
   activePostDetailId = postId;
@@ -253,7 +293,7 @@ async function forumLoadCommentsTree() {
   box.innerHTML = "";
 
   const allComments = await db.forum_comments.where('postId').equals(activePostDetailId).toArray();
-  allComments.sort((a,b) => a.createdAt - b.createdAt);
+  allComments.sort((a,b) => a.createdAt - a.createdAt);
 
   const fragment = document.createDocumentFragment();
   
@@ -262,15 +302,27 @@ async function forumLoadCommentsTree() {
     for (let c of layerComments) {
       let cName = "匿名";
       let cAvatar = "";
-      const npc = await db.forum_npc_accounts.get(c.authorId);
-      if (npc) {
-        cName = npc.nickname;
-        cAvatar = npc.avatar;
-      } else {
-        const acc = await db.forum_accounts.get(c.authorId);
+
+      // 基于 Number(c.authorId) === Number(forumActiveAccountId) 隔离用户评论身份，解决评论区 ID 碰撞 [1]
+      const isSelf = Number(c.authorId) === Number(forumActiveAccountId);
+      if (isSelf) {
+        const acc = await db.forum_accounts.get(forumActiveAccountId);
         if (acc) {
           cName = acc.nickname;
-          cAvatar = acc.avatar;
+          cAvatar = acc.avatar || forumGenerateColorfulAvatar(acc.nickname);
+        }
+      } else {
+        const npc = await db.forum_npc_accounts.get(c.authorId);
+        if (npc) {
+          cName = npc.nickname;
+          cAvatar = npc.avatar || forumGenerateColorfulAvatar(npc.nickname);
+        } else {
+          // 容灾兜底：支持其他玩家分身评论的无感解析
+          const otherAcc = await db.forum_accounts.get(c.authorId);
+          if (otherAcc) {
+            cName = otherAcc.nickname;
+            cAvatar = otherAcc.avatar || forumGenerateColorfulAvatar(otherAcc.nickname);
+          }
         }
       }
 
@@ -280,7 +332,7 @@ async function forumLoadCommentsTree() {
 
       nodeDiv.innerHTML = `
         <div style="display:flex; gap:10px; align-items:flex-start;">
-          <img src="${cAvatar || 'data:image/svg+xml;utf8,<svg viewBox=\'0 0 24 24\' xmlns=\'http://www.w3.org/2000/svg\'><circle cx=\'12\' cy=\'12\' r=\'12\' fill=\'%23cbd5e1\'/></svg>'}" style="width:28px; height:28px; border-radius:50%;">
+          <img src="${cAvatar}" style="width:28px; height:28px; border-radius:50%; object-fit:cover;">
           <div style="flex:1; display:flex; flex-direction:column; gap:4px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
               <span style="font-size:12px; font-weight:700; color:#334155;">${escapeHtml(cName)}</span>
@@ -364,7 +416,7 @@ ${npcsPersonaText}
     let likesGenerated = 0;
 
     for (let item of list) {
-      // 安全主权防御拦截：禁止评论区出现用 User 昵称伪冒的跟评回复
+      // 安全主权防御拦截：禁止评论区出现用 User 昵称伪冒的跟评回复 [1]
       if (userNick && item.nickname === userNick) {
         console.log(`[主权防火墙] 拦截到评论混淆，已放弃生成 User 伪冒跟评`);
         continue;
