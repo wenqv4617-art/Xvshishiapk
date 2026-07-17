@@ -126,7 +126,63 @@ class AndroidMcp(private val context: Context) {
         return dir
     }
 
-    // 1. 物理数据导出直写至真机：/Download/Storypoem/
+    // 物理文件二进制追加流句柄，保障分批流式直写
+    private var currentFileOutputStream: java.io.FileOutputStream? = null
+
+    // 1.1 初始化真机物理分片写入流：开辟并锁定目标 ZIP 文件 (清空历史同名备份)
+    @JavascriptInterface
+    fun startBinaryChunkedSave(fileName: String): Boolean {
+        Log.d(TAG, "startBinaryChunkedSave() called, fileName=$fileName")
+        return try {
+            currentFileOutputStream?.close()
+            currentFileOutputStream = null
+
+            val targetFile = File(getDownloadDir(), fileName)
+            if (targetFile.exists()) {
+                targetFile.delete()
+            }
+            // 启用 append = true 追加模式
+            currentFileOutputStream = java.io.FileOutputStream(targetFile, true)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "startBinaryChunkedSave() failed: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // 1.2 物理追加数据分片：接收 500KB Base64 字符串，将其逆向解码为原始二进制字节流并直写磁盘 [2]
+    @JavascriptInterface
+    fun appendBinaryChunk(chunkBase64: String): Boolean {
+        val outputStream = currentFileOutputStream ?: return false
+        return try {
+            val decodedBytes = android.util.Base64.decode(chunkBase64, android.util.Base64.DEFAULT)
+            outputStream.write(decodedBytes)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "appendBinaryChunk() failed: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // 1.3 物理关闭分片写入流：刷盘固化数据，安全释放文件句柄
+    @JavascriptInterface
+    fun closeBinaryChunkedSave(): Boolean {
+        Log.d(TAG, "closeBinaryChunkedSave() called")
+        return try {
+            currentFileOutputStream?.flush()
+            currentFileOutputStream?.close()
+            currentFileOutputStream = null
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "closeBinaryChunkedSave() failed: ${e.message}")
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // 1.4 降级容灾直写：保留作为纯文本备份或单卡片调试导入直写
     @JavascriptInterface
     fun saveBackupFile(jsonString: String, fileName: String): Boolean {
         Log.d(TAG, "saveBackupFile() called, fileName=$fileName, data.length=${jsonString.length}")

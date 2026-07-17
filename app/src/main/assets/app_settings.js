@@ -1325,7 +1325,7 @@ function getFormattedTimestamp() {
   return `${yyyy}${mm}${dd}_${hh}${min}`;
 }
 
-// 备份数据导出逻辑 (支持 PWA-Zip 压实与真机物理直写 /Download/Storypoem/ 无损 JSON 隔离) [1]
+// 备份数据导出逻辑 (支持 PWA-Zip 压实下载与 Android 真机分片流式二进制压缩包直写，彻底根治 TransactionTooLargeException 异常) [1, 2]
 async function exportBackup() {
   try {
     const rawBackup = {
@@ -1388,25 +1388,57 @@ async function exportBackup() {
     const jsonStr = JSON.stringify(backup, null, 2);
     const timestampStr = getFormattedTimestamp();
 
-    // 优先执行真机物理直写 (保存为纯文本无损 JSON，防止 AndroidMCP 无法解压二进制 ZIP) [2]
-    if (window.AndroidMCP && typeof window.AndroidMCP.saveBackupFile === 'function') {
-      const fileNameJson = `story_phone_all_backup_${timestampStr}.json`;
-      const success = window.AndroidMCP.saveBackupFile(jsonStr, fileNameJson);
-      if (success) {
-        showToast(`全量数据成功物理备份至：/Download/Storypoem/${fileNameJson}`);
+    // 1. 启动内存 JSZip 高强度压实
+    showToast("正在压缩在轨全量备份中...");
+    await loadJSZip();
+    const zip = new JSZip();
+    zip.file("backup_data.json", jsonStr);
+    
+    // 2. 如果处于真机 APP 环境：执行极速分片二进制写入协议，杜绝系统级 Binder 异常 [2]
+    if (window.AndroidMCP && typeof window.AndroidMCP.startBinaryChunkedSave === 'function') {
+      const fileNameZip = `story_phone_all_backup_${timestampStr}.zip`;
+      
+      // 编译为高压缩率的 Base64 字符串
+      const base64Str = await zip.generateAsync({ type: "base64", compression: "DEFLATE", compressionOptions: { level: 9 } });
+      
+      // 初始化真机文件写入流，准备追加
+      const initSuccess = window.AndroidMCP.startBinaryChunkedSave(fileNameZip);
+      if (!initSuccess) {
+        showToast("初始化真机文件追加通道失败！");
+        return;
+      }
+
+      // 强划 500KB 物理流式切片线，确保单片传输内存开销恒定
+      const chunkSize = 500 * 1024;
+      const totalLength = base64Str.length;
+      let offset = 0;
+      let chunkCount = 0;
+
+      while (offset < totalLength) {
+        const chunk = base64Str.substring(offset, offset + chunkSize);
+        // 向原生流物理追加分片
+        const appendSuccess = window.AndroidMCP.appendBinaryChunk(chunk);
+        if (!appendSuccess) {
+          showToast("追加数据分片到真机存储失败！");
+          window.AndroidMCP.closeBinaryChunkedSave();
+          return;
+        }
+        offset += chunkSize;
+        chunkCount++;
+      }
+
+      // 刷盘固化并关闭文件流
+      const closeSuccess = window.AndroidMCP.closeBinaryChunkedSave();
+      if (closeSuccess) {
+        showToast(`数据已完美分片(${chunkCount}个)压缩导出：/Download/Storypoem/${fileNameZip}`);
       } else {
-        showToast("物理备份失败，请检查存储读写权限。");
+        showToast("固化真机追加流失败，请检查存储空间。");
       }
       return;
     }
 
-    // PWA 降级下载：启动在轨动态 ZIP 压实，将 40MB 数据流压制至 3MB 左右
-    showToast("正在通过内存神经网压缩在轨备份中...");
-    await loadJSZip();
-    const zip = new JSZip();
-    zip.file("backup_data.json", jsonStr);
+    // 3. PWA 网页降级下载
     const zipBlob = await zip.generateAsync({ type: "blob", compression: "DEFLATE", compressionOptions: { level: 9 } });
-
     const fileNameZip = `story_phone_all_backup_${timestampStr}.zip`;
     const url = URL.createObjectURL(zipBlob);
     const a = document.createElement("a");
@@ -1611,7 +1643,7 @@ async function performImportTransaction(rawData) {
   }
 }
 
-// 备份数据自愈性多态还原导入逻辑 (自动支持 .zip 压缩包与历史遗留 .json 导入)
+// 备份数据自愈性多态还原导入逻辑 (完美自动解压支持：Web端 .zip 压缩包、APP端压缩型 Base64 .json、以及历史遗留普通文本 .json 导入) [2]
 async function importBackup(e) {
   const file = e.target.files[0];
   if (!file) return;
@@ -1645,14 +1677,35 @@ async function importBackup(e) {
   } else {
     reader.onload = async (event) => {
       try {
-        const rawData = JSON.parse(event.target.result);
+        const textContent = event.target.result.trim();
+        
+        // 自愈断言：如果发现文本以 UEsDB 开头，说明它是一个在真机 APP 上被 Base64 压实后的超轻量 ZIP 二进制文本包 [2]
+        if (textContent.startsWith("UEsDB")) {
+          showToast("检测到 APP 压缩包，正在智能解压译码中...");
+          await loadJSZip();
+          const zipBlob = dataURLtoBlob("data:application/zip;base64," + textContent);
+          const zip = await JSZip.loadAsync(zipBlob);
+          const jsonFile = zip.file("backup_data.json");
+          if (!jsonFile) {
+            throw new Error("压缩文本格式损坏：未找到核心备份节点");
+          }
+          const jsonText = await jsonFile.async("string");
+          const rawData = JSON.parse(jsonText);
+          await performImportTransaction(rawData);
+          alert("全量真机压缩文本包解密并恢复成功！系统即将自动重载。");
+          location.reload();
+          return;
+        }
+
+        // 普通遗留 JSON 文本导入分支
+        const rawData = JSON.parse(textContent);
         await performImportTransaction(rawData);
         
-        alert("全量 JSON 数据导入成功！系统即将自动重载。");
+        alert("全量普通文本数据导入成功！系统即将自动重载。");
         location.reload();
       } catch (error) {
         console.error(error);
-        alert("导入 JSON 备份失败，详细原因: " + error.message);
+        alert("导入备份文件失败，详细原因: " + error.message);
       }
     };
     reader.readAsText(file);
