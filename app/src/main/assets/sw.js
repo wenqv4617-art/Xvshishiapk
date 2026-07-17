@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v12'; // 离线 PWA 升级至 v12 支持 HTML 舱与剧情引擎
+const CACHE_NAME = 'story-phone-v13'; // 离线 PWA 升级至 v13 引入系统级论坛
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -21,13 +21,17 @@ const ASSETS = [
   './app_deeptalk.js',       // 深谈逻辑
   './chat_html.css',         // HTML 互动舱样式
   './app_chat_html_widget.js',// HTML 互动舱逻辑
-  './app_chat_plot_engine.js',// 剧情引擎逻辑 (新注册)
+  './app_chat_plot_engine.js',// 剧情引擎逻辑
   './app_chat_mcp.js',
   './app_desktop_pet.js',
   './app_reader.js',
   './app_chat_focus.js',
   './app_chat_check_phone.js',
   './check_phone.css',
+  './forum.css',             // 论坛主题样式表 (新加入)
+  './app_forum_loader.js',   // 论坛层栈管理器 (新加入)
+  './app_forum_posts.js',    // 论坛帖子与互动机制 (新加入)
+  './app_forum_messages.js', // 论坛私信机制 (新加入)
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js'

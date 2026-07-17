@@ -54,5 +54,18 @@ db.version(15).stores({
   reader_tags: 'id++, name',
 
   // === Version 15 新增：查手机设备数据长期持久化存储表 ===
-  check_phone_states: 'sessionId'
+  check_phone_states: 'sessionId',
+
+  // === Version 16 新增：系统级论坛社交应用专属物理表 ===
+  forum_accounts: 'id++, avatar, nickname, username, signature, boundPresetId',
+  forum_posts: 'id++, authorId, title, content, media, createdAt, views, likesCount, commentsCount, forwardsCount',
+  forum_comments: 'id++, postId, parentCommentId, authorId, content, createdAt, likesCount',
+  forum_likes: 'id++, userId, targetId, targetType, createdAt',
+  forum_forwards: 'id++, userId, postId, comment, createdAt',
+  forum_notifications: 'id++, userId, type, targetId, fromUserId, isRead, createdAt',
+  forum_conversations: 'id++, user1Id, user2Id, lastMessageTime',
+  forum_messages: 'id++, conversationId, senderId, content, contentType, createdAt',
+  forum_follows: 'id++, followerId, followeeId, createdAt',
+  forum_presets: 'id++, name, forumName, atmosphere, mountedEntryIds',
+  forum_npc_accounts: 'id++, charId, nickname, avatar, postFrequency, postPreference'
 });

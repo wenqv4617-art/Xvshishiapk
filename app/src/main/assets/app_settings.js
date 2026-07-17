@@ -106,6 +106,7 @@ function initSettingsApp() {
       else if (appId === "chat") appName = "聊天";
       else if (appId === "deeptalk") appName = "深谈";
       else if (appId === "reader") appName = "阅读";
+      else if (appId === "forum") appName = "论坛";
 
       alert(`应用「${appName}」图标已重置为系统默认。`);
       if (window.loadDesktopLayout) window.loadDesktopLayout();
@@ -545,8 +546,8 @@ function loadBeautifyForm() {
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
   if (enterSendInput) enterSendInput.checked = enterSend;
 
-  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
+  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -596,8 +597,8 @@ async function saveBeautifyConfig() {
     localStorage.setItem("settings-enter-send", enterSendInput.checked ? "true" : "false");
   }
 
-  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
+  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -953,6 +954,17 @@ async function clearAllAppData() {
       await db.reader_presets.clear();
       await db.reader_tags.clear();
       await db.check_phone_states.clear();
+      await db.forum_accounts.clear();
+      await db.forum_posts.clear();
+      await db.forum_comments.clear();
+      await db.forum_likes.clear();
+      await db.forum_forwards.clear();
+      await db.forum_notifications.clear();
+      await db.forum_conversations.clear();
+      await db.forum_messages.clear();
+      await db.forum_follows.clear();
+      await db.forum_presets.clear();
+      await db.forum_npc_accounts.clear();
       
       localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1160,6 +1172,17 @@ async function computeStorageUsage() {
     const reader_presets = await db.reader_presets.toArray();
     const reader_tags = await db.reader_tags.toArray();
     const check_phone_states = await db.check_phone_states.toArray();
+    const forum_accounts = await db.forum_accounts.toArray();
+    const forum_posts = await db.forum_posts.toArray();
+    const forum_comments = await db.forum_comments.toArray();
+    const forum_likes = await db.forum_likes.toArray();
+    const forum_forwards = await db.forum_forwards.toArray();
+    const forum_notifications = await db.forum_notifications.toArray();
+    const forum_conversations = await db.forum_conversations.toArray();
+    const forum_messages = await db.forum_messages.toArray();
+    const forum_follows = await db.forum_follows.toArray();
+    const forum_presets = await db.forum_presets.toArray();
+    const forum_npc_accounts = await db.forum_npc_accounts.toArray();
 
     // 1. 计算图片、美化方案与表情包所占容量
     const wallpaperStr = localStorage.getItem("beautify-wallpaper") || "";
@@ -1190,7 +1213,10 @@ async function computeStorageUsage() {
       deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
       moments, moment_comments, moment_settings, html_cards, desktop_pets,
       reader_books, reader_chapters, reader_presets, reader_tags,
-      check_phone_states
+      check_phone_states,
+      forum_accounts, forum_posts, forum_comments, forum_likes, forum_forwards,
+      forum_notifications, forum_conversations, forum_messages, forum_follows,
+      forum_presets, forum_npc_accounts
     };
     const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
@@ -1304,6 +1330,17 @@ async function exportBackup() {
       reader_presets: await db.reader_presets.toArray(),
       reader_tags: await db.reader_tags.toArray(),
       check_phone_states: await db.check_phone_states.toArray(),
+      forum_accounts: await db.forum_accounts.toArray(),
+      forum_posts: await db.forum_posts.toArray(),
+      forum_comments: await db.forum_comments.toArray(),
+      forum_likes: await db.forum_likes.toArray(),
+      forum_forwards: await db.forum_forwards.toArray(),
+      forum_notifications: await db.forum_notifications.toArray(),
+      forum_conversations: await db.forum_conversations.toArray(),
+      forum_messages: await db.forum_messages.toArray(),
+      forum_follows: await db.forum_follows.toArray(),
+      forum_presets: await db.forum_presets.toArray(),
+      forum_npc_accounts: await db.forum_npc_accounts.toArray(),
       localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1378,7 +1415,10 @@ async function importBackup(e) {
         db.deeptalks, db.deeptalk_messages, db.deeptalk_thoughts, db.deeptalk_presets,
         db.moments, db.moment_comments, db.moment_settings, db.html_cards, db.desktop_pets,
         db.reader_books, db.reader_chapters, db.reader_presets, db.reader_tags,
-        db.check_phone_states // 在 rw 事务列表中安全追加查手机物理表，彻底根治死锁 [2.2]
+        db.check_phone_states,
+        db.forum_accounts, db.forum_posts, db.forum_comments, db.forum_likes, db.forum_forwards,
+        db.forum_notifications, db.forum_conversations, db.forum_messages, db.forum_follows,
+        db.forum_presets, db.forum_npc_accounts
       ], async () => {
         if (data.api_presets) {
           await db.api_presets.clear();
@@ -1483,6 +1523,50 @@ async function importBackup(e) {
         if (data.check_phone_states) {
           await db.check_phone_states.clear();
           await db.check_phone_states.bulkAdd(data.check_phone_states);
+        }
+        if (data.forum_accounts) {
+          await db.forum_accounts.clear();
+          await db.forum_accounts.bulkAdd(data.forum_accounts);
+        }
+        if (data.forum_posts) {
+          await db.forum_posts.clear();
+          await db.forum_posts.bulkAdd(data.forum_posts);
+        }
+        if (data.forum_comments) {
+          await db.forum_comments.clear();
+          await db.forum_comments.bulkAdd(data.forum_comments);
+        }
+        if (data.forum_likes) {
+          await db.forum_likes.clear();
+          await db.forum_likes.bulkAdd(data.forum_likes);
+        }
+        if (data.forum_forwards) {
+          await db.forum_forwards.clear();
+          await db.forum_forwards.bulkAdd(data.forum_forwards);
+        }
+        if (data.forum_notifications) {
+          await db.forum_notifications.clear();
+          await db.forum_notifications.bulkAdd(data.forum_notifications);
+        }
+        if (data.forum_conversations) {
+          await db.forum_conversations.clear();
+          await db.forum_conversations.bulkAdd(data.forum_conversations);
+        }
+        if (data.forum_messages) {
+          await db.forum_messages.clear();
+          await db.forum_messages.bulkAdd(data.forum_messages);
+        }
+        if (data.forum_follows) {
+          await db.forum_follows.clear();
+          await db.forum_follows.bulkAdd(data.forum_follows);
+        }
+        if (data.forum_presets) {
+          await db.forum_presets.clear();
+          await db.forum_presets.bulkAdd(data.forum_presets);
+        }
+        if (data.forum_npc_accounts) {
+          await db.forum_npc_accounts.clear();
+          await db.forum_npc_accounts.bulkAdd(data.forum_npc_accounts);
         }
       });
       

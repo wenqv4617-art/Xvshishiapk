@@ -273,7 +273,8 @@ const DESKTOP_APPS_CONFIG = {
   world_book: { name: "世界书", svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.53c-.26-.81-1-1.4-1.9-1.4h-1v-3c0-.55-.45-1-1-1h-6v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.4z"/></svg>' }, 
   chat: { name: "聊天", svg: '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 9h12v2H6V9zm8 5H6v-2h8v2zm4-6H6V6h12v2z"/></svg>' },
   deeptalk: { name: "深谈", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/></svg>' },
-  reader: { name: "阅读", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 4z"></path></svg>' }
+  reader: { name: "阅读", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 4z"></path></svg>' },
+  forum: { name: "论坛", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>' }
 };
 
 function loadDesktopLayout() {
@@ -295,6 +296,7 @@ function loadDesktopLayout() {
             desktopLayout[2] = 'world_book';
             desktopLayout[3] = 'deeptalk'; // 默认第四个格子为深谈应用
             desktopLayout[4] = 'reader';   // 默认第五个格子为阅读应用 [1]
+            desktopLayout[5] = 'forum';    // 默认第六个格子为论坛应用
           }
         }
 
@@ -624,6 +626,7 @@ function openApp(app) {
     if (app === 'chat' && typeof initChatApp === 'function') initChatApp();
     if (app === 'deeptalk' && typeof initDeeptalkApp === 'function') initDeeptalkApp();
     if (app === 'reader' && typeof initReaderApp === 'function') initReaderApp();
+    if (app === 'forum' && typeof initForumApp === 'function') initForumApp();
   }
 }
 
@@ -1056,7 +1059,7 @@ function openAddSelector(type, slotIndex) {
   } catch(e) {}
 
   const widgetIds = Object.keys(widgets);
-  const appsList = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
+  const appsList = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum"];
 
   let html = `<div style="padding:16px;">
     <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;text-align:center;">选择要添加的内容</h4>
@@ -1074,6 +1077,7 @@ function openAddSelector(type, slotIndex) {
       else if (appId === "chat") name = "聊天";
       else if (appId === "deeptalk") name = "深谈";
       else if (appId === "reader") name = "阅读";
+      else if (appId === "forum") name = "论坛";
 
       html += `
         <button onclick="placeAppOnSlot('${type}', ${slotIndex}, '${appId}')" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid #e2e8f0; background:#f8fafc; font-size:12px; font-weight:600; text-align:left; cursor:pointer; display:flex; align-items:center; gap:6px;">
