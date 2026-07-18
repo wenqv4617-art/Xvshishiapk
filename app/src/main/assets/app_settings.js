@@ -995,44 +995,47 @@ async function clearAllAppData() {
   if (confirm("系统数据全清除警告！\n\n此操作将彻底抹除当前小手机内产生的所有本地聊天记录、配置、美化及自定义组件，格式化为最初始状态。确定要彻底清空吗？")) {
     if (confirm("再次确认：确定清除吗？清除后不可撤销。")) {
       await db.api_presets.clear();
-      await db.archives.clear();
-      await db.relations.clear();
-      await db.sessions.clear();
-      await db.messages.clear();
-      await db.world_book_entries.clear();
-      await db.theaters.clear();
-      await db.offline_messages.clear();
-      await db.status_history.clear();
-      await db.sticker_groups.clear();
-      await db.sticker_items.clear();
-      await db.summaries.clear();
-      await db.deeptalks.clear();
-      await db.deeptalk_messages.clear();
-      await db.deeptalk_thoughts.clear();
-      await db.deeptalk_presets.clear();
-      await db.moments.clear();
-      await db.moment_comments.clear();
-      await db.moment_settings.clear();
-      await db.html_cards.clear();
-      await db.desktop_pets.clear();
-      await db.reader_books.clear();
-      await db.reader_chapters.clear();
-      await db.reader_presets.clear();
-      await db.reader_tags.clear();
-      await db.check_phone_states.clear();
-      await db.forum_accounts.clear();
-      await db.forum_posts.clear();
-      await db.forum_comments.clear();
-      await db.forum_likes.clear();
-      await db.forum_forwards.clear();
-      await db.forum_notifications.clear();
-      await db.forum_conversations.clear();
-      await db.forum_messages.clear();
-      await db.forum_follows.clear();
-      await db.forum_presets.clear();
-      await db.forum_npc_accounts.clear();
-      
-      localStorage.clear();
+          await db.archives.clear();
+          await db.relations.clear();
+          await db.sessions.clear();
+          await db.messages.clear();
+          await db.world_book_entries.clear();
+          await db.theaters.clear();
+          await db.offline_messages.clear();
+          await db.status_history.clear();
+          await db.sticker_groups.clear();
+          await db.sticker_items.clear();
+          await db.summaries.clear();
+          await db.deeptalks.clear();
+          await db.deeptalk_messages.clear();
+          await db.deeptalk_thoughts.clear();
+          await db.deeptalk_presets.clear();
+          await db.moments.clear();
+          await db.moment_comments.clear();
+          await db.moment_settings.clear();
+          await db.html_cards.clear();
+          await db.desktop_pets.clear();
+          await db.reader_books.clear();
+          await db.reader_chapters.clear();
+          await db.reader_presets.clear();
+          await db.reader_tags.clear();
+          await db.check_phone_states.clear();
+          await db.forum_accounts.clear();
+          await db.forum_posts.clear();
+          await db.forum_comments.clear();
+          await db.forum_likes.clear();
+          await db.forum_forwards.clear();
+          await db.forum_notifications.clear();
+          await db.forum_conversations.clear();
+          await db.forum_messages.clear();
+          await db.forum_follows.clear();
+          await db.forum_presets.clear();
+          await db.forum_npc_accounts.clear();
+          await db.groups.clear();
+          await db.group_members.clear();
+          await db.group_polls.clear();
+          
+          localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
       location.reload();
     }
@@ -1272,19 +1275,25 @@ async function computeStorageUsage() {
     const totalSummariesBytes = new Blob([JSON.stringify(summaries)]).size;
 
     // 5. 计算全表总和
-    const fullDataObj = { 
-      api_presets, archives, relations, sessions, messages, 
-      world_book_entries, theaters, offline_messages, status_history, 
-      sticker_groups, sticker_items, summaries,
-      deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
-      moments, moment_comments, moment_settings, html_cards, desktop_pets,
-      reader_books, reader_chapters, reader_presets, reader_tags,
-      check_phone_states,
-      forum_accounts, forum_posts, forum_comments, forum_likes, forum_forwards,
-      forum_notifications, forum_conversations, forum_messages, forum_follows,
-      forum_presets, forum_npc_accounts
-    };
-    const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
+    const groups = await db.groups.toArray();
+        const group_members = await db.group_members.toArray();
+        const group_polls = await db.group_polls.toArray();
+
+        // 5. 计算全表总和
+        const fullDataObj = { 
+          api_presets, archives, relations, sessions, messages, 
+          world_book_entries, theaters, offline_messages, status_history, 
+          sticker_groups, sticker_items, summaries,
+          deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
+          moments, moment_comments, moment_settings, html_cards, desktop_pets,
+          reader_books, reader_chapters, reader_presets, reader_tags,
+          check_phone_states,
+          forum_accounts, forum_posts, forum_comments, forum_likes, forum_forwards,
+          forum_notifications, forum_conversations, forum_messages, forum_follows,
+          forum_presets, forum_npc_accounts,
+          groups, group_members, group_polls
+        };
+        const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
     // 同步渲染至多维统计看板
     document.getElementById("stat-beautify-bytes").innerText = `${(totalBeautifyBytes / 1024).toFixed(2)} KB`;
@@ -1420,19 +1429,22 @@ async function exportBackup() {
       reader_chapters: await db.reader_chapters.toArray(),
       reader_presets: await db.reader_presets.toArray(),
       reader_tags: await db.reader_tags.toArray(),
-      check_phone_states: await db.check_phone_states.toArray(),
-      forum_accounts: await db.forum_accounts.toArray(),
-      forum_posts: await db.forum_posts.toArray(),
-      forum_comments: await db.forum_comments.toArray(),
-      forum_likes: await db.forum_likes.toArray(),
-      forum_forwards: await db.forum_forwards.toArray(),
-      forum_notifications: await db.forum_notifications.toArray(),
-      forum_conversations: await db.forum_conversations.toArray(),
-      forum_messages: await db.forum_messages.toArray(),
-      forum_follows: await db.forum_follows.toArray(),
-      forum_presets: await db.forum_presets.toArray(),
-      forum_npc_accounts: await db.forum_npc_accounts.toArray(),
-      localStorage: {
+          check_phone_states: await db.check_phone_states.toArray(),
+          forum_accounts: await db.forum_accounts.toArray(),
+          forum_posts: await db.forum_posts.toArray(),
+          forum_comments: await db.forum_comments.toArray(),
+          forum_likes: await db.forum_likes.toArray(),
+          forum_forwards: await db.forum_forwards.toArray(),
+          forum_notifications: await db.forum_notifications.toArray(),
+          forum_conversations: await db.forum_conversations.toArray(),
+          forum_messages: await db.forum_messages.toArray(),
+          forum_follows: await db.forum_follows.toArray(),
+          forum_presets: await db.forum_presets.toArray(),
+          forum_npc_accounts: await db.forum_npc_accounts.toArray(),
+          groups: await db.groups.toArray(),
+          group_members: await db.group_members.toArray(),
+          group_polls: await db.group_polls.toArray(),
+          localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
         desktopLayout: localStorage.getItem("desktop-layout-v3"),
@@ -1534,7 +1546,8 @@ async function performImportTransaction(rawData) {
     db.check_phone_states,
     db.forum_accounts, db.forum_posts, db.forum_comments, db.forum_likes, db.forum_forwards,
     db.forum_notifications, db.forum_conversations, db.forum_messages, db.forum_follows,
-    db.forum_presets, db.forum_npc_accounts
+    db.forum_presets, db.forum_npc_accounts,
+    db.groups, db.group_members, db.group_polls
   ], async () => {
     if (data.api_presets) {
       await db.api_presets.clear();
@@ -1681,10 +1694,22 @@ async function performImportTransaction(rawData) {
       await db.forum_presets.bulkAdd(data.forum_presets);
     }
     if (data.forum_npc_accounts) {
-      await db.forum_npc_accounts.clear();
-      await db.forum_npc_accounts.bulkAdd(data.forum_npc_accounts);
-    }
-  });
+          await db.forum_npc_accounts.clear();
+          await db.forum_npc_accounts.bulkAdd(data.forum_npc_accounts);
+        }
+        if (data.groups) {
+          await db.groups.clear();
+          await db.groups.bulkAdd(data.groups);
+        }
+        if (data.group_members) {
+          await db.group_members.clear();
+          await db.group_members.bulkAdd(data.group_members);
+        }
+        if (data.group_polls) {
+          await db.group_polls.clear();
+          await db.group_polls.bulkAdd(data.group_polls);
+        }
+      });
   
   if (data.localStorage) {
     const map = {

@@ -460,10 +460,18 @@ async function deleteStickerEdit() {
 // ============================================================
 async function getMountedGroupIds(sessionId) {
   try {
-    // 核心修复：强制转为数字类型，避免 string 类型的 sessionId 触发 Dexie 查询失效
     const numSessionId = Number(sessionId);
     const session = await db.sessions.get(numSessionId);
-    if (!session || !session.stickerMountedGroupIds) return [];
+    if (!session) return [];
+
+    // 核心自愈：如果是群聊，自适应从 groups 主表读取挂载表情包，保障挂载逻辑就地生效
+    if (session.isGroup === 1) {
+      const group = await db.groups.get(session.groupId);
+      if (!group || !group.stickerMountedGroupIds) return [];
+      return group.stickerMountedGroupIds.split(',').map(s => parseInt(s.trim())).filter(id => !isNaN(id));
+    }
+
+    if (!session.stickerMountedGroupIds) return [];
     return session.stickerMountedGroupIds.split(',').map(s => parseInt(s.trim())).filter(id => !isNaN(id));
   } catch (e) {
     return [];

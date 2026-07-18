@@ -102,10 +102,147 @@ let isOfflineContextMenuInitialized = false;
 let isChatAppEventsBound = false;
 let isOfflineChatAppEventsBound = false;
 
-// 主动注入语音及多媒体场景卡片的 CSS 规范样式，保障视觉平铺无污染
-(function() {
-  const multimediaStyle = document.createElement("style");
-  multimediaStyle.textContent = `
+// 主动注入语音、多媒体场景卡片及群聊专属面板的 CSS 规范样式
+          (function() {
+            const multimediaStyle = document.createElement("style");
+            multimediaStyle.textContent = `
+              /* 群聊专属：展示在气泡左上角的发信人姓名 */
+              .group-sender-name {
+                font-size: 11px;
+                color: #7f7f7f;
+                margin-bottom: 2px;
+                font-weight: 700;
+                max-width: 140px;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                user-select: none;
+                -webkit-user-select: none;
+              }
+              .msg-bubble.self .group-sender-name {
+                text-align: right;
+                align-self: flex-end;
+              }
+              .msg-bubble.other .group-sender-name {
+                text-align: left;
+                align-self: flex-start;
+              }
+
+              /* 修复群聊气泡列包装，防止子选择器样式丢失与挤压腰斩问题 */
+              .group-msg-wrapper {
+                display: flex;
+                flex-direction: column;
+                align-items: flex-start;
+                max-width: 100%;
+              }
+              .group-msg-wrapper .msg-text {
+                width: fit-content;
+                max-width: 100%;
+                flex-shrink: 0;
+                word-break: break-all;
+              }
+
+      /* 置顶群公告卡片 */
+      .group-announcement-sticky-bar {
+        background: rgba(255, 255, 255, 0.85);
+        backdrop-filter: blur(16px);
+        -webkit-backdrop-filter: blur(16px);
+        border-bottom: 1.5px solid var(--border);
+        padding: 8px 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        position: absolute;
+        top: 50px;
+        left: 0;
+        width: 100%;
+        box-sizing: border-box;
+        z-index: 100;
+        animation: slideDown 0.2s ease-out;
+      }
+      .group-announcement-content-area {
+        flex: 1;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+      }
+      .group-announcement-title {
+        font-size: 12px;
+        font-weight: 800;
+        color: #ef4444;
+      }
+      .group-announcement-text {
+        font-size: 11.5px;
+        color: #475569;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .btn-group-announcement-done {
+        padding: 4px 10px;
+        background: #07c160;
+        color: #fff;
+        border: none;
+        border-radius: 6px;
+        font-size: 10px;
+        font-weight: 700;
+        cursor: pointer;
+        margin-left: 12px;
+      }
+
+      /* 投票卡片 UI 渲染 */
+      .group-poll-card {
+        background: #ffffff;
+        border: 1.5px solid var(--border);
+        border-radius: 12px;
+        padding: 12px;
+        width: 220px;
+        box-shadow: var(--shadow-sm);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .group-poll-card-title {
+        font-size: 13px;
+        font-weight: 800;
+        color: #1e293b;
+        border-bottom: 1px dashed var(--border);
+        padding-bottom: 6px;
+      }
+      .group-poll-option-row {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        padding: 8px;
+        background: #f8fafc;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        cursor: pointer;
+        transition: background 0.15s;
+      }
+      .group-poll-option-row:hover {
+        background: #f1f5f9;
+      }
+      .group-poll-option-header {
+        display: flex;
+        justify-content: space-between;
+        font-size: 11px;
+        font-weight: 700;
+        color: #334155;
+      }
+      .group-poll-progressbar {
+        height: 6px;
+        background: #e2e8f0;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      .group-poll-progressbar-fill {
+        height: 100%;
+        background: var(--primary);
+        width: 0%;
+        transition: width 0.3s ease;
+      }
     /* 微信语音消息气泡 */
     .voice-bubble-card {
       background-color: #ffffff;
@@ -412,6 +549,30 @@ let isOfflineChatAppEventsBound = false;
     };
   };
 
+  // 全局 HTML 弹窗渲染接口，解决嵌套已读列表 HTML 代码被转译展示的 BUG
+  window.showCustomHtmlAlert = function(title, htmlContent, callback) {
+    const overlay = document.createElement("div");
+    overlay.className = "pwa-modal-overlay";
+    overlay.innerHTML = '<div class="pwa-modal-card" style="width: 320px; max-width: 90%;">' +
+      '<div class="pwa-modal-title">' + escapeHtml(title) + '</div>' +
+      '<div class="pwa-modal-message" style="text-align: left; max-height: 240px; overflow-y: auto;">' + htmlContent + '</div>' +
+      '<div class="pwa-modal-buttons" style="margin-top: 16px;">' +
+        '<button class="btn-pwa-modal confirm">确定</button>' +
+      '</div>' +
+    '</div>';
+    document.body.appendChild(overlay);
+    
+    setTimeout(() => overlay.classList.add("show"), 10);
+    
+    overlay.querySelector(".confirm").onclick = () => {
+      overlay.classList.remove("show");
+      setTimeout(() => {
+        overlay.remove();
+        if (typeof callback === 'function') callback();
+      }, 200);
+    };
+  };
+
   window.showCustomPrompt = function(title, defaultValue, callback) {
     const overlay = document.createElement("div");
     overlay.className = "pwa-modal-overlay";
@@ -490,8 +651,8 @@ let isOfflineChatAppEventsBound = false;
 
 function resolveAvatar(avatar) {
   if (!avatar) {
-    // 零冲突、显式高宽的标准 URL 编码灰底圆形 SVG 头像
-    return 'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2250%22%20height%3D%2250%22%20viewBox%3D%220%200%2050%2050%22%3E%3Ccircle%20cx%3D%2225%22%20cy%3D%2225%22%20r%3D%2225%22%20fill%3D%22%23ccc%22%2F%3E%3C%2Fsvg%3E';
+    // 使用纯单引号闭合的干净 SVG 默认图，杜绝 HTML 双引号闭合逃逸
+    return "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/></svg>";
   }
   if (avatar instanceof Blob) {
     return URL.createObjectURL(avatar); 
@@ -883,46 +1044,51 @@ async function renderSessionList() {
     }
 
     for (let s of list) {
-      const char = await db.archives.get(s.charId);
-      const rawMsgs = await db.messages.where('sessionId').equals(s.id).toArray();
-      const latestMsg = rawMsgs.sort((a, b) => b.timestamp - a.timestamp)[0];
-      
-      let latestText = "暂无对话消息";
-      if (latestMsg) {
-        if (latestMsg.contentType === 'transfer') {
-          latestText = "[微信转账]";
-        } else if (latestMsg.contentType === 'red_envelope') {
-          latestText = "[微信红包]";
-        } else if (latestMsg.contentType === 'voice') {
-          latestText = "[语音消息]";
-        } else if (latestMsg.contentType === 'moment_share') {
-          latestText = "[转发了一条朋友圈]";
-        } else if (latestMsg.contentType === 'image' && typeof latestMsg.content === 'string' && latestMsg.content.startsWith("{")) {
-          latestText = "[图片与描述]";
-        } else {
-          latestText = latestMsg.content;
-          if (typeof latestText === 'string') {
-            latestText = latestText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '');
+          let char = null;
+          if (s.isGroup !== 1) {
+            char = await db.archives.get(s.charId);
           }
+          const rawMsgs = await db.messages.where('sessionId').equals(s.id).toArray();
+          const latestMsg = rawMsgs.sort((a, b) => b.timestamp - a.timestamp)[0];
+          
+          let latestText = "暂无对话消息";
+          if (latestMsg) {
+            if (latestMsg.contentType === 'transfer') {
+              latestText = "[微信转账]";
+            } else if (latestMsg.contentType === 'red_envelope') {
+              latestText = "[微信红包]";
+            } else if (latestMsg.contentType === 'voice') {
+              latestText = "[语音消息]";
+            } else if (latestMsg.contentType === 'moment_share') {
+              latestText = "[转发了一条朋友圈]";
+            } else if (latestMsg.contentType === 'group_poll') {
+              latestText = "[群投票]";
+            } else if (latestMsg.contentType === 'image' && typeof latestMsg.content === 'string' && latestMsg.content.startsWith("{")) {
+              latestText = "[图片与描述]";
+            } else {
+              latestText = latestMsg.content;
+              if (typeof latestText === 'string') {
+                latestText = latestText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '');
+              }
+            }
+          }
+          
+          const timeDisplay = formatWeChatTime(new Date(latestMsg ? latestMsg.timestamp : (s.lastMessageTime || Date.now())), new Date());
+          const div = document.createElement("div");
+          div.className = "session-item";
+          div.onclick = () => openWeChatDialog(s.id);
+          div.innerHTML = `
+            <img class="session-avatar" src="${resolveAvatar(s.customCharAvatar || char?.avatar)}">
+            <div class="session-detail">
+              <div class="session-row">
+                <span class="session-name">${s.customCharName || char?.name || '未知角色'}</span>
+                <span class="session-time">${timeDisplay}</span>
+              </div>
+              <div class="session-msg">${latestText}</div>
+            </div>
+          `;
+          container.appendChild(div);
         }
-      }
-      
-      const timeDisplay = formatWeChatTime(new Date(latestMsg ? latestMsg.timestamp : (s.lastMessageTime || Date.now())), new Date());
-      const div = document.createElement("div");
-      div.className = "session-item";
-      div.onclick = () => openWeChatDialog(s.id);
-      div.innerHTML = `
-        <img class="session-avatar" src="${resolveAvatar(s.customCharAvatar || char?.avatar)}">
-        <div class="session-detail">
-          <div class="session-row">
-            <span class="session-name">${s.customCharName || char?.name || '未知角色'}</span>
-            <span class="session-time">${timeDisplay}</span>
-          </div>
-          <div class="session-msg">${latestText}</div>
-        </div>
-      `;
-      container.appendChild(div);
-    }
   } catch (err) {
     console.error("加载会话列表失败:", err);
     container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">加载会话列表出错，请重试</p>`;
@@ -949,6 +1115,23 @@ function updateChatInputLockState(sess) {
 async function openWeChatDialog(sessionId) {
   activeSessionId = sessionId;
   const sess = await db.sessions.get(sessionId);
+  
+  // 群聊专属拦截路由
+  if (sess && sess.isGroup === 1) {
+    if (window.groupChatSystem) {
+      await window.groupChatSystem.openGroupDialog(sessionId);
+      return;
+    }
+  }
+
+  // 清理群置顶公告，防止其穿透并残留留在单聊视窗中
+  const stickyBar = document.getElementById("group-announcement-sticky");
+  if (stickyBar) stickyBar.remove();
+
+  // 单聊展示右上角心声状态粉色爱心按钮
+  const btnCharStatus = document.getElementById("btn-char-status");
+  if (btnCharStatus) btnCharStatus.style.display = "flex";
+
   const char = await db.archives.get(sess.charId);
   const user = await db.archives.get(sess.userId);
 
@@ -968,6 +1151,11 @@ async function openWeChatDialog(sessionId) {
 function closeChatDialog() {
   document.getElementById("chat-dialog-panel").classList.remove("active");
   updateThemeColor("#f4f6fa");
+  
+  // 会话关闭时物理拔除置顶公告条
+  const stickyBar = document.getElementById("group-announcement-sticky");
+  if (stickyBar) stickyBar.remove();
+
   renderSessionList();
 }
 
@@ -978,6 +1166,7 @@ async function renderDialogMessages() {
   if (!container) return;
   
   const sess = await db.sessions.get(activeSessionId);
+  const user = await db.archives.get(sess.userId);
   const msgs = await db.messages.where('sessionId').equals(activeSessionId).sortBy('timestamp');
   const fragment = document.createDocumentFragment();
   
@@ -1014,40 +1203,55 @@ async function renderDialogMessages() {
           fragment.appendChild(timeDiv);
         }
 
-        if (m.isRecalled === 1) {
-      const recallEl = document.createElement("div");
-      recallEl.className = "recalled-system-msg-container";
-      recallEl.setAttribute("data-msg-id", m.id);
-      recallEl.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
-      recallEl.innerHTML = `
-        <div style="background-color: rgba(0,0,0,0.05); padding: 6px 12px; border-radius: 4px; font-size: 11.5px; color: #999; user-select: none; max-width: 85%; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;">
-          <div style="pointer-events: none;">
-            ${m.senderType === 'user' ? '你' : '对方'} 撤回了一条消息 
-            <span class="recall-view-btn" style="color: #576b95; font-size: 10.5px; margin-left: 4px; cursor: pointer; pointer-events: auto;" onclick="window.toggleRecallContent(this, event)">查看</span>
-          </div>
-          <div class="recall-original-content" style="display: none; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 4px; margin-top: 4px; color: #666; font-size: 11px; word-break: break-all; width: 100%; text-align: left;">
-            ${escapeHtml(m.content)}
-          </div>
-        </div>
-      `;
-      recallEl.ondblclick = (e) => {
-        e.preventDefault();
-        if (isMultiSelectMode) return;
-        selectedMsgId = m.id;
-        
-        if (window.momentShareClickTimer) {
-          clearTimeout(window.momentShareClickTimer);
-          window.momentShareClickTimer = null;
+        // 核心支持：将 senderType === 'system' 的系统消息渲染为微信中间灰字
+        if (m.senderType === 'system') {
+          const sysEl = document.createElement("div");
+          sysEl.className = "group-system-notice-container";
+          sysEl.setAttribute("data-msg-id", m.id);
+          sysEl.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
+          sysEl.innerHTML = `
+            <div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; user-select: none; max-width: 85%; text-align: center; line-height: 1.4;">
+              ${escapeHtml(m.content)}
+            </div>
+          `;
+          fragment.appendChild(sysEl);
+          continue;
         }
-        
-        const btnRecall = document.getElementById("btn-menu-recall");
-        if (btnRecall) btnRecall.style.display = "none";
-        
-        document.getElementById("bubble-context-menu").style.display = "flex";
-      };
-      fragment.appendChild(recallEl);
-      continue;
-    }
+
+        if (m.isRecalled === 1) {
+          const recallEl = document.createElement("div");
+          recallEl.className = "recalled-system-msg-container";
+          recallEl.setAttribute("data-msg-id", m.id);
+          recallEl.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
+          recallEl.innerHTML = `
+            <div style="background-color: rgba(0,0,0,0.05); padding: 6px 12px; border-radius: 4px; font-size: 11.5px; color: #999; user-select: none; max-width: 85%; display: flex; flex-direction: column; align-items: center; gap: 4px; text-align: center;">
+              <div style="pointer-events: none;">
+                ${m.senderType === 'user' ? '你' : '对方'} 撤回了一条消息 
+                <span class="recall-view-btn" style="color: #576b95; font-size: 10.5px; margin-left: 4px; cursor: pointer; pointer-events: auto;" onclick="window.toggleRecallContent(this, event)">查看</span>
+              </div>
+              <div class="recall-original-content" style="display: none; border-top: 1px dashed rgba(0,0,0,0.1); padding-top: 4px; margin-top: 4px; color: #666; font-size: 11px; word-break: break-all; width: 100%; text-align: left;">
+                ${escapeHtml(m.content)}
+              </div>
+            </div>
+          `;
+          recallEl.ondblclick = (e) => {
+            e.preventDefault();
+            if (isMultiSelectMode) return;
+            selectedMsgId = m.id;
+            
+            if (window.momentShareClickTimer) {
+              clearTimeout(window.momentShareClickTimer);
+              window.momentShareClickTimer = null;
+            }
+            
+            const btnRecall = document.getElementById("btn-menu-recall");
+            if (btnRecall) btnRecall.style.display = "none";
+            
+            document.getElementById("bubble-context-menu").style.display = "flex";
+          };
+          fragment.appendChild(recallEl);
+          continue;
+        }
 
         const bubble = document.createElement("div");
     bubble.className = `msg-bubble ${m.senderType === 'user' ? 'self' : 'other'}`;
@@ -1169,6 +1373,7 @@ async function renderDialogMessages() {
         const amount = parseFloat(data.amount) || 0;
         const statusClass = data.status || 'pending';
         const statusLabel = statusClass === 'received' ? '已收钱' : '待接收';
+        const targetLabel = data.targetName ? `（给 ${escapeHtml(data.targetName)}）` : "";
         contentHtml = `
           <div class="wallet-bubble-card transfer ${statusClass}" onclick="walletSystem.claimTransfer(${m.id})" style="position: relative;">
             <div class="wallet-bubble-body">
@@ -1179,7 +1384,7 @@ async function renderDialogMessages() {
                 </svg>
               </div>
               <div class="wallet-bubble-details">
-                <div class="wallet-bubble-title">微信转账</div>
+                <div class="wallet-bubble-title">微信转账 ${targetLabel}</div>
                 <div class="wallet-bubble-amount">¥ ${amount.toFixed(2)}</div>
               </div>
             </div>
@@ -1195,8 +1400,10 @@ async function renderDialogMessages() {
         const data = JSON.parse(m.content);
         const amount = parseFloat(data.amount) || 0;
         const remark = escapeHtml(data.remark || '恭喜发财，大吉大利');
+        const isLucky = data.type === 'lucky';
+        const typeLabel = isLucky ? ' 拼手气' : '';
         const statusClass = data.status || 'pending';
-        const statusLabel = statusClass === 'opened' ? '微信红包（已领取）' : '微信红包';
+        const statusLabel = statusClass === 'opened' ? `微信${typeLabel}红包（已领取）` : `微信${typeLabel}红包`;
         contentHtml = `
           <div class="wallet-bubble-card red-envelope ${statusClass}" onclick="walletSystem.claimRedEnvelope(${m.id})" style="position: relative;">
             <div class="wallet-bubble-body">
@@ -1241,32 +1448,73 @@ async function renderDialogMessages() {
         contentHtml = `<div class="msg-text" style="position: relative;">朋友圈分享格式错误${emojiHtml}</div>`;
       }
     } else {
-      const isOnlySticker = typeof m.content === 'string' && /^【表情包：[^】]+】$/.test(m.content.trim());
-      let displayContent = m.content;
-      if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-        displayContent = window.stickerSystem.renderStickerInMessageSync(m.content, mountedGroupIds);
-      }
-      
-      if (isOnlySticker && displayContent.includes('<img')) {
-        contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative;">${displayContent}${emojiHtml}</div>`;
-      } else {
-        // 支持引用渲染
-        let quoteHtml = "";
-        if (window.quoteSystem) {
-          const parsed = await window.quoteSystem.parseQuote(m.content);
-          if (parsed) {
-            quoteHtml = parsed.quoteHtml;
-            displayContent = parsed.cleanText;
-            if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-              displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
-            }
-          }
+      // 文本与表情切分上屏器：如果消息含有【表情包：xx】，在渲染时智能切分为多个独立的文字气泡与表情气泡，在上下文里依然原样储存
+      const rawContent = m.content;
+      let quoteHtml = "";
+      let displayContent = rawContent;
+      if (window.quoteSystem) {
+        const parsed = await window.quoteSystem.parseQuote(rawContent);
+        if (parsed) {
+          quoteHtml = parsed.quoteHtml;
+          displayContent = parsed.cleanText;
         }
-        contentHtml = `<div class="msg-text" style="position: relative;">${quoteHtml}${displayContent}${emojiHtml}</div>`;
+      }
+
+      // 对 displayContent 按照表情包语法切分成多个气泡组件，多气泡垂直纵向无缝叠放
+      const stickerRegex = /(【表情包：[^】]+】)/g;
+      const parts = displayContent.split(stickerRegex).filter(Boolean);
+      
+      let segmentsHtml = "";
+      for (const part of parts) {
+        if (part.startsWith("【表情包：") && part.endsWith("】")) {
+          const stickerImgHtml = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+          if (stickerImgHtml.includes("<img")) {
+            segmentsHtml += `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${stickerImgHtml}${emojiHtml}</div>`;
+          } else {
+            segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${escapeHtml(part)}${emojiHtml}</div>`;
+          }
+        } else {
+          let textNode = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+          segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${textNode}${emojiHtml}</div>`;
+          quoteHtml = ""; // 引用标题仅在首段呈现
+        }
+      }
+      contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
+    }
+
+    // 判断群聊发送人信息与头衔
+    let finalSenderName = "";
+    // 强制转型 Number 防止 Dexie 主键查询类型冲突失效
+    let finalAvatarUrl = m.senderType === 'user' ? (user ? resolveAvatar(user.avatar) : userAvatarUrl) : charAvatarUrl;
+    let roleTitleHtml = "";
+
+    if (sess.isGroup === 1) {
+      if (Number(m.senderId) === 99999) {
+        // 核心支持：精准匹配并加载群助手机器人的专属名称与头像
+        const groupObj = await db.groups.get(sess.groupId);
+        const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+        finalSenderName = botObj ? botObj.name : "群助手";
+        finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
+      } else {
+        const memberInfo = await db.group_members.where('[groupId+memberId+memberType]').equals([sess.groupId, Number(m.senderId), m.senderType]).first();
+        if (m.senderType === 'user') {
+          finalSenderName = sess.customUserName || user?.name || "我";
+        } else {
+          const charSender = await db.archives.get(Number(m.senderId));
+          finalSenderName = charSender ? (charSender.remark || charSender.name) : "群成员";
+          finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar) : finalAvatarUrl;
+        }
+        if (memberInfo && memberInfo.title) {
+          const badgeColor = memberInfo.role === 'owner' ? '#ef4444' : (memberInfo.role === 'admin' ? '#3b82f6' : '#10b981');
+          roleTitleHtml = `<span style="font-size:9px; background-color:${badgeColor}; color:#fff; padding:1px 4px; border-radius:4px; margin-right:4px; font-weight:700;">${escapeHtml(memberInfo.title)}</span>`;
+        }
       }
     }
 
-    const avatarUrl = m.senderType === 'user' ? userAvatarUrl : charAvatarUrl;
+    // 针对旧 Service Worker 缓存遗留的 SVG 实体进行自愈转译，保障无符号残留
+    if (finalAvatarUrl && finalAvatarUrl.includes('%22')) {
+      finalAvatarUrl = "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/></svg>";
+    }
 
     const blockedIconHtml = m.isBlocked === 1 ? `
       <div class="msg-blocked-icon" style="color: #ef4444; display: flex; align-items: center; justify-content: center; margin: 0 4px; align-self: center; flex-shrink: 0;" title="消息未送达/对方已拒收">
@@ -1278,12 +1526,38 @@ async function renderDialogMessages() {
       </div>
     ` : "";
 
+    // 群聊时气泡上方显示发送人名称 (己方也显示)
+    const showSenderNameHtml = (sess.isGroup === 1) ? `
+      <div class="group-sender-name">${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
+    ` : "";
+
+    // 投票卡片内容定制拦截
+    if (m.contentType === 'group_poll' && window.groupChatSystem) {
+      const pollCard = await window.groupChatSystem.renderPollCardInMsg(m);
+      fragment.appendChild(pollCard);
+      continue;
+    }
+
+    // 核心自愈：群聊中双方均使用包装器呈现（名字居上，己方靠右，Char靠左）
+    let bubbleBodyHtml = "";
+    if (sess.isGroup === 1) {
+      const alignStyle = m.senderType === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;';
+      bubbleBodyHtml = `
+        <div class="group-msg-wrapper" style="display: flex; flex-direction: column; ${alignStyle}">
+          ${showSenderNameHtml}
+          ${contentHtml}
+        </div>
+      `;
+    } else {
+      bubbleBodyHtml = contentHtml;
+    }
+
     bubble.innerHTML = `
       <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'};">
         <input type="checkbox" class="msg-checkbox" data-msg-id="${m.id}" onchange="updateSelectedCount()">
       </div>
-      <img class="msg-avatar" src="${avatarUrl}">
-      ${contentHtml}
+      <img class="msg-avatar" src="${finalAvatarUrl}">
+      ${bubbleBodyHtml}
       ${blockedIconHtml}
     `;
     fragment.appendChild(bubble);
@@ -1300,6 +1574,13 @@ async function appendMessageToDOM(msg) {
   if (!container) return;
 
   const sess = await db.sessions.get(activeSessionId);
+  const user = await db.archives.get(sess.userId); // 补全 user 异步读取，彻底根治 user is not defined 异常 [1]
+  
+  // 补全头像与表情局部变量加载，彻底根治 charAvatarUrl 与 emojiHtml 未初始化异常
+  const charAvatarUrl = resolveAvatar(activeSessionCharAvatar);
+  const userAvatarUrl = resolveAvatar(activeSessionUserAvatar);
+  const emojiHtml = msg.reactionEmoji ? `<div class="bubble-attached-emoji" onclick="window.removeReaction(${msg.id}, event)">${msg.reactionEmoji}</div>` : "";
+
   const msgs = await db.messages.where('sessionId').equals(activeSessionId).sortBy('timestamp');
   const prevMsg = msgs.length >= 2 ? msgs[msgs.length - 2] : null;
 
@@ -1321,6 +1602,38 @@ async function appendMessageToDOM(msg) {
     timeDiv.style.cssText = "text-align: center; margin: 12px 0; font-size: 11.5px; color: #b2b2b2; user-select: none;";
     timeDiv.innerText = formatWeChatTime(currentDisplayTime, getSimulatedNow(sess));
     container.appendChild(timeDiv);
+  }
+
+  // 核心支持：将 senderType === 'system' 的追加消息渲染为微信中间灰字
+  if (msg.senderType === 'system') {
+    const sysEl = document.createElement("div");
+    sysEl.className = "group-system-notice-container";
+    sysEl.setAttribute("data-msg-id", msg.id);
+    sysEl.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
+    sysEl.innerHTML = `
+      <div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; user-select: none; max-width: 85%; text-align: center; line-height: 1.4;">
+        ${escapeHtml(msg.content)}
+      </div>
+    `;
+    container.appendChild(sysEl);
+    container.scrollTop = container.scrollHeight;
+    return;
+  }
+
+  // 核心支持：将 senderType === 'system' 的追加消息渲染为微信中间灰字 [3]
+  if (msg.senderType === 'system') {
+    const sysEl = document.createElement("div");
+    sysEl.className = "group-system-notice-container";
+    sysEl.setAttribute("data-msg-id", msg.id);
+    sysEl.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
+    sysEl.innerHTML = `
+      <div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; user-select: none; max-width: 85%; text-align: center; line-height: 1.4;">
+        ${escapeHtml(msg.content)}
+      </div>
+    `;
+    container.appendChild(sysEl);
+    container.scrollTop = container.scrollHeight;
+    return;
   }
 
   if (msg.isRecalled === 1) {
@@ -1480,6 +1793,7 @@ async function appendMessageToDOM(msg) {
       const amount = parseFloat(data.amount) || 0;
       const statusClass = data.status || 'pending';
       const statusLabel = statusClass === 'received' ? '已收钱' : '待接收';
+      const targetLabel = data.targetName ? `（给 ${escapeHtml(data.targetName)}）` : "";
       contentHtml = `
         <div class="wallet-bubble-card transfer ${statusClass}" onclick="walletSystem.claimTransfer(${msg.id})">
           <div class="wallet-bubble-body">
@@ -1490,7 +1804,7 @@ async function appendMessageToDOM(msg) {
               </svg>
             </div>
             <div class="wallet-bubble-details">
-              <div class="wallet-bubble-title">微信转账</div>
+              <div class="wallet-bubble-title">微信转账 ${targetLabel}</div>
               <div class="wallet-bubble-amount">¥ ${amount.toFixed(2)}</div>
             </div>
           </div>
@@ -1505,8 +1819,10 @@ async function appendMessageToDOM(msg) {
       const data = JSON.parse(msg.content);
       const amount = parseFloat(data.amount) || 0;
       const remark = escapeHtml(data.remark || '恭喜发财，大吉大利');
+      const isLucky = data.type === 'lucky';
+      const typeLabel = isLucky ? ' 拼手气' : '';
       const statusClass = data.status || 'pending';
-      const statusLabel = statusClass === 'opened' ? '微信红包（已领取）' : '微信红包';
+      const statusLabel = statusClass === 'opened' ? `微信${typeLabel}红包（已领取）` : `微信${typeLabel}红包`;
       contentHtml = `
         <div class="wallet-bubble-card red-envelope ${statusClass}" onclick="walletSystem.claimRedEnvelope(${msg.id})">
           <div class="wallet-bubble-body">
@@ -1549,36 +1865,72 @@ async function appendMessageToDOM(msg) {
       contentHtml = `<div class="msg-text">朋友圈分享格式错误</div>`;
     }
   } else {
-    const isOnlySticker = typeof msg.content === 'string' && /^【表情包：[^】]+】$/.test(msg.content.trim());
-    let displayContent = msg.content;
-    if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-      displayContent = window.stickerSystem.renderStickerInMessageSync(msg.content, mountedGroupIds);
+    // 文本与表情切分上屏器：如果消息含有【表情包：xx】，在追加渲染时也切分为多个独立的文字和表情组件
+    const rawContent = msg.content;
+    let quoteHtml = "";
+    let displayContent = rawContent;
+    if (window.quoteSystem) {
+      const parsed = await window.quoteSystem.parseQuote(rawContent);
+      if (parsed) {
+        quoteHtml = parsed.quoteHtml;
+        displayContent = parsed.cleanText;
+      }
     }
+
+    const stickerRegex = /(【表情包：[^】]+】)/g;
+    const parts = displayContent.split(stickerRegex).filter(Boolean);
     
-    if (isOnlySticker && displayContent.includes('<img')) {
-      contentHtml = `<div class="msg-sticker-alone-wrapper">${displayContent}</div>`;
-    } else {
-      // 支持引用渲染
-      let quoteHtml = "";
-      if (window.quoteSystem) {
-        const parsed = await window.quoteSystem.parseQuote(msg.content);
-        if (parsed) {
-          quoteHtml = parsed.quoteHtml;
-          displayContent = parsed.cleanText;
-          if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-            displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
+    let segmentsHtml = "";
+    for (const part of parts) {
+      if (part.startsWith("【表情包：") && part.endsWith("】")) {
+        const stickerImgHtml = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+        if (stickerImgHtml.includes("<img")) {
+          segmentsHtml += `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${stickerImgHtml}${emojiHtml}</div>`;
+        } else {
+          segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${escapeHtml(part)}${emojiHtml}</div>`;
+        }
+      } else {
+        let textNode = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+        segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${textNode}${emojiHtml}</div>`;
+        quoteHtml = "";
+      }
+    }
+    contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
+  }
+
+// 支撑追加消息时的群聊视图渲染
+      let finalSenderName = "";
+      let finalAvatarUrl = msg.senderType === 'user' ? (user ? resolveAvatar(user.avatar) : userAvatarUrl) : charAvatarUrl;
+      let roleTitleHtml = "";
+
+      if (sess && sess.isGroup === 1) {
+        if (Number(msg.senderId) === 99999) {
+          const groupObj = await db.groups.get(sess.groupId);
+          const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+          finalSenderName = botObj ? botObj.name : "群助手";
+          finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
+        } else {
+          const memberInfo = await db.group_members.where('[groupId+memberId+memberType]').equals([sess.groupId, Number(msg.senderId), msg.senderType]).first();
+          if (msg.senderType === 'user') {
+            finalSenderName = sess.customUserName || user?.name || "我";
+          } else {
+            const charSender = await db.archives.get(Number(msg.senderId));
+            finalSenderName = charSender ? (charSender.remark || charSender.name) : "群成员";
+            finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar) : finalAvatarUrl;
+          }
+          if (memberInfo && memberInfo.title) {
+            const badgeColor = memberInfo.role === 'owner' ? '#ef4444' : (memberInfo.role === 'admin' ? '#3b82f6' : '#10b981');
+            roleTitleHtml = `<span style="font-size:9px; background-color:${badgeColor}; color:#fff; padding:1px 4px; border-radius:4px; margin-right:4px; font-weight:700;">${escapeHtml(memberInfo.title)}</span>`;
           }
         }
       }
-      contentHtml = `<div class="msg-text">${quoteHtml}${displayContent}</div>`;
-    }
-  }
 
-  const avatarUrl = msg.senderType === 'user' ? resolveAvatar(activeSessionUserAvatar) : resolveAvatar(activeSessionCharAvatar);
-  const emojiHtml = msg.reactionEmoji ? `<div class="bubble-attached-emoji" onclick="window.removeReaction(${msg.id}, event)">${msg.reactionEmoji}</div>` : "";
+  // 针对旧 Service Worker 缓存遗留的 SVG 实体进行自愈转译，保障无符号残留
+  if (finalAvatarUrl && finalAvatarUrl.includes('%22')) {
+    finalAvatarUrl = "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/></svg>";
+  }
   
   let finalContentHtml = contentHtml;
-  // 给动态追加出来的单一卡片体注入相对坐标和贴纸
   if (msg.contentType === 'image') {
     finalContentHtml = contentHtml.replace('class="image-bubble-card"', 'class="image-bubble-card" style="position: relative;"').replace('class="msg-image-placeholder-card"', 'class="msg-image-placeholder-card" style="position: relative;"') + emojiHtml;
   } else if (msg.contentType === 'voice') {
@@ -1599,12 +1951,30 @@ async function appendMessageToDOM(msg) {
     </div>
   ` : "";
 
+  const showSenderNameHtml = (sess && sess.isGroup === 1) ? `
+        <div class="group-sender-name">${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
+      ` : "";
+
+      // 核心自愈：群聊中双方均使用包装器呈现（名字居上，己方靠右，Char靠左）
+      let bubbleBodyHtml = "";
+      if (sess && sess.isGroup === 1) {
+        const alignStyle = msg.senderType === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;';
+        bubbleBodyHtml = `
+          <div class="group-msg-wrapper" style="display: flex; flex-direction: column; ${alignStyle}">
+            ${showSenderNameHtml}
+            ${finalContentHtml}
+          </div>
+        `;
+      } else {
+        bubbleBodyHtml = finalContentHtml;
+      }
+
   bubble.innerHTML = `
     <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'};">
       <input type="checkbox" class="msg-checkbox" data-msg-id="${msg.id}" onchange="updateSelectedCount()">
     </div>
-    <img class="msg-avatar" src="${avatarUrl}">
-    ${finalContentHtml}
+    <img class="msg-avatar" src="${finalAvatarUrl}">
+    ${bubbleBodyHtml}
     ${blockedIconHtml}
   `;
   container.appendChild(bubble);
@@ -1949,29 +2319,19 @@ function bindChatAppEvents() {
 
   const btnNewChat = document.getElementById("btn-new-chat");
   if (btnNewChat) {
-    btnNewChat.onclick = async () => {
-      if (!activeUserPersonaId) { alert("请先去‘我的’中切换我的人设"); return; }
-      const overlay = document.getElementById("new-chat-overlay");
-      const list = document.getElementById("new-chat-list");
-      if (!overlay || !list) return;
-      list.innerHTML = "";
-
-      try {
-        const allArchives = await db.archives.toArray();
-        const chars = allArchives.filter(c => c.type === 'character' || c.type === 'npc');
-        
-        chars.forEach(c => {
-          const row = document.createElement("div");
-          row.className = "menu-item";
-          row.onclick = () => startSingleChat(c.id);
-          row.innerHTML = `<span>${c.name} (${c.type === 'character' ? '角色' : 'NPC'})</span>`;
-          list.appendChild(row);
-        });
-
-        overlay.classList.add("active");
-      } catch (err) {
-        console.error(err);
-        alert("获取角色列表失败: " + err.message);
+    btnNewChat.onclick = () => {
+      if (!activeUserPersonaId) {
+        showToast("请先在“我的”选项卡中选择我的人设！");
+        return;
+      }
+      const choiceOverlay = document.getElementById("new-chat-choice-overlay");
+      if (choiceOverlay) {
+        choiceOverlay.classList.add("active");
+      } else {
+        // 降级兼容：若群聊面板未就绪则直接走单聊选择
+        if (window.groupChatSystem && typeof window.groupChatSystem.openDirectChatSelector === 'function') {
+          window.groupChatSystem.openDirectChatSelector();
+        }
       }
     };
   }
@@ -1995,21 +2355,63 @@ function bindChatAppEvents() {
     };
 
     btnSend.onclick = async () => {
-      let text = dialogInput.value.trim();
-      if (!text) return;
+        let text = dialogInput.value.trim();
+        if (!text) return;
 
-      // 引用挂载检测
-      if (window.quoteSystem && window.quoteSystem.getActiveQuote()) {
-        text = `[QUOTE:${window.quoteSystem.getActiveQuote()}] ` + text;
-        window.quoteSystem.clearQuote();
-      }
+        // 引用挂载检测
+        if (window.quoteSystem && window.quoteSystem.getActiveQuote()) {
+          text = `[QUOTE:${window.quoteSystem.getActiveQuote()}] ` + text;
+          window.quoteSystem.clearQuote();
+        }
 
-      // 表情包过滤
-      const processedText = window.stickerSystem ? await window.stickerSystem.processStickersInMessage(text, activeSessionId) : text;
-      await saveAndRenderMessage('user', processedText);
-      dialogInput.value = "";
-      dialogInput.focus(); // 显式回焦，保证键盘在移动端与桌面端均能顺畅保持不收起 [1]
-    };
+        // 表情包过滤
+        const processedText = window.stickerSystem ? await window.stickerSystem.processStickersInMessage(text, activeSessionId) : text;
+        
+        const sess = await db.sessions.get(activeSessionId);
+        if (sess && sess.isGroup === 1) {
+          // 首先判断是否被禁言
+          const myMem = await db.group_members.where('[groupId+memberId+memberType]').equals([sess.groupId, Number(activeUserPersonaId), 'user']).first();
+          
+          // 核心分流：若 User（我）没有加入本群，直接进入旁白模式！发信内容作为中间灰字上屏
+          if (!myMem) {
+            const sysMsg = {
+              sessionId: activeSessionId,
+              senderType: 'system',
+              senderId: 0,
+              content: processedText,
+              contentType: 'text',
+              timestamp: Date.now()
+            };
+            await db.messages.add(sysMsg);
+            await appendMessageToDOM(sysMsg);
+            dialogInput.value = "";
+            dialogInput.focus();
+            return;
+          }
+
+          if (myMem.muteUntil && myMem.muteUntil > Date.now()) {
+            const diffMin = Math.ceil((myMem.muteUntil - Date.now()) / 60000);
+            showToast(`您已被群主或管理员禁言，还剩 ${diffMin} 分钟`);
+            return;
+          }
+
+          await saveAndRenderMessage('user', processedText);
+          dialogInput.value = "";
+          dialogInput.focus();
+
+          // 检测并触发机器人指令
+          if (window.groupChatSystem && typeof window.groupChatSystem.interceptBotTrigger === 'function') {
+            const u = await db.archives.get(Number(activeUserPersonaId));
+            const senderName = u ? u.name : "User";
+            const isIntercepted = await window.groupChatSystem.interceptBotTrigger(processedText, senderName);
+            if (isIntercepted) return;
+          }
+        } else {
+          await saveAndRenderMessage('user', processedText);
+          dialogInput.value = "";
+          dialogInput.focus(); // 显式回焦，保证键盘在移动端与桌面端均能顺畅保持不收起
+        }
+      };
 
     // 绑定回车发送事件
     dialogInput.onkeydown = (e) => {
@@ -2055,10 +2457,11 @@ function bindChatAppEvents() {
         const api = await db.api_presets.get(Number(presetId));
         if (!api) throw new Error("所选的 API 预设可能已被删除，请重新配置！");
 
-        // === 【微信交易引擎核心逻辑】：AI自动拦截并领取对方发来的一切未拆红包/未收转账 ===
+        // === 【微信交易引擎核心逻辑】：AI自动拦截并收取/拆开玩家发送的交易，并生成对应的灰色系统卡片 ===
         const rawList = await db.messages.where('sessionId').equals(activeSessionId).toArray();
         const pendingUserTransactions = rawList.filter(m => m.senderType === 'user' && (m.contentType === 'transfer' || m.contentType === 'red_envelope'));
         
+        // 直接复用函数头部已加载的 sessObj 变量，绝不重复定义以避免 SyntaxError 异常
         let autoReclaimContext = "";
         for (let ut of pendingUserTransactions) {
           try {
@@ -2067,6 +2470,25 @@ function bindChatAppEvents() {
               // 模拟AI自动收钱行为并更新数据库
               data.status = ut.contentType === 'transfer' ? 'received' : 'opened';
               await db.messages.update(ut.id, { content: JSON.stringify(data) });
+              
+              // 物理向数据库追加一条系统通知灰字，确保上屏与存盘对齐
+              let noticeText = "";
+              if (ut.contentType === 'transfer') {
+                noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 确认收钱，收取了 你的转账` : `[系统通知] 对方已确认收钱`;
+              } else {
+                noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 领取了 你的红包` : `[系统通知] 对方领取了你的红包`;
+              }
+
+              const sysMsg = {
+                sessionId: activeSessionId,
+                senderType: 'system',
+                senderId: 0,
+                content: noticeText,
+                contentType: 'text',
+                timestamp: Date.now()
+              };
+              await db.messages.add(sysMsg);
+              await appendMessageToDOM(sysMsg); // 瞬时灰字置中上屏
               
               // 自动合成记账文本提示词喂给大模型
               const transactionName = ut.contentType === 'transfer' ? '微信转账' : '微信红包';
@@ -2106,7 +2528,7 @@ function bindChatAppEvents() {
 
         const messagesToSend = [{ role: "system", content: finalSystemPrompt }];
         
-        // 核心注入：在消息对话前注入领取提醒，实现极其逼真的互动对白！
+        // 核心注入：在消息对话前注入领取提醒，实现极其逼生的互动对白！
         if (autoReclaimContext) {
           messagesToSend.push({
             role: "system", 
@@ -2114,8 +2536,10 @@ function bindChatAppEvents() {
           });
         }
 
-        history.forEach(h => {
-          // 注入消息 ID 供引用系统识别
+        const sessObj = await db.sessions.get(activeSessionId);
+
+        // 异步映射历史记录，确保在群聊时，AI 角色的历史对白自带 [SENDER: 名字] 标头，进行 1:1 小样本（Few-shot）格式锚定
+        for (let h of history) {
           const prefix = `[MSG_ID: ${h.id}] `;
           let displayContent = h.content;
           if (h.isRecalled === 1) {
@@ -2131,8 +2555,16 @@ function bindChatAppEvents() {
               displayContent = `[语音转文字: ${data.text}]`;
             } catch(e) {}
           }
+
+          // 核心 Few-shot 历史格式对齐
+          if (sessObj && sessObj.isGroup === 1 && h.senderType === 'char') {
+            const charSender = await db.archives.get(Number(h.senderId));
+            const senderName = charSender ? charSender.name : "群成员";
+            displayContent = `[SENDER: ${senderName}] ${displayContent}`;
+          }
+
           messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
-        });
+        }
 
         const response = await fetch(`${api.url}/chat/completions`, {
           method: "POST",
@@ -2159,6 +2591,164 @@ function bindChatAppEvents() {
 
         // 核心消除：自动擦除大模型在对白中误编或幻觉出来的 [MSG_ID: xxx] 标签
         rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+
+        // === 【群聊 AI 多人分流与指令决策器】 ===
+            const currentSess = await db.sessions.get(activeSessionId);
+            if (currentSess && currentSess.isGroup === 1) {
+              // 打印大模型吐出的原始未加工对白，用以排查格式异形
+              console.log("[Group Chat Debug] 1. 大模型返回的原始对白文本 rawReply:\n", rawReply);
+
+              // 升级为高宽容双轨非消耗性正向断言正则，确保群聊对白零遗漏捕获
+              const senderRegex = /[\[【]SENDER:\s*([^\]】\n]+)[\]】]\s*([\s\S]+?)(?=[\[【]SENDER:|$)/gi;
+              let match;
+              let hasGroupReplies = false;
+
+              while ((match = senderRegex.exec(rawReply)) !== null) {
+                hasGroupReplies = true;
+                // 清洗可能伴随出现的冒号或空格，确保拿到纯净的档案馆角色名字
+                const senderName = match[1].replace(/[:：]/g, "").trim();
+                let textContent = match[2].trim();
+                
+                // 打印正则捕获的每次分流细节
+                console.log(`[Group Chat Debug] 2. 正则分流捕获成功 -> 发信人: "${senderName}"，发言正文: "${textContent}"`);
+                
+                if (!textContent) continue;
+
+            // 检查并执行 AI 物理管理动作指令 (禁言、踢人、头衔等)
+            const actionMuteRegex = /[\[【]MUTE\s*[:：]\s*([^\s(（]+)\s*\((\d+)\)[\]】]/i;
+            const muteMatch = textContent.match(actionMuteRegex);
+            if (muteMatch && window.groupChatSystem) {
+              const targetName = muteMatch[1].trim();
+              const duration = parseInt(muteMatch[2]);
+              await window.groupChatSystem.executeAiMuteCommand(senderName, targetName, duration);
+              textContent = textContent.replace(actionMuteRegex, "").trim();
+            }
+
+            const actionKickRegex = /[\[【]KICK\s*[:：]\s*([^\]】]+)[\]】]/i;
+            const kickMatch = textContent.match(actionKickRegex);
+            if (kickMatch && window.groupChatSystem) {
+              const targetName = kickMatch[1].trim();
+              await window.groupChatSystem.executeAiKickCommand(senderName, targetName);
+              textContent = textContent.replace(actionKickRegex, "").trim();
+            }
+
+            const actionTitleRegex = /[\[【]TITLE\s*[:：]\s*([^\s(（]+)\s*\(([^)]+)\)[\]】]/i;
+            const titleMatch = textContent.match(actionTitleRegex);
+            if (titleMatch && window.groupChatSystem) {
+              const targetName = titleMatch[1].trim();
+              const newTitle = titleMatch[2].trim();
+              await window.groupChatSystem.executeAiTitleCommand(senderName, targetName, newTitle);
+              textContent = textContent.replace(actionTitleRegex, "").trim();
+            }
+
+            const actionAdminRegex = /[\[【]ADMIN\s*[:：]\s*([^\s(（]+)\s*\((设为|取消)\)[\]】]/i;
+            const adminMatch = textContent.match(actionAdminRegex);
+            if (adminMatch && window.groupChatSystem) {
+              const targetName = adminMatch[1].trim();
+              const actType = adminMatch[2].trim();
+              await window.groupChatSystem.executeAiAdminCommand(senderName, targetName, actType);
+              textContent = textContent.replace(actionAdminRegex, "").trim();
+            }
+
+            const actionTransferRegex = /[\[【]TRANSFER_OWNER\s*[:：]\s*([^\]】]+)[\]】]/i;
+            const txMatch = textContent.match(actionTransferRegex);
+            if (txMatch && window.groupChatSystem) {
+              const targetName = txMatch[1].trim();
+              await window.groupChatSystem.executeAiTransferOwnerCommand(senderName, targetName);
+              textContent = textContent.replace(actionTransferRegex, "").trim();
+            }
+
+            // 检查并执行 AI 发起群投票指令 [POLL: 主题 (选项1 | 选项2)]
+            const actionPollRegex = /[\[【]POLL\s*[:：]\s*([^\s(（]+)\s*\(([^)]+)\)[\]】]/i;
+            const pollMatch = textContent.match(actionPollRegex);
+            if (pollMatch && window.groupChatSystem) {
+              const pollTitle = pollMatch[1].trim();
+              const optionsStr = pollMatch[2].trim();
+              await window.groupChatSystem.executeAiPollCommand(senderName, pollTitle, optionsStr);
+              textContent = textContent.replace(actionPollRegex, "").trim();
+            }
+
+            // 检查并执行 AI 发布群公告指令 [ANNOUNCE: 标题 (内容)] (升级为高宽容换行匹配正则)
+            const actionAnnounceRegex = /[\[【]ANNOUNCE\s*[:：]\s*([^((（]+?)\s*[(（]([\s\S]+?)[)）][\]】]/i;
+            const announceMatch = textContent.match(actionAnnounceRegex);
+            if (announceMatch && window.groupChatSystem) {
+              const annTitle = announceMatch[1].trim();
+              const annText = announceMatch[2].trim();
+              await window.groupChatSystem.executeAiAnnounceCommand(senderName, annTitle, annText);
+              textContent = textContent.replace(actionAnnounceRegex, "").trim();
+            }
+
+            // 检查并执行 AI 发起定向转账指令 [TRANSFER: 收款人 (金额)]
+            const actionTransferValRegex = /[\[【]TRANSFER\s*[:：]\s*([^\s(（]+)\s*\((\d+(?:\.\d+)?)\)[\]】]/i;
+            const transferValMatch = textContent.match(actionTransferValRegex);
+            if (transferValMatch && window.groupChatSystem) {
+              const targetName = transferValMatch[1].trim();
+              const amount = parseFloat(transferValMatch[2]) || 0;
+              await window.groupChatSystem.executeAiTransferCommand(senderName, targetName, amount);
+              textContent = textContent.replace(actionTransferValRegex, "").trim();
+            }
+
+            // 检查并执行 AI 发送普通/拼手气红包指令 (普通或拼手气) [RED_ENVELOPE: normal/lucky (金额) (备注)]
+            const actionRedEnvelopeValRegex = /[\[【]RED_ENVELOPE\s*[:：]\s*(normal|lucky)\s*\((\d+(?:\.\d+)?)\)\s*(?:\(([^)]+)\))?[\]】]/i;
+            const redEnvelopeValMatch = textContent.match(actionRedEnvelopeValRegex);
+            if (redEnvelopeValMatch && window.groupChatSystem) {
+              const envType = redEnvelopeValMatch[1].toLowerCase();
+              const amount = parseFloat(redEnvelopeValMatch[2]) || 0;
+              const remark = redEnvelopeValMatch[3] ? redEnvelopeValMatch[3].trim() : "恭喜发财，大吉大利";
+              await window.groupChatSystem.executeAiRedEnvelopeCommand(senderName, envType, amount, remark);
+              textContent = textContent.replace(actionRedEnvelopeValRegex, "").trim();
+            }
+
+            // 检查并执行 AI 拆开红包指令 [OPEN_RED_ENVELOPE: 消息ID]
+            const actionOpenRedEnvelopeRegex = /[\[【](?:OPEN_RED_ENVELOPE|拆红包)\s*[:：]\s*(\d+)[\]】]/i;
+            const openRedEnvelopeMatch = textContent.match(actionOpenRedEnvelopeRegex);
+            if (openRedEnvelopeMatch && window.groupChatSystem) {
+              const targetMsgId = Number(openRedEnvelopeMatch[1]);
+              await window.groupChatSystem.executeAiClaimRedEnvelopeCommand(senderName, targetMsgId);
+              textContent = textContent.replace(actionOpenRedEnvelopeRegex, "").trim();
+            }
+
+            // 检查并执行 AI 收取定向转账指令 [RECEIVE_TRANSFER: 消息ID]
+            const actionReceiveTransferRegex = /[\[【](?:RECEIVE_TRANSFER|收钱|收转账)\s*[:：]\s*(\d+)[\]】]/i;
+            const receiveTransferMatch = textContent.match(actionReceiveTransferRegex);
+            if (receiveTransferMatch && window.groupChatSystem) {
+              const targetMsgId = Number(receiveTransferMatch[1]);
+              await window.groupChatSystem.executeAiClaimTransferCommand(senderName, targetMsgId);
+              textContent = textContent.replace(actionReceiveTransferRegex, "").trim();
+            }
+
+            // 检查并执行 AI 已阅公告指令 [READ_ANNOUNCE: 消息ID] [2]
+            const actionReadAnnounceRegex = /[\[【](?:READ_ANNOUNCE|已阅公告|阅读公告)\s*[:：]\s*(\d+)[\]】]/i;
+            const readAnnounceMatch = textContent.match(actionReadAnnounceRegex);
+            if (readAnnounceMatch && window.groupChatSystem) {
+              const targetMsgId = Number(readAnnounceMatch[1]);
+              await window.groupChatSystem.executeAiReadAnnounceCommand(senderName, targetMsgId);
+              textContent = textContent.replace(actionReadAnnounceRegex, "").trim();
+            }
+
+            // 检查并执行 AI 参与投票指令 [VOTE_POLL: 消息ID (选项索引)] [2]
+            const actionVotePollRegex = /[\[【](?:VOTE_POLL|参与投票|投票)\s*[:：]\s*(\d+)\s*\((\d+)\)[\]】]/i;
+            const votePollMatch = textContent.match(actionVotePollRegex);
+            if (votePollMatch && window.groupChatSystem) {
+              const targetMsgId = Number(votePollMatch[1]);
+              const optIdx = parseInt(votePollMatch[2]);
+              await window.groupChatSystem.executeAiVotePollCommand(senderName, targetMsgId, optIdx);
+              textContent = textContent.replace(actionVotePollRegex, "").trim();
+            }
+
+            if (textContent) {
+              await window.groupChatSystem.saveGroupAiMessage(senderName, textContent);
+            }
+          }
+
+          if (hasGroupReplies) {
+            header.classList.remove("header-typing");
+            header.innerText = originalTitle;
+            btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
+            onlineAbortController = null;
+            return; // 直接退出，阻止原有单聊上屏逻辑
+          }
+        }
 
         // === 智能高精拉黑与解除拉黑指令高自愈性解析器（全/半角英文或中文括号均可） ===
         const charBlockRegex = /(\[|【)(BLOCK|拉黑)\s*[:：]\s*([^\]】\n]+)(\]|】)/i;
@@ -2687,8 +3277,17 @@ if (btnDialogDetails) {
     try {
       const sess = await db.sessions.get(activeSessionId);
       if (!sess) {
-        throw new Error("无法从数据库加载当前单聊会话记录！");
+        throw new Error("无法从数据库加载当前会话记录！");
       }
+
+      // 核心拦截：如果是群聊，直接打开群聊专属后台，防止与单聊后台重叠
+      if (sess.isGroup === 1) {
+        if (window.groupChatSystem && typeof window.groupChatSystem.openGroupDetailsPanel === 'function') {
+          window.groupChatSystem.openGroupDetailsPanel();
+        }
+        return;
+      }
+
       const char = sess.charId ? await db.archives.get(sess.charId) : null;
       const user = sess.userId ? await db.archives.get(sess.userId) : null;
 
@@ -3014,6 +3613,14 @@ function enterTheater(theaterId) {
   activeTheaterId = theaterId;
   exitOfflineMultiSelectMode();
   
+  // 核心检测：判断会话类型，若是群聊则下架隐藏线下粉色心声状态按钮
+  db.sessions.get(activeSessionId).then(sess => {
+    const btnOfflineStatus = document.getElementById("btn-offline-char-status");
+    if (btnOfflineStatus) {
+      btnOfflineStatus.style.display = (sess && sess.isGroup === 1) ? "none" : "flex";
+    }
+  });
+
   db.theaters.get(theaterId).then(th => {
     document.getElementById("offline-chat-title").innerText = `独立剧场：${th.name}`;
     document.getElementById("win-offline-chat").classList.add("active");
@@ -3026,6 +3633,14 @@ function triggerAppointmentMode() {
   isOfflineTheater = false;
   activeTheaterId = 0;
   exitOfflineMultiSelectMode();
+
+  // 核心检测：判断会话类型，若是群聊则下架隐藏线下粉色心声状态按钮
+  db.sessions.get(activeSessionId).then(sess => {
+    const btnOfflineStatus = document.getElementById("btn-offline-char-status");
+    if (btnOfflineStatus) {
+      btnOfflineStatus.style.display = (sess && sess.isGroup === 1) ? "none" : "flex";
+    }
+  });
 
   document.getElementById("offline-chat-title").innerText = "赴约中...";
   document.getElementById("win-offline-chat").classList.add("active");

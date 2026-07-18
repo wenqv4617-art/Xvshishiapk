@@ -123,6 +123,11 @@ async function buildGlobalSystemPrompt(sessionId) {
   const sess = await db.sessions.get(sessionId);
   if (!sess) return "";
 
+  // 1. 群聊线上 Prompt 拦截分支
+  if (sess.isGroup === 1) {
+    return await buildGroupOnlineSystemPrompt(sessionId);
+  }
+
   const char = await db.archives.get(sess.charId);
   const user = await db.archives.get(sess.userId);
 
@@ -418,6 +423,11 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
   const sess = await db.sessions.get(sessionId);
   if (!sess) return "";
 
+  // 群聊线下/剧场 Prompt 拦截分支
+  if (sess.isGroup === 1) {
+    return await buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater);
+  }
+
   const char = await db.archives.get(sess.charId);
   const user = await db.archives.get(sess.userId);
 
@@ -680,3 +690,226 @@ ${relationshipDesc}`;
   return segments.map(s => s.content).join("\n\n");
 }
 
+/**
+ * 3. 微信群聊线上发言人称、心理防御、身份隔离与多维指令 Prompt 生成器 (高精度拼接物理加固版)
+ */
+async function buildGroupOnlineSystemPrompt(sessionId) {
+  const sess = await db.sessions.get(sessionId);
+  const group = await db.groups.get(sess.groupId);
+  const bot = (group && group.bots && group.bots.length > 0) ? group.bots[0] : null;
+  const members = await db.group_members.where('groupId').equals(group.id).toArray();
+  
+  const userIsMember = members.some(m => m.memberType === 'user');
+
+  // 1. 动态提炼置顶群公告环境及已阅/未阅名单，强化模型阅读心智与 [READ_ANNOUNCE] 动作响应机制 [2]
+  let announcementPrompt = "";
+  if (group.announcement) {
+    const ann = group.announcement;
+    const readIds = ann.readBy || [];
+    let doneNames = [];
+    let pendingNames = [];
+
+    for (const m of members) {
+      let name = "未知";
+      if (m.memberType === 'user') {
+        const u = await db.archives.get(m.memberId);
+        name = u ? u.name : "User";
+      } else {
+        const c = await db.archives.get(m.memberId);
+        name = c ? c.name : "群员";
+      }
+      if (readIds.includes(m.memberId)) {
+        doneNames.push(name);
+      } else {
+        pendingNames.push(name);
+      }
+    }
+    announcementPrompt = "\n【当前置顶群公告（所有未读群员应当尽快输入 [READ_ANNOUNCE: " + (ann.publisherId || 1) + "] 标记已阅并在对白中做出正常人际反应）：】\n" +
+      "- 公告消息ID: " + (ann.publisherId || 1) + "\n" +
+      "- 标题: " + ann.title + "\n" +
+      "- 具体内容: " + ann.text + "\n" +
+      "- 已阅群成员列表: [" + (doneNames.join('、') || "无") + "]\n" +
+      "- 未阅群成员列表: [" + (pendingNames.join('、') || "无") + "]\n" +
+      "注：如果你扮演的群员目前在「未阅成员列表」中，你应当非常自然地在回复尾部输出 `[READ_ANNOUNCE: " + (ann.publisherId || 1) + "]` 并在台词里对此做出口吻相符的调侃、抱怨或支持评价！\n";
+  }
+
+  // 2. 动态提炼群内正在进行的投票、当前票数看板 (自适应过滤已被下架归档的投票，释放 Prompt 首位空间) [2]
+  let pollsPrompt = "";
+  const activePolls = await db.messages.where('sessionId').equals(sess.id).and(m => {
+    if (m.contentType !== 'group_poll') return false;
+    try {
+      const poll = JSON.parse(m.content);
+      return poll.status !== 'archived'; // 过滤掉已被归档下架的投票
+    } catch(e) { return true; }
+  }).toArray();
+
+  if (activePolls.length > 0) {
+    pollsPrompt = "\n【当前群内正在进行的投票（AI群员可随时输入投票命令来表达并修正自己的态度）：】";
+    for (const pMsg of activePolls) {
+      try {
+        const poll = JSON.parse(pMsg.content);
+        const options = poll.options || [];
+        const votes = poll.votes || {};
+        let optionsTextList = [];
+        options.forEach((opt, idx) => {
+          const optVotes = votes[idx] || [];
+          optionsTextList.push((idx + 1) + ". " + opt + " (" + optVotes.length + " 票)");
+        });
+        pollsPrompt += "\n- 投票消息ID: " + pMsg.id + " | 主题: " + poll.title + " | 选项列表: [" + optionsTextList.join('、') + "]\n" +
+          "  注：如果你扮演的 AI 角色想要参与此项投票，必须且只能在回复最末尾单独占一行输出投票指令：`[VOTE_POLL: " + pMsg.id + " (选项索引)]`。选项索引从 0 开始。例如投票给第二个选项：“" + options[1] + "”（索引1），命令应写为：`[VOTE_POLL: " + pMsg.id + " (1)]`。每个红包每个角色只能投一票。\n";
+      } catch(e) {}
+    }
+  }
+
+  let narratorPromptText = "";
+  if (!userIsMember) {
+    narratorPromptText = "\n【旁观者/上帝视角旁白模式（当前 User 未加入本微信群，请绝对遵守此客观现实！）】：\n" +
+      "当前群聊中并没有 User（我/你/玩家/或用户本名）这个群成员，因此他们在手机上无法看到你，你对于所有群员来说是【完全无形、不存在、处于群成员名单外】的上帝叙述者！\n" +
+      "1. 绝对禁令：你扮演的所有 AI 角色，在发言对白中绝对禁止向 User 发送任何消息，绝对禁止艾特 @user，绝对禁止对 User 发起禁言、踢人、拉黑等任何交互行为！在他们手机上群员名单中根本没有这个人！\n" +
+      "2. 旁白约束与遵循：当你在历史对白中看到没有 [SENDER: 名字] 标签的、居中的系统灰字旁白时（例如：“（外面突然下起了倾盆暴雨...）”），那是玩家作为无形的世界意志在输入环境描述推动剧情。请你扮演的所有 AI 角色共同承认、遵循并遵守该旁白设定的环境变化与剧情大纲，并在接下来的群聊讨论中对此做出最符合各自人设的讨论与情绪反应！\n";
+  }
+
+  let botPromptText = "";
+  if (bot) {
+    botPromptText = "\n【群内公共助手机器人设定（AI 角色可主动艾特与其玩耍交互）】\n" +
+      "群聊中当前部署并启用了一位名为 [@" + bot.name + "] 的群助手机器人。\n" +
+      "- 机器人设定背景与底料：" + bot.persona + "\n" +
+      "- 机器人快捷触发指令（任何成员在发言末尾附加以下指令，即可召唤其特定回应）：\n" +
+      bot.commands + "\n\n" +
+      "- 交互建议：你扮演的各 AI 角色在闲聊时，如果觉得气氛合适或出于无聊、打赌、好奇，也可以主动在自己的对白中艾特该机器人进行互动（例如：[SENDER: 林栖] 景深天天在群里装高冷，我也去求个签。 @" + bot.name + " 签到）。机器人会在群内根据指令做出特定响应。\n";
+  }
+
+  let context = "【最高优先级输出格式控制（绝对必须严格遵守，违者直接中断判定失效）】\n" +
+    "你当前的唯一职责，是同时扮演/模拟微信群聊 [" + group.name + "] 内除了 User（我/你本人）以外的所有活跃 AI 角色（群成员）的反应与互动。\n\n" +
+    "【当前场景时空环境设定（极其重要，违者判定出戏）：】\n" +
+    "这是一个纯粹的线上远程微信群聊（WeChat）场景，所有的成员此刻均不处于同一个物理时空环境下，大家正拿着各自的手机进行打字远程交互。绝对禁止在你的白描或对白中假设你们能看到对方的实时现实身体、触摸到对方、或者处于同一个房间中！如果你想互动，你只能打字，或者通过艾特、发语音图片等方式互动！\n\n" +
+    "【回复格式规范（极其严格，绝不容许发生偏移）】\n" +
+    "1. 你必须且只能严格按照以下 [SENDER: 名字] 格式标头输出每个角色的对白！每个角色占据单独的一行，不准输出任何标头外的废话或描述！\n" +
+    "   格式（必须单独占一行）：\n" +
+    "   [SENDER: 成员名字] 发言内容...\n\n" +
+    "2. 正确回复示例（多角色连续发言）：\n" +
+    "   [SENDER: 林栖] 真的吗？\n" +
+    "   [SENDER: 林栖] 我怎么不知道这回事。\n" +
+    "   [SENDER: 夜影] 哼，你不知道的多着呢。\n\n" +
+    "3. 名字匹配：每个 [SENDER: 名字] 中的“名字”必须和下方【活跃群成员列表】里登记的角色本名（如：林栖、夜影等）完全一致！\n" +
+    "4. 禁言限制：如果某角色被标记为禁言状态（上下文会有系统通知提示），该被禁言角色在本轮及禁言期限内绝对不能在 [SENDER: ...] 中发言！\n\n" +
+    "【发言及身份隔离规则（极其严格）】\n" +
+    "1. 【群像创作】：每人势均力敌。不是每轮所有人都要说话，最多1-5个人发言即可，不需要每个人都说一句，该谁沉默谁沉默。与当前矛盾无关的人，选择沉默而不是硬凑。\n" +
+    "2. 【消息风格】：回复要简短，像发微信一样。每条消息 1-2 句话。一个角色可以连续发2-3条短消息，而不要发长篇幅段落。\n" +
+    "3. 【绝对禁止】：严厉禁止在群聊闲聊中使用任何括号（如 (笑) ）或星号（如 *点头* ）包裹的动作、神态、心理描写！你只能且必须发送干净、纯粹的对白台词文本。\n" +
+    "4. 【身份隔离】：每个角色只能以自己的人设说话，禁止角色串味！\n" +
+    "5. 【主权防线（核心禁令）】：你绝对无权扮演、代表或模拟 User 进行任何发言！严厉禁止自己生成任何包含 [SENDER: 我]、[SENDER: user]、[SENDER: User] 或当前用户本名的发言标头与内容！User 的发言 100% 由屏幕前的真实玩家通过输入框手动输入决定，你永远不准替玩家发信、抢答或臆造其发言！\n\n" +
+    "【当前群聊中活跃的群成员列表与性格底料如下】：\n";
+
+  for (let m of members) {
+    if (m.memberType === 'char') {
+      const char = await db.archives.get(m.memberId);
+      if (char) {
+        let muteStatusText = "无";
+        if (m.muteUntil && m.muteUntil > Date.now()) {
+          const leftSec = Math.ceil((m.muteUntil - Date.now()) / 1000);
+          muteStatusText = "【当前处于禁言状态中！剩余禁言时间约 " + leftSec + " 秒。禁言期间该角色绝对无法发言，请其他群员对此做出社交反应】";
+        }
+        context += "\n- 成员 [" + char.name + "]:\n人设背景：" + char.persona + "\n群内专属头衔：" + (m.title || "无") + "\n当前禁言状态：" + muteStatusText + "\n";
+      }
+    }
+  }
+
+  context += botPromptText;
+  context += narratorPromptText;
+  context += announcementPrompt;
+  context += pollsPrompt;
+
+  context += "\n【角色群聊多维社交与管理执行指令（极其重要）】\n" +
+    "你在群聊中发言时，可以通过在发言文本的【最末尾单独占一行】输出特定指令，来执行红包、转账、投票、公告、或主动领取红包/转账。格式必须绝对精准，中英文半角括号必须严格配对，金额限定为数字：\n\n" +
+    "一、 发起红包与转账指令（金额限定为数字，任何成员均可发起）：\n" +
+    "1. 发送拼手气红包：[RED_ENVELOPE: lucky (红包总金额) (祝福语)]\n" +
+    "   - 示例：[RED_ENVELOPE: lucky (100) (拼手气啦！)]\n" +
+    "2. 发送普通等额红包：[RED_ENVELOPE: normal (红包总金额) (祝福语)]\n" +
+    "   - 示例：[RED_ENVELOPE: normal (50) (大吉大利)]\n" +
+    "3. 发起定向转账（给具体某人，收款人必须为群友真实本名或 'user'）：[TRANSFER: 收款人姓名 (金额)]\n" +
+    "   - 示例：[TRANSFER: user (500)] 或 [TRANSFER: 林栖 (200)]\n\n" +
+    "二、 拆开红包与确认收取转账指令（由各 AI 角色的性格人设自主决定是否执行！）：\n" +
+    "1. 拆开群内发出的未完结红包：[OPEN_RED_ENVELOPE: 红包消息ID] 或 【拆红包: 红包消息ID】\n" +
+    "   - 性格考量：傲娇、高冷、矜持或极其富有的角色，面对别人发的红包可以不屑于去抢或害羞不拆；活泼、财迷、爱凑热闹或缺钱的角色会迫不及待去抢，并在对白中吐槽、攀比分得的金额。请完全按照人设做出决定！\n" +
+    "   - 示例：[OPEN_RED_ENVELOPE: 1024]\n" +
+    "2. 确认收取给自己的定向转账（仅限转账中指定的收款人能收取）：[RECEIVE_TRANSFER: 转账消息ID] 或 【收钱: 转账消息ID】\n" +
+    "   - 示例：[RECEIVE_TRANSFER: 1025]\n\n" +
+    "三、 群投票与群公告指令：\n" +
+    "1. 发起群投票（任何成员均可发起，选项之间用 | 分割）：[POLL: 投票主题 (选项1 | 选项2 | 选项3)]\n" +
+    "   - 示例：[POLL: 今晚去哪聚餐 (火锅店 | 日料店 | 烤肉店)]\n" +
+    "2. 发布置顶群公告（仅限群主或管理员执行）：[ANNOUNCE: 公告标题 (具体公告内容)]\n" +
+    "   - 示例：[ANNOUNCE: 群规守则 (请大家在群内保持文明，不要刷屏)]\n\n" +
+    "四、 成员管理动作指令（仅限群主或管理员执行。不仅可以对 User 发起，也可以对【任何其他 AI 群成员】发起，目标必须为对方真实本名或 'user'）：\n" +
+    "1. 禁言某成员：[MUTE: 目标名字 (分钟数)]\n" +
+    "   - 示例：[MUTE: 林栖 (10)] 或 [MUTE: user (5)]\n" +
+    "2. 移出群聊：[KICK: 目标名字]\n" +
+    "   - 示例：[KICK: 林栖]\n" +
+    "3. 设置群头衔：[TITLE: 目标名字 (头衔名称)]\n" +
+    "   - 示例：[TITLE: 林栖 (大内总管)]\n" +
+    "4. 设为/取消管理员（仅群主执行）：[ADMIN: 目标名字 (设为/取消)]\n" +
+    "   - 示例：[ADMIN: 林栖 (设为)]\n" +
+    "5. 安全转让群主（仅当前群主角色执行）：[TRANSFER_OWNER: 目标名字]\n" +
+    "   - 示例：[TRANSFER_OWNER: 林栖]\n\n" +
+    "【正确回复格式与多行指令合并示例】：\n" +
+    "[SENDER: 林栖] 哇，小明发红包了！谢谢大老板，手气红包我来啦！\n" +
+    "[OPEN_RED_ENVELOPE: 1024]\n" +
+    "[SENDER: 林栖] 抢完了，凭什么小红抢得比我多啊，哼，不公平！\n";
+
+  return PROMPT_TEMPLATES.DISCLAIMER + "\n\n" + context;
+}
+
+/**
+ * 4. 微信群聊线下白描剧场与多维小说视角 Prompt 生成器 (高优先级首位偏好重置版)
+ */
+async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
+  const sess = await db.sessions.get(sessionId);
+  const group = await db.groups.get(sess.groupId);
+  const members = await db.group_members.where('groupId').equals(group.id).toArray();
+  
+  let context = `【最高优先级叙事与人称控制规范（绝对必须严格遵守，违者判定OOC）】：
+你当前的职责是同时模拟当前群聊线下场景内除了 User（我/你本人）以外的所有 AI 角色（群成员）的动作白描与发言。
+
+【创作原则 · 核心】
+1. 分清主次矛盾：
+   - 主线矛盾：当前场景最核心的冲突或事件是什么？谁直接参与其中？
+   - 支线矛盾：谁受到主线波折的间接影响？谁有自己的事在忙？
+   - 分分清之后：主线人物有动机、有目标、有行动；支线人物可以一笔带过或不出场
+2. 人物出场要有驱动力：
+   - 每个人出现在场景里都是有原因的。他来干什么？想要什么？达到目的了吗？
+   - 如果一个人只是路过、围观、没任何目的，就不要写他
+3. 群像不是列菜。不要让每个人轮流说一句话然后消失。该谁说话谁说话，该谁沉默谁沉默
+4. 自然生活原则：不在主线矛盾中心的人，他该干嘛干嘛去。不用每人都给镜头
+5. 角色塑造最高原则：每个人都有自己独立的生活、事业、目标，不是围着某个人转的卫星
+6. 场景调度：本轮出场不超过3人。与当前矛盾无关的人，哪怕读者知道他在附近，也不需要写。
+
+【文风要求 · 重要】
+- 短句为主，节奏要快。但偶尔可以突然插入一两句长的心理分析，制造落差感
+- 用口语化叙述，像有人在跟朋友讲故事。可以带语气词：啊、吧、呢、嘛、他娘的（角色说脏话时）
+- 视角自由切换，这一句写A的动作，下一句可以写B看到A时的心理活动，再下一句写旁观者的反应
+- 细节丰富但不啰嗦。关键动作要写到位，无关紧要的直接跳过
+- 幽默感可以穿插在严肃场景里。人物有反差感才真实——高冷的人也会心软，严肃的场合也会有人出洋相
+- 叙事中间可以突然插入叙述者的一句评价，也可以突然补一段往事。想到什么说什么，不用刻意分段
+- 句子不用打磨，长短由你。逗号句号随便断，偶尔一两句不带标点也没事
+- 感觉要对。就是那种窝在沙发里，有一搭没一搭地往下说的调子。不急
+
+【绝对禁止】
+- 禁止用对话体！禁止输出"[角色名]:消息"格式
+- 禁止写用户的内心活动、心理感受、情绪判断（用户是读者视角，不是镜头里的角色）
+- 禁止写"你感到……""你以为……""你知道……""你想起……""你意识到……"
+- 直接以叙事文本输出。描述谁做了什么、说了什么、发生了什么。像写小说一样
+
+【当前线下场景活跃的群成员列表与性格底料如下】：
+`;
+
+  for (let m of members) {
+    if (m.memberType === 'char') {
+      const char = await db.archives.get(m.memberId);
+      if (char) {
+        context += `\n- 成员 [${char.name}]:\n人设背景：${char.persona}\n群内身份：${m.title || "无"}\n`;
+      }
+    }
+  }
+
+  return PROMPT_TEMPLATES.DISCLAIMER + "\n\n" + context;
+}

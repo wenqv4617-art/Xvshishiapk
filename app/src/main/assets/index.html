@@ -856,6 +856,22 @@
           </div>
         </header>
 
+        <!-- 发起聊天方式选择模态窗 -->
+        <div id="new-chat-choice-overlay" class="modal-overlay" style="z-index: 1100;">
+          <div class="modal" style="max-width: 300px; padding: 20px;">
+            <header class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+              <h4 style="font-weight:700; color:var(--text-primary);">创建新会话</h4>
+              <button class="btn-icon" onclick="document.getElementById('new-chat-choice-overlay').classList.remove('active')">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" style="display: flex; flex-direction: column; gap: 12px; margin-top: 16px;">
+              <button class="btn btn-primary" onclick="document.getElementById('new-chat-choice-overlay').classList.remove('active'); if(window.groupChatSystem){window.groupChatSystem.openDirectChatSelector();}" style="padding: 12px; font-weight:700;">建立单聊对话</button>
+              <button class="btn btn-outline" onclick="document.getElementById('new-chat-choice-overlay').classList.remove('active'); if(window.groupChatSystem){window.groupChatSystem.openGroupChatCreator();}" style="padding: 12px; font-weight:700; border-color: var(--primary); color: var(--primary);">创建群聊</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 对话选择模态窗 -->
         <div id="new-chat-overlay" class="modal-overlay">
           <div class="modal">
@@ -866,6 +882,52 @@
               </button>
             </header>
             <div class="win-body" id="new-chat-list"></div>
+          </div>
+        </div>
+
+        <!-- 新建群聊多选及群属性模态窗 -->
+        <div id="group-create-overlay" class="modal-overlay">
+          <div class="modal" style="max-height: 85%;">
+            <header class="modal-header">
+              <h4>创建群聊</h4>
+              <button class="btn-icon" onclick="document.getElementById('group-create-overlay').classList.remove('active')">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" style="padding: 16px; overflow-y: auto;">
+              <div class="form-group">
+                <label>群聊名称</label>
+                <input type="text" id="group-create-name" placeholder="输入群组名称" required>
+              </div>
+              <div class="form-group">
+                <label>群头像 (URL / 本地上传)</label>
+                <div style="display:flex; gap:8px;">
+                  <input type="text" id="group-create-avatar-url" placeholder="输入图片 URL" style="flex:1;">
+                  <button class="btn btn-outline" id="btn-group-create-avatar-upload" style="padding:8px 12px; font-size:11px;">上传图片</button>
+                  <input type="file" id="file-group-create-avatar" accept="image/*" style="display:none;">
+                </div>
+              </div>
+              <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 10px 0;">
+                <label style="margin-bottom:0; font-weight:700;">User (你本人) 加入该群聊</label>
+                <label class="switch">
+                  <input type="checkbox" id="group-create-user-join" checked>
+                  <span class="slider"></span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label>选择群主成员 (Owner)</label>
+                <select id="group-create-owner-select">
+                  <option value="user">User (我)</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label style="margin-bottom: 8px; font-weight:700;">选择要引入群聊的角色/NPC (多选卡片)</label>
+                <div id="group-create-members-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 200px; overflow-y: auto; padding: 4px 2px;"></div>
+              </div>
+              <div class="form-actions" style="margin-top:20px;">
+                <button class="btn btn-primary" id="btn-group-create-submit" style="width:100%;">确认并创建群聊</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1004,7 +1066,7 @@
               <button id="btn-multi-cancel" class="btn" style="flex:1;">退出多选</button>
             </div>
             
-            <!-- === 核心重构：支持左右横向滚动分页滑动的扩展面板 === -->
+            <!-- === 支持多页翻转、SVG纯净按钮配置的群聊扩展面板 === -->
             <div id="chat-expand-panel" class="expand-panel">
               <div class="expand-slider">
                 <!-- 第一页：常用社交与交易互动 (前 8 项) -->
@@ -1013,12 +1075,6 @@
                     <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm3.5-9c.83 0 1.5-.67 1.5-1.5S16.33 8 15.5 8 14 8.67 14 9.5s.67 1.5 1.5 1.5zm-7 0c.83 0 1.5-.67 1.5-1.5S9.33 8 8.5 8 7 8.67 7 9.5 7.67 11 8.5 11zm3.5 6.5c2.33 0 4.31-1.46 5.11-3.5H6.89c.8 2.04 2.78 3.5 5.11 3.5z"/></svg></div>
                     <span>表情包</span>
                   </div>
-                  <div class="expand-item" id="btn-chat-photo">
-                    <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 5H5l3.5-4.5z"/></svg></div>
-                    <span>图片</span>
-                    <input type="file" id="chat-photo-file" accept="image/*" style="display:none;">
-                  </div>
-                  <!-- 原生语音按钮，完美穿插在图片与语音通话之间 -->
                   <div class="expand-item" id="btn-chat-voice-trigger">
                     <div class="expand-icon-wrapper">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1030,13 +1086,10 @@
                     </div>
                     <span>语音</span>
                   </div>
-                  <div class="expand-item" id="btn-chat-call">
-                    <div class="expand-icon-wrapper">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"/>
-                      </svg>
-                    </div>
-                    <span>语音通话</span>
+                  <div class="expand-item" id="btn-chat-photo">
+                    <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 5H5l3.5-4.5z"/></svg></div>
+                    <span>图片</span>
+                    <input type="file" id="chat-photo-file" accept="image/*" style="display:none;">
                   </div>
                   <div class="expand-item" id="btn-chat-transfer">
                     <div class="expand-icon-wrapper">
@@ -1060,30 +1113,47 @@
                     </div>
                     <span>红包</span>
                   </div>
-                  <div class="expand-item" id="btn-chat-focus">
-                    <div class="expand-icon-wrapper">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
-                      </svg>
-                    </div>
-                    <span>专注</span>
-                  </div>
                   <div class="expand-item" id="btn-chat-offline">
                     <div class="expand-icon-wrapper"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg></div>
                     <span>线下</span>
                   </div>
-                </div>
-                <!-- 第二页：剧场、辅助功能与记忆回写、总结 (绑定特定事件触发通道) -->
-                <div class="expand-page">
-                  <div class="expand-item" id="btn-chat-check-phone" style="cursor: pointer;">
+                  <div class="expand-item" id="btn-chat-plot-engine">
                     <div class="expand-icon-wrapper">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
-                        <line x1="12" y1="18" x2="12.01" y2="18"/>
+                        <polygon points="12 2 2 7 12 12 22 7 12 2" />
+                        <polyline points="2 17 12 22 22 17" />
+                        <polyline points="2 12 12 17 22 12" />
                       </svg>
                     </div>
-                    <span>查手机</span>
+                    <span>剧情引擎</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-group-poll">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20V10M18 20V4M6 20v-6"/>
+                      </svg>
+                    </div>
+                    <span>群投票</span>
+                  </div>
+                </div>
+                <!-- 第二页：机器人、群公告、成员、清空删除 -->
+                <div class="expand-page">
+                  <div class="expand-item" id="btn-chat-group-helper">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M12 2v2M5 5l1.5 1.5M19 5l-1.5 1.5"/>
+                      </svg>
+                    </div>
+                    <span>群助手</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-group-announce">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/>
+                      </svg>
+                    </div>
+                    <span>群公告</span>
                   </div>
                   <div class="expand-item" id="btn-chat-memory" style="cursor: pointer;">
                     <div class="expand-icon-wrapper">
@@ -1106,37 +1176,13 @@
                     </div>
                     <span>总结</span>
                   </div>
-                  <!-- 新增：HTML 卡片触发按钮 -->
-                  <div class="expand-item" id="btn-chat-html-widget" style="cursor: pointer;">
+                  <div class="expand-item" id="btn-chat-group-members">
                     <div class="expand-icon-wrapper">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="16 18 22 12 16 6" />
-                        <polyline points="8 6 2 12 8 18" />
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M17 21v-2a4 4 0 0 0-3-3.87m4-12a4 4 0 0 1 0 7.75M9 21v-2a4 4 0 0 0-3-3.87m13-12a4 4 0 1 1-4 4"/>
                       </svg>
                     </div>
-                    <span>HTML</span>
-                  </div>
-                  <!-- 新增：剧情引擎触发按钮 -->
-                  <div class="expand-item" id="btn-chat-plot-engine" style="cursor: pointer;">
-                    <div class="expand-icon-wrapper">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <polygon points="12 2 2 7 12 12 22 7 12 2" />
-                        <polyline points="2 17 12 22 22 17" />
-                        <polyline points="2 12 12 17 22 12" />
-                      </svg>
-                    </div>
-                    <span>剧情引擎</span>
-                  </div>
-                  <!-- 新增：MCP 中枢按钮 (符合加号底栏排版) -->
-                  <div class="expand-item" id="btn-chat-mcp" style="cursor: pointer;">
-                    <div class="expand-icon-wrapper">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
-                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
-                        <line x1="12" y1="22.08" x2="12" y2="12"></line>
-                      </svg>
-                    </div>
-                    <span>MCP中枢</span>
+                    <span>成员管理</span>
                   </div>
                 </div>
               </div>
@@ -1144,6 +1190,179 @@
                 <span class="dot active"></span>
                 <span class="dot"></span>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 群后台专属面板 (与 win-chat 高度集成) -->
+        <div id="group-details-panel" class="chat-details-overlay">
+          <header class="win-header">
+            <button class="btn-icon" onclick="document.getElementById('group-details-panel').classList.remove('active')">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3>群聊专属后台</h3>
+            <div style="width:40px;"></div>
+          </header>
+          <div class="win-body" style="padding: 16px; overflow-y: auto;">
+            <div class="form-group">
+              <label>修改群名称</label>
+              <input type="text" id="group-details-name" placeholder="群名称">
+            </div>
+            <div class="form-group">
+              <label>修改群头像 (URL / 本地上传)</label>
+              <div style="display:flex; gap:8px;">
+                <input type="text" id="group-details-avatar-url" placeholder="图片 URL" style="flex:1;">
+                <button class="btn btn-outline" id="btn-group-details-avatar-upload" style="padding:8px 12px; font-size:11px;">上传图片</button>
+                <input type="file" id="file-group-details-avatar" accept="image/*" style="display:none;">
+              </div>
+            </div>
+            <div class="form-group">
+              <label>挂载世界书设定 (多选卡片)</label>
+              <select id="group-details-wb-mounted" multiple style="height: 120px;"></select>
+            </div>
+            <div class="form-group">
+              <label>挂载表情包分组</label>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <div id="group-details-mounted-stickers" style="flex:1; font-size:12px; color:var(--text-secondary); padding:6px 10px; background:var(--surface); border-radius:8px; border:1.5px solid var(--border); min-height:18px;">暂无挂载</div>
+                <button id="btn-group-details-sticker-mount" class="btn btn-outline" type="button" style="padding:8px 12px; flex-shrink:0; font-size:12px;">选择</button>
+              </div>
+            </div>
+            <div class="form-group" style="background:#f1f5f9; padding:12px; border-radius:12px; margin-top:14px;">
+              <h4 style="margin:0 0 10px 0; font-size:12px; color:var(--text-primary); font-weight:700;">🧠 聊天记忆双向同步机制 (玩家视角控制)</h4>
+              <div style="display:flex; flex-direction:column; gap:8px;">
+                <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; color:var(--text-secondary); cursor:pointer;">
+                  <input type="checkbox" id="group-sync-from-single"> 允许本群从对应角色的单聊中拉取长期记忆
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; color:var(--text-secondary); cursor:pointer;">
+                  <input type="checkbox" id="group-sync-to-single"> 允许群聊记忆沉淀同步回滚至角色单聊中
+                </label>
+              </div>
+            </div>
+            <div class="form-actions" style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
+              <button id="btn-group-details-save" class="btn btn-primary" style="width:100%;">保存群后台修改</button>
+              <button id="btn-group-details-clear" class="btn btn-outline" style="width:100%; color: #b45309; border-color: #fde68a;">清空群聊天记录</button>
+              <button id="btn-group-details-delete" class="btn btn-outline" style="width:100%; color: #991b1b; border-color: #fca5a5; background-color: #fef2f2;">解散并删除此群聊</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 成员管理专属滑入面板 -->
+            <div id="group-members-panel" class="chat-details-overlay" style="z-index: 800;">
+              <header class="win-header">
+                <button class="btn-icon" onclick="document.getElementById('group-members-panel').classList.remove('active')">
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                </button>
+                <h3>成员管理 (<span id="group-member-count-total">0</span>人)</h3>
+                <div style="width:40px;"></div>
+              </header>
+              <div class="win-body" style="padding: 16px; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between; height: calc(100% - 50px); box-sizing: border-box;">
+                <div style="flex:1; overflow-y:auto;">
+                  <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-secondary); font-weight:700; background:#f8fafc; padding:10px 14px; border-radius:10px; margin-bottom:14px; border:1px solid var(--border);">
+                    <span>当前在线人数：<span id="group-online-count" style="color:var(--primary);">0</span> 人</span>
+                    <span>当前活跃人数：<span id="group-active-count" style="color:#07c160;">0</span> 人</span>
+                  </div>
+                  <div id="group-members-list-box" style="display:flex; flex-direction:column; gap:10px;"></div>
+                </div>
+                <!-- 底部邀请成员操作按钮 -->
+                <div style="padding-top:16px; border-top: 1.5px solid var(--border); background:#fff; flex-shrink:0;">
+                  <button class="btn btn-primary" onclick="if(window.groupChatSystem){window.groupChatSystem.openGroupInviteSelector();}" style="width:100%; font-weight:700; display:flex; align-items:center; justify-content:center; gap:6px;">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                    邀请新的群成员
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- 邀请成员专属多选浮层 -->
+            <div id="group-invite-overlay" class="modal-overlay" style="z-index: 1200;">
+              <div class="modal" style="max-height: 85%;">
+                <header class="modal-header">
+                  <h4>邀请新成员入群</h4>
+                  <button class="btn-icon" onclick="document.getElementById('group-invite-overlay').classList.remove('active')">
+                    <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                  </button>
+                </header>
+                <div class="win-body" style="padding: 16px; overflow-y: auto;">
+                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 240px; overflow-y: auto; padding: 4px 2px; margin-bottom: 16px;"></div>
+                  <button class="btn btn-primary" onclick="if(window.groupChatSystem){window.groupChatSystem.submitGroupInvitation();}" style="width:100%; font-weight:700;">确认邀请加入</button>
+                </div>
+              </div>
+            </div>
+        <!-- 发起群投票弹层 -->
+        <div id="group-poll-overlay" class="modal-overlay" style="z-index: 1500; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width: 320px; border-radius: 16px; padding: 20px;">
+            <header class="modal-header" style="border-bottom:none; padding-bottom:0;">
+              <h4 style="font-weight:700;">发起新投票</h4>
+              <button class="btn-icon" onclick="document.getElementById('group-poll-overlay').classList.remove('active')">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" style="display:flex; flex-direction:column; gap:12px; margin-top:16px;">
+              <div class="form-group">
+                <label>投票主题</label>
+                <input type="text" id="group-poll-title" placeholder="请输入投票主题" required>
+              </div>
+              <div class="form-group">
+                <label>投票选项 (每行一个)</label>
+                <textarea id="group-poll-options" rows="4" placeholder="选项 1&#10;选项 2&#10;选项 3" required></textarea>
+              </div>
+              <button class="btn btn-primary" id="btn-group-poll-submit" style="width:100%; height:40px; font-weight:700;">发布投票卡片</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 机器人设置专属弹层 -->
+        <div id="group-helper-overlay" class="modal-overlay" style="z-index: 1500;">
+          <div class="modal" style="max-height:85%;">
+            <header class="modal-header">
+              <h4>群助手 - 引入机器人</h4>
+              <button class="btn-icon" onclick="document.getElementById('group-helper-overlay').classList.remove('active')">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" style="padding:16px; overflow-y:auto;">
+              <div class="form-group">
+                <label>机器人姓名 (艾特响应名)</label>
+                <input type="text" id="group-bot-name" placeholder="例如：养鸡农场">
+              </div>
+              <div class="form-group">
+                <label>机器人头像 (URL)</label>
+                <input type="text" id="group-bot-avatar" placeholder="https://example.com/bot.png">
+              </div>
+              <div class="form-group">
+                <label>机器人全局性格设定 (AI 神经底料)</label>
+                <textarea id="group-bot-persona" rows="3" placeholder="扮演养鸡场智能化助手，对用户的喂鸡起名和签到产生高情感反馈。"></textarea>
+              </div>
+              <div class="form-group">
+                <label>快捷命令配置 (语法：命令名 | 返回对白变量，每行一个)</label>
+                <textarea id="group-bot-commands" rows="4" placeholder="起名 | @Sender 你的小鸡【VALUE】正在吃草！&#10;喂食 | @Sender 投喂成功！饱食度增加20%，当前饱食度：80%"></textarea>
+              </div>
+              <div class="form-actions" style="margin-top:16px;">
+                <button class="btn btn-primary" id="btn-group-bot-save" style="width:100%;">保存并部署机器人</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 发布群公告模态窗 -->
+        <div id="group-announce-overlay" class="modal-overlay" style="z-index: 1500; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:320px; border-radius:16px; padding:20px;">
+            <header class="modal-header" style="border-bottom:none; padding-bottom:0;">
+              <h4>发布群公告</h4>
+              <button class="btn-icon" onclick="document.getElementById('group-announce-overlay').classList.remove('active')">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </header>
+            <div class="win-body" style="display:flex; flex-direction:column; gap:12px; margin-top:16px;">
+              <div class="form-group">
+                <label>公告标题</label>
+                <input type="text" id="group-announce-title" placeholder="请输入公告标题" required>
+              </div>
+              <div class="form-group">
+                <label>具体内容</label>
+                <textarea id="group-announce-text" rows="5" placeholder="请输入群公告具体要求或通知..." required></textarea>
+              </div>
+              <button class="btn btn-primary" id="btn-group-announce-submit" style="width:100%; height:40px; font-weight:700;">确认发布置顶公告</button>
             </div>
           </div>
         </div>
@@ -1409,7 +1628,7 @@
                   <div class="win-body" style="padding: 16px; overflow-y: auto;">
                     
                     <!-- 1. 角色核心记忆 (Core Memory) -->
-                    <div class="form-group" style="background:#fffcf0; padding:12px; border-radius:12px; border:1px solid #fef08a; margin-bottom:16px;">
+                    <div class="form-group" id="memory-core-card-wrapper" style="background:#fffcf0; padding:12px; border-radius:12px; border:1px solid #fef08a; margin-bottom:16px;">
                       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
                         <h4 style="margin:0; font-size:14px; color:#a16207; font-weight:700;">🧠 角色核心记忆 (Core Memory)</h4>
                         <button id="btn-generate-core-memory" class="btn btn-outline" style="padding:4px 8px; font-size:10px; border-color:#ca8a04; color:#ca8a04; border-radius:6px;">AI提炼核心记忆</button>
@@ -2788,8 +3007,21 @@
             </button>
           </header>
           <div class="win-body" style="padding: 0 16px 16px 16px;">
+            <!-- 红包类型选择器 -->
+            <div class="form-group" id="wallet-envelope-type-group" style="margin-bottom: 12px; display: none;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">红包类型</label>
+              <select id="wallet-envelope-type" style="width: 100%; height: 38px; border: 1.5px solid var(--border); border-radius: 10px; font-size:13px; padding: 0 8px;">
+                <option value="normal">普通红包</option>
+                <option value="lucky">拼手气红包</option>
+              </select>
+            </div>
+            <!-- 转账收款人选择器 (群聊专用) -->
+            <div class="form-group" id="wallet-transfer-receiver-group" style="margin-bottom: 12px; display: none;">
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">选择收款人</label>
+              <select id="wallet-transfer-receiver" style="width: 100%; height: 38px; border: 1.5px solid var(--border); border-radius: 10px; font-size:13px; padding: 0 8px;"></select>
+            </div>
             <div class="form-group" style="margin-bottom: 12px;">
-              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">金额 (元)</label>
+              <label id="wallet-tx-amount-label" style="font-size: 11px; color: var(--text-secondary); font-weight:700;">金额 (元)</label>
               <div style="position: relative; display: flex; align-items: center;">
                 <span style="position: absolute; left: 12px; font-size: 18px; font-weight: 700; color: #1e293b;">¥</span>
                 <input type="number" id="wallet-tx-amount" step="0.01" min="0.01" placeholder="0.00" style="padding-left: 28px; font-size: 18px; font-weight: 700; border-radius: 10px; height: 44px; width: 100%;">
@@ -3157,6 +3389,7 @@
   <script src="app_forum_messages.js"></script>
   <script src="app_chat_focus.js"></script>
   <script src="app_chat_check_phone.js"></script>
+  <script src="app_chat_group.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {

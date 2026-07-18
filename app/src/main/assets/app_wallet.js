@@ -343,16 +343,19 @@
     const overlay = document.getElementById("wallet-tx-overlay");
     if (overlay) overlay.classList.remove("active");
     
-    // 清空数据以便下次再次录入
     const amountInput = document.getElementById("wallet-tx-amount");
     const remarkInput = document.getElementById("wallet-tx-remark");
     if (amountInput) amountInput.value = "";
     if (remarkInput) remarkInput.value = "";
+    
+    // 隐藏级联群选项
+    document.getElementById("wallet-envelope-type-group").style.display = "none";
+    document.getElementById("wallet-transfer-receiver-group").style.display = "none";
   }
 
   async function openTransferModal() {
     if (typeof activeSessionId === 'undefined' || !activeSessionId) {
-      alert("请先进入一个好友对话。");
+      alert("请先进入一个会话。");
       return;
     }
     const overlay = document.getElementById("wallet-tx-overlay");
@@ -367,6 +370,30 @@
     title.textContent = "微信转账";
     remarkLabel.textContent = "转账备注";
     remarkInput.placeholder = "转账备注（选填）";
+
+    // 默认关闭红包类型，开启群聊转账接收人下拉面板
+    document.getElementById("wallet-envelope-type-group").style.display = "none";
+    
+    const session = await db.sessions.get(Number(activeSessionId));
+    if (session.isGroup === 1) {
+      document.getElementById("wallet-transfer-receiver-group").style.display = "block";
+      const receiverSelect = document.getElementById("wallet-transfer-receiver");
+      receiverSelect.innerHTML = '<option value="">-- 选择收款群员 (非必填) --</option>';
+      const members = await db.group_members.where('groupId').equals(session.groupId).toArray();
+      for (const m of members) {
+        if (m.memberType === 'char') {
+          const char = await db.archives.get(m.memberId);
+          if (char) {
+            const opt = document.createElement("option");
+            opt.value = char.name;
+            opt.innerText = char.name;
+            receiverSelect.appendChild(opt);
+          }
+        }
+      }
+    } else {
+      document.getElementById("wallet-transfer-receiver-group").style.display = "none";
+    }
 
     // 绑定发送事件
     submitBtn.onclick = async () => {
@@ -383,17 +410,20 @@
         return;
       }
 
+      let targetName = session.customCharName || "对方";
+      if (session.isGroup === 1) {
+        const selectReceiver = document.getElementById("wallet-transfer-receiver").value;
+        targetName = selectReceiver || ""; // 为空代表公共群转账，非空代表定向转账
+      }
+
       // 扣减并记账
       setBalance(current - amountVal);
-      addLedgerEntry("转账（出账）", amountVal, "expense");
+      addLedgerEntry("转账（出账）" + (targetName ? `（给 ${targetName}）` : ""), amountVal, "expense");
 
-      // 组装并写入消息
-      const session = await db.sessions.get(Number(activeSessionId));
-      const charName = session?.customCharName || "对方";
       const walletData = {
         amount: amountVal,
         status: "pending",
-        targetName: charName,
+        targetName: targetName,
         remark: remarkVal
       };
 
@@ -419,7 +449,7 @@
 
   async function openRedEnvelopeModal() {
     if (typeof activeSessionId === 'undefined' || !activeSessionId) {
-      alert("请先进入一个好友对话。");
+      alert("请先进入一个会话。");
       return;
     }
     const overlay = document.getElementById("wallet-tx-overlay");
@@ -435,6 +465,16 @@
     remarkLabel.textContent = "红包祝福语";
     remarkInput.placeholder = "恭喜发财，大吉大利";
 
+    // 默认关闭转账面板，在群聊中激活红包类型选项
+    document.getElementById("wallet-transfer-receiver-group").style.display = "none";
+    
+    const session = await db.sessions.get(Number(activeSessionId));
+    if (session.isGroup === 1) {
+      document.getElementById("wallet-envelope-type-group").style.display = "block";
+    } else {
+      document.getElementById("wallet-envelope-type-group").style.display = "none";
+    }
+
     submitBtn.onclick = async () => {
       const amountVal = parseFloat(document.getElementById("wallet-tx-amount").value);
       const remarkVal = remarkInput.value.trim() || "恭喜发财，大吉大利";
@@ -449,13 +489,26 @@
         return;
       }
 
+      let envType = "normal";
+      let splitsLeft = 1;
+      if (session.isGroup === 1) {
+        envType = document.getElementById("wallet-envelope-type").value;
+        const members = await db.group_members.where('groupId').equals(session.groupId).toArray();
+        splitsLeft = Math.min(5, members.length); // 默认最多分 5 个包
+      }
+
       setBalance(current - amountVal);
-      addLedgerEntry("发送红包", amountVal, "expense");
+      addLedgerEntry(`发送微信${envType === 'lucky' ? '拼手气' : '普通'}红包`, amountVal, "expense");
 
       const walletData = {
         amount: amountVal,
         status: "pending",
-        remark: remarkVal
+        remark: remarkVal,
+        type: envType,
+        remainingAmount: amountVal,
+        totalSplits: splitsLeft,
+        splitsLeft: splitsLeft,
+        claimed: {} // 储存领取记录 { userId: amount }
       };
 
       const msg = {
@@ -486,6 +539,20 @@
     if (!msg) return;
     try {
       const data = JSON.parse(msg.content);
+      const session = await db.sessions.get(Number(activeSessionId));
+      const myUser = await db.archives.get(Number(activeUserPersonaId));
+      const myName = myUser ? myUser.name : "我";
+
+      // 核心拦截：支持群聊内定向转账权限校验
+      if (session.isGroup === 1 && data.targetName) {
+        const cleanedTarget = data.targetName.trim().toLowerCase();
+        const cleanedMyName = myName.trim().toLowerCase();
+        if (cleanedTarget !== "user" && cleanedTarget !== "我" && cleanedTarget !== cleanedMyName) {
+          showToast(`对不起，这笔转账是定向发给 ${data.targetName} 的，您无权收取！`);
+          return;
+        }
+      }
+
       if (msg.senderType === 'user') {
         if (data.status === 'pending') {
           showToast(`正在等待对方确认收钱...`);
@@ -504,13 +571,18 @@
       data.status = 'received';
       await db.messages.update(Number(msgId), { content: JSON.stringify(data) });
 
-      // 核心修复：领取对方转账时，账单 Ledger 中必须抓取对方（Char）的名字，而不能错误展现为自己的姓名
-      const session = await db.sessions.get(Number(activeSessionId));
-      const charName = session ? (session.customCharName || "好友") : "好友";
+      // 核心修复：获取真正的发信人名字
+      let senderLabel = "好友";
+      if (session.isGroup === 1) {
+        const charSender = await db.archives.get(Number(msg.senderId));
+        senderLabel = charSender ? charSender.name : "群员";
+      } else {
+        senderLabel = session.customCharName || "好友";
+      }
 
       const current = getBalance();
       setBalance(current + data.amount);
-      addLedgerEntry(`收取[${charName}]转账`, data.amount, "income");
+      addLedgerEntry(`收取[${senderLabel}]转账`, data.amount, "income");
 
       if (window.renderDialogMessages) {
         await window.renderDialogMessages();
@@ -526,6 +598,72 @@
     if (!msg) return;
     try {
       const data = JSON.parse(msg.content);
+      const session = await db.sessions.get(Number(activeSessionId));
+      const myIdNum = Number(activeUserPersonaId);
+
+      // 获取发信人名称
+      let senderLabel = "好友";
+      if (session.isGroup === 1) {
+        const charSender = await db.archives.get(Number(msg.senderId));
+        senderLabel = charSender ? charSender.name : "群员";
+      } else {
+        senderLabel = session.customCharName || "好友";
+      }
+
+      // 1. 群聊场景：升级版多态/拼手气红包分配算法
+      if (session.isGroup === 1) {
+        if (!data.claimed) data.claimed = {};
+        if (data.claimed[myIdNum] !== undefined) {
+          showToast(`您已经拆过该红包了，共领到 ￥ ${data.claimed[myIdNum].toFixed(2)} 元。`);
+          return;
+        }
+
+        const isLucky = data.type === 'lucky';
+        const totalSplits = data.splitsLeft !== undefined ? data.splitsLeft : 5;
+        
+        if (totalSplits <= 0) {
+          showToast("手慢了，红包已被领完！");
+          return;
+        }
+
+        let claimAmount = 0;
+        if (isLucky) {
+          // 经典拼手气算法（二倍均值法防止极端值）
+          if (totalSplits === 1) {
+            claimAmount = data.remainingAmount || data.amount;
+          } else {
+            const avg = data.remainingAmount / totalSplits;
+            claimAmount = Math.random() * (avg * 2 - 0.01) + 0.01;
+            claimAmount = parseFloat(claimAmount.toFixed(2));
+          }
+        } else {
+          // 普通等额红包
+          claimAmount = data.amount / (data.totalSplits || 5);
+          claimAmount = parseFloat(claimAmount.toFixed(2));
+        }
+
+        data.claimed[myIdNum] = claimAmount;
+        data.remainingAmount = parseFloat((data.remainingAmount - claimAmount).toFixed(2));
+        data.splitsLeft = totalSplits - 1;
+
+        if (data.splitsLeft <= 0) {
+          data.status = 'opened';
+        }
+
+        await db.messages.update(msg.id, { content: JSON.stringify(data) });
+
+        const current = getBalance();
+        setBalance(current + claimAmount);
+        addLedgerEntry(`拆开[${senderLabel}]的${isLucky ? '拼手气' : '普通'}红包`, claimAmount, "income");
+
+        if (window.renderDialogMessages) {
+          await window.renderDialogMessages();
+        }
+        showToast(`红包拆开成功！共分得金额 ￥ ${claimAmount.toFixed(2)} 元！`);
+        return;
+      }
+
+      // 2. 单聊场景：普通一对一红包
       if (msg.senderType === 'user') {
         if (data.status === 'pending') {
           showToast(`您发给对方的红包正在等待对方拆开中...`);
@@ -535,22 +673,17 @@
         return;
       }
 
-      // 领取 Char 发给 User 的红包
       if (data.status === 'opened') {
         showToast("这个红包您已经拆过了。");
         return;
       }
 
       data.status = 'opened';
-      await db.messages.update(Number(msgId), { content: JSON.stringify(data) });
-
-      // 核心修复：领取对方红包时，账单 Ledger 中必须抓取对方（Char）的名字
-      const session = await db.sessions.get(Number(activeSessionId));
-      const charName = session ? (session.customCharName || "好友") : "好友";
+      await db.messages.update(msg.id, { content: JSON.stringify(data) });
 
       const current = getBalance();
       setBalance(current + data.amount);
-      addLedgerEntry(`打开[${charName}]的红包`, data.amount, "income");
+      addLedgerEntry(`打开[${senderLabel}]的红包`, data.amount, "income");
 
       if (window.renderDialogMessages) {
         await window.renderDialogMessages();

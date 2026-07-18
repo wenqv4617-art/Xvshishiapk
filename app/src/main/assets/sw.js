@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v13'; // 离线 PWA 升级至 v13 引入系统级论坛
+const CACHE_NAME = 'story-phone-v18'; // 离线 PWA 升级至 v18 引入群聊并自愈复合索引
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

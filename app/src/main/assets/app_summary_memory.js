@@ -407,11 +407,19 @@ async function loadCoreMemory(sessionId) {
   const sess = await db.sessions.get(Number(sessionId));
   if (!sess) return;
 
-  document.getElementById("memory-core-status").value = sess.coreSelfStatus || "";
-  document.getElementById("memory-core-purpose").value = sess.coreSelfPurpose || "";
-  document.getElementById("memory-core-changes").value = sess.coreSelfChanges || "";
-  document.getElementById("memory-core-relationship").value = sess.coreRelationship || "";
-  document.getElementById("memory-core-userineyes").value = sess.coreUserInEyes || "";
+  // 核心解耦：如果是群聊，不展现角色个人核心记忆（Core Memory）
+  const coreMemoryWrapper = document.getElementById("memory-core-card-wrapper");
+  if (coreMemoryWrapper) {
+    coreMemoryWrapper.style.display = sess.isGroup === 1 ? "none" : "block";
+  }
+
+  if (sess.isGroup !== 1) {
+    document.getElementById("memory-core-status").value = sess.coreSelfStatus || "";
+    document.getElementById("memory-core-purpose").value = sess.coreSelfPurpose || "";
+    document.getElementById("memory-core-changes").value = sess.coreSelfChanges || "";
+    document.getElementById("memory-core-relationship").value = sess.coreRelationship || "";
+    document.getElementById("memory-core-userineyes").value = sess.coreUserInEyes || "";
+  }
 
   // 加载本地 ONNX 向量微调设置
   const isVectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
