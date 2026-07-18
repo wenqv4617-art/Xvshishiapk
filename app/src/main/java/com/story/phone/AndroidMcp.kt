@@ -29,6 +29,24 @@ class AndroidMcp(private val context: Context) {
 
     private var mediaPlayer: MediaPlayer? = null
     private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var mediaSession: android.media.session.MediaSession? = null
+    private var currentSongName: String = ""
+
+    private val mediaControlReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                "com.story.phone.ACTION_PLAY" -> {
+                    resumeMusicNatively()
+                }
+                "com.story.phone.ACTION_PAUSE" -> {
+                    pauseMusicNatively()
+                }
+                "com.story.phone.ACTION_STOP" -> {
+                    stopMusicNatively()
+                }
+            }
+        }
+    }
 
     @JavascriptInterface
     fun toggleBackgroundWakeLock(enabled: Boolean) {
@@ -109,6 +127,8 @@ class AndroidMcp(private val context: Context) {
         try {
             getDownloadDir()
             getMusicDir()
+            initMediaSession()
+            registerMediaReceiver()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -217,6 +237,205 @@ class AndroidMcp(private val context: Context) {
         return jsonArray.toString()
     }
 
+    private fun registerMediaReceiver() {
+        try {
+            val filter = android.content.IntentFilter().apply {
+                addAction("com.story.phone.ACTION_PLAY")
+                addAction("com.story.phone.ACTION_PAUSE")
+                addAction("com.story.phone.ACTION_STOP")
+            }
+            context.applicationContext.registerReceiver(mediaControlReceiver, filter)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun initMediaSession() {
+        if (mediaSession != null) return
+        try {
+            mediaSession = android.media.session.MediaSession(context, "StoryPhoneMediaSession").apply {
+                setCallback(object : android.media.session.MediaSession.Callback() {
+                    override fun onPlay() {
+                        resumeMusicNatively()
+                    }
+
+                    override fun onPause() {
+                        pauseMusicNatively()
+                    }
+
+                    override fun onStop() {
+                        stopMusicNatively()
+                    }
+
+                    override fun onSeekTo(pos: Long) {
+                        try {
+                            mediaPlayer?.seekTo(pos.toInt())
+                            updateMediaSessionState(android.media.session.PlaybackState.STATE_PLAYING)
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                })
+                isActive = true
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun updateMediaSessionState(state: Int) {
+        try {
+            val mediaPlayer = this.mediaPlayer
+            val position = mediaPlayer?.currentPosition?.toLong() ?: 0L
+            val speed = if (state == android.media.session.PlaybackState.STATE_PLAYING) 1.0f else 0.0f
+            
+            val stateBuilder = android.media.session.PlaybackState.Builder()
+                .setState(state, position, speed, android.os.SystemClock.elapsedRealtime())
+                .setActions(
+                    android.media.session.PlaybackState.ACTION_PLAY or
+                    android.media.session.PlaybackState.ACTION_PAUSE or
+                    android.media.session.PlaybackState.ACTION_STOP or
+                    android.media.session.PlaybackState.ACTION_SEEK_TO
+                )
+            mediaSession?.setPlaybackState(stateBuilder.build())
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun updateMediaNotification(songName: String, isPlaying: Boolean) {
+        if (mediaSession == null) return
+        try {
+            val channelId = "story_phone_media_channel"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                var channel = notificationManager.getNotificationChannel(channelId)
+                if (channel == null) {
+                    channel = android.app.NotificationChannel(channelId, "音乐播放控制", android.app.NotificationManager.IMPORTANCE_LOW).apply {
+                        description = "提供锁屏与下拉栏多媒体播放卡片控制"
+                    }
+                    notificationManager.createNotificationChannel(channel)
+                }
+            }
+
+            val playPauseAction = if (isPlaying) {
+                val intent = Intent("com.story.phone.ACTION_PAUSE")
+                val pendingIntent = android.app.PendingIntent.getBroadcast(
+                    context, 1, intent,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                android.app.Notification.Action.Builder(
+                    android.R.drawable.ic_media_pause, "暂停", pendingIntent
+                ).build()
+            } else {
+                val intent = Intent("com.story.phone.ACTION_PLAY")
+                val pendingIntent = android.app.PendingIntent.getBroadcast(
+                    context, 1, intent,
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                )
+                android.app.Notification.Action.Builder(
+                    android.R.drawable.ic_media_play, "播放", pendingIntent
+                ).build()
+            }
+
+            val stopIntent = Intent("com.story.phone.ACTION_STOP")
+            val stopPendingIntent = android.app.PendingIntent.getBroadcast(
+                context, 2, stopIntent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val stopAction = android.app.Notification.Action.Builder(
+                android.R.drawable.ic_menu_close_clear_cancel, "停止", stopPendingIntent
+            ).build()
+
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val contentPendingIntent = android.app.PendingIntent.getActivity(
+                context, 0, intent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+
+            val mediaStyle = android.app.Notification.MediaStyle()
+                .setMediaSession(mediaSession?.sessionToken)
+                .setShowActionsInCompactView(0, 1)
+
+            val smallIcon = try {
+                context.resources.getDrawable(R.drawable.ic_launcher, context.theme)
+                R.drawable.ic_launcher
+            } catch (e: Exception) {
+                android.R.drawable.ic_dialog_info
+            }
+
+            val notification = android.app.Notification.Builder(context, channelId)
+                .setStyle(mediaStyle)
+                .setSmallIcon(smallIcon)
+                .setContentTitle(songName)
+                .setContentText("叙事诗本地歌单")
+                .setContentIntent(contentPendingIntent)
+                .setOngoing(isPlaying)
+                .apply {
+                    addAction(playPauseAction)
+                    addAction(stopAction)
+                }
+                .build()
+
+            notificationManager.notify(1005, notification)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    private fun resetToDefaultNotification() {
+        try {
+            val channelId = "mcp_foreground_service_channel"
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            val intent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                context, 0, intent,
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE else android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            
+            val smallIcon = try {
+                context.resources.getDrawable(R.drawable.ic_launcher, context.theme)
+                R.drawable.ic_launcher
+            } catch (e: Exception) {
+                android.R.drawable.ic_dialog_info
+            }
+
+            val notification = android.app.Notification.Builder(context, channelId)
+                .setContentTitle("叙事诗前台守护中")
+                .setContentText("系统不休眠、歌单播放与后台发信功能保护中")
+                .setSmallIcon(smallIcon)
+                .setContentIntent(pendingIntent)
+                .build()
+
+            notificationManager.notify(1005, notification)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun resumeMusicNatively() {
+        try {
+            if (mediaPlayer?.isPlaying == false) {
+                mediaPlayer?.start()
+                updateMediaSessionState(android.media.session.PlaybackState.STATE_PLAYING)
+                updateMediaNotification(currentSongName, true)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun pauseMusicNatively() {
+        try {
+            if (mediaPlayer?.isPlaying == true) {
+                mediaPlayer?.pause()
+                updateMediaSessionState(android.media.session.PlaybackState.STATE_PAUSED)
+                updateMediaNotification(currentSongName, false)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    fun stopMusicNatively() {
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+            updateMediaSessionState(android.media.session.PlaybackState.STATE_STOPPED)
+            resetToDefaultNotification()
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
     // 3. Android 原生 MediaPlayer 后台音乐播放器
     @JavascriptInterface
     fun playNativeMusic(songName: String): Boolean {
@@ -232,6 +451,19 @@ class AndroidMcp(private val context: Context) {
                 prepare()
                 start()
             }
+            currentSongName = songName
+            
+            initMediaSession()
+            val metadata = android.media.MediaMetadata.Builder()
+                .putString(android.media.MediaMetadata.METADATA_KEY_TITLE, songName)
+                .putString(android.media.MediaMetadata.METADATA_KEY_ARTIST, "叙事诗本地歌单")
+                .putLong(android.media.MediaMetadata.METADATA_KEY_DURATION, mediaPlayer?.duration?.toLong() ?: 0L)
+                .build()
+            mediaSession?.setMetadata(metadata)
+            
+            updateMediaSessionState(android.media.session.PlaybackState.STATE_PLAYING)
+            updateMediaNotification(songName, true)
+            
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -242,25 +474,13 @@ class AndroidMcp(private val context: Context) {
     @JavascriptInterface
     fun pauseNativeMusic() {
         Log.d(TAG, "pauseNativeMusic() called")
-        try {
-            if (mediaPlayer?.isPlaying == true) {
-                mediaPlayer?.pause()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        pauseMusicNatively()
     }
 
     @JavascriptInterface
     fun stopNativeMusic() {
         Log.d(TAG, "stopNativeMusic() called")
-        try {
-            mediaPlayer?.stop()
-            mediaPlayer?.release()
-            mediaPlayer = null
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        stopMusicNatively()
     }
 
     // 4. 安卓真机马达物理震动桥接
