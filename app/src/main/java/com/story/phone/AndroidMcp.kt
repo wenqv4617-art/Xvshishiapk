@@ -338,153 +338,58 @@ class AndroidMcp(private val context: Context) {
     private var hideBubbleRunnable: Runnable? = null
 
     // ============================================================
-    //  后台主动发信 — Kotlin 层直接发 HTTP 请求（绕过 WebView 冻结）
+    //  后台主动发信 — Kotlin 原生定时 30 秒高强度唤醒心跳（直接物理击穿 WebView 冻结）
     // ============================================================
 
-    // 存储前端注册的 API 配置
-    private var bgApiUrl: String = ""
-    private var bgApiKey: String = ""
-    private var bgApiModel: String = ""
-
-    // 待发送消息队列（线程安全）
-    private val pendingMessages = mutableListOf<String>()
-    private var bgSendInProgress = false
-
-    // 后台发信结果暂存
-    private var lastBgResultJson: String? = null
-
-    /**
-     * 前端注册 API 配置到 Kotlin 层（由 toggleActiveMessage 调用）
-     */
     @JavascriptInterface
     fun registerBgApiConfig(url: String, key: String, model: String, temperature: Double) {
-        Log.d(TAG, "registerBgApiConfig() called, url=$url, key=${key.take(8)}..., model=$model, temperature=$temperature")
-        try {
-            bgApiUrl = url
-            bgApiKey = key
-            bgApiModel = model
-            Log.d(TAG, "registerBgApiConfig() success, bgApiUrl=$bgApiUrl, bgApiModel=$bgApiModel")
-        } catch (e: Exception) {
-            Log.e(TAG, "registerBgApiConfig() error: ${e.message}", e)
-            e.printStackTrace()
-        }
+        // 已全面升级为 JS 原生心跳调度，保留此接口防前端调用未定义崩溃
+        Log.d(TAG, "registerBgApiConfig() no-op, integrated into JS Native Heartbeat")
     }
 
-    /**
-     * 前端推送一条待发送消息到 Kotlin 队列
-     */
     @JavascriptInterface
     fun pushBgMessage(message: String) {
-        Log.d(TAG, "pushBgMessage() called, message=${message.take(50)}...")
-        synchronized(pendingMessages) {
-            pendingMessages.add(message)
-            Log.d(TAG, "pushBgMessage() success, pending count=${pendingMessages.size}")
-        }
+        // 已全面解耦，JS 心跳自主决策，保留此接口防崩溃
+        Log.d(TAG, "pushBgMessage() no-op, integrated into JS Native Heartbeat")
     }
 
-    /**
-     * 前端查询待发送队列长度
-     */
     @JavascriptInterface
     fun getBgPendingCount(): Int {
-        synchronized(pendingMessages) {
-            val count = pendingMessages.size
-            Log.d(TAG, "getBgPendingCount() called, returning $count")
-            return count
-        }
+        return 0
     }
 
-    /**
-     * 前端消费（拉取）后台发信结果，返回后自动清空
-     */
     @JavascriptInterface
     fun pollBgResult(): String? {
-        val result = lastBgResultJson
-        lastBgResultJson = null
-        Log.d(TAG, "pollBgResult() called, returning=${result?.take(80)}...")
-        return result
+        return null
     }
 
     /**
-     * 启动后台轮询发信（定时器在 Kotlin 层直接发 HTTP，不依赖 WebView）
+     * 强力直写唤醒：在 Native 层开启高精度后台计时，每 30 秒从 Android 线程强行注入代码
+     * 这会迫使系统立即对 WebView 分配 CPU 时间片，确保 JS 定时发信调度不被系统打盹挂起。
      */
     @JavascriptInterface
     fun startBackgroundPolling(intervalMinutes: Int) {
-        Log.d(TAG, "startBackgroundPolling() called, intervalMinutes=$intervalMinutes")
+        Log.d(TAG, "startBackgroundPolling() called. Core Native-to-JS heartbeat polling starting...")
         try {
             stopBackgroundPolling()
             bgPollTimer = java.util.Timer().apply {
                 scheduleAtFixedRate(object : java.util.TimerTask() {
                     override fun run() {
-                        // 如果没有待发消息或正在发送，跳过本轮
-                        val message: String
-                        synchronized(pendingMessages) {
-                            if (pendingMessages.isEmpty() || bgSendInProgress) return
-                            message = pendingMessages.removeFirst()
-                            bgSendInProgress = true
-                        }
-
-                        try {
-                            // 检查 API 配置是否已注册
-                            val apiUrl = bgApiUrl
-                            val apiKey = bgApiKey
-                            val apiModel = bgApiModel
-                            if (apiUrl.isEmpty() || apiKey.isEmpty()) {
-                                storeBgResult(400, "{\"error\":\"API 配置未注册，请先在 MCP 面板开启后台主动发信\"}")
-                                return
-                            }
-
-                            // 构造请求体：兼容 OpenAI 格式
-                            val requestBody = JSONObject().apply {
-                                put("model", apiModel)
-                                put("messages", JSONArray().apply {
-                                    put(JSONObject().apply {
-                                        put("role", "user")
-                                        put("content", message)
-                                    })
-                                })
-                                put("stream", false)
-                            }
-
-                            // Kotlin 层直接用 HttpURLConnection 发请求
-                            val conn = java.net.URL(apiUrl).openConnection() as java.net.HttpURLConnection
-                            try {
-                                conn.requestMethod = "POST"
-                                conn.setRequestProperty("Content-Type", "application/json")
-                                conn.setRequestProperty("Authorization", "Bearer $apiKey")
-                                conn.doOutput = true
-                                conn.connectTimeout = 15000
-                                conn.readTimeout = 60000
-
-                                conn.outputStream.use { os ->
-                                    os.write(requestBody.toString().toByteArray(Charsets.UTF_8))
-                                }
-
-                                val responseCode = conn.responseCode
-                                val responseBody = if (responseCode in 200..299) {
-                                    conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                                } else {
-                                    val errorBody = conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() ?: ""
-                                    "{\"error\":\"HTTP $responseCode\",\"body\":${JSONObject.quote(errorBody)}}"
-                                }
-
-                                storeBgResult(responseCode, responseBody)
-                            } finally {
-                                conn.disconnect()
-                            }
-                        } catch (e: Exception) {
-                            storeBgResult(0, "{\"error\":${JSONObject.quote(e.message ?: e.toString())}}")
-                            e.printStackTrace()
-                        } finally {
-                            synchronized(pendingMessages) {
-                                bgSendInProgress = false
+                        mainActivity?.runOnUiThread {
+                            val webView = getWebView()
+                            if (webView != null) {
+                                Log.d(TAG, "Native heartbeat ticking: forcing execution in background WebView context.")
+                                webView.evaluateJavascript(
+                                    "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.triggerBackgroundActiveMessageNative === 'function') { window.desktopPetSystem.triggerBackgroundActiveMessageNative(); }",
+                                    null
+                                )
+                            } else {
+                                Log.e(TAG, "Native heartbeat skipped: WebView is null.")
                             }
                         }
                     }
-                }, intervalMinutes * 60 * 1000L, intervalMinutes * 60 * 1000L)
+                }, 30000L, 30000L) // 每 30 秒无差错强制激活唤醒一次
             }
-            // 存入标记供前端拉取
-            storeBgResult(0, "{\"info\":\"background_polling_started\",\"interval_minutes\":$intervalMinutes}")
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -492,25 +397,13 @@ class AndroidMcp(private val context: Context) {
 
     @JavascriptInterface
     fun stopBackgroundPolling() {
-        Log.d(TAG, "stopBackgroundPolling() called")
+        Log.d(TAG, "stopBackgroundPolling() called. Heartbeat polling stopped.")
         try {
             bgPollTimer?.cancel()
             bgPollTimer = null
-            synchronized(pendingMessages) {
-                bgSendInProgress = false
-            }
-            storeBgResult(0, "{\"info\":\"background_polling_stopped\"}")
         } catch (e: Exception) {
             e.printStackTrace()
         }
-    }
-
-    private fun storeBgResult(code: Int, bodyJson: String) {
-        lastBgResultJson = JSONObject().apply {
-            put("code", code)
-            put("body", bodyJson)
-            put("timestamp", System.currentTimeMillis())
-        }.toString()
     }
 
 // ============================================================
