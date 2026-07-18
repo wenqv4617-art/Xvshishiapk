@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
+        settings.geolocationEnabled = true
         
         // 解锁 AI 在后台静默自动点播放歌
         settings.mediaPlaybackRequiresUserGesture = false
