@@ -154,7 +154,9 @@ async function renderSelectTab() {
   const activeMeId = localStorage.getItem("active_me_id");
   const userIdNum = Number(activeMeId);
 
-  const sessions = await db.sessions.where('userId').equals(userIdNum).toArray();
+  // 核心解耦：拉取会话列表后，过滤并切除所有群聊会话，保证深谈择选仅对单聊（1对1私密灵魂剖白）起效
+  const sessions = (await db.sessions.where('userId').equals(userIdNum).toArray())
+    .filter(s => s.isGroup !== 1);
   
   let candidatesHtml = `<div style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-bottom: 8px;">开始新深谈</div>
                         <div class="session-list" style="margin-bottom: 24px;">`;
@@ -568,11 +570,18 @@ async function renderMicrocosmTab() {
   if (!container) return;
   container.innerHTML = "";
 
-  const talk = await db.deeptalks.get(activeDeeptalkId);
-  const sessionIdNum = talk ? Number(talk.sessionId) : Number(activeSessionId);
-  
-  const rawThoughts = await db.deeptalk_thoughts.where('sessionId').equals(sessionIdNum).toArray();
-  const thoughts = rawThoughts.sort((a,b) => b.timestamp - a.timestamp); // 最新时间在最上
+  const activeMeId = localStorage.getItem("active_me_id");
+  const userIdNum = Number(activeMeId);
+  if (isNaN(userIdNum)) return;
+
+  // 核心解耦：直接拉取当前 User 玩家名下的所有深谈记录 ID，脱离对 activeDeeptalkId 房间指针的依赖，防止冷启动时 null 导致 Dexie.get() 报错 [2.1]
+  const myTalks = await db.deeptalks.where('userId').equals(userIdNum).toArray();
+  const myTalkIds = myTalks.map(t => t.id);
+
+  const rawThoughts = await db.deeptalk_thoughts.toArray();
+  const thoughts = rawThoughts
+    .filter(t => myTalkIds.includes(t.deeptalkId))
+    .sort((a,b) => b.timestamp - a.timestamp); // 最新时间在最上
 
   if (thoughts.length === 0) {
     container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该面具的小宇宙中尚未产生思想。</p>`;
@@ -582,9 +591,10 @@ async function renderMicrocosmTab() {
   // 按角色分组
   const grouped = {};
   for (let t of thoughts) {
-    const dt = await db.deeptalks.get(t.deeptalkId);
+    // 内存预配对优化：直接从已拉取的 myTalks 数组中配对，免除循环内 await 数据库 get 请求的性能损耗 [2.1]
+    const dt = myTalks.find(talk => talk.id === t.deeptalkId);
     if (!dt) continue;
-    const charId = dt.charId;
+    const charId = Number(dt.charId);
     if (!grouped[charId]) {
       const char = await db.archives.get(charId);
       grouped[charId] = {

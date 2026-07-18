@@ -1129,11 +1129,16 @@ async function openWeChatDialog(sessionId) {
   if (stickyBar) stickyBar.remove();
 
   // 单聊展示右上角心声状态粉色爱心按钮
-  const btnCharStatus = document.getElementById("btn-char-status");
-  if (btnCharStatus) btnCharStatus.style.display = "flex";
+             const btnCharStatus = document.getElementById("btn-char-status");
+             if (btnCharStatus) btnCharStatus.style.display = "flex";
 
-  const char = await db.archives.get(sess.charId);
-  const user = await db.archives.get(sess.userId);
+             // 核心解耦：开启单聊专属加号展开栏排布，完整恢复并显现 14 项原生功能按键
+             if (window.setupExpandPanel) {
+               window.setupExpandPanel('single');
+             }
+
+             const char = await db.archives.get(sess.charId);
+             const user = await db.archives.get(sess.userId);
 
   activeSessionCharAvatar = sess.customCharAvatar || char?.avatar || null;
   activeSessionUserAvatar = sess.customUserAvatar || user?.avatar || null;
@@ -1448,38 +1453,63 @@ async function renderDialogMessages() {
         contentHtml = `<div class="msg-text" style="position: relative;">朋友圈分享格式错误${emojiHtml}</div>`;
       }
     } else {
-      // 文本与表情切分上屏器：如果消息含有【表情包：xx】，在渲染时智能切分为多个独立的文字气泡与表情气泡，在上下文里依然原样储存
-      const rawContent = m.content;
-      let quoteHtml = "";
-      let displayContent = rawContent;
-      if (window.quoteSystem) {
-        const parsed = await window.quoteSystem.parseQuote(rawContent);
-        if (parsed) {
-          quoteHtml = parsed.quoteHtml;
-          displayContent = parsed.cleanText;
-        }
-      }
-
-      // 对 displayContent 按照表情包语法切分成多个气泡组件，多气泡垂直纵向无缝叠放
-      const stickerRegex = /(【表情包：[^】]+】)/g;
-      const parts = displayContent.split(stickerRegex).filter(Boolean);
-      
-      let segmentsHtml = "";
-      for (const part of parts) {
-        if (part.startsWith("【表情包：") && part.endsWith("】")) {
-          const stickerImgHtml = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
-          if (stickerImgHtml.includes("<img")) {
-            segmentsHtml += `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${stickerImgHtml}${emojiHtml}</div>`;
-          } else {
-            segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${escapeHtml(part)}${emojiHtml}</div>`;
+      // 核心解耦：仅群聊会话支持表情包自动分割气泡；单聊会话 100% 保持原有不分割扁平布局，防止其被搞坏
+      if (sess && sess.isGroup === 1) {
+        const rawContent = m.content;
+        let quoteHtml = "";
+        let displayContent = rawContent;
+        if (window.quoteSystem) {
+          const parsed = await window.quoteSystem.parseQuote(rawContent);
+          if (parsed) {
+            quoteHtml = parsed.quoteHtml;
+            displayContent = parsed.cleanText;
           }
+        }
+
+        const stickerRegex = /(【表情包：[^】]+】)/g;
+        const parts = displayContent.split(stickerRegex).filter(Boolean);
+        
+        let segmentsHtml = "";
+        for (const part of parts) {
+          if (part.startsWith("【表情包：") && part.endsWith("】")) {
+            const stickerImgHtml = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+            if (stickerImgHtml.includes("<img")) {
+              segmentsHtml += `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${stickerImgHtml}${emojiHtml}</div>`;
+            } else {
+              segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${escapeHtml(part)}${emojiHtml}</div>`;
+            }
+          } else {
+            let textNode = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+            segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${textNode}${emojiHtml}</div>`;
+            quoteHtml = "";
+          }
+        }
+        contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
+      } else {
+        // 单聊原有扁平非分割渲染
+        const isOnlySticker = typeof m.content === 'string' && /^【表情包：[^】]+】$/.test(m.content.trim());
+        let displayContent = m.content;
+        if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+          displayContent = window.stickerSystem.renderStickerInMessageSync(m.content, mountedGroupIds);
+        }
+        
+        if (isOnlySticker && displayContent.includes('<img')) {
+          contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative;">${displayContent}${emojiHtml}</div>`;
         } else {
-          let textNode = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
-          segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${textNode}${emojiHtml}</div>`;
-          quoteHtml = ""; // 引用标题仅在首段呈现
+          let quoteHtml = "";
+          if (window.quoteSystem) {
+            const parsed = await window.quoteSystem.parseQuote(m.content);
+            if (parsed) {
+              quoteHtml = parsed.quoteHtml;
+              displayContent = parsed.cleanText;
+              if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+                displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
+              }
+            }
+          }
+          contentHtml = `<div class="msg-text" style="position: relative;">${quoteHtml}${displayContent}${emojiHtml}</div>`;
         }
       }
-      contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
     }
 
     // 判断群聊发送人信息与头衔
@@ -1865,37 +1895,63 @@ async function appendMessageToDOM(msg) {
       contentHtml = `<div class="msg-text">朋友圈分享格式错误</div>`;
     }
   } else {
-    // 文本与表情切分上屏器：如果消息含有【表情包：xx】，在追加渲染时也切分为多个独立的文字和表情组件
-    const rawContent = msg.content;
-    let quoteHtml = "";
-    let displayContent = rawContent;
-    if (window.quoteSystem) {
-      const parsed = await window.quoteSystem.parseQuote(rawContent);
-      if (parsed) {
-        quoteHtml = parsed.quoteHtml;
-        displayContent = parsed.cleanText;
-      }
-    }
-
-    const stickerRegex = /(【表情包：[^】]+】)/g;
-    const parts = displayContent.split(stickerRegex).filter(Boolean);
-    
-    let segmentsHtml = "";
-    for (const part of parts) {
-      if (part.startsWith("【表情包：") && part.endsWith("】")) {
-        const stickerImgHtml = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
-        if (stickerImgHtml.includes("<img")) {
-          segmentsHtml += `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${stickerImgHtml}${emojiHtml}</div>`;
-        } else {
-          segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${escapeHtml(part)}${emojiHtml}</div>`;
+    // 核心解耦：仅群聊会话支持表情包自动分割气泡；单聊会话 100% 保持原有不分割扁平布局，防止其被搞坏
+    if (sess && sess.isGroup === 1) {
+      const rawContent = msg.content;
+      let quoteHtml = "";
+      let displayContent = rawContent;
+      if (window.quoteSystem) {
+        const parsed = await window.quoteSystem.parseQuote(rawContent);
+        if (parsed) {
+          quoteHtml = parsed.quoteHtml;
+          displayContent = parsed.cleanText;
         }
+      }
+
+      const stickerRegex = /(【表情包：[^】]+】)/g;
+      const parts = displayContent.split(stickerRegex).filter(Boolean);
+      
+      let segmentsHtml = "";
+      for (const part of parts) {
+        if (part.startsWith("【表情包：") && part.endsWith("】")) {
+          const stickerImgHtml = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+          if (stickerImgHtml.includes("<img")) {
+            segmentsHtml += `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${stickerImgHtml}${emojiHtml}</div>`;
+          } else {
+            segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${escapeHtml(part)}${emojiHtml}</div>`;
+          }
+        } else {
+          let textNode = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
+          segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${textNode}${emojiHtml}</div>`;
+          quoteHtml = "";
+        }
+      }
+      contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
+    } else {
+      // 单聊原有扁平非分割追加渲染
+      const isOnlySticker = typeof msg.content === 'string' && /^【表情包：[^】]+】$/.test(msg.content.trim());
+      let displayContent = msg.content;
+      if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+        displayContent = window.stickerSystem.renderStickerInMessageSync(msg.content, mountedGroupIds);
+      }
+      
+      if (isOnlySticker && displayContent.includes('<img')) {
+        contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${displayContent}</div>`;
       } else {
-        let textNode = window.stickerSystem ? window.stickerSystem.renderStickerInMessageSync(part, mountedGroupIds) : part;
-        segmentsHtml += `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${textNode}${emojiHtml}</div>`;
-        quoteHtml = "";
+        let quoteHtml = "";
+        if (window.quoteSystem) {
+          const parsed = await window.quoteSystem.parseQuote(msg.content);
+          if (parsed) {
+            quoteHtml = parsed.quoteHtml;
+            displayContent = parsed.cleanText;
+            if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+              displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
+            }
+          }
+        }
+        contentHtml = `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${displayContent}</div>`;
       }
     }
-    contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
   }
 
 // 支撑追加消息时的群聊视图渲染
@@ -4607,6 +4663,116 @@ function bindOfflineChatAppEvents() {
   const btnEndAppointment = document.getElementById("btn-end-appointment");
   if (btnEndAppointment) btnEndAppointment.onclick = endAppointment;
 }
+
+// 全局三态解耦加号展开栏调度管理器，精准服务于单聊（14项）、群聊成员（13项）与群聊旁白（2项）多模态场景 [3]
+window.setupExpandPanel = function(mode) {
+  const panel = document.getElementById("chat-expand-panel");
+  if (!panel) return;
+
+  const page1 = panel.querySelector(".expand-slider .expand-page:nth-child(1)");
+  const page2 = panel.querySelector(".expand-slider .expand-page:nth-child(2)");
+  const dots = panel.querySelector(".expand-dots");
+
+  // 召回所有 18 项 SVG 物理功能按键
+  const btnSticker = document.getElementById("btn-chat-sticker");
+  const btnPhoto = document.getElementById("btn-chat-photo");
+  const btnVoice = document.getElementById("btn-chat-voice-trigger");
+  const btnCall = document.getElementById("btn-chat-call");
+  const btnTransfer = document.getElementById("btn-chat-transfer");
+  const btnRedEnvelope = document.getElementById("btn-chat-redenvelope");
+  const btnFocus = document.getElementById("btn-chat-focus");
+  const btnOffline = document.getElementById("btn-chat-offline");
+  const btnCheckPhone = document.getElementById("btn-chat-check-phone");
+  const btnMemory = document.getElementById("btn-chat-memory");
+  const btnSummary = document.getElementById("btn-chat-summary");
+  const btnHtml = document.getElementById("btn-chat-html-widget");
+  const btnPlot = document.getElementById("btn-chat-plot-engine");
+  const btnMcp = document.getElementById("btn-chat-mcp");
+  const btnPoll = document.getElementById("btn-chat-group-poll");
+  const btnHelper = document.getElementById("btn-chat-group-helper");
+  const btnAnnounce = document.getElementById("btn-chat-group-announce");
+  const btnMembers = document.getElementById("btn-chat-group-members");
+
+  const allItems = [
+    btnSticker, btnPhoto, btnVoice, btnCall, btnTransfer, btnRedEnvelope,
+    btnFocus, btnOffline, btnCheckPhone, btnMemory, btnSummary, btnHtml,
+    btnPlot, btnMcp, btnPoll, btnHelper, btnAnnounce, btnMembers
+  ];
+  allItems.forEach(item => {
+    if (item) item.style.display = "none";
+  });
+
+  if (mode === 'single') {
+    // 1. 单聊专属：第1页装载 8 项，第2页装载 6 项，合计 14 项原生按键
+    if (page1) {
+      page1.appendChild(btnSticker);
+      page1.appendChild(btnPhoto);
+      page1.appendChild(btnVoice);
+      page1.appendChild(btnCall);
+      page1.appendChild(btnTransfer);
+      page1.appendChild(btnRedEnvelope);
+      page1.appendChild(btnFocus);
+      page1.appendChild(btnOffline);
+    }
+    if (page2) {
+      page2.appendChild(btnCheckPhone);
+      page2.appendChild(btnMemory);
+      page2.appendChild(btnSummary);
+      page2.appendChild(btnHtml);
+      page2.appendChild(btnPlot);
+      page2.appendChild(btnMcp);
+    }
+    const activeItems = [
+      btnSticker, btnPhoto, btnVoice, btnCall, btnTransfer, btnRedEnvelope,
+      btnFocus, btnOffline, btnCheckPhone, btnMemory, btnSummary, btnHtml,
+      btnPlot, btnMcp
+    ];
+    activeItems.forEach(item => { if (item) item.style.display = "flex"; });
+    if (page1) page1.style.display = "grid";
+    if (page2) page2.style.display = "grid";
+    if (dots) dots.style.display = "flex";
+
+  } else if (mode === 'group') {
+    // 2. 群聊成员专属：第1页装载 8 项，第2页装载 5 项，合计 13 项群组按键
+    if (page1) {
+      page1.appendChild(btnSticker);
+      page1.appendChild(btnPhoto);
+      page1.appendChild(btnVoice);
+      page1.appendChild(btnTransfer);
+      page1.appendChild(btnRedEnvelope);
+      page1.appendChild(btnOffline);
+      page1.appendChild(btnPlot);
+      page1.appendChild(btnPoll);
+    }
+    if (page2) {
+      page2.appendChild(btnHelper);
+      page2.appendChild(btnAnnounce);
+      page2.appendChild(btnMemory);
+      page2.appendChild(btnSummary);
+      page2.appendChild(btnMembers);
+    }
+    const activeItems = [
+      btnSticker, btnPhoto, btnVoice, btnTransfer, btnRedEnvelope, btnOffline,
+      btnPlot, btnPoll, btnHelper, btnAnnounce, btnMemory, btnSummary, btnMembers
+    ];
+    activeItems.forEach(item => { if (item) item.style.display = "flex"; });
+    if (page1) page1.style.display = "grid";
+    if (page2) page2.style.display = "grid";
+    if (dots) dots.style.display = "flex";
+
+  } else if (mode === 'narrator') {
+    // 3. 群聊上帝旁白专属：只保留 2 项，隐藏翻页和 Page 2
+    if (page1) {
+      page1.appendChild(btnMemory);
+      page1.appendChild(btnSummary);
+    }
+    const activeItems = [btnMemory, btnSummary];
+    activeItems.forEach(item => { if (item) item.style.display = "flex"; });
+    if (page1) page1.style.display = "grid";
+    if (page2) page2.style.display = "none";
+    if (dots) dots.style.display = "none";
+  }
+};
 
 // 微信语音以及自定义图片发设绑定 (核心去原生 Prompt)
 function bindMultimediaEvents() {

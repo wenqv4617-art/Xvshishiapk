@@ -243,7 +243,6 @@
       // 核心支持：探测 User 是否为群成员。若未加入，启动旁观者/上帝视角旁白输入控制
       const myMem = await db.group_members.where('[groupId+memberId+memberType]').equals([group.id, Number(activeUserPersonaId), 'user']).first();
       const inputEl = document.getElementById("dialog-input-text");
-      const expandPanel = document.getElementById("chat-expand-panel");
       
       if (inputEl) {
         if (!myMem) {
@@ -261,41 +260,9 @@
         }
       }
 
-      // 核心解耦：如果是旁白模式，加号展开栏只展示记忆和总结，隐藏其他不可用选项 [1]
-      if (expandPanel) {
-        const page1 = expandPanel.querySelector(".expand-slider .expand-page:nth-child(1)");
-        const page2 = expandPanel.querySelector(".expand-slider .expand-page:nth-child(2)");
-        const dots = expandPanel.querySelector(".expand-dots");
-        const btnMemory = document.getElementById("btn-chat-memory");
-        const btnSummary = document.getElementById("btn-chat-summary");
-
-        if (!myMem) {
-          // 旁白模式：将记忆和总结按钮临时转移至第1页，并隐藏其余选项和第2页
-          if (page1 && btnMemory && btnSummary) {
-            page1.appendChild(btnMemory);
-            page1.appendChild(btnSummary);
-          }
-          expandPanel.querySelectorAll(".expand-slider .expand-page:nth-child(1) .expand-item").forEach(item => {
-            if (item.id !== "btn-chat-memory" && item.id !== "btn-chat-summary") {
-              item.style.display = "none";
-            } else {
-              item.style.display = "flex";
-            }
-          });
-          if (page2) page2.style.display = "none";
-          if (dots) dots.style.display = "none";
-        } else {
-          // 成员模式：还原恢复所有选项排布与翻页点
-          if (page2 && btnMemory && btnSummary) {
-            page2.appendChild(btnMemory);
-            page2.appendChild(btnSummary);
-          }
-          expandPanel.querySelectorAll(".expand-item").forEach(item => {
-            item.style.display = "flex";
-          });
-          if (page2) page2.style.display = "grid";
-          if (dots) dots.style.display = "flex";
-        }
+      // 核心解耦三态加号调度：若是群聊，根据 User 是否加入群聊，选择渲染“群聊成员”或“旁白模式”专属按键排布
+      if (window.setupExpandPanel) {
+        window.setupExpandPanel(myMem ? 'group' : 'narrator');
       }
 
       // 加载并置顶群公告
