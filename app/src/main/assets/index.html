@@ -71,8 +71,44 @@
       background-color: #9ca3af;
     }
   </style>
+<!-- 引入 Supabase 官方客户端 SDK 极其信赖的 CDN 服务 [2.1] -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    // 由于 CDN 导出的默认对象名为 supabase，为了防止命名空间冲突，重命名为全局变量
+    window.libSupabase = supabase;
+  </script>
+  <script src="./app_auth.js" defer></script>
 </head>
 <body>
+  <!-- 全局 PWA 自研毛玻璃防绕过登录系统遮罩层 -->
+  <div id="auth-login-overlay" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: linear-gradient(135deg, #fef2f2 0%, #f0fdf4 50%, #eff6ff 100%); display: flex; align-items: center; justify-content: center; z-index: 99999; box-sizing: border-box; padding: 20px;">
+    <div style="background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); width: 330px; border-radius: 20px; padding: 30px; box-shadow: 0 10px 40px rgba(0,0,0,0.05); border: 1.5px solid rgba(255,255,255,0.6); text-align: center; box-sizing: border-box;">
+      <div style="font-size: 22px; font-weight: 800; color: #1e293b; margin-bottom: 6px; letter-spacing: 1px;">叙事诗小手机</div>
+      <div style="font-size: 11px; color: #64748b; margin-bottom: 24px; font-weight: 600; letter-spacing: 0.5px;">请输入安全神经登入凭证</div>
+      
+      <div style="display: flex; flex-direction: column; gap: 14px; text-align: left; margin-bottom: 20px;">
+        <div>
+          <label style="font-size: 11px; font-weight: 700; color: #64748b; display: block; margin-bottom: 6px;">电子邮箱账户</label>
+          <input type="email" id="auth-email" placeholder="example@domain.com" style="width: 100%; height: 42px; border: 1.5px solid var(--border); border-radius: 10px; padding: 0 12px; font-size: 14px; outline: none; box-sizing: border-box; font-weight: 600; transition: border-color 0.2s;">
+        </div>
+        <div>
+          <label style="font-size: 11px; font-weight: 700; color: #64748b; display: block; margin-bottom: 6px;">神经解密钥匙 (密码)</label>
+          <input type="password" id="auth-password" placeholder="••••••••" style="width: 100%; height: 42px; border: 1.5px solid var(--border); border-radius: 10px; padding: 0 12px; font-size: 14px; outline: none; box-sizing: border-box; font-weight: 600; transition: border-color 0.2s;">
+        </div>
+        <div>
+          <label style="font-size: 11px; font-weight: 700; color: #64748b; display: block; margin-bottom: 6px;">专属系统激活码 (仅注册需要)</label>
+          <input type="text" id="auth-code" placeholder="例: poem-9912" style="width: 100%; height: 42px; border: 1.5px solid var(--border); border-radius: 10px; padding: 0 12px; font-size: 14px; outline: none; box-sizing: border-box; font-weight: 600; transition: border-color 0.2s;">
+        </div>
+      </div>
+
+      <button id="btn-auth-submit" onclick="handleUserLogin(document.getElementById('auth-email').value.trim(), document.getElementById('auth-password').value.trim())" style="width: 100%; height: 44px; border: none; border-radius: 10px; background: #07c160; color: #ffffff; font-size: 14px; font-weight: 700; cursor: pointer; transition: background 0.2s; box-shadow: 0 4px 12px rgba(7,193,96,0.2);">立即登入</button>
+      
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 18px; font-size: 11px; font-weight: 700;">
+        <span style="color: #576b95; cursor: pointer;" onclick="handleUserSignUp(document.getElementById('auth-email').value.trim(), document.getElementById('auth-password').value.trim(), document.getElementById('auth-code').value.trim())">注册新账户</span>
+        <span style="color: #94a3b8; cursor: default;">限2台设备在线</span>
+      </div>
+    </div>
+  </div>
   <div id="phone-container">
     <!-- 桌面网格 -->
     <main id="desktop">
@@ -228,6 +264,10 @@
         <div class="win-body">
           <!-- 一级主菜单 -->
             <div id="settings-lv1">
+              <div class="menu-item" onclick="openSettingsLv2('account')">
+                <span>账号安全管理</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
               <div class="menu-item" onclick="openSettingsLv2('api')">
                 <span>API 协议设置</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
@@ -273,6 +313,30 @@
                 </label>
               </div>
             </div>
+
+          <!-- 二级：账号安全管理 -->
+          <div id="settings-lv2-account" class="settings-lv2-panel" style="display:none;">
+            <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom: 12px; text-align: left;">
+              <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700;">👤 当前登录账户</h4>
+              <div style="display:flex; flex-direction:column; gap:8px; font-size:12px; color:var(--text-secondary);">
+                <div style="display:flex; justify-content:space-between; border-bottom:1px dashed var(--border); padding-bottom:6px;">
+                  <span>登录邮箱：</span>
+                  <span id="settings-account-email" style="font-weight:700; color:var(--text-primary);">加载中...</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; border-bottom:1px dashed var(--border); padding-bottom:6px;">
+                  <span>神经钥匙 (密码)：</span>
+                  <span id="settings-account-password" style="font-weight:700; color:var(--text-primary);">******</span>
+                </div>
+                <div style="display:flex; justify-content:space-between; padding-top:4px;">
+                  <span>当前多端在线数：</span>
+                  <span id="settings-account-devices" style="font-weight:700; color:var(--primary);">加载中...</span>
+                </div>
+              </div>
+            </div>
+            <div class="form-actions" style="margin-top: 16px;">
+              <button id="btn-settings-logout-device" class="btn btn-danger-outline" style="width:100%; border:none; background-color:#ef4444; color:#fff; border-radius:10px; height:40px; font-weight:700; cursor:pointer;">登出此设备</button>
+            </div>
+          </div>
 
           <!-- 二级：API 设置 -->
           <div id="settings-lv2-api" class="settings-lv2-panel" style="display:none;">

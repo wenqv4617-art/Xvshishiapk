@@ -27,6 +27,7 @@ const ASSETS = [
   './app_reader.js',
   './app_chat_focus.js',
   './app_chat_check_phone.js',
+  './app_auth.js',
   './check_phone.css',
   './forum.css',             // 论坛主题样式表 (新加入)
   './app_forum_loader.js',   // 论坛层栈管理器 (新加入)
