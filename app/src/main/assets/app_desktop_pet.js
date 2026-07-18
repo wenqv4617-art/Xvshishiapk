@@ -707,33 +707,40 @@
     }
   };
 
+  // 将原有的高灵敏定时扫描调度统一封装在 desktopPetSystem 实体内部，以便支持 native 定时跨端和 PWA 自身定时双态调度，减少代码重复度
+  desktopPetSystem.triggerBackgroundActiveMessageNative = async function() {
+    if (typeof db === 'undefined' || !db.desktop_pets) return;
+    try {
+      const allPets = await db.desktop_pets.toArray();
+      const now = Date.now();
+
+      for (let pet of allPets) {
+        if (pet.activeMsgEnabled) {
+          const interval = parseInt(pet.activeMsgInterval) || 10;
+          const lastTimeKey = `mcp_last_msg_time_${pet.charId}`;
+          const lastTrigger = parseInt(localStorage.getItem(lastTimeKey) || "0") || now;
+          
+          if (!localStorage.getItem(lastTimeKey)) {
+            localStorage.setItem(lastTimeKey, now);
+            continue;
+          }
+
+          if (now - lastTrigger >= interval * 60 * 1000) {
+            localStorage.setItem(lastTimeKey, now);
+            await this.triggerActiveMessageForChar(pet.charId);
+          }
+        }
+      }
+    } catch(e) {
+      console.error("主动发信调度评估运行异常:", e);
+    }
+  };
+
   // 全局高精度定时扫描线程
   if (!window.activeMsgSchedulerInterval) {
     window.activeMsgSchedulerInterval = setInterval(async () => {
-      if (typeof db === 'undefined' || !db.desktop_pets) return;
-      try {
-        const allPets = await db.desktop_pets.toArray();
-        const now = Date.now();
-
-        for (let pet of allPets) {
-          if (pet.activeMsgEnabled) {
-            const interval = parseInt(pet.activeMsgInterval) || 10;
-            const lastTimeKey = `mcp_last_msg_time_${pet.charId}`;
-            const lastTrigger = parseInt(localStorage.getItem(lastTimeKey) || "0") || now;
-            
-            if (!localStorage.getItem(lastTimeKey)) {
-              localStorage.setItem(lastTimeKey, now);
-              continue;
-            }
-
-            if (now - lastTrigger >= interval * 60 * 1000) {
-              localStorage.setItem(lastTimeKey, now);
-              await desktopPetSystem.triggerActiveMessageForChar(pet.charId);
-            }
-          }
-        }
-      } catch(e) {
-        console.error("主动发信调度异常:", e);
+      if (window.desktopPetSystem && typeof window.desktopPetSystem.triggerBackgroundActiveMessageNative === 'function') {
+        await window.desktopPetSystem.triggerBackgroundActiveMessageNative();
       }
     }, 30000);
   }

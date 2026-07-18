@@ -24,33 +24,6 @@ function initSettingsApp() {
   document.getElementById("btn-delete-deeptalk-preset").onclick = deleteDeeptalkPreset;
   document.getElementById("settings-deeptalk-presets-select").onchange = loadDeeptalkPresetToForm;
 
-  // 绑定：二级面板中账号管理安全登出事件
-  const btnLogout = document.getElementById("btn-settings-logout-device");
-  if (btnLogout) {
-    btnLogout.onclick = () => {
-      showCustomConfirm("安全登出", "确定要登出当前设备吗？\n\n这会注销此设备的在线Token，并在数据库中物理移除这台设备登记。", async () => {
-        if (typeof supabaseClient !== 'undefined' && typeof myClientToken !== 'undefined') {
-          try {
-            const { data: { session } } = await supabaseClient.auth.getSession();
-            if (session) {
-              await supabaseClient
-                .from('user_devices')
-                .delete()
-                .eq('device_token', myClientToken);
-            }
-          } catch (e) { console.error(e); }
-          
-          if (typeof handleKickOut === 'function') {
-            await handleKickOut();
-          } else {
-            await supabaseClient.auth.signOut();
-            location.reload();
-          }
-        }
-      });
-    };
-  }
-
   // 1. 桌面壁纸美化上传
   const btnBgUpload = document.getElementById("btn-beautify-bg-upload");
   const fileBg = document.getElementById("file-beautify-bg");
@@ -243,7 +216,6 @@ function openSettingsLv2(subTab) {
   document.getElementById(`settings-lv2-${subTab}`).style.display = "block";
   
   const titles = {
-    account: '账号安全管理',
     api: 'API 协议设置',
     beautify: '桌面美化设置',
     css: '全局 CSS 注入',
@@ -255,44 +227,6 @@ function openSettingsLv2(subTab) {
   document.getElementById("settings-title").innerText = titles[subTab] || '系统设置';
   
   if (subTab === 'data') computeStorageUsage();
-  if (subTab === 'account') loadAccountSettingsInfo();
-}
-
-async function loadAccountSettingsInfo() {
-  const emailEl = document.getElementById("settings-account-email");
-  const passEl = document.getElementById("settings-account-password");
-  const devEl = document.getElementById("settings-account-devices");
-  if (!emailEl || !passEl || !devEl) return;
-
-  try {
-    if (typeof supabaseClient === 'undefined') {
-      emailEl.innerText = "Supabase未连接";
-      return;
-    }
-    const { data: { session }, error: sessionErr } = await supabaseClient.auth.getSession();
-    if (sessionErr || !session) {
-      emailEl.innerText = "未登录";
-      return;
-    }
-
-    const user = session.user;
-    emailEl.innerText = user.email || "无";
-    
-    const cachedPass = localStorage.getItem("cached_user_password") || "******";
-    passEl.innerText = cachedPass;
-
-    const { data: devices, error: devErr } = await supabaseClient
-      .from('user_devices')
-      .select('id')
-      .eq('user_id', user.id);
-
-    if (devErr) throw devErr;
-    devEl.innerText = `${devices ? devices.length : 0} / 2 台`;
-
-  } catch (err) {
-    console.error("加载账户数据失败:", err);
-    emailEl.innerText = "同步失败";
-  }
 }
 
 // === 深谈全局预设配置管理 ===

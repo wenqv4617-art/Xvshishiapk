@@ -278,7 +278,7 @@ let isOfflineChatAppEventsBound = false;
       padding: 10px 18px;
       border-radius: 20px;
       font-size: 13px;
-      z-index: 100001;
+      z-index: 10000;
       opacity: 0;
       transition: opacity 0.2s ease, transform 0.2s ease;
       pointer-events: none;
@@ -302,7 +302,7 @@ let isOfflineChatAppEventsBound = false;
       display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 100000;
+      z-index: 10000;
       opacity: 0;
       transition: opacity 0.2s ease;
     }
