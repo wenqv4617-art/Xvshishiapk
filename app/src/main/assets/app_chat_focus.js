@@ -21,6 +21,207 @@
     tempBlob: null
   };
 
+  function getLocalPlaylist() {
+    if (window.mcpSystem && window.mcpSystem.localPlaylist && window.mcpSystem.localPlaylist.length > 0) {
+      return window.mcpSystem.localPlaylist;
+    }
+    if (window.AndroidMCP && typeof window.AndroidMCP.scanLocalMusicFolder === 'function') {
+      try {
+        return JSON.parse(window.AndroidMCP.scanLocalMusicFolder());
+      } catch(e) {}
+    }
+    try {
+      const titles = localStorage.getItem("mcp_playlist_titles");
+      if (titles) return JSON.parse(titles);
+    } catch(e) {}
+    return [];
+  }
+
+  async function openAmbientMusicPanel() {
+    const sess = await db.sessions.get(activeSessionId);
+    if (!sess) return;
+    
+    let modal = document.getElementById("focus-ambient-modal");
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.id = "focus-ambient-modal";
+      modal.style.cssText = "position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 11000; box-sizing: border-box; padding: 16px;";
+      document.body.appendChild(modal);
+    }
+    
+    modal.innerHTML = `
+      <div style="background: #ffffff; width: 340px; max-height: 80vh; border-radius: 16px; display: flex; flex-direction: column; box-shadow: 0 12px 32px rgba(0,0,0,0.15); box-sizing: border-box; overflow: hidden; animation: scaleIn 0.2s ease-out;">
+        <div style="padding: 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: #f8fafc;">
+          <span style="font-size: 15px; font-weight: 700; color: #1e293b;">选择伴随环境音</span>
+          <span id="close-ambient-panel" style="font-size: 18px; font-weight: 700; color: #64748b; cursor: pointer; padding: 4px;">&times;</span>
+        </div>
+        <div style="flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; box-sizing: border-box;" id="ambient-panel-content">
+        </div>
+        <div style="padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; background: #f8fafc;">
+          <button id="btn-ambient-upload-file" class="btn-pwa-modal confirm" style="margin: 0; font-size: 11.5px; height: 34px;">上传文件</button>
+          <button id="btn-ambient-add-url" class="btn-pwa-modal confirm" style="margin: 0; font-size: 11.5px; height: 34px; background: #3b82f6;">添加网络URL</button>
+        </div>
+      </div>
+    `;
+    
+    document.getElementById("close-ambient-panel").onclick = () => modal.remove();
+    document.getElementById("btn-ambient-upload-file").onclick = () => {
+      const fileInput = document.getElementById("file-focus-ambient");
+      if (fileInput) fileInput.click();
+    };
+    document.getElementById("btn-ambient-add-url").onclick = () => {
+      showCustomPrompt("请输入网络音频URL", "https://example.com/music.mp3", async (url) => {
+        if (!url) return;
+        let name = url.substring(url.lastIndexOf('/') + 1) || "未命名网络音频";
+        showCustomPrompt("请输入显示名称", name, async (customName) => {
+          if (!customName) return;
+          let list = sess.focusAmbientSounds || [];
+          if (!list.some(s => s.name === customName)) {
+            list.push({ name: customName, data: null, url: url });
+            await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
+            showToast("网络音源添加成功");
+            openAmbientMusicPanel();
+            await loadSetupScreen();
+          } else {
+            showToast("该音源名称已存在");
+          }
+        });
+      });
+    };
+    
+    renderAmbientPanelList(modal, sess);
+  }
+
+  function renderAmbientPanelList(modalEl, sess) {
+    const container = modalEl.querySelector("#ambient-panel-content");
+    if (!container) return;
+    
+    container.innerHTML = "";
+    
+    const currentSelected = state.currentConfig.ambientSoundName;
+    
+    const localList = getLocalPlaylist();
+    const localHeader = document.createElement("div");
+    localHeader.style.cssText = "font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px;";
+    localHeader.innerText = `本地文件夹音乐 (/Music/Storypoem) [${localList.length}]`;
+    container.appendChild(localHeader);
+    
+    if (localList.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "font-size: 11px; color: #94a3b8; margin-bottom: 12px;";
+      empty.innerText = "本地文件夹无歌曲，请放入MP3文件并重新扫描。";
+      container.appendChild(empty);
+    } else {
+      const localBox = document.createElement("div");
+      localBox.style.cssText = "display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;";
+      localList.forEach(song => {
+        const row = document.createElement("div");
+        const isSelected = song === currentSelected;
+        row.style.cssText = `padding: 8px 10px; background: #f1f5f9; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; border: 1.5px solid ${isSelected ? '#10b981' : 'transparent'};`;
+        row.innerHTML = `
+          <div style="font-size: 12px; color: #334155; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px;" title="${song}">${song}</div>
+          <button style="padding: 4px 8px; font-size: 11px; font-weight: 700; border: none; border-radius: 4px; background: ${isSelected ? '#10b981' : '#3b82f6'}; color: #fff; cursor: pointer;">
+            ${isSelected ? "已选" : "选择"}
+          </button>
+        `;
+        row.querySelector("button").onclick = async () => {
+          state.currentConfig.ambientSoundName = song;
+          await loadSetupScreen();
+          const configInput = document.getElementById("focus-config-ambient");
+          if (configInput) configInput.value = song;
+          showToast(`已选择本地环境音: ${song}`);
+          modalEl.remove();
+        };
+        localBox.appendChild(row);
+      });
+      container.appendChild(localBox);
+    }
+    
+    const uploadsHeader = document.createElement("div");
+    uploadsHeader.style.cssText = "font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 4px;";
+    uploadsHeader.innerText = "已上传/添加音源";
+    container.appendChild(uploadsHeader);
+    
+    const uploads = sess.focusAmbientSounds || [];
+    if (uploads.length === 0) {
+      const empty = document.createElement("div");
+      empty.style.cssText = "font-size: 11px; color: #94a3b8;";
+      empty.innerText = "暂无上传音源，支持上传本地MP3或添加在线URL。";
+      container.appendChild(empty);
+    } else {
+      const uploadBox = document.createElement("div");
+      uploadBox.style.cssText = "display: flex; flex-direction: column; gap: 6px;";
+      uploads.forEach((item, index) => {
+        const isSelected = item.name === currentSelected;
+        const row = document.createElement("div");
+        row.style.cssText = `padding: 8px 10px; background: #f8fafc; border: 1.5px solid ${isSelected ? '#10b981' : '#e2e8f0'}; border-radius: 8px; display: flex; flex-direction: column; gap: 6px;`;
+        row.innerHTML = `
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div style="font-size: 12px; color: #1e293b; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 170px;" title="${item.name}">${item.name}</div>
+            <div style="display: flex; gap: 4px;">
+              <button class="select-btn" style="padding: 4px 8px; font-size: 11px; font-weight: 700; border: none; border-radius: 4px; background: ${isSelected ? '#10b981' : '#3b82f6'}; color: #fff; cursor: pointer;">
+                ${isSelected ? "已选" : "选择"}
+              </button>
+              <button class="edit-btn" style="padding: 4px 6px; font-size: 11px; border: 1px solid #cbd5e1; border-radius: 4px; background: #fff; color: #64748b; cursor: pointer;">编辑</button>
+              <button class="delete-btn" style="padding: 4px 6px; font-size: 11px; border: none; border-radius: 4px; background: #ef4444; color: #fff; cursor: pointer;">删除</button>
+            </div>
+          </div>
+          ${item.url ? `<div style="font-size: 10px; color: #94a3b8; word-break: break-all;">链接: ${item.url}</div>` : `<div style="font-size: 10px; color: #10b981;">本地二进制Blob文件</div>`}
+        `;
+        
+        row.querySelector(".select-btn").onclick = async () => {
+          state.currentConfig.ambientSoundName = item.name;
+          await loadSetupScreen();
+          const configInput = document.getElementById("focus-config-ambient");
+          if (configInput) configInput.value = item.name;
+          showToast(`已选择上传环境音: ${item.name}`);
+          modalEl.remove();
+        };
+        
+        row.querySelector(".edit-btn").onclick = async () => {
+          showCustomPrompt("编辑音源名称", item.name, async (newName) => {
+            if (!newName) return;
+            let list = sess.focusAmbientSounds || [];
+            if (item.url) {
+              showCustomPrompt("编辑网络音源URL", item.url, async (newUrl) => {
+                if (!newUrl) return;
+                list[index].name = newName;
+                list[index].url = newUrl;
+                await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
+                showToast("音源修改成功");
+                openAmbientMusicPanel();
+                await loadSetupScreen();
+              });
+            } else {
+              list[index].name = newName;
+              await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
+              showToast("名称修改成功");
+              openAmbientMusicPanel();
+              await loadSetupScreen();
+            }
+          });
+        };
+        
+        row.querySelector(".delete-btn").onclick = async () => {
+          showCustomConfirm("确认删除", `确定要删除音源 "${item.name}" 吗？`, async () => {
+            let list = sess.focusAmbientSounds || [];
+            list.splice(index, 1);
+            await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
+            if (state.currentConfig.ambientSoundName === item.name) {
+              state.currentConfig.ambientSoundName = "";
+            }
+            showToast("删除成功");
+            openAmbientMusicPanel();
+            await loadSetupScreen();
+          });
+        };
+        
+        uploadBox.appendChild(row);
+      });
+      container.appendChild(uploadBox);
+    }
+  }
+
   // 1. 初始化设置界面数据
   async function loadSetupScreen() {
     if (!activeSessionId) return;
@@ -62,11 +263,25 @@
     const btnAmbientHeadphone = document.getElementById("btn-focus-ambient-sound");
     if (ambientSelect) {
       ambientSelect.innerHTML = `<option value="">-- 无伴随环境音 --</option>`;
+      
+      // A2a. 添加本地文件夹音轨
+      const localList = getLocalPlaylist();
+      localList.forEach(song => {
+        const opt = document.createElement("option");
+        opt.value = song;
+        opt.innerText = `[本地] ${song}`;
+        if (config.ambientSoundName === song) {
+          opt.selected = true;
+        }
+        ambientSelect.appendChild(opt);
+      });
+
+      // A2b. 添加已上传/添加音轨
       const sounds = sess.focusAmbientSounds || [];
       sounds.forEach(s => {
         const opt = document.createElement("option");
         opt.value = s.name;
-        opt.innerText = s.name;
+        opt.innerText = `[自定义] ${s.name}`;
         if (config.ambientSoundName === s.name) {
           opt.selected = true;
         }
@@ -269,13 +484,34 @@
     if (player) {
       player.pause();
       player.src = "";
+      if (window.AndroidMCP && typeof window.AndroidMCP.stopNativeMusic === 'function') {
+        window.AndroidMCP.stopNativeMusic();
+      }
       if (config.ambientSoundName) {
         const sess = await db.sessions.get(activeSessionId);
         const sounds = sess.focusAmbientSounds || [];
         const sound = sounds.find(s => s.name === config.ambientSoundName);
-        if (sound && sound.data) {
-          player.src = URL.createObjectURL(sound.data);
-          player.play().catch(err => console.log("伴奏白噪音拉起被安全屏蔽:", err));
+        
+        if (sound) {
+          if (sound.data) {
+            // 本地 Blob
+            player.src = URL.createObjectURL(sound.data);
+            player.play().catch(err => console.log("伴奏白噪音拉起被安全屏蔽:", err));
+          } else if (sound.url) {
+            // 网络 URL
+            player.src = sound.url;
+            player.play().catch(err => console.log("伴奏白噪音拉起被安全屏蔽:", err));
+          }
+        } else {
+          // 检测并尝试播放物理本地音轨
+          const localList = getLocalPlaylist();
+          if (localList.includes(config.ambientSoundName)) {
+            if (window.AndroidMCP && typeof window.AndroidMCP.playNativeMusic === 'function') {
+              window.AndroidMCP.playNativeMusic(config.ambientSoundName);
+            } else {
+              showToast("当前非真机环境，无法播放本地环境音");
+            }
+          }
         }
       }
     }
@@ -335,11 +571,14 @@
     const activeScreen = document.getElementById("win-focus-active");
     if (activeScreen) activeScreen.style.display = "none";
 
-    // 安全停播白噪音伴奏
+    // 安全停播白噪音伴奏与物理音乐
     const player = document.getElementById("focus-ambient-player");
     if (player) {
       player.pause();
       player.src = "";
+    }
+    if (window.AndroidMCP && typeof window.AndroidMCP.stopNativeMusic === 'function') {
+      window.AndroidMCP.stopNativeMusic();
     }
 
     if (elapsedMins < 0.1) {
@@ -506,9 +745,12 @@
       if (state.isActive) {
         state.isActive = false;
         
-        // 1. 暂停环境伴奏音
+        // 1. 暂停环境伴奏音与原生物理音频
         const player = document.getElementById("focus-ambient-player");
         if (player) player.pause();
+        if (window.AndroidMCP && typeof window.AndroidMCP.pauseNativeMusic === 'function') {
+          window.AndroidMCP.pauseNativeMusic();
+        }
 
         // 2. 隐藏进度条文字并唤起“继续”指示按钮
         const resumeBtn = document.getElementById("focus-active-resume-btn");
@@ -554,10 +796,19 @@
         state.isActive = true;
         state.lastTickTime = Date.now();
 
-        // 1. 继续播放环境音
+        // 1. 继续播放环境音与物理音轨
         const player = document.getElementById("focus-ambient-player");
         if (player && player.src) {
           player.play().catch(err => console.log("白噪音恢复播音失败:", err));
+        }
+        const config = state.currentConfig;
+        if (config && config.ambientSoundName) {
+          const localList = getLocalPlaylist();
+          if (localList.includes(config.ambientSoundName)) {
+            if (window.AndroidMCP && typeof window.AndroidMCP.playNativeMusic === 'function') {
+              window.AndroidMCP.playNativeMusic(config.ambientSoundName);
+            }
+          }
         }
 
         // 2. 隐藏恢复按钮，展示进度比例文字
@@ -705,14 +956,14 @@
       };
     }
 
-    // 9.5 环境音 MP3 本地上载与存储
+    // 9.5 环境音 MP3 伴随音面板与存储
     const btnAmbientSound = document.getElementById("btn-focus-ambient-sound");
     const fileAmbientInput = document.getElementById("file-focus-ambient");
     if (btnAmbientSound && fileAmbientInput) {
       btnAmbientSound.onclick = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        fileAmbientInput.click();
+        openAmbientMusicPanel();
       };
       fileAmbientInput.onchange = async (e) => {
         if (e.target.files.length > 0) {
@@ -725,6 +976,9 @@
             await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
             showToast(`环境音导入成功: ${file.name}`);
             await loadSetupScreen();
+            
+            const panel = document.getElementById("focus-ambient-modal");
+            if (panel) openAmbientMusicPanel();
           } else {
             showToast("此环境音音轨已在库中，无需重复载入");
           }
