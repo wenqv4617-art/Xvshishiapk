@@ -463,10 +463,12 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     userPOV = sess.offlineUserPOV || "第二人称";
   }
 
-  // 动态检索关系网
-  const relationshipDesc = await queryRelationship(sess.userId, sess.charId, userName, charName);
+  // 核心解耦：若不携带记忆与关系网，强制将关系描述初始化为普通即时通讯关系 [3]
+  const relationshipDesc = carryMemory 
+    ? await queryRelationship(sess.userId, sess.charId, userName, charName) 
+    : "你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
 
-  // 收集世界书
+  // 收集世界书 (世界书作为客观世界观/物理环境法则设定，即使不携带角色交往记忆，也应当保持正常完美生效)
   const alwaysActiveWB = await db.world_book_entries
     .where('group').equals('常驻')
     .and(entry => entry.isActive === true)
@@ -537,11 +539,11 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     content: offlineRules
   });
 
-  // 2.2 绝对双端身份与性别锁定墙（线下核心隔离，防止人设混淆、代词错位与变性错误，此处人设不再受到 carryMemory 的屏蔽）
-  const charPersona = sess.customCharPersona || char?.persona || "一个普通人";
-  const userPersona = sess.customUserPersona || user?.persona || "一个普通人";
+  // 2.2 绝对双端身份与性别锁定墙（采用极高精记忆阻断：若不携带记忆，人设必须强制回退到纯净的档案本色，完全隔断 session 自主注入的总结记忆）
+          const charPersona = carryMemory ? (sess.customCharPersona || char?.persona || "一个普通人") : (char?.persona || "一个普通人");
+          const userPersona = carryMemory ? (sess.customUserPersona || user?.persona || "一个普通人") : (user?.persona || "一个普通人");
 
-  const identityWall = `【双端人设身份与性别隔离墙（最高优先级指令：严防角色混淆与性别代词搞错！）】
+          const identityWall = `【双端人设身份与性别隔离墙（最高优先级指令：严防角色混淆与性别代词搞错！）】
 你当前的角色是 [${charName}]（AI端）。你只有一个唯一的肉体、身份和思维，就是下面【扮演角色背景】中描述的人。你绝对不是用户 [${userName}]！
 
 请你仔细核对并严格锁定以下双方的信息，并在所有的叙事描写和对话中彻底遵守隔离界限：
