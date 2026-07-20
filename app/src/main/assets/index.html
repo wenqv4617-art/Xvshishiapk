@@ -4,6 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" id="theme-color-meta" content="#f4f6fa">
+  <!-- iOS PWA Standalone Mode & Status Bar Safe Area Inset Capability -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="叙事诗小手机">
   <title>叙事诗小手机</title>
   <script src="https://unpkg.com/vconsole@latest/dist/vconsole.min.js"></script>
   <link rel="manifest" href="manifest.json">
@@ -711,9 +715,16 @@
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
           </button>
           <h3 id="archive-title">档案库 - 角色</h3>
-          <button class="btn-icon" id="btn-add-archive">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-          </button>
+          <div style="display:flex; gap:4px; align-items:center;">
+            <!-- 档案馆设定导入按键 (纯 SVG 矢量) -->
+            <button class="btn-icon" id="btn-archive-import" title="导入 .txt/.docx 设定">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </button>
+            <input type="file" id="file-archive-import" accept=".txt,.docx" style="display:none;">
+            <button class="btn-icon" id="btn-add-archive">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+          </div>
         </header>
         <div class="win-body">
           <div id="archive-list-container" class="archive-main"></div>
@@ -790,9 +801,16 @@
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
           </button>
           <h3 id="world_book-title">世界书</h3>
-          <button class="btn-icon" id="btn-add-world_book">
-            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
-          </button>
+          <div style="display:flex; gap:4px; align-items:center;">
+            <!-- 世界书设定导入按键 (纯 SVG 矢量) -->
+            <button class="btn-icon" id="btn-world_book-import" title="导入 .txt/.docx 设定">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            </button>
+            <input type="file" id="file-world_book-import" accept=".txt,.docx" style="display:none;">
+            <button class="btn-icon" id="btn-add-world_book">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+            </button>
+          </div>
         </header>
         <div class="win-body">
           <div id="world_book-list-container"></div>
@@ -952,6 +970,16 @@
 
           <section id="chat-tab-me" class="chat-tab-panel">
             <div class="me-header" style="background-color: var(--surface); padding: 16px; border-bottom: 1px solid var(--border);">
+              <!-- 微信/QQ 风格搜索聊天记录入口 -->
+              <div class="chat-search-trigger-wrapper" style="margin-bottom: 12px;">
+                <div class="chat-search-trigger-bar" onclick="chatSearchSystem.openSearchPage()" style="height: 36px; background-color: #ffffff; border: 1.5px solid var(--border); border-radius: 8px; display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; color: var(--text-secondary); box-shadow: var(--shadow-sm); border: 1px solid var(--border);">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                  </svg>
+                  <span style="font-size: 13px; font-weight: 600;">查找聊天记录</span>
+                </div>
+              </div>
               <!-- 当前选中的人设卡片 -->
               <div id="me-active-card" class="me-active-card" style="display: none; background: #ffffff; border: 1.5px solid var(--border); border-radius: 12px; padding: 12px; display: flex; align-items: center; gap: 12px; cursor: pointer; transition: all 0.2s;">
                 <img id="me-active-avatar" src="" style="width: 50px; height: 50px; border-radius: 50%; object-fit: cover;">
@@ -1284,11 +1312,325 @@
                 </label>
               </div>
             </div>
+            <!-- 新增：群专属个性化聊天美化入口 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px; cursor:pointer;" onclick="chatBeautifySystem.openPanel()">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; font-weight:700; color:var(--text-secondary);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);">
+                  <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                  <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>
+                </svg> 群聊天界面专属美化
+              </label>
+              <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+
             <div class="form-actions" style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
               <button id="btn-group-details-save" class="btn btn-primary" style="width:100%;">保存群后台修改</button>
               <button id="btn-group-details-clear" class="btn btn-outline" style="width:100%; color: #b45309; border-color: #fde68a;">清空群聊天记录</button>
               <button id="btn-group-details-delete" class="btn btn-outline" style="width:100%; color: #991b1b; border-color: #fca5a5; background-color: #fef2f2;">解散并删除此群聊</button>
             </div>
+          </div>
+        </div>
+
+        <!-- === 4.10 聊天界面高透个性化美化面板 === -->
+        <div id="chat-beautify-panel" class="chat-details-overlay" style="z-index: 600;">
+          <header class="win-header">
+            <button class="btn-icon" onclick="chatBeautifySystem.closePanel()">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+            </button>
+            <h3>聊天个性化美化</h3>
+            <div style="width:40px;"></div>
+          </header>
+          <div class="win-body" style="padding: 16px; overflow-y: auto; background-color: var(--bg-main);">
+            
+            <!-- 上方背景图片上传 -->
+            <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom: 12px;">
+              <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                聊天背景设置
+              </h4>
+              <div style="display:flex; gap:12px; align-items:center;">
+                <div id="beautify-chat-bg-preview" style="width:60px; height:60px; border-radius:8px; border:1.5px dashed var(--border); display:flex; align-items:center; justify-content:center; background:#f8fafc; flex-shrink:0; overflow:hidden;">
+                  <span style="font-size:9px; color:var(--text-secondary); text-align:center;">无背景</span>
+                </div>
+                <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+                  <input type="text" id="beautify-chat-bg-url" placeholder="输入背景图 URL" style="font-size:12px; padding:8px;" oninput="chatBeautifySystem.updatePreview()">
+                  <div style="display:flex; gap:6px;">
+                    <button class="btn btn-outline" onclick="document.getElementById('file-beautify-chat-bg').click()" style="padding:6px 10px; font-size:11px; flex:1;">本地上传</button>
+                    <input type="file" id="file-beautify-chat-bg" accept="image/*" style="display:none;">
+                    <button class="btn btn-danger-outline" onclick="chatBeautifySystem.clearBackground()" style="padding:6px 10px; font-size:11px; flex:1;">清空</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 对话效果实时预览 -->
+            <div class="mcp-card collapsible-section" id="section-beautify-preview" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom: 12px;">
+              <div class="section-toggle-header" onclick="chatBeautifySystem.toggleSection('section-beautify-preview')" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+                <h4 style="margin:0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                  实时效果预览
+                </h4>
+                <svg class="chevron-icon" viewBox="0 0 24 24" style="width:16px; height:16px; transition: transform 0.2s;"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+              </div>
+              <div class="section-content-body" style="margin-top:12px;">
+                <div id="beautify-chat-sandbox" style="border:1px solid var(--border); border-radius:12px; padding:16px; min-height:180px; background-color:#ededed; background-size:cover; background-position:center; display:flex; flex-direction:column; gap:12px;">
+                  <!-- 对方 mock bubble -->
+                  <div class="msg-bubble other" id="sandbox-bubble-other" style="max-width:100%; align-self:flex-start; display:flex; align-items:flex-start;">
+                    <div class="sandbox-avatar-wrapper" style="position:relative; flex-shrink:0;">
+                      <img class="msg-avatar" id="sandbox-avatar-other" src="data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' fill='%233b82f6'/></svg>" style="width:40px; height:40px; border-radius:6px; object-fit:cover;">
+                    </div>
+                    <div class="msg-text" id="sandbox-text-other" style="margin-left:10px; background-color:#ffffff; color:#191919; padding:10px 14px; border-radius:6px; font-size:13px; line-height:1.4; word-break:break-all; max-width:170px;">这是对方的对白预览内容，您可以在设置板块里实时调整。</div>
+                  </div>
+                  <!-- 我方 mock bubble -->
+                  <div class="msg-bubble self" id="sandbox-bubble-self" style="max-width:100%; align-self:flex-end; display:flex; align-items:flex-start; flex-direction:row-reverse;">
+                    <div class="sandbox-avatar-wrapper" style="position:relative; flex-shrink:0;">
+                      <img class="msg-avatar" id="sandbox-avatar-self" src="data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' fill='%2310b981'/></svg>" style="width:40px; height:40px; border-radius:6px; object-fit:cover;">
+                    </div>
+                    <div class="msg-text" id="sandbox-text-self" style="margin-right:10px; background-color:#95ec69; color:#191919; padding:10px 14px; border-radius:6px; font-size:13px; line-height:1.4; word-break:break-all; max-width:170px;">这是我方的气泡效果预览。</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 细节大小控制 -->
+            <div class="mcp-card collapsible-section" id="section-beautify-sliders" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom: 12px;">
+              <div class="section-toggle-header" onclick="chatBeautifySystem.toggleSection('section-beautify-sliders')" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+                <h4 style="margin:0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+                  细节大小控制
+                </h4>
+                <svg class="chevron-icon" viewBox="0 0 24 24" style="width:16px; height:16px; transition: transform 0.2s;"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+              </div>
+              <div class="section-content-body" style="margin-top:12px; display:none;">
+                <div class="beautify-tab-headers" style="display:flex; gap:6px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:6px;">
+                  <button class="btn-group-announcement-done" id="tab-trigger-char" onclick="chatBeautifySystem.switchTab('char')" style="background-color:#ef4444;">对方 (Char) 设置</button>
+                  <button class="btn-group-announcement-done" id="tab-trigger-user" onclick="chatBeautifySystem.switchTab('user')" style="background-color:#94a3b8;">我方 (User) 设置</button>
+                </div>
+                
+                <div id="beautify-sliders-container" style="display:flex; flex-direction:column; gap:10px; text-align:left;">
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>1. 头像形状 (圆角半径)</span>
+                      <span id="slider-val-avatarRadius">12%</span>
+                    </label>
+                    <input type="range" id="slider-avatarRadius" min="0" max="100" value="12" oninput="chatBeautifySystem.onSliderInput('avatarRadius', this.value)">
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>2. 头像物理大小</span>
+                      <span id="slider-val-avatarSize">40px</span>
+                    </label>
+                    <input type="range" id="slider-avatarSize" min="30" max="70" value="40" oninput="chatBeautifySystem.onSliderInput('avatarSize', this.value)">
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>3. 气泡内高度 (上下内边距)</span>
+                      <span id="slider-val-bubblePaddingTB">10px</span>
+                    </label>
+                    <input type="range" id="slider-bubblePaddingTB" min="4" max="24" value="10" oninput="chatBeautifySystem.onSliderInput('bubblePaddingTB', this.value)">
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>4. 气泡内宽度 (左右内边距)</span>
+                      <span id="slider-val-bubblePaddingLR">14px</span>
+                    </label>
+                    <input type="range" id="slider-bubblePaddingLR" min="4" max="24" value="14" oninput="chatBeautifySystem.onSliderInput('bubblePaddingLR', this.value)">
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>5. 头像与消息间距</span>
+                      <span id="slider-val-avatarSpacing">10px</span>
+                    </label>
+                    <input type="range" id="slider-avatarSpacing" min="0" max="30" value="10" oninput="chatBeautifySystem.onSliderInput('avatarSpacing', this.value)">
+                  </div>
+                  <!-- 四角 radius 独立拉条 -->
+                  <div style="border-top:1px dashed var(--border); padding-top:8px; margin-top:4px;">
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); margin-bottom:4px; display:block;">6. 气泡四角圆角大小 (百分比)</label>
+                    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                      <div>
+                        <label style="font-size:10px; color:var(--text-secondary); display:flex; justify-content:space-between;"><span>左上角</span><span id="slider-val-bubbleRadiusTL">12%</span></label>
+                        <input type="range" id="slider-bubbleRadiusTL" min="0" max="100" value="12" oninput="chatBeautifySystem.onSliderInput('bubbleRadiusTL', this.value)">
+                      </div>
+                      <div>
+                        <label style="font-size:10px; color:var(--text-secondary); display:flex; justify-content:space-between;"><span>右上角</span><span id="slider-val-bubbleRadiusTR">12%</span></label>
+                        <input type="range" id="slider-bubbleRadiusTR" min="0" max="100" value="12" oninput="chatBeautifySystem.onSliderInput('bubbleRadiusTR', this.value)">
+                      </div>
+                      <div>
+                        <label style="font-size:10px; color:var(--text-secondary); display:flex; justify-content:space-between;"><span>左下角</span><span id="slider-val-bubbleRadiusBL">12%</span></label>
+                        <input type="range" id="slider-bubbleRadiusBL" min="0" max="100" value="12" oninput="chatBeautifySystem.onSliderInput('bubbleRadiusBL', this.value)">
+                      </div>
+                      <div>
+                        <label style="font-size:10px; color:var(--text-secondary); display:flex; justify-content:space-between;"><span>右下角</span><span id="slider-val-bubbleRadiusBR">12%</span></label>
+                        <input type="range" id="slider-bubbleRadiusBR" min="0" max="100" value="12" oninput="chatBeautifySystem.onSliderInput('bubbleRadiusBR', this.value)">
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 边框色、背景色、透明度、文本色 -->
+                  <div style="border-top:1px dashed var(--border); padding-top:8px; margin-top:4px; display:flex; flex-direction:column; gap:8px;">
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      <div style="flex:1;">
+                        <label style="font-size:10px; font-weight:700; color:var(--text-secondary); display:block; margin-bottom:4px;">7. 边框颜色 (HEX)</label>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                          <input type="color" id="picker-bubbleBorderColor" style="width:24px; height:24px; border:none; padding:0; background:none; cursor:pointer;" oninput="chatBeautifySystem.onColorInput('bubbleBorderColor', this.value)">
+                          <input type="text" id="input-bubbleBorderColor" value="#e2e8f0" style="padding:4px 8px; font-size:11px; height:24px; border-radius:6px; flex:1;" oninput="chatBeautifySystem.onColorInput('bubbleBorderColor', this.value)">
+                        </div>
+                      </div>
+                      <div style="flex:1;">
+                        <label style="font-size:10px; font-weight:700; color:var(--text-secondary); display:block; margin-bottom:4px;">8. 气泡内填充色</label>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                          <input type="color" id="picker-bubbleBgColor" style="width:24px; height:24px; border:none; padding:0; background:none; cursor:pointer;" oninput="chatBeautifySystem.onColorInput('bubbleBgColor', this.value)">
+                          <input type="text" id="input-bubbleBgColor" value="#ffffff" style="padding:4px 8px; font-size:11px; height:24px; border-radius:6px; flex:1;" oninput="chatBeautifySystem.onColorInput('bubbleBgColor', this.value)">
+                        </div>
+                      </div>
+                    </div>
+                    <div style="display:flex; gap:8px; align-items:center;">
+                      <div style="flex:1;">
+                        <label style="font-size:10px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between; margin-bottom:4px;">
+                          <span>9. 填充色不透明度</span>
+                          <span id="slider-val-bubbleBgOpacity">1.0</span>
+                        </label>
+                        <input type="range" id="slider-bubbleBgOpacity" min="0" max="1" step="0.1" value="1" oninput="chatBeautifySystem.onSliderInput('bubbleBgOpacity', this.value)">
+                      </div>
+                      <div style="flex:1;">
+                        <label style="font-size:10px; font-weight:700; color:var(--text-secondary); display:block; margin-bottom:4px;">10. 文字颜色 (HEX)</label>
+                        <div style="display:flex; gap:4px; align-items:center;">
+                          <input type="color" id="picker-textColor" style="width:24px; height:24px; border:none; padding:0; background:none; cursor:pointer;" oninput="chatBeautifySystem.onColorInput('textColor', this.value)">
+                          <input type="text" id="input-textColor" value="#191919" style="padding:4px 8px; font-size:11px; height:24px; border-radius:6px; flex:1;" oninput="chatBeautifySystem.onColorInput('textColor', this.value)">
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- 新增：小尾巴开关及细节控制 -->
+                    <div style="border-top:1px dashed var(--border); padding-top:10px; margin-top:6px; display:flex; flex-direction:column; gap:8px;">
+                      <div style="display:flex; align-items:center; justify-content:space-between;">
+                        <span style="font-size:11px; font-weight:700; color:var(--text-secondary);">11. 启用气泡小尾巴</span>
+                        <label class="switch">
+                          <input type="checkbox" id="slider-tailToggle" onchange="chatBeautifySystem.onTailToggleInput(this.checked)">
+                          <span class="slider"></span>
+                        </label>
+                      </div>
+                      <div id="beautify-tail-controls" style="display:flex; flex-direction:column; gap:8px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom: 4px;">
+                          <span style="font-size:11px; font-weight:700; color:var(--text-secondary);">永远指向头像形心</span>
+                          <label class="switch">
+                            <input type="checkbox" id="slider-tailPointToAvatarCenter" onchange="chatBeautifySystem.onTailPointToggleInput(this.checked)">
+                            <span class="slider"></span>
+                          </label>
+                        </div>
+                        <div>
+                          <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                            <span>小尾巴长度 (px)</span>
+                            <span id="slider-val-tailLength">10px</span>
+                          </label>
+                          <input type="range" id="slider-tailLength" min="3" max="25" value="10" oninput="chatBeautifySystem.onSliderInput('tailLength', this.value)">
+                        </div>
+                        <div>
+                          <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                            <span>小尾巴上下位置 (0%-100%)</span>
+                            <span id="slider-val-tailY">80%</span>
+                          </label>
+                          <input type="range" id="slider-tailY" min="0" max="100" value="80" oninput="chatBeautifySystem.onSliderInput('tailY', this.value)">
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 一键对称同步按键 -->
+                <button class="btn btn-outline" onclick="chatBeautifySystem.makeSymmetry()" style="width:100%; margin-top:14px; font-size:11px; padding:6px; border-radius:8px; display:flex; align-items:center; justify-content:center; gap:4px;">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M17 1l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 23l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></svg>
+                  一键对称 (将当前面具设置同步至另一方)
+                </button>
+              </div>
+            </div>
+
+            <!-- 头像挂件定制 -->
+            <div class="mcp-card collapsible-section" id="section-beautify-pendant" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom: 12px;">
+              <div class="section-toggle-header" onclick="chatBeautifySystem.toggleSection('section-beautify-pendant')" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+                <h4 style="margin:0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  头像挂件定制
+                </h4>
+                <svg class="chevron-icon" viewBox="0 0 24 24" style="width:16px; height:16px; transition: transform 0.2s;"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+              </div>
+              <div class="section-content-body" style="margin-top:12px; display:none;">
+                <div class="beautify-tab-headers" style="display:flex; gap:6px; margin-bottom:12px; border-bottom:1px solid var(--border); padding-bottom:6px;">
+                  <button class="btn-group-announcement-done" id="pendant-trigger-char" onclick="chatBeautifySystem.switchPendantTab('char')" style="background-color:#ef4444;">对方 (Char) 挂件</button>
+                  <button class="btn-group-announcement-done" id="pendant-trigger-user" onclick="chatBeautifySystem.switchPendantTab('user')" style="background-color:#94a3b8;">我方 (User) 挂件</button>
+                </div>
+
+                <div style="display:flex; flex-direction:column; gap:10px; text-align:left;">
+                  <div class="form-group">
+                    <label style="font-size:11px;">挂件图片 (URL / 本地上传)</label>
+                    <div style="display:flex; gap:6px;">
+                      <input type="text" id="beautify-pendant-url" placeholder="输入挂件 PNG 地址" style="font-size:11px; padding:6px; height:32px; border-radius:6px;" oninput="chatBeautifySystem.onPendantInput('pendantUrl', this.value)">
+                      <button class="btn btn-outline" onclick="document.getElementById('file-beautify-pendant').click()" style="padding:0 8px; font-size:11px; height:32px; border-radius:6px; flex-shrink:0;">上传</button>
+                      <input type="file" id="file-beautify-pendant" accept="image/png" style="display:none;">
+                      <button class="btn btn-danger-outline" onclick="chatBeautifySystem.clearPendant()" style="padding:0 8px; font-size:11px; height:32px; border-radius:6px; flex-shrink:0;">清空</button>
+                    </div>
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>偏移横坐标 (X轴)</span>
+                      <span id="slider-val-pendantX">0px</span>
+                    </label>
+                    <input type="range" id="slider-pendantX" min="-20" max="20" value="0" oninput="chatBeautifySystem.onPendantSliderInput('pendantX', this.value)">
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>偏移纵坐标 (Y轴)</span>
+                      <span id="slider-val-pendantY">0px</span>
+                    </label>
+                    <input type="range" id="slider-pendantY" min="-20" max="20" value="0" oninput="chatBeautifySystem.onPendantSliderInput('pendantY', this.value)">
+                  </div>
+                  <div>
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary); display:flex; justify-content:space-between;">
+                      <span>挂件尺寸大小</span>
+                      <span id="slider-val-pendantSize">20px</span>
+                    </label>
+                    <input type="range" id="slider-pendantSize" min="10" max="50" value="20" oninput="chatBeautifySystem.onPendantSliderInput('pendantSize', this.value)">
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- CSS 输入调试 -->
+            <div class="mcp-card collapsible-section" id="section-beautify-css" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom: 12px;">
+              <div class="section-toggle-header" onclick="chatBeautifySystem.toggleSection('section-beautify-css')" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
+                <h4 style="margin:0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                  CSS 输入调试
+                </h4>
+                <svg class="chevron-icon" viewBox="0 0 24 24" style="width:16px; height:16px; transition: transform 0.2s;"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+              </div>
+              <div class="section-content-body" style="margin-top:12px; display:none;">
+                <button class="btn" onclick="chatBeautifySystem.copyGeneratedCss()" style="width:100%; margin-bottom:10px; display:flex; align-items:center; justify-content:center; gap:4px; font-size:11px; padding:8px; border-radius:8px;">
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  一键复制聊天页所有的 CSS 属性
+                </button>
+                <textarea id="beautify-custom-css-editor" rows="6" placeholder="/* 在此处输入您自定义的 CSS，可覆盖上述滑条效果... */" style="font-family:monospace; font-size:11px; border-radius:10px;" oninput="chatBeautifySystem.onCssInputChanged()"></textarea>
+                <button class="btn btn-outline" onclick="chatBeautifySystem.compileCustomCss()" style="width:100%; margin-top:8px; font-size:11px; padding:6px; border-radius:8px;">编译并应用预览</button>
+              </div>
+            </div>
+
+            <!-- 最下方预设与应用操作 -->
+            <div style="margin-top:20px; display:flex; flex-direction:column; gap:10px;">
+              <div style="display:flex; gap:8px;">
+                <select id="beautify-preset-select" style="flex:1; height:38px; border-radius:10px; font-size:12px;" onchange="chatBeautifySystem.onPresetChange(this.value)">
+                  <option value="">-- 自定义预设库 --</option>
+                </select>
+                <button class="btn btn-outline" onclick="chatBeautifySystem.deletePreset()" style="padding:0 12px; font-size:12px; height:38px; border-radius:10px; color:#ef4444; border-color:#fca5a5;">删除</button>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-outline" onclick="chatBeautifySystem.savePreset()" style="flex:1; height:40px; font-size:13px; border-radius:10px;">存为/更新此预设</button>
+                <button class="btn btn-primary" onclick="chatBeautifySystem.applyActiveConfig()" style="flex:1; height:40px; font-size:13px; border-radius:10px; background-color:#07c160;">立即应用美化</button>
+              </div>
+              <button class="btn btn-danger-outline" onclick="chatBeautifySystem.resetAllStyles()" style="width:100%; height:40px; font-size:13px; border-radius:10px; display:flex; align-items:center; justify-content:center; gap:6px;">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M19 7l-.867 12.142A2 2 0 0 1 16.138 21H7.862a2 2 0 0 1-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v3M4 7h16"/></svg>
+                一键清空所有效果并恢复默认
+              </button>
+            </div>
+
           </div>
         </div>
 
@@ -1542,7 +1884,7 @@
             <!-- 新增：允许对方情绪化拉黑你开关 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
                   <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
                   <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
@@ -1552,6 +1894,17 @@
                 <input type="checkbox" id="details-allow-char-block">
                 <span class="slider"></span>
               </label>
+            </div>
+
+            <!-- 新增：个性化聊天美化入口 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); cursor:pointer;" onclick="chatBeautifySystem.openPanel()">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:700;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);">
+                  <path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"/>
+                  <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>
+                </svg> 聊天界面个性化美化
+              </label>
+              <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
             </div>
 
             <!-- 新增：自定义模拟时间设定卡片 -->
@@ -3436,6 +3789,8 @@
   <script src="app_chat_focus.js"></script>
   <script src="app_chat_check_phone.js"></script>
   <script src="app_chat_group.js"></script>
+  <script src="app_chat_search.js"></script>
+  <script src="app_chat_beautify.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {

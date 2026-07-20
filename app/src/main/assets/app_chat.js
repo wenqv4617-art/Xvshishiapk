@@ -1114,6 +1114,16 @@ function updateChatInputLockState(sess) {
 
 async function openWeChatDialog(sessionId) {
   activeSessionId = sessionId;
+  
+  // 同步清除上一次对话残留，彻底根治切换对话时的闪屏
+  const container = document.getElementById("dialog-messages-container");
+  if (container) container.innerHTML = "";
+
+  // 自动载入并应用当前聊天窗口的个性化美化样式，根治切换会话和冷启动时的闪变
+  if (window.chatBeautifySystem && typeof window.chatBeautifySystem.loadActiveConfig === "function") {
+    window.chatBeautifySystem.loadActiveConfig(sessionId);
+  }
+
   const sess = await db.sessions.get(sessionId);
   
   // 群聊专属拦截路由
@@ -3669,6 +3679,10 @@ function enterTheater(theaterId) {
   activeTheaterId = theaterId;
   exitOfflineMultiSelectMode();
   
+  // 同步清空旧剧场白描记录，消除进入剧场转场时的内容残留闪动
+  const container = document.getElementById("offline-messages-flow");
+  if (container) container.innerHTML = "";
+  
   // 核心检测：判断会话类型，若是群聊则下架隐藏线下粉色心声状态按钮
   db.sessions.get(activeSessionId).then(sess => {
     const btnOfflineStatus = document.getElementById("btn-offline-char-status");
@@ -3689,6 +3703,10 @@ function triggerAppointmentMode() {
   isOfflineTheater = false;
   activeTheaterId = 0;
   exitOfflineMultiSelectMode();
+
+  // 同步清空旧赴约对白记录，消除进入赴约转场时的内容残留闪动
+  const container = document.getElementById("offline-messages-flow");
+  if (container) container.innerHTML = "";
 
   // 核心检测：判断会话类型，若是群聊则下架隐藏线下粉色心声状态按钮
   db.sessions.get(activeSessionId).then(sess => {
@@ -4379,6 +4397,10 @@ ${dialogText}`;
 async function openAppointmentArchives() {
   const archiveWin = document.getElementById("win-appointment-archive");
   if (archiveWin) {
+    // 同步清空历史存档列表，根治读取时的列表闪动
+    const container = document.getElementById("appointment-archive-list");
+    if (container) container.innerHTML = "";
+
     archiveWin.classList.add("active");
     await renderAppointmentArchives();
   }

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v18'; // 离线 PWA 升级至 v18 引入群聊并自愈复合索引
+const CACHE_NAME = 'story-phone-v19'; // 离线 PWA 升级至 v19 引入聊天美化与查找记录
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -27,6 +27,8 @@ const ASSETS = [
   './app_reader.js',
   './app_chat_focus.js',
   './app_chat_check_phone.js',
+  './app_chat_search.js',
+  './app_chat_beautify.js',
   './app_auth.js',
   './check_phone.css',
   './forum.css',             // 论坛主题样式表 (新加入)

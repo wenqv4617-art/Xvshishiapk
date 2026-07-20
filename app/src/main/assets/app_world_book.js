@@ -62,6 +62,102 @@ function initWorldBookApp() {
     document.getElementById("world_book-form-overlay").classList.remove("active");
     loadWorldBookData();
   };
+
+  // 初始化世界书导入
+  initWorldBookImport();
+}
+
+// 初始化世界书导入控制器
+function initWorldBookImport() {
+  const btnImport = document.getElementById("btn-world_book-import");
+  const fileImport = document.getElementById("file-world_book-import");
+  if (btnImport && fileImport) {
+    btnImport.onclick = () => fileImport.click();
+    fileImport.onchange = async (e) => {
+      if (e.target.files.length > 0) {
+        const file = e.target.files[0];
+        showToast("正在解析世界书设定文件...");
+        try {
+          let text = "";
+          if (file.name.endsWith(".docx")) {
+            text = await parseDocxText(file);
+          } else {
+            text = await readTxtFileSafe(file);
+          }
+
+          // 打开新建表单并自动填充数据
+          await openWorldBookForm();
+          const defaultTitle = file.name.substring(0, file.name.lastIndexOf('.')) || "新世界书设定";
+          document.getElementById("wb-entry-title").value = defaultTitle;
+          document.getElementById("wb-entry-content").value = text;
+          showToast(`成功导入并填充设定「${file.name}」！`);
+        } catch(err) {
+          console.error(err);
+          showToast("解析设定文件失败: " + err.message);
+        }
+        fileImport.value = "";
+      }
+    };
+  }
+}
+
+// 动态异步加载 JSZip 库，保障 Word 文本解压正常进行
+function loadJSZip() {
+  return new Promise((resolve, reject) => {
+    if (typeof JSZip !== 'undefined') {
+      resolve();
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = "https://unpkg.com/jszip@3.10.1/dist/jszip.min.js";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("加载 JSZip 压缩组件失败，请检查网络连接后重试"));
+    document.head.appendChild(script);
+  });
+}
+
+// 异步解析 docx 并提取文本，规避由于 binary 格式造成的乱码崩溃
+async function parseDocxText(file) {
+  await loadJSZip();
+  const zip = await JSZip.loadAsync(file);
+  const docXmlFile = zip.file("word/document.xml");
+  if (!docXmlFile) throw new Error("无效的 docx Word 格式文件");
+  const xmlText = await docXmlFile.async("string");
+  
+  const parser = new DOMParser();
+  const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+  const texts = xmlDoc.getElementsByTagName("w:t");
+  let out = "";
+  for (let i = 0; i < texts.length; i++) {
+    out += texts[i].textContent + "\n";
+  }
+  return out;
+}
+
+// 双向在轨自愈型文本读取解码器 (TextDecoder 强校验 UTF-8 与 GBK 降级机制，100% 根除中文乱码)
+function readTxtFileSafe(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const arrayBuffer = e.target.result;
+      const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
+      try {
+        const text = utf8Decoder.decode(arrayBuffer);
+        resolve(text);
+      } catch (err) {
+        // 捕获 UTF-8 错码序列异常，回退降级到 GBK 国标编码进行自愈重新翻译
+        const gbkDecoder = new TextDecoder("gbk");
+        try {
+          const text = gbkDecoder.decode(arrayBuffer);
+          resolve(text);
+        } catch (gbkErr) {
+          reject(gbkErr);
+        }
+      }
+    };
+    reader.onerror = reject;
+    reader.readAsArrayBuffer(file);
+  });
 }
 
 // 刷新加载列表数据（对分组折叠排版）

@@ -979,15 +979,6 @@ function forumGetChatRoomTemplate() {
   `;
 }
 
-// 注册 App 启动捕获监听适配
-document.addEventListener("DOMContentLoaded", () => {
-  document.querySelectorAll('[data-app="forum"]').forEach(el => {
-    el.addEventListener("click", () => {
-      openApp('forum');
-    });
-  });
-});
-
 const originalOpenApp = window.openApp;
 window.openApp = function(appId) {
   if (appId === "forum") {

@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>叙事诗小手机 · 激活码自助领取</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { background: #f5f3f0; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; font-family: system-ui; color: #1e293b; }
+        .card { background: white; padding: 40px; border-radius: 24px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); text-align: center; max-width: 400px; width: 90%; border: 1px solid #e2e8f0; }
+        h1 { font-size: 22px; font-weight: 700; margin-top: 0; margin-bottom: 8px; }
+        p { font-size: 14px; color: #64748b; margin-bottom: 24px; }
+        .code-box { background: #f8fafc; border: 2px dashed #cbd5e1; border-radius: 12px; padding: 20px; font-size: 28px; font-weight: 800; letter-spacing: 2px; color: #0f172a; margin-bottom: 20px; word-break: break-all; }
+        button { width: 100%; padding: 14px; background: #2c241a; color: white; border: none; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+        button:hover { background: #1e1810; }
+        button:disabled { background: #94a3b8; cursor: not-allowed; }
+        .error { color: #ef4444; font-size: 14px; margin-top: 10px; }
+        .success { color: #10b981; font-size: 14px; margin-top: 10px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h1>📱 叙事诗小手机</h1>
+    <p>点击下方按钮，从库存中分配一个专属激活码</p>
+    
+    <div id="codeDisplay" class="code-box">------</div>
+    
+    <button id="claimBtn" onclick="claimCode()">🎁 领取激活码</button>
+    
+    <div id="statusMessage" class="error" style="display: none;"></div>
+</div>
+
+<script>
+    // 这里把名字改成了 supabaseClient，防止和 CDN 的全局变量冲突
+    const supabaseClient = supabase.createClient(
+        "https://itqigfuhxaqglnergizc.supabase.co",
+        "sb_publishable_el5tQonGZp4ymQunND3Cqw_WSs5h8Bg"
+    );
+
+    async function claimCode() {
+        const btn = document.getElementById('claimBtn');
+        const display = document.getElementById('codeDisplay');
+        const status = document.getElementById('statusMessage');
+        
+        btn.disabled = true;
+        btn.innerText = "正在分配神经凭证...";
+        status.style.display = 'none';
+
+        try {
+            // 核心逻辑：从数据库中挑选一个未被使用的激活码
+            const { data, error } = await supabaseClient
+                .from('activation_codes')
+                .select('code')
+                .eq('is_used', false)
+                .limit(1);
+
+            if (error) throw error;
+
+            if (data && data.length > 0) {
+                const foundCode = data[0].code;
+                
+                // 成功展示！不修改 is_used，让 App 注册时由触发器去改
+                display.innerText = foundCode;
+                status.className = 'success';
+                status.innerText = '✅ 已分配！请尽快在 App 中注册，注册后该码会自动失效。';
+                status.style.display = 'block';
+                btn.innerText = "继续分配";
+                btn.disabled = false;
+            } else {
+                display.innerText = "暂无库存";
+                status.className = 'error';
+                status.innerText = '❌ 非常抱歉，目前的激活码已分发完毕！';
+                status.style.display = 'block';
+                btn.innerText = "没了";
+            }
+        } catch (e) {
+            console.error(e);
+            display.innerText = "网络错误";
+            status.className = 'error';
+            status.innerText = '⚠️ 连接服务器失败，请稍后重试。';
+            status.style.display = 'block';
+            btn.disabled = false;
+            btn.innerText = "重新尝试";
+        }
+    }
+</script>
+</body>
+</html>
