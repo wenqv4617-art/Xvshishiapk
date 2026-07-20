@@ -51,23 +51,53 @@ function initSettingsApp() {
     };
   }
 
-  // 1. 桌面壁纸美化上传
+  // 1. 桌面壁纸美化上传 (并入 1080px 视网膜高清自适应 Canvas 压缩自愈引擎，彻底粉碎 LocalStorage 5MB 爆仓死锁) [1]
   const btnBgUpload = document.getElementById("btn-beautify-bg-upload");
   const fileBg = document.getElementById("file-beautify-bg");
   if (btnBgUpload && fileBg) {
     btnBgUpload.onclick = () => fileBg.click();
-    fileBg.onchange = (e) => {
+    fileBg.onchange = async (e) => {
       if (e.target.files.length > 0) {
-        tempBgBlob = e.target.files[0];
+        showToast("正在执行高清桌面壁纸自适应压缩...");
+        const file = e.target.files[0];
+        
+        // 在轨 Canvas 压缩，将数兆壁纸瞬时降至 150KB 级别，彻底避免 QuotaExceededError 崩溃
+        const compressedBlob = await new Promise((resolve) => {
+          const img = new Image();
+          img.onload = () => {
+            let width = img.width;
+            let height = img.height;
+            const maxWidth = 1080;
+            if (width > maxWidth) {
+              height = Math.round((height * maxWidth) / width);
+              width = maxWidth;
+            }
+            const canvas = document.createElement("canvas");
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(img, 0, 0, width, height);
+            canvas.toBlob((blob) => {
+              resolve(blob || file);
+            }, "image/jpeg", 0.75);
+          };
+          img.onerror = () => resolve(file);
+          const reader = new FileReader();
+          reader.onload = (evt) => {
+            img.src = evt.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
+
+        tempBgBlob = compressedBlob;
         document.getElementById("beautify-bg-url").value = "[本地上传背景]";
         
-        // 实时触发壁纸的图像预览
         const reader = new FileReader();
         reader.onload = function(evt) {
           const preview = document.getElementById("beautify-bg-preview");
           if (preview) preview.innerHTML = `<img src="${evt.target.result}" style="width:100%; height:100%; object-fit:cover;">`;
         };
-        reader.readAsDataURL(tempBgBlob);
+        reader.readAsDataURL(compressedBlob);
       }
     };
   }

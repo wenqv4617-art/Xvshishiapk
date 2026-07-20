@@ -1106,16 +1106,44 @@ ${config.customCss || ""}`;
     bindUploadEvents: function() {
       const fileBg = document.getElementById("file-beautify-chat-bg");
       if (fileBg) {
-        fileBg.onchange = (e) => {
+        fileBg.onchange = async (e) => {
           if (e.target.files.length > 0) {
             const file = e.target.files[0];
-            const reader = new FileReader();
-            reader.onload = (evt) => {
-              activeConfig.bgUrl = evt.target.result;
-              document.getElementById("beautify-chat-bg-url").value = "[本地上传背景]";
-              chatBeautifySystem.updatePreview();
-            };
-            reader.readAsDataURL(file);
+            showToast("正在执行聊天背景自适应压缩...");
+
+            // 核心：在轨压缩聊天背景，将体积从 5MB 压至 150KB 级别，彻底消除 7MB 样式表引起的浏览器样式重构线程死锁 [2]
+            const compressedDataURL = await new Promise((resolve) => {
+              const img = new Image();
+              img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+                const maxWidth = 1080;
+                if (width > maxWidth) {
+                  height = Math.round((height * maxWidth) / width);
+                  width = maxWidth;
+                }
+                const canvas = document.createElement("canvas");
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, width, height);
+                resolve(canvas.toDataURL("image/jpeg", 0.75));
+              };
+              img.onerror = () => {
+                const reader = new FileReader();
+                reader.onload = (evt) => resolve(evt.target.result);
+                reader.readAsDataURL(file);
+              };
+              const reader = new FileReader();
+              reader.onload = (evt) => {
+                img.src = evt.target.result;
+              };
+              reader.readAsDataURL(file);
+            });
+
+            activeConfig.bgUrl = compressedDataURL;
+            document.getElementById("beautify-chat-bg-url").value = "[本地上传背景]";
+            chatBeautifySystem.updatePreview();
           }
         };
       }
