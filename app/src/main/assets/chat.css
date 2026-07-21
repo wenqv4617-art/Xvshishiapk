@@ -108,6 +108,16 @@
   resize: none; font-size: 14px; max-height: 80px;
 }
 
+/* 线下白描输入自适应高度重塑 (物理4行锁定对齐) */
+#offline-input-text {
+  height: 36px;
+  min-height: 36px !important;
+  max-height: 90px !important;
+  line-height: 1.4 !important;
+  overflow-y: hidden;
+  box-sizing: border-box !important;
+}
+
 /* 发送和获取回复 SVG 按钮 */
 .chat-send-btn {
   width: 38px; height: 38px;

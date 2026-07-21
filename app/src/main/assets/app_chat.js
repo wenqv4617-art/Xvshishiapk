@@ -2658,6 +2658,33 @@ function bindChatAppEvents() {
         // 核心消除：自动擦除大模型在对白中误编或幻觉出来的 [MSG_ID: xxx] 标签
         rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
 
+        // 核心自愈：检验首部是否包含 [QUOTE:消息ID]，若有，强制将引用原句清除并与后续真实回复并入单行，杜绝被回车切分为多条空卡片消息 [1.1]
+        const firstQuoteMatch = rawReply.match(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]/i);
+        if (firstQuoteMatch) {
+          const quoteTag = firstQuoteMatch[0];
+          const quoteId = Number(firstQuoteMatch[2]);
+          const quotedMsg = await db.messages.get(quoteId);
+          if (quotedMsg) {
+            const origText = quotedMsg.content;
+            const origBareText = typeof origText === 'string' ? origText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '').trim() : "";
+            
+            let remaining = rawReply.replace(firstQuoteMatch[0], "").trim();
+            if (origBareText) {
+              // 精准捕捉并抹除可能紧随其后（包括换行符之后）的被引用原文，如：\n"原话"\n
+              const quotesRegex = /^[\s\n\r]*["'“‘『「\(（【\[]*(.*?)[”’』」\)）】\]]*[\s\n\r]*/;
+              let tempMatch = remaining.match(quotesRegex);
+              if (tempMatch) {
+                const innerText = tempMatch[1].trim();
+                if (innerText.toLowerCase() === origBareText.toLowerCase() || origBareText.toLowerCase().includes(innerText.toLowerCase())) {
+                  remaining = remaining.replace(tempMatch[0], "").trim();
+                }
+              }
+            }
+            // 重新拼接为单行气泡内容，打破 split 的换行切割条件，保障完美融合
+            rawReply = `${quoteTag} ${remaining}`;
+          }
+        }
+
         // === 【群聊 AI 多人分流与指令决策器】 ===
             const currentSess = await db.sessions.get(activeSessionId);
             if (currentSess && currentSess.isGroup === 1) {
@@ -3955,6 +3982,11 @@ async function sendOfflineMessage() {
   };
   await db.offline_messages.add(msg);
   textEl.value = "";
+  
+  // 发送后重置 textarea 为初始单行自适应高度，防止高度残留
+  textEl.style.height = "auto";
+  textEl.style.overflowY = "hidden";
+
   await renderOfflineMessages();
 }
 
@@ -4684,6 +4716,23 @@ function bindOfflineChatAppEvents() {
 
   const btnEndAppointment = document.getElementById("btn-end-appointment");
   if (btnEndAppointment) btnEndAppointment.onclick = endAppointment;
+
+  // 绑定线下输入框动态换行自适应增高监听 (最多4行，即 90px) [1]
+  const textarea = document.getElementById("offline-input-text");
+  if (textarea) {
+    textarea.addEventListener("input", function() {
+      this.style.height = "auto";
+      const sHeight = this.scrollHeight;
+      const maxH = 90; // 4行物理行高像素对齐线
+      if (sHeight > maxH) {
+        this.style.height = maxH + "px";
+        this.style.overflowY = "auto";
+      } else {
+        this.style.height = sHeight + "px";
+        this.style.overflowY = "hidden";
+      }
+    });
+  }
 }
 
 // 全局三态解耦加号展开栏调度管理器，精准服务于单聊（14项）、群聊成员（13项）与群聊旁白（2项）多模态场景 [3]

@@ -214,11 +214,31 @@
       if (!match) return null;
 
       const quoteMsgId = Number(match[2]);
-      const cleanText = content.replace(match[0], '').trim();
+      let cleanText = content.replace(match[0], '').trim();
 
       try {
         const quotedMsg = await db.messages.get(quoteMsgId);
         if (!quotedMsg) return { quoteHtml: '', cleanText };
+
+        // 核心自愈：自动清洗可能意外漏过或幻觉产生的复读被引用消息原文的异常行为 [1.1]
+        const origText = quotedMsg.content;
+        const origBareText = typeof origText === 'string' ? origText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '').trim() : "";
+        if (origBareText) {
+          // 1. 拦截清洗 bare text 物理重复：如 "[QUOTE:1] 你真好 我也觉得" -> "我也觉得"
+          if (cleanText.toLowerCase().startsWith(origBareText.toLowerCase())) {
+            cleanText = cleanText.substring(origBareText.length).trim();
+          }
+          
+          // 2. 拦截并清洗带中英文引号的重复：如 '[QUOTE:1] "原话" 你的新回复'
+          const quotesRegex = /^["'“‘『「\(（【\[]*(.*?)[”’』」\)）】\]]*\s*/;
+          const quoteMatch = cleanText.match(quotesRegex);
+          if (quoteMatch) {
+            const innerText = quoteMatch[1].trim();
+            if (innerText && (innerText.toLowerCase() === origBareText.toLowerCase() || origBareText.toLowerCase().includes(innerText.toLowerCase()))) {
+              cleanText = cleanText.replace(quotesRegex, '').trim();
+            }
+          }
+        }
 
         let senderName = "未知好友";
         const session = await db.sessions.get(quotedMsg.sessionId);

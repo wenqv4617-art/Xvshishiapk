@@ -257,17 +257,24 @@ JSON 格式格式如下：
       }
     }
 
+    // 核心自愈：自动检索并替换心声内容里出现的 "user"、"User"、"USER" 占位符为我方当前面具的真实名字 [1]
+    const userRegex = /\buser\b/gi;
+    const cleanProp = (val) => {
+      if (typeof val !== 'string') return val;
+      return val.replace(userRegex, userName);
+    };
+
     // 保存到 IndexedDB
     const record = {
       sessionId: activeStatusSessionId,
       theaterId: isOfflineTheater ? activeTheaterId : 0,
       isTheater: isOfflineTheater ? 1 : 0,
       timestamp: Date.now(),
-      attire: parsedData.attire || "未详",
-      affection: parsedData.affection || "未详",
-      excitement: parsedData.excitement || "未详",
-      thoughts: parsedData.thoughts || "未详",
-      hiddenCorners: parsedData.hiddenCorners || "无"
+      attire: cleanProp(parsedData.attire) || "未详",
+      affection: cleanProp(parsedData.affection) || "未详",
+      excitement: cleanProp(parsedData.excitement) || "未详",
+      thoughts: cleanProp(parsedData.thoughts) || "未详",
+      hiddenCorners: cleanProp(parsedData.hiddenCorners) || "无"
     };
 
     await db.status_history.add(record);

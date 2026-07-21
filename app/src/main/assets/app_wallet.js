@@ -103,11 +103,11 @@
       color: #1a1a1a;
     }
 
-    /* 微信对话转账、红包对话气泡样式 */
+    /* 微信对话转账、红包对话气泡样式 (重构为 visible 保证表情反应贴纸完美不被裁减切边) [1] */
     .wallet-bubble-card {
       width: 230px;
       border-radius: 8px;
-      overflow: hidden;
+      overflow: visible !important; /* 核心：开启溢出显示，确保角落表情贴纸 100% 完整露出来 */
       cursor: pointer;
       box-shadow: 0 1px 3px rgba(0,0,0,0.06);
       user-select: none;
@@ -142,6 +142,8 @@
       display: flex;
       align-items: center;
       gap: 12px;
+      border-top-left-radius: 8px; /* 补齐子层级顶部圆角，防范纯色背景溢出 */
+      border-top-right-radius: 8px;
     }
     .wallet-bubble-icon {
       width: 38px;
@@ -185,6 +187,8 @@
       font-size: 9.5px;
       color: rgba(255,255,255,0.65);
       border-top: 1px solid rgba(255,255,255,0.06);
+      border-bottom-left-radius: 8px; /* 补齐子层级底部圆角，防范纯色背景溢出 */
+      border-bottom-right-radius: 8px;
     }
   `;
   document.head.appendChild(walletStyle);
