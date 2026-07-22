@@ -218,6 +218,60 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
+    // 1.5 原生 HTTP 网络请求接口：彻底击穿 WebView 浏览器 CORS 跨域与 Header 拦截限制
+    @JavascriptInterface
+    fun sendNativeHttpRequest(urlStr: String, method: String, headersJson: String, bodyStr: String): String {
+        Log.d(TAG, "sendNativeHttpRequest() called, url=$urlStr, method=$method")
+        return try {
+            val url = java.net.URL(urlStr)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = if (method.isEmpty()) "POST" else method.uppercase()
+            conn.connectTimeout = 15000
+            conn.readTimeout = 15000
+            conn.instanceFollowRedirects = true
+
+            if (headersJson.isNotEmpty()) {
+                val jsonObj = JSONObject(headersJson)
+                val keys = jsonObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    conn.setRequestProperty(key, jsonObj.getString(key))
+                }
+            }
+
+            if (bodyStr.isNotEmpty() && (conn.requestMethod == "POST" || conn.requestMethod == "PUT" || conn.requestMethod == "PATCH")) {
+                conn.doOutput = true
+                conn.outputStream.use { os ->
+                    os.write(bodyStr.toByteArray(Charsets.UTF_8))
+                }
+            }
+
+            val status = conn.responseCode
+            val inputStream = if (status in 200..299) conn.inputStream else conn.errorStream
+            val responseBody = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
+
+            val resHeaders = JSONObject()
+            conn.headerFields?.forEach { (k, v) ->
+                if (k != null && v.isNotEmpty()) {
+                    resHeaders.put(k, v[0])
+                }
+            }
+
+            val resultJson = JSONObject()
+            resultJson.put("status", status)
+            resultJson.put("body", responseBody)
+            resultJson.put("headers", resHeaders)
+            resultJson.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "sendNativeHttpRequest failed: ${e.message}", e)
+            val errorJson = JSONObject()
+            errorJson.put("status", 500)
+            errorJson.put("body", e.message ?: "Native HTTP Error")
+            errorJson.put("headers", JSONObject())
+            errorJson.toString()
+        }
+    }
+
     // 2. 静默读取真机 /Music/Storypoem 目录下的本地歌单列表
     @JavascriptInterface
     fun scanLocalMusicFolder(): String {

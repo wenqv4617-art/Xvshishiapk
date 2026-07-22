@@ -146,17 +146,71 @@
       }
     },
 
-    // 通用底层请求引擎：自动嗅探并解决 Web 浏览器端 CORS 跨域拦截问题 (Failed to fetch)
+    // 通用底层请求引擎：极速自适应跨域穿透 (支持直连、安卓原生桥接、多重 CORS 代理熔断)
     mcpFetch: async function(url, options) {
+      // 1. 真机 APK 环境：若原生桥挂载了 sendNativeHttpRequest，优先走 Kotlin 原生网络 (100% 避开浏览器 CORS 限制)
+      if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === 'function') {
+        try {
+          const headersJson = JSON.stringify(options.headers || {});
+          const bodyStr = options.body || "";
+          const method = options.method || "POST";
+          const nativeResStr = window.AndroidMCP.sendNativeHttpRequest(url, method, headersJson, bodyStr);
+          if (nativeResStr) {
+            const parsedRes = JSON.parse(nativeResStr);
+            return {
+              ok: parsedRes.status >= 200 && parsedRes.status < 300,
+              status: parsedRes.status,
+              text: async () => parsedRes.body,
+              json: async () => JSON.parse(parsedRes.body),
+              headers: {
+                get: (k) => {
+                  if (!parsedRes.headers) return null;
+                  const targetKey = Object.keys(parsedRes.headers).find(key => key.toLowerCase() === k.toLowerCase());
+                  return targetKey ? parsedRes.headers[targetKey] : null;
+                }
+              }
+            };
+          }
+        } catch (e) {
+          console.warn("[MCP Native Bridge] 原生请求通道异常，回退为 Web 代理:", e);
+        }
+      }
+
+      // 2. 优先尝试浏览器直连
       try {
-        // 优先发起直连
-        return await fetch(url, options);
+        const directResponse = await fetch(url, options);
+        return directResponse;
       } catch (err) {
-        // 当捕获到浏览器 CORS 跨域安全拦截 (TypeError: Failed to fetch) 时，无缝切入 CORS 代理桥
-        if (err && err.message && err.message.includes("Failed to fetch")) {
-          console.warn("[MCP CORS Warning] 直连被浏览器跨域安全策略拦截，正在自动通过 CORS 代理重试:", url);
-          const proxyUrl = "https://corsproxy.io/?" + encodeURIComponent(url);
-          return await fetch(proxyUrl, options);
+        // 当捕获到 Failed to fetch（跨域 CORS 拦截或预检拒绝）时，启动多代理容灾链路
+        if (err && err.message && (err.message.includes("Failed to fetch") || err.message.includes("NetworkError"))) {
+          console.warn("[MCP CORS Warning] 直连被跨域策略阻断，正在切入多通道跨域代理桥:", url);
+
+          // 代理通道 1: thingproxy (完美透传 Authorization 鉴权头与 POST 实体)
+          try {
+            const proxyUrl1 = "https://thingproxy.freeboard.io/fetch/" + url;
+            const res1 = await fetch(proxyUrl1, options);
+            if (res1.ok || res1.status < 500) return res1;
+          } catch (e1) {
+            console.warn("[MCP Proxy 1] thingproxy 代理未响应，尝试通道 2...");
+          }
+
+          // 代理通道 2: corsproxy.io
+          try {
+            const proxyUrl2 = "https://corsproxy.io/?" + encodeURIComponent(url);
+            const res2 = await fetch(proxyUrl2, options);
+            if (res2.ok || res2.status < 500) return res2;
+          } catch (e2) {
+            console.warn("[MCP Proxy 2] corsproxy 代理未响应，尝试通道 3...");
+          }
+
+          // 代理通道 3: allorigins 容灾兜底
+          try {
+            const proxyUrl3 = "https://api.allorigins.win/raw?url=" + encodeURIComponent(url);
+            const res3 = await fetch(proxyUrl3, options);
+            if (res3.ok || res3.status < 500) return res3;
+          } catch (e3) {
+            console.warn("[MCP Proxy 3] 代理通道尝试完毕");
+          }
         }
         throw err;
       }
