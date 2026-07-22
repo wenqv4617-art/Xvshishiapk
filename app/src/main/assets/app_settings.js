@@ -194,6 +194,7 @@ function initSettingsApp() {
       else if (appId === "deeptalk") appName = "深谈";
       else if (appId === "reader") appName = "阅读";
       else if (appId === "forum") appName = "论坛";
+      else if (appId === "couples") appName = "情侣空间";
 
       alert(`应用「${appName}」图标已重置为系统默认。`);
       if (window.loadDesktopLayout) window.loadDesktopLayout();
@@ -672,8 +673,8 @@ function loadBeautifyForm() {
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
   if (enterSendInput) enterSendInput.checked = enterSend;
 
-  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum"];
+  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -723,8 +724,8 @@ async function saveBeautifyConfig() {
     localStorage.setItem("settings-enter-send", enterSendInput.checked ? "true" : "false");
   }
 
-  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum"];
+  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -765,7 +766,7 @@ function resetBeautifyConfig() {
     localStorage.removeItem("settings-enter-send");
     document.getElementById("beautify-bg-url").value = "";
     
-    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader"];
+    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples"];
     apps.forEach(appId => {
       const input = document.getElementById(`beautify-icon-url-${appId}`);
       if (input) input.value = "";
@@ -1094,6 +1095,10 @@ async function clearAllAppData() {
           await db.groups.clear();
           await db.group_members.clear();
           await db.group_polls.clear();
+          await db.table('couples_schedules').clear();
+          await db.table('couples_albums').clear();
+          await db.table('couples_journals').clear();
+          await db.table('couples_whispers').clear();
           
           localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1336,23 +1341,28 @@ async function computeStorageUsage() {
 
     // 5. 计算全表总和
     const groups = await db.groups.toArray();
-        const group_members = await db.group_members.toArray();
-        const group_polls = await db.group_polls.toArray();
+    const group_members = await db.group_members.toArray();
+    const group_polls = await db.group_polls.toArray();
+    const couples_schedules = await db.table('couples_schedules').toArray();
+    const couples_albums = await db.table('couples_albums').toArray();
+    const couples_journals = await db.table('couples_journals').toArray();
+    const couples_whispers = await db.table('couples_whispers').toArray();
 
-        // 5. 计算全表总和
-        const fullDataObj = { 
-          api_presets, archives, relations, sessions, messages, 
-          world_book_entries, theaters, offline_messages, status_history, 
-          sticker_groups, sticker_items, summaries,
-          deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
-          moments, moment_comments, moment_settings, html_cards, desktop_pets,
-          reader_books, reader_chapters, reader_presets, reader_tags,
-          check_phone_states,
-          forum_accounts, forum_posts, forum_comments, forum_likes, forum_forwards,
-          forum_notifications, forum_conversations, forum_messages, forum_follows,
-          forum_presets, forum_npc_accounts,
-          groups, group_members, group_polls
-        };
+    // 5. 计算全表总和
+    const fullDataObj = { 
+      api_presets, archives, relations, sessions, messages, 
+      world_book_entries, theaters, offline_messages, status_history, 
+      sticker_groups, sticker_items, summaries,
+      deeptalks, deeptalk_messages, deeptalk_thoughts, deeptalk_presets,
+      moments, moment_comments, moment_settings, html_cards, desktop_pets,
+      reader_books, reader_chapters, reader_presets, reader_tags,
+      check_phone_states,
+      forum_accounts, forum_posts, forum_comments, forum_likes, forum_forwards,
+      forum_notifications, forum_conversations, forum_messages, forum_follows,
+      forum_presets, forum_npc_accounts,
+      groups, group_members, group_polls,
+      couples_schedules, couples_albums, couples_journals, couples_whispers
+    };
         const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
     // 同步渲染至多维统计看板
@@ -1504,6 +1514,10 @@ async function exportBackup() {
           groups: await db.groups.toArray(),
           group_members: await db.group_members.toArray(),
           group_polls: await db.group_polls.toArray(),
+          couples_schedules: await db.table('couples_schedules').toArray(),
+          couples_albums: await db.table('couples_albums').toArray(),
+          couples_journals: await db.table('couples_journals').toArray(),
+          couples_whispers: await db.table('couples_whispers').toArray(),
           localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1607,7 +1621,8 @@ async function performImportTransaction(rawData) {
     db.forum_accounts, db.forum_posts, db.forum_comments, db.forum_likes, db.forum_forwards,
     db.forum_notifications, db.forum_conversations, db.forum_messages, db.forum_follows,
     db.forum_presets, db.forum_npc_accounts,
-    db.groups, db.group_members, db.group_polls
+    db.groups, db.group_members, db.group_polls,
+    db.table('couples_schedules'), db.table('couples_albums'), db.table('couples_journals'), db.table('couples_whispers')
   ], async () => {
     if (data.api_presets) {
       await db.api_presets.clear();
@@ -1768,6 +1783,22 @@ async function performImportTransaction(rawData) {
         if (data.group_polls) {
           await db.group_polls.clear();
           await db.group_polls.bulkAdd(data.group_polls);
+        }
+        if (data.couples_schedules) {
+          await db.table('couples_schedules').clear();
+          await db.table('couples_schedules').bulkAdd(data.couples_schedules);
+        }
+        if (data.couples_albums) {
+          await db.table('couples_albums').clear();
+          await db.table('couples_albums').bulkAdd(data.couples_albums);
+        }
+        if (data.couples_journals) {
+          await db.table('couples_journals').clear();
+          await db.table('couples_journals').bulkAdd(data.couples_journals);
+        }
+        if (data.couples_whispers) {
+          await db.table('couples_whispers').clear();
+          await db.table('couples_whispers').bulkAdd(data.couples_whispers);
         }
       });
   
@@ -1959,8 +1990,9 @@ async function compressImageBase64(base64Str, maxWidth = 300, quality = 0.7) {
       const ctx = canvas.getContext("2d");
       ctx.drawImage(img, 0, 0, width, height);
       
-      // 导出高比例 JPEG 无损压缩编码
-      const compressedDataUrl = canvas.toDataURL("image/jpeg", quality);
+      // 自动判定 PNG 格式与高亮透明度，防止透明背景变黑
+      const isPng = base64Str.startsWith("data:image/png") || base64Str.startsWith("data:image/svg");
+      const compressedDataUrl = isPng ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", quality);
       resolve(compressedDataUrl);
     };
     img.onerror = () => {
@@ -1969,6 +2001,7 @@ async function compressImageBase64(base64Str, maxWidth = 300, quality = 0.7) {
     img.src = base64Str;
   });
 }
+window.compressImageBase64 = compressImageBase64;
 
 // 引擎 1：深度压缩全库大Base64图片（头像缩至300px，照片缩至800px，质量限制0.7）
 async function optimizeImagesAndAvatars() {

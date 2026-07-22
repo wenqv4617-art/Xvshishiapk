@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v19'; // 离线 PWA 升级至 v19 引入聊天美化与查找记录
+const CACHE_NAME = 'story-phone-v20'; // 离线 PWA 升级至 v20 引入情侣空间桌面主应用
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -30,6 +30,8 @@ const ASSETS = [
   './app_chat_search.js',
   './app_chat_beautify.js',
   './app_auth.js',
+  './app_chat_couples.js',
+  './couples.css',
   './check_phone.css',
   './forum.css',             // 论坛主题样式表 (新加入)
   './app_forum_loader.js',   // 论坛层栈管理器 (新加入)

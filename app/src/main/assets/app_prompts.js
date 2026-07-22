@@ -273,6 +273,54 @@ ${relationshipDesc}`;
     });
   }
 
+  // === 情侣空间（Couples Space）日程与愿望清单在轨实时注入 ===
+  const couplesCalSyncKey = `couples_cal_sync_${sess.userId}_${sess.charId}`;
+  const couplesWishSyncKey = `couples_wish_sync_${sess.userId}_${sess.charId}`;
+  
+  let couplesPromptText = "";
+  if (localStorage.getItem(couplesCalSyncKey) === "true") {
+    try {
+      const today = new Date();
+      const pad = (num) => String(num).padStart(2, '0');
+      const dateStr = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+      
+      const schedules = await db.table('couples_schedules')
+        .where('charId').equals(Number(sess.charId))
+        .and(s => s.date === dateStr)
+        .toArray();
+        
+      if (schedules.length > 0) {
+        couplesPromptText += `\n- 【你们本日在情侣空间绑定的纪念日程】：\n`;
+        schedules.forEach(s => {
+          couplesPromptText += `  * [安排类型: ${s.type === 'routine' ? '日常作息' : (s.type === 'milestone' ? '大事记' : '生理期')}] | 时段: ${s.time} | 详情: ${s.content}\n`;
+        });
+      }
+    } catch(e) { console.warn("情侣日程注入失败:", e); }
+  }
+
+  if (localStorage.getItem(couplesWishSyncKey) === "true") {
+    try {
+      const wishes = await db.table('summaries')
+        .where('sessionId').equals(sessionId)
+        .and(s => s.source === 'couples_wish' && s.endRound === 0)
+        .toArray();
+        
+      if (wishes.length > 0) {
+        couplesPromptText += `\n- 【你们在情侣空间内共同许下的未完成愿望清单】：\n`;
+        wishes.forEach(w => {
+          couplesPromptText += `  * 愿望内容: ${w.content}\n`;
+        });
+      }
+    } catch(e) { console.warn("情侣愿望清单注入失败:", e); }
+  }
+
+  if (couplesPromptText) {
+    segments.push({
+      depth: -495,
+      content: `【情侣专属时空动态与交往期许注入】：\n你与对方在私人情侣空间中留下了以下动态，请你在闲聊对话中极度自然地提及、并对此表示关切、约定或督促提醒（例如询问对方是否完成了本日的日常作息，或探讨什么时候一起去完成愿望清单）：\n${couplesPromptText}`
+    });
+  }
+
   // 1.4 线上微信闲聊回复准则：深度 -500
   segments.push({
     depth: -500,

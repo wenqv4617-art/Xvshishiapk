@@ -160,3 +160,16 @@ db.version(18).stores({
   group_members: 'id++, groupId, memberId, memberType, [groupId+memberId+memberType]',
   group_polls: 'id++, groupId, messageId'
 });
+
+// ============================================
+// 🎯 新增 Version 20：只写“新增的表”和“改动的表”
+// ============================================
+db.version(20).stores({
+  // 1. 如果你之前有表报错缺少索引，要在这里复写它
+  
+  // 2. 你新加的情侣空间模块的 4 张表：
+  couples_schedules: 'id++, charId, date',
+  couples_albums: 'id++, charId, timestamp',
+  couples_journals: 'id++, charId',
+  couples_whispers: 'id++, charId, timestamp'
+});
