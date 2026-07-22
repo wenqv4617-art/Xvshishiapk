@@ -36,6 +36,10 @@
       const toggle = document.getElementById("settings-mcp-prompt-toggle");
       if (toggle) toggle.checked = isMcpEnabled;
 
+      const isAgentLoopEnabled = localStorage.getItem("settings-mcp-agent-loop-enabled") !== "false";
+      const agentLoopToggle = document.getElementById("settings-mcp-agent-loop-toggle");
+      if (agentLoopToggle) agentLoopToggle.checked = isAgentLoopEnabled;
+
       const isActiveMsgEnabled = localStorage.getItem("settings-mcp-active-msg-enabled") === "true";
       const activeMsgToggle = document.getElementById("settings-mcp-active-msg-toggle");
       if (activeMsgToggle) activeMsgToggle.checked = isActiveMsgEnabled;
@@ -63,6 +67,12 @@
     togglePrompt: function(toggleEl) {
       localStorage.setItem("settings-mcp-prompt-enabled", toggleEl.checked ? "true" : "false");
       showToast(toggleEl.checked ? "已成功建立神经感知！物理传感器与歌单已同步至 AI。" : "已切断神经数据通道。");
+    },
+
+    // 多轮循环工具调用 Agent 连贯开关切换
+    toggleAgentLoop: function(toggleEl) {
+      localStorage.setItem("settings-mcp-agent-loop-enabled", toggleEl.checked ? "true" : "false");
+      showToast(toggleEl.checked ? "已开启多轮连贯工具调用 (Agent Loop)" : "已关闭多轮连贯工具调用");
     },
 
     // 1. 同步地理位置与天气

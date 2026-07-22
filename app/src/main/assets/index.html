@@ -391,6 +391,13 @@
                 <span class="slider"></span>
               </label>
             </div>
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label style="margin-bottom:0; font-weight:700;">开启 API 流式传输 (Stream)</label>
+              <label class="switch">
+                <input type="checkbox" id="api-stream-enabled-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
             <div class="form-actions">
               <button id="btn-test-api" class="btn btn-outline">测试连接</button>
               <button id="btn-save-preset" class="btn">保存预设</button>
@@ -2200,6 +2207,21 @@
                     </button>
                   </header>
                   <div class="win-body" style="padding: 16px; overflow-y: auto; background: var(--bg-main);">
+                    <!-- 1. 顶部分组切换 Tabs 栏 -->
+                    <div id="mcp-group-tabs-bar" style="display:flex; gap:8px; overflow-x:auto; padding-bottom:8px; margin-bottom:10px; scrollbar-width:none; -webkit-overflow-scrolling:touch;"></div>
+                    
+                    <!-- 2. 当前分组总开关控制卡片 -->
+                    <div id="mcp-group-master-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:10px 12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                      <div style="display:flex; align-items:center; gap:6px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+                        <span id="mcp-active-group-title" style="font-size:13px; font-weight:700; color:var(--text-primary);">分组总开关</span>
+                      </div>
+                      <label class="switch">
+                        <input type="checkbox" id="mcp-group-master-toggle" onchange="mcpClientSystem.toggleActiveGroupMaster(this.checked)">
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+
                     <div id="mcp-servers-list-container" style="display:flex; flex-direction:column; gap:12px;">
                       <!-- 动态渲染 MCP 服务器与工具列表 -->
                     </div>
@@ -2219,7 +2241,11 @@
                       <input type="hidden" id="mcp-server-edit-id">
                       <div class="form-group">
                         <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">服务器名称</label>
-                        <input type="text" id="mcp-server-input-name" placeholder="例如：天气服务中心" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
+                        <input type="text" id="mcp-server-input-name" placeholder="例如：麦当劳订餐助手" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
+                      </div>
+                      <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">所属分组 (可输入新建或自定义分组)</label>
+                        <input type="text" id="mcp-server-input-group" placeholder="例如：默认、生活服务、林栖专属" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
                       </div>
                       <div class="form-group">
                         <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">传输协议类型</label>
@@ -2259,10 +2285,23 @@
                       <!-- MCP 提示词注入总开关 -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between;">
                         <label style="margin-bottom:0; font-weight:700; font-size:13px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
-                          🧠 融入 AI 提示词 (MCP 协议)
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><path d="M12 2a10 10 0 1 0 10 10H12V2z"></path><path d="M12 12L2.5 7.5"></path><path d="M12 12v10"></path></svg>
+                          融入 AI 提示词 (MCP 协议)
                         </label>
                         <label class="switch">
                           <input type="checkbox" id="settings-mcp-prompt-toggle" onchange="mcpSystem.togglePrompt(this)">
+                          <span class="slider"></span>
+                        </label>
+                      </div>
+
+                      <!-- 多轮自动循环工具调用开关 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between;">
+                        <label style="margin-bottom:0; font-weight:700; font-size:13px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                          多轮连贯工具调用 (Agent 循环)
+                        </label>
+                        <label class="switch">
+                          <input type="checkbox" id="settings-mcp-agent-loop-toggle" onchange="mcpSystem.toggleAgentLoop(this)">
                           <span class="slider"></span>
                         </label>
                       </div>

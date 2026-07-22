@@ -263,6 +263,16 @@ function initSettingsApp() {
     };
   }
 
+  // 绑定：流式传输 (Stream) 总开关
+  const streamGlobalToggle = document.getElementById("api-stream-enabled-toggle");
+  if (streamGlobalToggle) {
+    streamGlobalToggle.checked = localStorage.getItem("settings-stream-enabled") === "true";
+    streamGlobalToggle.onchange = (e) => {
+      localStorage.setItem("settings-stream-enabled", e.target.checked ? "true" : "false");
+      showToast(e.target.checked ? "已开启 API 流式传输 (Stream)" : "已关闭流式传输");
+    };
+  }
+
   // 绑定：强更新开关状态维护
   const forceToggle = document.getElementById("force-update-toggle");
   if (forceToggle) {

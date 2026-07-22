@@ -335,12 +335,12 @@ ${relationshipDesc}`;
     });
   }
 
-  // === 外部 MCP 工具服务动态注入 (depth: -470) ===
+  // === 外部 MCP 工具服务动态注入 (depth: -100 末尾偏好激活，解决 AI 中间失忆与假装打字问题) ===
   if (window.mcpClientSystem && typeof window.mcpClientSystem.buildMcpPromptSegment === 'function') {
     const mcpPromptStr = await window.mcpClientSystem.buildMcpPromptSegment();
     if (mcpPromptStr) {
       segments.push({
-        depth: -470,
+        depth: -100,
         content: mcpPromptStr
       });
     }

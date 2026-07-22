@@ -75,6 +75,193 @@ function formatWeChatTime(date, relativeToDate) {
   }
 }
 
+// 可折叠式 MCP 工具调用卡片动态 HTML 组装器 (支持持久化与历史渲染)
+function buildMcpToolCardHtml(msgId, toolData) {
+  const cardId = "mcp-card-" + msgId;
+  const serverName = toolData.server || "MCP";
+  const toolName = toolData.tool || "tool";
+  const argsObj = toolData.arguments || {};
+  const resData = toolData.result || {};
+  const isSuccess = toolData.status !== 'error';
+
+  const statusBadge = isSuccess
+    ? `<span class="mcp-tool-status-badge success">已完成</span>`
+    : `<span class="mcp-tool-status-badge error">异常/失败</span>`;
+
+  const resTitle = isSuccess ? "[执行结果 Output]" : "[错误反馈 Error]";
+  const resContent = typeof resData === 'string' ? resData : JSON.stringify(resData, null, 2);
+
+  return `
+    <div class="mcp-tool-card" id="${cardId}">
+      <div class="mcp-tool-card-header" onclick="window.toggleMcpToolCardBody('${cardId}')">
+        <div class="mcp-tool-card-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary); flex-shrink:0;"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+          <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(serverName)}.${escapeHtml(toolName)}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px;">
+          ${statusBadge}
+          <svg class="mcp-tool-card-chevron" id="${cardId}-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+      </div>
+      <div class="mcp-tool-card-body" id="${cardId}-body" style="display:none;">
+        <div style="font-weight:700; margin-bottom:4px; color:var(--text-secondary);">[调用参数 Params]</div>
+        <div>${escapeHtml(JSON.stringify(argsObj, null, 2))}</div>
+        <div style="font-weight:700; margin-top:8px; margin-bottom:4px; color:var(--text-secondary);">${resTitle}</div>
+        <div>${escapeHtml(resContent)}</div>
+      </div>
+    </div>
+  `;
+}
+
+window.toggleMcpToolCardBody = function(cardId) {
+  const body = document.getElementById(`${cardId}-body`);
+  const chevron = document.getElementById(`${cardId}-chevron`);
+  if (body) {
+    const isHidden = body.style.display === "none";
+    body.style.display = isHidden ? "block" : "none";
+    if (chevron) {
+      if (isHidden) chevron.classList.add("expanded");
+      else chevron.classList.remove("expanded");
+    }
+  }
+};
+
+// 深度平衡括号 JSON 提取器：彻底解决嵌套对象导致 JSON 截断和 Unexpected non-whitespace 报错
+function parseToolCallFromReply(rawReply) {
+  if (!rawReply) return null;
+
+  // 1. 尝试匹配标准的 [CALL_TOOL: ...] 或 【CALL_TOOL: ...】 标签
+  const tagRegex = /[\[【]CALL_TOOL\s*:\s*/i;
+  const match = rawReply.match(tagRegex);
+  
+  let toolIndex = -1;
+  let fullMatchStr = "";
+  let jsonPayload = null;
+
+  if (match) {
+    toolIndex = match.index;
+    const startJsonIndex = toolIndex + match[0].length;
+    jsonPayload = extractFirstJsonObject(rawReply.substring(startJsonIndex));
+    if (jsonPayload) {
+      const jsonEndIndex = startJsonIndex + jsonPayload.rawLength;
+      const closingMatch = rawReply.substring(jsonEndIndex).match(/^[\s]*[\]】]/);
+      const closingLen = closingMatch ? closingMatch[0].length : 0;
+      fullMatchStr = rawReply.substring(toolIndex, jsonEndIndex + closingLen);
+    }
+  }
+
+  // 2. 托底防错：如果 AI 忘带 [CALL_TOOL:] 裸写 {"server":..., "tool":...}，智能捕获并修复执行
+  if (!jsonPayload) {
+    const bareJsonRegex = /\{\s*"server"\s*:\s*"[^"]+"\s*,\s*"tool"\s*:/i;
+    const bareMatch = rawReply.match(bareJsonRegex);
+    if (bareMatch) {
+      toolIndex = bareMatch.index;
+      jsonPayload = extractFirstJsonObject(rawReply.substring(toolIndex));
+      if (jsonPayload) {
+        fullMatchStr = rawReply.substring(toolIndex, toolIndex + jsonPayload.rawLength);
+      }
+    }
+  }
+
+  if (jsonPayload && jsonPayload.data) {
+    // 强制剥离 AI 脑补凭空伪造的 result 或 status 字段，保证全流程触发真实 MCP 请求
+    if (jsonPayload.data.result) delete jsonPayload.data.result;
+    if (jsonPayload.data.status) delete jsonPayload.data.status;
+
+    return {
+      index: toolIndex,
+      fullMatchStr: fullMatchStr,
+      payload: jsonPayload.data
+    };
+  }
+  return null;
+}
+
+// 逐字扫描匹配平铺大括号，精准解析任意深层嵌套的 JSON 对象 (含换行符自愈与 AI 漏写括号自动修复)
+function extractFirstJsonObject(str) {
+  let startIndex = str.indexOf('{');
+  if (startIndex === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let isEscaped = false;
+  let lastJsonCharIndex = -1;
+
+  // 辅助解析器：支持自动处理 JSON 字符串中未转义的换行与控制字符
+  const tryParseJson = (jsonText) => {
+    try {
+      return JSON.parse(jsonText);
+    } catch(e) {
+      try {
+        const cleaned = jsonText.replace(/[\u0000-\u001F]+/g, (m) => {
+          if (m === '\n') return '\\n';
+          if (m === '\r') return '\\r';
+          if (m === '\t') return '\\t';
+          return '';
+        });
+        return JSON.parse(cleaned);
+      } catch(e2) {
+        return null;
+      }
+    }
+  };
+
+  for (let i = startIndex; i < str.length; i++) {
+    const char = str[i];
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (char === '\\') {
+        isEscaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+    } else {
+      if (char === '"') {
+        inString = true;
+      } else if (char === '{') {
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          const rawJsonStr = str.substring(startIndex, i + 1);
+          const parsedData = tryParseJson(rawJsonStr);
+          if (parsedData) {
+            return {
+              data: parsedData,
+              rawLength: (i + 1) - startIndex
+            };
+          }
+        }
+      } else if (char === ']' || char === '】') {
+        if (depth > 0) {
+          lastJsonCharIndex = i;
+          break;
+        }
+      }
+    }
+  }
+
+  // 容灾自愈：若 AI 在生成超长嵌套 JSON 时漏写了结尾的 } 大括号，自动补齐补全并尝试解析
+  if (depth > 0) {
+    const targetEnd = lastJsonCharIndex !== -1 ? lastJsonCharIndex : str.length;
+    let rawJsonStr = str.substring(startIndex, targetEnd).trim();
+    for (let d = 0; d < depth; d++) {
+      rawJsonStr += '}';
+    }
+    const parsedData = tryParseJson(rawJsonStr);
+    if (parsedData) {
+      return {
+        data: parsedData,
+        rawLength: targetEnd - startIndex
+      };
+    }
+  }
+
+  return null;
+}
+
 function openCustomEditModal(msgId, content, isOffline) {
   currentEditingMsgId = msgId;
   isEditingOfflineMsg = isOffline;
@@ -394,6 +581,81 @@ let isOfflineChatAppEventsBound = false;
     @keyframes popIn {
       from { transform: scale(0); }
       to { transform: scale(1); }
+    }
+
+    /* 折叠式 MCP 工具调用卡片样式 (无 Emoji 矢量版) */
+    .mcp-tool-card {
+      background: #ffffff;
+      border: 1.5px solid var(--border);
+      border-radius: 12px;
+      margin: 10px auto;
+      padding: 10px 14px;
+      font-size: 12px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      width: 90%;
+      max-width: 320px;
+      box-sizing: border-box;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .mcp-tool-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .mcp-tool-card-title {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 700;
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+    .mcp-tool-status-badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .mcp-tool-status-badge.running {
+      background: #fef3c7;
+      color: #b45309;
+    }
+    .mcp-tool-status-badge.success {
+      background: #dcfce7;
+      color: #15803d;
+    }
+    .mcp-tool-status-badge.error {
+      background: #fee2e2;
+      color: #b91c1c;
+    }
+    .mcp-tool-card-body {
+      border-top: 1px dashed var(--border);
+      padding-top: 8px;
+      font-family: monospace;
+      font-size: 11px;
+      color: #334155;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 180px;
+      overflow-y: auto;
+      background: #f8fafc;
+      padding: 8px;
+      border-radius: 8px;
+    }
+    .mcp-tool-card-chevron {
+      transition: transform 0.2s ease;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+    .mcp-tool-card-chevron.expanded {
+      transform: rotate(180deg);
     }
 
     /* 气泡长按选中缩小动效 */
@@ -1063,6 +1325,8 @@ async function renderSessionList() {
               latestText = "[转发了一条朋友圈]";
             } else if (latestMsg.contentType === 'group_poll') {
               latestText = "[群投票]";
+            } else if (latestMsg.contentType === 'mcp_tool') {
+              latestText = "[外部工具调用记录]";
             } else if (latestMsg.contentType === 'image' && typeof latestMsg.content === 'string' && latestMsg.content.startsWith("{")) {
               latestText = "[图片与描述]";
             } else {
@@ -1461,6 +1725,19 @@ async function renderDialogMessages() {
         `;
       } catch(e) {
         contentHtml = `<div class="msg-text" style="position: relative;">朋友圈分享格式错误${emojiHtml}</div>`;
+      }
+    } else if (m.contentType === 'mcp_tool') {
+      try {
+        const toolData = JSON.parse(m.content);
+        const cardHtml = buildMcpToolCardHtml(m.id, toolData);
+        const cardContainer = document.createElement("div");
+        cardContainer.setAttribute("data-msg-id", m.id);
+        cardContainer.style.cssText = "width: 100%; display: flex; justify-content: center;";
+        cardContainer.innerHTML = cardHtml;
+        fragment.appendChild(cardContainer);
+        continue;
+      } catch(e) {
+        contentHtml = `<div class="msg-text" style="position: relative;">工具调用记录解析异常${emojiHtml}</div>`;
       }
     } else {
       // 核心解耦：仅群聊会话支持表情包自动分割气泡；单聊会话 100% 保持原有不分割扁平布局，防止其被搞坏
@@ -1904,6 +2181,18 @@ async function appendMessageToDOM(msg) {
     } catch(e) {
       contentHtml = `<div class="msg-text">朋友圈分享格式错误</div>`;
     }
+  } else if (msg.contentType === 'mcp_tool') {
+    try {
+      const toolData = JSON.parse(msg.content);
+      const cardHtml = buildMcpToolCardHtml(msg.id, toolData);
+      const tempDiv = document.createElement("div");
+      tempDiv.style.cssText = "width: 100%; display: flex; justify-content: center;";
+      tempDiv.innerHTML = cardHtml;
+      tempDiv.setAttribute("data-msg-id", msg.id);
+      container.appendChild(tempDiv);
+      container.scrollTop = container.scrollHeight;
+      return;
+    } catch(e) {}
   } else {
     // 核心解耦：仅群聊会话支持表情包自动分割气泡；单聊会话 100% 保持原有不分割扁平布局，防止其被搞坏
     if (sess && sess.isGroup === 1) {
@@ -3102,52 +3391,112 @@ function bindChatAppEvents() {
         // 强力擦除所有解析过的指令文本以确保对白干净呈现
         rawReply = rawReply.replace(transactionRegex, '').trim();
 
-        // === 【MCP 工具客户端自动拦截与调用环】 ===
-        const callToolRegex = /[\[【]CALL_TOOL\s*:\s*(\{[\s\S]*?\})[\]】]/i;
-        const callToolMatch = rawReply.match(callToolRegex);
-        if (callToolMatch && window.mcpClientSystem) {
+        // === 【MCP 连贯 Agent 循环与折叠卡片渲染引擎（支持嵌套 JSON 与裸 JSON 智能自愈）】 ===
+        const isAgentLoopEnabled = localStorage.getItem("settings-mcp-agent-loop-enabled") !== "false";
+        let maxAgentLoops = 5; // 安全深度限制
+
+        while (maxAgentLoops > 0) {
+          const toolCallInfo = parseToolCallFromReply(rawReply);
+          if (!toolCallInfo || !window.mcpClientSystem) {
+            // 没有进一步工具调用要求，跳出循环进入正常回复展示
+            break;
+          }
+
           try {
-            const toolCallPayload = JSON.parse(callToolMatch[1]);
+            const fullMatchStr = toolCallInfo.fullMatchStr;
+            const toolIndex = toolCallInfo.index;
+
+            // 1. 提取工具调用之前的“前半句台词”（如：“稍等哦，我帮你看一下……”）
+            const prefixText = rawReply.substring(0, toolIndex).trim();
+            if (prefixText) {
+              // 关键：前半句台词即时落库存盘并上屏，展示自然流畅的时序对白！
+              await saveAndRenderMessage('char', prefixText);
+            }
+
+            // 提取 JSON 参数
+            const toolCallPayload = toolCallInfo.payload;
             const serverName = toolCallPayload.server;
             const toolName = toolCallPayload.tool;
             const toolArgs = toolCallPayload.arguments || {};
 
-            // 擦除 Tool Call 标识以防污染前端气泡
-            rawReply = rawReply.replace(callToolRegex, "").trim();
+            // 切除前半句和已匹配的工具指令，留存后半段文本
+            rawReply = rawReply.substring(toolIndex + fullMatchStr.length).trim();
 
-            showToast(`正在调用外部 MCP 工具: [${serverName}] -> ${toolName}...`);
+            showToast(`正在调用 MCP 工具: [${serverName}] -> ${toolName}...`);
 
-            // 静默发起 JSON-RPC 2.0 请求
-            const executionResult = await window.mcpClientSystem.callMcpTool(serverName, toolName, toolArgs);
+            // 2. 发起物理工具调用 (JSON-RPC 2.0)
+            let executionResult = null;
+            let isSuccess = true;
+            try {
+              executionResult = await window.mcpClientSystem.callMcpTool(serverName, toolName, toolArgs);
+            } catch (execErr) {
+              isSuccess = false;
+              executionResult = { error: execErr.message };
+            }
 
-            // 追加一条带有执行结果的 system 指令，再次激发大模型进行基于工具结果的回复
-            messagesToSend.push({ role: "assistant", content: `[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]` });
+            // 3. 将工具调用记录作为 contentType === 'mcp_tool' 写入数据库并即时时序渲染上屏 (100% 永久保留且展开折叠)
+            const toolCardData = {
+              server: serverName,
+              tool: toolName,
+              arguments: toolArgs,
+              result: executionResult,
+              status: isSuccess ? 'success' : 'error'
+            };
+            const toolMsg = {
+              sessionId: activeSessionId,
+              senderType: 'char',
+              senderId: 0,
+              content: JSON.stringify(toolCardData),
+              contentType: 'mcp_tool',
+              timestamp: Date.now()
+            };
+            toolMsg.id = await db.messages.add(toolMsg);
+            await appendMessageToDOM(toolMsg);
+
+            // 4. 将前半句发言、本次工具调用及反馈完整并入上下文，供 AI 决策后续对白
+            const assistantRecord = prefixText ? `${prefixText}\n[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]` : `[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]`;
+            messagesToSend.push({ role: "assistant", content: assistantRecord });
             messagesToSend.push({
               role: "system",
-              content: `【MCP 工具执行反馈通知】\n工具 [${serverName}.${toolName}] 返回了以下执行结果：\n${JSON.stringify(executionResult)}\n\n请结合上述工具执行结果，以角色的自然口吻向用户给出答复。`
+              content: `【MCP 工具执行反馈通知】\n工具 [${serverName}.${toolName}] 返回了以下执行结果：\n${JSON.stringify(executionResult)}\n\n请结合上述工具执行结果，继续顺着你刚才的话（如有）以自然角色的口吻接下去说。如果你认为还需要调用其他工具，可以继续嵌入 [CALL_TOOL: ...] 指令。`
             });
 
-            // 重新请求 API 获取根据工具结果推演出的最终回答
+            // 若关闭了多轮连贯循环，仅执行一次后便跳出
+            if (!isAgentLoopEnabled) {
+              break;
+            }
+
+            maxAgentLoops--;
+
+            // 5. 自动再次向 API 发起请求，驱动 AI 连贯推理或接话
             const followUpResp = await fetch(`${api.url}/chat/completions`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
               body: JSON.stringify({
                 model: api.model,
                 messages: messagesToSend,
-                temperature: api.temperature
+                temperature: api.temperature,
+                stream: false
               }),
               signal: onlineAbortController.signal
             });
 
-            if (followUpResp.ok) {
-              const followUpResult = await followUpResp.json();
-              if (followUpResult.choices && followUpResult.choices.length > 0) {
-                rawReply = followUpResult.choices[0].message.content.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
-              }
+            if (!followUpResp.ok) {
+              const errText = await followUpResp.text();
+              throw new Error(`HTTP ${followUpResp.status}: ${errText}`);
             }
+
+            const followUpResult = await followUpResp.json();
+            if (followUpResult.choices && followUpResult.choices.length > 0) {
+              rawReply = followUpResult.choices[0].message.content.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+            } else {
+              break;
+            }
+
           } catch (e) {
-            console.error("MCP 工具调用拦截异常:", e);
-            showToast("MCP 工具执行或解析失败: " + e.message);
+            console.error("MCP 工具 Agent 循环异常:", e);
+            showToast("MCP 工具执行终止: " + e.message);
+            break;
           }
         }
 
