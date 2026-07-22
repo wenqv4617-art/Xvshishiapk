@@ -1099,6 +1099,7 @@ async function clearAllAppData() {
           await db.table('couples_albums').clear();
           await db.table('couples_journals').clear();
           await db.table('couples_whispers').clear();
+          if (db.mcp_servers) await db.mcp_servers.clear();
           
           localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1316,9 +1317,10 @@ async function computeStorageUsage() {
     const forum_messages = await db.forum_messages.toArray();
     const forum_follows = await db.forum_follows.toArray();
     const forum_presets = await db.forum_presets.toArray();
-    const forum_npc_accounts = await db.forum_npc_accounts.toArray();
+        const forum_npc_accounts = await db.forum_npc_accounts.toArray();
+        const mcp_servers = db.mcp_servers ? await db.mcp_servers.toArray() : [];
 
-    // 1. 计算图片、美化方案与表情包所占容量
+        // 1. 计算图片、美化方案与表情包所占容量
     const wallpaperStr = localStorage.getItem("beautify-wallpaper") || "";
     const customIconsStr = localStorage.getItem("beautify-custom-icons") || "";
     const cssPresetsStr = localStorage.getItem("custom-css-presets") || "";
@@ -1361,7 +1363,8 @@ async function computeStorageUsage() {
       forum_notifications, forum_conversations, forum_messages, forum_follows,
       forum_presets, forum_npc_accounts,
       groups, group_members, group_polls,
-      couples_schedules, couples_albums, couples_journals, couples_whispers
+      couples_schedules, couples_albums, couples_journals, couples_whispers,
+      mcp_servers
     };
         const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
@@ -1518,6 +1521,7 @@ async function exportBackup() {
           couples_albums: await db.table('couples_albums').toArray(),
           couples_journals: await db.table('couples_journals').toArray(),
           couples_whispers: await db.table('couples_whispers').toArray(),
+          mcp_servers: db.mcp_servers ? await db.mcp_servers.toArray() : [],
           localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1622,7 +1626,8 @@ async function performImportTransaction(rawData) {
     db.forum_notifications, db.forum_conversations, db.forum_messages, db.forum_follows,
     db.forum_presets, db.forum_npc_accounts,
     db.groups, db.group_members, db.group_polls,
-    db.table('couples_schedules'), db.table('couples_albums'), db.table('couples_journals'), db.table('couples_whispers')
+    db.table('couples_schedules'), db.table('couples_albums'), db.table('couples_journals'), db.table('couples_whispers'),
+    db.mcp_servers
   ], async () => {
     if (data.api_presets) {
       await db.api_presets.clear();
@@ -1799,6 +1804,10 @@ async function performImportTransaction(rawData) {
         if (data.couples_whispers) {
           await db.table('couples_whispers').clear();
           await db.table('couples_whispers').bulkAdd(data.couples_whispers);
+        }
+        if (data.mcp_servers && db.mcp_servers) {
+          await db.mcp_servers.clear();
+          await db.mcp_servers.bulkAdd(data.mcp_servers);
         }
       });
   

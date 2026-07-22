@@ -173,3 +173,10 @@ db.version(20).stores({
   couples_journals: 'id++, charId',
   couples_whispers: 'id++, charId, timestamp'
 });
+
+// ============================================
+// 🎯 新增 Version 21：支持真实 MCP 服务器与工具存储
+// ============================================
+db.version(21).stores({
+  mcp_servers: 'id++, name, type, url, enabled'
+});

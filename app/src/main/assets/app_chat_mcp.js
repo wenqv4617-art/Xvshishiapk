@@ -44,6 +44,10 @@
         window.desktopPetSystem.loadMcpPanelState();
       }
 
+      if (window.mcpClientSystem && typeof window.mcpClientSystem.updateSummaryText === 'function') {
+        window.mcpClientSystem.updateSummaryText();
+      }
+
       // 回显本地扫描出的物理歌单 [1]
       const listEl = document.getElementById("mcp-playlist-list");
       if (listEl) {

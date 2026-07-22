@@ -2188,6 +2188,62 @@
                   </div>
                 </div>
 
+                <!-- MCP 工具服务器配置列表面板 (完全隔离收纳在 win-chat 内部，符合套袋隔离原则) -->
+                <div id="mcp-servers-panel" class="chat-details-overlay" style="z-index: 700;">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="mcpClientSystem.closeServersPanel()">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>MCP 工具服务器列表</h3>
+                    <button class="btn-icon" onclick="mcpClientSystem.openServerEditModal()" title="新建 MCP 服务器">
+                      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    </button>
+                  </header>
+                  <div class="win-body" style="padding: 16px; overflow-y: auto; background: var(--bg-main);">
+                    <div id="mcp-servers-list-container" style="display:flex; flex-direction:column; gap:12px;">
+                      <!-- 动态渲染 MCP 服务器与工具列表 -->
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 新建 / 编辑 MCP 服务器模态窗 -->
+                <div id="mcp-server-edit-overlay" class="modal-overlay" style="z-index: 1500; align-items:center !important; justify-content:center !important;">
+                  <div class="modal" style="max-width: 330px; border-radius: 16px; padding: 20px; background:#ffffff;">
+                    <header class="modal-header" style="border-bottom:none; padding-bottom:0;">
+                      <h4 id="mcp-server-modal-title" style="font-size:15px; font-weight:700; color:var(--text-primary); margin:0;">新建 MCP 服务器</h4>
+                      <button class="btn-icon" onclick="mcpClientSystem.closeServerEditModal()">
+                        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                      </button>
+                    </header>
+                    <div class="win-body" style="display:flex; flex-direction:column; gap:12px; margin-top:14px; padding:0;">
+                      <input type="hidden" id="mcp-server-edit-id">
+                      <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">服务器名称</label>
+                        <input type="text" id="mcp-server-input-name" placeholder="例如：天气服务中心" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
+                      </div>
+                      <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">传输协议类型</label>
+                        <select id="mcp-server-input-type" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box; background:#fff;">
+                          <option value="streamable_http">Streamable HTTP (JSON-RPC POST)</option>
+                          <option value="sse">SSE (Server-Sent Events)</option>
+                        </select>
+                      </div>
+                      <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">服务器 URL 地址</label>
+                        <input type="text" id="mcp-server-input-url" placeholder="https://api.example.com/mcp" style="font-size:12px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
+                      </div>
+                      <div class="form-group">
+                        <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">自定义请求头 (JSON 格式，如 Authorization)</label>
+                        <textarea id="mcp-server-input-headers" rows="3" placeholder='{"Authorization": "Bearer token_xxx"}' style="font-size:11px; font-family:monospace; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box; resize:none;"></textarea>
+                      </div>
+                      <div class="form-actions" style="display:flex; gap:10px; margin-top:8px;">
+                        <button type="button" class="btn btn-outline" onclick="mcpClientSystem.closeServerEditModal()" style="flex:1; border-radius:10px; height:40px; font-size:13px;">取消</button>
+                        <button type="button" class="btn btn-primary" onclick="mcpClientSystem.saveServerAndFetchTools()" style="flex:1; border-radius:10px; height:40px; font-size:13px; background-color:#07c160; border:none; font-weight:700;">保存并拉取工具</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
                 <!-- MCP 控制中枢面板弹窗 (完全隔离收纳在 win-chat 内部，满足套袋原则) -->
                 <div id="chat-mcp-panel" class="chat-details-overlay">
                   <header class="win-header">
@@ -2200,7 +2256,7 @@
                   <div class="win-body" style="padding: 16px; overflow-y: auto; background: #fafbfc;">
                     <div style="display:flex; flex-direction:column; gap:12px;">
                       
-                      <!-- 新增：MCP 提示词注入总开关 -->
+                      <!-- MCP 提示词注入总开关 -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between;">
                         <label style="margin-bottom:0; font-weight:700; font-size:13px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
                           🧠 融入 AI 提示词 (MCP 协议)
@@ -2209,6 +2265,20 @@
                           <input type="checkbox" id="settings-mcp-prompt-toggle" onchange="mcpSystem.togglePrompt(this)">
                           <span class="slider"></span>
                         </label>
+                      </div>
+
+                      <!-- 外部 MCP 工具服务器入口卡片 -->
+                      <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between; cursor:pointer;" onclick="if(window.mcpClientSystem){window.mcpClientSystem.openServersPanel();}">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                          <div style="width:32px; height:32px; border-radius:8px; background:#f0fdf4; border:1px solid #bbf7d0; display:flex; align-items:center; justify-content:center; color:#166534;">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                          </div>
+                          <div>
+                            <div style="font-size:13px; font-weight:700; color:var(--text-primary);">MCP 工具服务器配置</div>
+                            <div style="font-size:11px; color:var(--text-secondary);" id="mcp-servers-summary-text">正在读取配置...</div>
+                          </div>
+                        </div>
+                        <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
                       </div>
 
                       <!-- 硬件定位与天气卡片 -->
@@ -4043,6 +4113,7 @@
   <script src="app_chat_html_widget.js"></script>
   <script src="app_chat_plot_engine.js"></script>
   <script src="app_chat_mcp.js"></script>
+  <script src="app_mcp_client.js"></script>
   <script src="app_desktop_pet.js"></script>
   <script src="app_reader.js"></script>
   <!-- 论坛模块业务合并组件 -->

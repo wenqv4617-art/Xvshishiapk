@@ -335,6 +335,17 @@ ${relationshipDesc}`;
     });
   }
 
+  // === 外部 MCP 工具服务动态注入 (depth: -470) ===
+  if (window.mcpClientSystem && typeof window.mcpClientSystem.buildMcpPromptSegment === 'function') {
+    const mcpPromptStr = await window.mcpClientSystem.buildMcpPromptSegment();
+    if (mcpPromptStr) {
+      segments.push({
+        depth: -470,
+        content: mcpPromptStr
+      });
+    }
+  }
+
   // === 智能拉黑指令状态动态注入 (depth: -475) ===
   if (sess.isBlockedByUser === 1) {
     segments.push({

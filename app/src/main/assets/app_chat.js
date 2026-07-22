@@ -3102,6 +3102,55 @@ function bindChatAppEvents() {
         // 强力擦除所有解析过的指令文本以确保对白干净呈现
         rawReply = rawReply.replace(transactionRegex, '').trim();
 
+        // === 【MCP 工具客户端自动拦截与调用环】 ===
+        const callToolRegex = /[\[【]CALL_TOOL\s*:\s*(\{[\s\S]*?\})[\]】]/i;
+        const callToolMatch = rawReply.match(callToolRegex);
+        if (callToolMatch && window.mcpClientSystem) {
+          try {
+            const toolCallPayload = JSON.parse(callToolMatch[1]);
+            const serverName = toolCallPayload.server;
+            const toolName = toolCallPayload.tool;
+            const toolArgs = toolCallPayload.arguments || {};
+
+            // 擦除 Tool Call 标识以防污染前端气泡
+            rawReply = rawReply.replace(callToolRegex, "").trim();
+
+            showToast(`正在调用外部 MCP 工具: [${serverName}] -> ${toolName}...`);
+
+            // 静默发起 JSON-RPC 2.0 请求
+            const executionResult = await window.mcpClientSystem.callMcpTool(serverName, toolName, toolArgs);
+
+            // 追加一条带有执行结果的 system 指令，再次激发大模型进行基于工具结果的回复
+            messagesToSend.push({ role: "assistant", content: `[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]` });
+            messagesToSend.push({
+              role: "system",
+              content: `【MCP 工具执行反馈通知】\n工具 [${serverName}.${toolName}] 返回了以下执行结果：\n${JSON.stringify(executionResult)}\n\n请结合上述工具执行结果，以角色的自然口吻向用户给出答复。`
+            });
+
+            // 重新请求 API 获取根据工具结果推演出的最终回答
+            const followUpResp = await fetch(`${api.url}/chat/completions`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+              body: JSON.stringify({
+                model: api.model,
+                messages: messagesToSend,
+                temperature: api.temperature
+              }),
+              signal: onlineAbortController.signal
+            });
+
+            if (followUpResp.ok) {
+              const followUpResult = await followUpResp.json();
+              if (followUpResult.choices && followUpResult.choices.length > 0) {
+                rawReply = followUpResult.choices[0].message.content.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+              }
+            }
+          } catch (e) {
+            console.error("MCP 工具调用拦截异常:", e);
+            showToast("MCP 工具执行或解析失败: " + e.message);
+          }
+        }
+
         // 尝试解析心声随动 [STATUS] 格式
         let statusJson = null;
         let textReply = rawReply;
