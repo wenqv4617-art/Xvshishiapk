@@ -1244,6 +1244,17 @@
                     </div>
                     <span>MCP中枢</span>
                   </div>
+                  <div class="expand-item" id="btn-chat-cot" style="cursor: pointer;">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="6" y1="3" x2="6" y2="15"></line>
+                        <circle cx="18" cy="6" r="3"></circle>
+                        <circle cx="6" cy="18" r="3"></circle>
+                        <path d="M18 9a9 9 0 0 1-9 9"></path>
+                      </svg>
+                    </div>
+                    <span>思维链</span>
+                  </div>
                   <div class="expand-item" id="btn-chat-group-poll" style="display:none;">
                     <div class="expand-icon-wrapper">
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -2192,6 +2203,70 @@
                         <button type="button" class="btn btn-cyber" onclick="chatHtmlWidgetSystem.submitGeneration()" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px;">编译发射</button>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                <!-- 思维链 CoT 专属配置面板 (物理隔离嵌套在 win-chat 内部) -->
+                <div id="chat-cot-panel" class="chat-details-overlay" style="z-index: 700;">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="cotSystem.closePanel()">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>思维链 (CoT) 中枢</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px; overflow-y: auto; background: var(--bg-main);">
+                    <!-- 1. 会话开关卡片 -->
+                    <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                      <label style="margin-bottom:0; font-weight:700; font-size:13px; color:var(--text-primary); display:flex; align-items:center; gap:6px;">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+                        本对话开启思维链推演
+                      </label>
+                      <label class="switch">
+                        <input type="checkbox" id="cot-session-toggle" onchange="cotSystem.toggleSessionCot(this.checked)">
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+
+                    <!-- 2. 全局预设选择与管理 (含思维链与配套正则打包导入/导出) -->
+                    <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px;">
+                      <h4 style="margin:0 0 8px 0; font-size:12px; color:var(--text-secondary); font-weight:700;">全局思维链预设库 (思维链 + 配套正则)</h4>
+                      <div style="display:flex; gap:8px; margin-bottom:8px;">
+                        <select id="cot-preset-select" style="flex:1; height:36px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; padding:0 8px; background:#fff;" onchange="cotSystem.onPresetChange(this.value)">
+                          <option value="">-- 新建/自定义思维链 --</option>
+                        </select>
+                        <button class="btn btn-outline" onclick="cotSystem.deletePreset()" style="padding:0 10px; font-size:11px; color:#ef4444; border-color:#fca5a5; border-radius:8px;">删除预设</button>
+                      </div>
+                      <div style="display:flex; gap:6px;">
+                        <button class="btn btn-outline" onclick="cotSystem.saveCurrentAsPreset()" style="flex:1; height:34px; font-size:11px; border-radius:8px;">保存新预设</button>
+                        <button class="btn btn-outline" onclick="cotSystem.exportPreset()" style="flex:1; height:34px; font-size:11px; border-radius:8px;">导出 JSON</button>
+                        <button class="btn btn-outline" onclick="document.getElementById('cot-preset-file-input').click()" style="flex:1; height:34px; font-size:11px; border-radius:8px;">导入 JSON</button>
+                        <input type="file" id="cot-preset-file-input" accept=".json" style="display:none;" onchange="cotSystem.importPreset(this)">
+                      </div>
+                    </div>
+
+                    <!-- 3. 线上 / 线下模式 Tabs 切换 -->
+                    <div style="display:flex; gap:6px; margin-bottom:12px;">
+                      <button class="btn" id="cot-tab-btn-online" onclick="cotSystem.switchModeTab('online')" style="flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px; background:var(--primary); color:#fff;">线上聊天思维链</button>
+                      <button class="btn btn-outline" id="cot-tab-btn-offline" onclick="cotSystem.switchModeTab('offline')" style="flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px;">线下剧场思维链</button>
+                    </div>
+
+                    <!-- 4. 思维链步骤编辑器 -->
+                    <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:16px;">
+                      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <span style="font-size:12px; font-weight:700; color:var(--text-primary);" id="cot-mode-title">线上推理步骤列表</span>
+                        <button class="btn btn-outline" onclick="cotSystem.addStep()" style="padding:4px 10px; font-size:11px; border-radius:6px; font-weight:700; display:flex; align-items:center; gap:3px;">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                          添加思考步骤
+                        </button>
+                      </div>
+                      <div id="cot-steps-list-container" style="display:flex; flex-direction:column; gap:10px;">
+                        <!-- 动态渲染步骤卡片 (支持上下排序、编辑、删除) -->
+                      </div>
+                    </div>
+
+                    <!-- 5. 保存并应用 -->
+                    <button class="btn btn-primary" onclick="cotSystem.saveSessionConfig()" style="width:100%; height:42px; font-size:13px; font-weight:700; border-radius:12px; background:#07c160; border:none; box-shadow: 0 4px 12px rgba(7,193,96,0.2);">应用思维链到本对话</button>
                   </div>
                 </div>
 
@@ -4153,6 +4228,7 @@
   <script src="app_chat_plot_engine.js"></script>
   <script src="app_chat_mcp.js"></script>
   <script src="app_mcp_client.js"></script>
+  <script src="app_chat_cot.js"></script>
   <script src="app_desktop_pet.js"></script>
   <script src="app_reader.js"></script>
   <!-- 论坛模块业务合并组件 -->

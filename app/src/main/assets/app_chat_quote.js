@@ -82,9 +82,24 @@
         let senderName = "未知好友";
         const session = await db.sessions.get(msg.sessionId);
         if (msg.senderType === 'user') {
-          senderName = session?.customUserName || "我";
-        } else {
-          senderName = session?.customCharName || "对方";
+          const user = session ? await db.archives.get(session.userId) : null;
+          senderName = session?.customUserName || user?.name || "我";
+        } else if (msg.senderType === 'char') {
+          if (session && session.isGroup === 1) {
+            if (Number(msg.senderId) === 99999) {
+              const groupObj = await db.groups.get(session.groupId);
+              const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+              senderName = botObj ? botObj.name : "群助手";
+            } else {
+              const charObj = await db.archives.get(Number(msg.senderId));
+              senderName = charObj ? (charObj.remark || charObj.name) : "群成员";
+            }
+          } else {
+            const char = session ? await db.archives.get(session.charId) : null;
+            senderName = session?.customCharName || char?.name || "对方";
+          }
+        } else if (msg.senderType === 'system') {
+          senderName = "系统通知";
         }
 
         let displayText = msg.content;
@@ -243,9 +258,24 @@
         let senderName = "未知好友";
         const session = await db.sessions.get(quotedMsg.sessionId);
         if (quotedMsg.senderType === 'user') {
-          senderName = session?.customUserName || "我";
-        } else {
-          senderName = session?.customCharName || "对方";
+          const user = session ? await db.archives.get(session.userId) : null;
+          senderName = session?.customUserName || user?.name || "我";
+        } else if (quotedMsg.senderType === 'char') {
+          if (session && session.isGroup === 1) {
+            if (Number(quotedMsg.senderId) === 99999) {
+              const groupObj = await db.groups.get(session.groupId);
+              const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+              senderName = botObj ? botObj.name : "群助手";
+            } else {
+              const charObj = await db.archives.get(Number(quotedMsg.senderId));
+              senderName = charObj ? (charObj.remark || charObj.name) : "群成员";
+            }
+          } else {
+            const char = session ? await db.archives.get(session.charId) : null;
+            senderName = session?.customCharName || char?.name || "对方";
+          }
+        } else if (quotedMsg.senderType === 'system') {
+          senderName = "系统通知";
         }
 
         let displayText = quotedMsg.content;

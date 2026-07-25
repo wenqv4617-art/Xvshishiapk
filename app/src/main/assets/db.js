@@ -180,3 +180,10 @@ db.version(20).stores({
 db.version(21).stores({
   mcp_servers: 'id++, name, type, url, enabled'
 });
+
+// ============================================
+// 🎯 新增 Version 22：支持全局思维链 (CoT) 预设存储
+// ============================================
+db.version(22).stores({
+  cot_presets: 'id++, name'
+});

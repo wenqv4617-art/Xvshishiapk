@@ -262,6 +262,256 @@ function extractFirstJsonObject(str) {
   return null;
 }
 
+// 真正意义上的 API 流式传输 (SSE Stream Reader) 驱动引擎 (支持思考过程自动包裹与单次请求安全 protection)
+async function fetchStreamOrJson(baseUrl, api, messagesToSend, signal, onStreamChunk) {
+  // TODO (待以后优化解决): 若 API 对象显式指定了 disableStream (如群聊场景)，则强行关闭流式传输
+  const isStreamEnabled = !api.disableStream && localStorage.getItem("settings-stream-enabled") === "true";
+  const cleanBaseUrl = baseUrl ? baseUrl.replace(/\/+$/, '') : '';
+  const endpoint = cleanBaseUrl.endsWith('/chat/completions') ? cleanBaseUrl : `${cleanBaseUrl}/chat/completions`;
+
+  // 1. 开启流式传输模式
+  if (isStreamEnabled) {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream, application/json, */*",
+        "Authorization": `Bearer ${api.key}`
+      },
+      body: JSON.stringify({
+        model: api.model,
+        messages: messagesToSend,
+        temperature: api.temperature,
+        stream: true
+      }),
+      signal: signal
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+    }
+
+    if (response.body) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let reasoningText = "";
+      let contentText = "";
+
+      try {
+        while (true) {
+          if (signal && signal.aborted) {
+            reader.cancel();
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (let line of lines) {
+            line = line.trim();
+            if (!line || line.startsWith(":")) continue;
+            if (line.startsWith("data: ")) {
+              const dataStr = line.slice(6).trim();
+              if (dataStr === "[DONE]") break;
+              try {
+                const parsed = JSON.parse(dataStr);
+                const deltaContent = parsed.choices?.[0]?.delta?.content || "";
+                const deltaReasoning = parsed.choices?.[0]?.delta?.reasoning_content || parsed.choices?.[0]?.delta?.thinking || "";
+
+                if (deltaReasoning) reasoningText += deltaReasoning;
+                if (deltaContent) contentText += deltaContent;
+
+                // 计算当前合成的完整文本
+                let fullText = contentText;
+                if (reasoningText) {
+                  fullText = `<think>\n${reasoningText.trim()}\n</think>\n` + contentText;
+                }
+
+                if (onStreamChunk) onStreamChunk(deltaContent || deltaReasoning, fullText);
+              } catch(e) {}
+            }
+          }
+        }
+      } catch(e) {
+        if (e.name === 'AbortError') throw e;
+        console.warn("流式读取终止:", e);
+      }
+
+      let finalFullText = contentText;
+      if (reasoningText && !contentText.includes("<think>")) {
+        finalFullText = `<think>\n${reasoningText.trim()}\n</think>\n` + contentText;
+      }
+      return finalFullText;
+    }
+  }
+
+  // 2. 普通非流式模式
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json, */*",
+      "Authorization": `Bearer ${api.key}`
+    },
+    body: JSON.stringify({
+      model: api.model,
+      messages: messagesToSend,
+      temperature: api.temperature,
+      stream: false
+    }),
+    signal: signal
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+  }
+
+  const result = await response.json();
+  if (!result.choices || result.choices.length === 0) {
+    throw new Error("模型服务返回数据异常，Choice 节点为空。");
+  }
+
+  const choice = result.choices[0];
+  let content = choice.message?.content || choice.text || "";
+  const reasoning = choice.message?.reasoning_content || choice.message?.thinking || "";
+
+  if (reasoning && !content.includes("<think>")) {
+    content = `<think>\n${reasoning.trim()}\n</think>\n` + content;
+  }
+  return content;
+}
+
+// 多媒体与特殊指令单步时序解析器 (防止多媒体卡片乱序置顶)
+async function processAndRenderSpecialItem(item, userName, activeSessionId) {
+  const tokenRaw = item.tokenRaw;
+  const contentRaw = item.contentRaw;
+
+  let token = "";
+  if (tokenRaw.includes("TRANSFER") || tokenRaw.includes("转账")) {
+    token = tokenRaw.includes("RECEIVE") || tokenRaw.includes("收") ? "RECEIVE_TRANSFER" : "TRANSFER";
+  } else if (tokenRaw.includes("RED") || tokenRaw.includes("红包")) {
+    token = tokenRaw.includes("OPEN") || tokenRaw.includes("拆") || tokenRaw.includes("领") ? "OPEN_RED_ENVELOPE" : "RED_ENVELOPE";
+  } else if (tokenRaw.includes("VOICE") || tokenRaw.includes("语音")) {
+    token = "VOICE";
+  } else if (tokenRaw.includes("IMAGE") || tokenRaw.includes("图片")) {
+    token = "IMAGE";
+  }
+
+  if (!token) return;
+
+  let amount = 0, duration = 5, remark = "", url = "", voiceText = "...", imageText = "";
+  let isJsonParsed = false;
+  const jsonMatch = contentRaw.match(/\{[\s\S]*?\}/);
+
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      amount = parseFloat(parsed.amount) || 0;
+      duration = parseInt(parsed.duration) || 5;
+      remark = parsed.remark || "";
+      url = parsed.url || "";
+      voiceText = parsed.text || parsed.voiceText || "...";
+      imageText = parsed.text || parsed.imageText || "";
+      isJsonParsed = true;
+    } catch(e) {}
+  }
+
+  if (!isJsonParsed) {
+    const numMatch = contentRaw.match(/[0-9]+(?:\.[0-9]+)?/);
+    if (numMatch) {
+      const parsedNum = parseFloat(numMatch[0]);
+      amount = parsedNum;
+      duration = parseInt(parsedNum) || 5;
+    }
+    let cleanRemark = contentRaw.replace(/[0-9]+(?:\.[0-9]+)?/g, "").replace(/[:：|｜(（)）元秒\s]/g, "").trim();
+    remark = cleanRemark;
+    voiceText = cleanRemark || "...";
+    imageText = cleanRemark;
+  }
+
+  try {
+    if (token === 'TRANSFER' && amount > 0) {
+      const walletData = { amount: amount, status: 'pending', targetName: userName };
+      const transMsg = { sessionId: activeSessionId, senderType: 'char', senderId: 0, content: JSON.stringify(walletData), contentType: 'transfer', timestamp: Date.now() };
+      transMsg.id = await db.messages.add(transMsg);
+      await appendMessageToDOM(transMsg);
+    } else if (token === 'RED_ENVELOPE' && amount > 0) {
+      const walletData = { amount: amount, status: 'pending', remark: remark || "恭喜发财" };
+      const redMsg = { sessionId: activeSessionId, senderType: 'char', senderId: 0, content: JSON.stringify(walletData), contentType: 'red_envelope', timestamp: Date.now() };
+      redMsg.id = await db.messages.add(redMsg);
+      await appendMessageToDOM(redMsg);
+    } else if (token === 'VOICE') {
+      const msgData = { duration: duration, text: voiceText };
+      const voiceMsg = { sessionId: activeSessionId, senderType: 'char', senderId: 0, content: JSON.stringify(msgData), contentType: 'voice', timestamp: Date.now() };
+      voiceMsg.id = await db.messages.add(voiceMsg);
+      await appendMessageToDOM(voiceMsg);
+    } else if (token === 'IMAGE') {
+      const msgData = { url: url, text: imageText };
+      const imageMsg = { sessionId: activeSessionId, senderType: 'char', senderId: 0, content: JSON.stringify(msgData), contentType: 'image', timestamp: Date.now() };
+      imageMsg.id = await db.messages.add(imageMsg);
+      await appendMessageToDOM(imageMsg);
+    }
+  } catch(e) {
+    console.error("处理单步多媒体消息失败:", e);
+  }
+}
+
+// 提取并剥离文本中的思维链 (支持动态正则及防掉格式多模态解析)
+function parseThoughtFromText(text) {
+  if (!text) return { thought: "", cleanText: "" };
+
+  if (window.cotSystem && typeof window.cotSystem.parseThoughtWithRegex === 'function') {
+    return window.cotSystem.parseThoughtWithRegex(text);
+  }
+  
+  const thinkRegex = /(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)([\s\S]*?)(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|$)/i;
+  const match = text.match(thinkRegex);
+  
+  if (match) {
+    const thought = match[1].trim();
+    const cleanText = text.replace(match[0], "").trim();
+    return { thought, cleanText };
+  }
+  return { thought: "", cleanText: text };
+}
+
+// 构建渲染可折叠思维链 (CoT) 卡片 HTML
+function buildCotThoughtCardHtml(cardId, thoughtText) {
+  return `
+    <div class="cot-thought-card" id="${cardId}">
+      <div class="cot-thought-card-header" onclick="window.toggleCotCardBody('${cardId}')">
+        <div class="cot-thought-card-title">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+          <span>深度思考过程 (已折叠)</span>
+        </div>
+        <svg class="mcp-tool-card-chevron" id="${cardId}-chevron" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+      </div>
+      <div class="cot-thought-card-body" id="${cardId}-body" style="display:none;">
+        ${escapeHtml(thoughtText)}
+      </div>
+    </div>
+  `;
+}
+
+window.toggleCotCardBody = function(cardId) {
+  const body = document.getElementById(`${cardId}-body`);
+  const chevron = document.getElementById(`${cardId}-chevron`);
+  if (body) {
+    const isHidden = body.style.display === "none";
+    body.style.display = isHidden ? "block" : "none";
+    if (chevron) {
+      if (isHidden) chevron.classList.add("expanded");
+      else chevron.classList.remove("expanded");
+    }
+  }
+};
+
 function openCustomEditModal(msgId, content, isOffline) {
   currentEditingMsgId = msgId;
   isEditingOfflineMsg = isOffline;
@@ -581,6 +831,49 @@ let isOfflineChatAppEventsBound = false;
     @keyframes popIn {
       from { transform: scale(0); }
       to { transform: scale(1); }
+    }
+
+    /* 折叠式思维链 (CoT) 思考卡片样式 (无 Emoji 矢量版) */
+    .cot-thought-card {
+      background: #f8fafc;
+      border: 1px dashed var(--border);
+      border-radius: 10px;
+      margin: 6px auto;
+      padding: 8px 12px;
+      font-size: 11.5px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 90%;
+      max-width: 320px;
+      box-sizing: border-box;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .cot-thought-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .cot-thought-card-title {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 700;
+      color: #64748b;
+    }
+    .cot-thought-card-body {
+      border-top: 1px dashed var(--border);
+      padding-top: 6px;
+      font-size: 11px;
+      color: #475569;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 200px;
+      overflow-y: auto;
     }
 
     /* 折叠式 MCP 工具调用卡片样式 (无 Emoji 矢量版) */
@@ -1389,6 +1682,11 @@ async function openWeChatDialog(sessionId) {
   }
 
   const sess = await db.sessions.get(sessionId);
+
+  // 核心同步：从数据库读取真实 cotToggle 状态，精确同步给 cotSystem
+  if (window.cotSystem && sess) {
+    window.cotSystem.currentSessionCotToggle = (sess.cotToggle === 1);
+  }
   
   // 群聊专属拦截路由
   if (sess && sess.isGroup === 1) {
@@ -1773,29 +2071,61 @@ async function renderDialogMessages() {
         }
         contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
       } else {
-        // 单聊原有扁平非分割渲染
-        const isOnlySticker = typeof m.content === 'string' && /^【表情包：[^】]+】$/.test(m.content.trim());
-        let displayContent = m.content;
-        if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-          displayContent = window.stickerSystem.renderStickerInMessageSync(m.content, mountedGroupIds);
-        }
+        // 单聊原有扁平非分割渲染 (支持思维链连同气泡一体化与防空气泡拦截)
+      const parsedCot = parseThoughtFromText(m.content);
+      if (parsedCot.thought) {
+        const thoughtDiv = document.createElement("div");
+        thoughtDiv.setAttribute("data-msg-id", m.id);
+        thoughtDiv.style.cssText = "width: 100%; display: flex; justify-content: center; align-items: center; position: relative; margin: 4px 0;";
         
-        if (isOnlySticker && displayContent.includes('<img')) {
-          contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative;">${displayContent}${emojiHtml}</div>`;
-        } else {
-          let quoteHtml = "";
-          if (window.quoteSystem) {
-            const parsed = await window.quoteSystem.parseQuote(m.content);
-            if (parsed) {
-              quoteHtml = parsed.quoteHtml;
-              displayContent = parsed.cleanText;
-              if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-                displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
-              }
-            }
+        thoughtDiv.ondblclick = (e) => {
+          e.preventDefault();
+          if (isMultiSelectMode) return;
+          selectedMsgId = m.id;
+          const btnRecall = document.getElementById("btn-menu-recall");
+          if (btnRecall) btnRecall.style.display = "none";
+          document.getElementById("bubble-context-menu").style.display = "flex";
+        };
+
+        thoughtDiv.innerHTML = `
+          <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'}; margin-right: 6px; align-self: center;">
+            <input type="checkbox" class="msg-checkbox" data-msg-id="${m.id}" onchange="updateSelectedCount()">
+          </div>
+          <div style="flex: 1; max-width: 90%; display: flex; justify-content: center;">
+            ${buildCotThoughtCardHtml("cot-msg-" + m.id, parsedCot.thought)}
+          </div>
+        `;
+        fragment.appendChild(thoughtDiv);
+      }
+
+      let displayContent = parsedCot.cleanText;
+      // 核心防御：若清理后正文为空，直接跳过不渲染空气泡
+      if (!displayContent) {
+        continue;
+      }
+
+      const isOnlySticker = typeof displayContent === 'string' && /^【表情包：[^】]+】$/.test(displayContent.trim());
+      let renderedSticker = displayContent;
+      if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+        renderedSticker = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
+      }
+
+      if (isOnlySticker && renderedSticker.includes('<img')) {
+        contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative;">${renderedSticker}${emojiHtml}</div>`;
+      } else {
+        let quoteHtml = "";
+        if (window.quoteSystem) {
+          const parsed = await window.quoteSystem.parseQuote(displayContent);
+          if (parsed) {
+            quoteHtml = parsed.quoteHtml;
+            displayContent = parsed.cleanText;
           }
-          contentHtml = `<div class="msg-text" style="position: relative;">${quoteHtml}${displayContent}${emojiHtml}</div>`;
         }
+        if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+          displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
+        }
+        contentHtml = `<div class="msg-text" style="position: relative;">${quoteHtml}${displayContent}${emojiHtml}</div>`;
+      }
       }
     }
 
@@ -1855,19 +2185,24 @@ async function renderDialogMessages() {
       continue;
     }
 
-    // 核心自愈：群聊中双方均使用包装器呈现（名字居上，己方靠右，Char靠左）
-    let bubbleBodyHtml = "";
-    if (sess.isGroup === 1) {
-      const alignStyle = m.senderType === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;';
-      bubbleBodyHtml = `
-        <div class="group-msg-wrapper" style="display: flex; flex-direction: column; ${alignStyle}">
-          ${showSenderNameHtml}
-          ${contentHtml}
-        </div>
-      `;
-    } else {
-      bubbleBodyHtml = contentHtml;
-    }
+    // 核心自愈：包裹 msg-content-col 垂直列容器，彻底解决 CoT 与气泡横向挤压排列的 BUG
+        let bubbleBodyHtml = "";
+        const alignStyle = m.senderType === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;';
+
+        if (sess.isGroup === 1) {
+          bubbleBodyHtml = `
+            <div class="group-msg-wrapper" style="display: flex; flex-direction: column; ${alignStyle}">
+              ${showSenderNameHtml}
+              ${contentHtml}
+            </div>
+          `;
+        } else {
+          bubbleBodyHtml = `
+            <div class="msg-content-col" style="display: flex; flex-direction: column; ${alignStyle} max-width: 80%; gap: 4px; flex: 1;">
+              ${contentHtml}
+            </div>
+          `;
+        }
 
     bubble.innerHTML = `
       <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'};">
@@ -2227,26 +2562,59 @@ async function appendMessageToDOM(msg) {
       }
       contentHtml = segmentsHtml || `<div class="msg-text" style="position: relative;">${escapeHtml(displayContent)}</div>`;
     } else {
-      // 单聊原有扁平非分割追加渲染
-      const isOnlySticker = typeof msg.content === 'string' && /^【表情包：[^】]+】$/.test(msg.content.trim());
-      let displayContent = msg.content;
+      // 单聊原有扁平非分割追加渲染 (支持思维链连同气泡一体化与防空气泡拦截)
+      const parsedCot = parseThoughtFromText(msg.content);
+      if (parsedCot.thought) {
+        const thoughtDiv = document.createElement("div");
+        thoughtDiv.setAttribute("data-msg-id", msg.id);
+        thoughtDiv.style.cssText = "width: 100%; display: flex; justify-content: center; align-items: center; position: relative; margin: 4px 0;";
+
+        thoughtDiv.ondblclick = (e) => {
+          e.preventDefault();
+          if (isMultiSelectMode) return;
+          selectedMsgId = msg.id;
+          const btnRecall = document.getElementById("btn-menu-recall");
+          if (btnRecall) btnRecall.style.display = "none";
+          document.getElementById("bubble-context-menu").style.display = "flex";
+        };
+
+        thoughtDiv.innerHTML = `
+          <div class="msg-select-checkbox" style="display: ${isMultiSelectMode ? 'flex' : 'none'}; margin-right: 6px; align-self: center;">
+            <input type="checkbox" class="msg-checkbox" data-msg-id="${msg.id}" onchange="updateSelectedCount()">
+          </div>
+          <div style="flex: 1; max-width: 90%; display: flex; justify-content: center;">
+            ${buildCotThoughtCardHtml("cot-append-" + (msg.id || Date.now()), parsedCot.thought)}
+          </div>
+        `;
+        container.appendChild(thoughtDiv);
+      }
+
+      let displayContent = parsedCot.cleanText;
+      // 核心防御：若清理后正文为空，直接返回不渲染空气泡
+      if (!displayContent) {
+        container.scrollTop = container.scrollHeight;
+        return;
+      }
+
+      const isOnlySticker = typeof displayContent === 'string' && /^【表情包：[^】]+】$/.test(displayContent.trim());
+      let renderedSticker = displayContent;
       if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-        displayContent = window.stickerSystem.renderStickerInMessageSync(msg.content, mountedGroupIds);
+        renderedSticker = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
       }
       
-      if (isOnlySticker && displayContent.includes('<img')) {
-        contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${displayContent}</div>`;
+      if (isOnlySticker && renderedSticker.includes('<img')) {
+        contentHtml = `<div class="msg-sticker-alone-wrapper" style="position: relative; margin-top: 4px; display: block;">${renderedSticker}</div>`;
       } else {
         let quoteHtml = "";
         if (window.quoteSystem) {
-          const parsed = await window.quoteSystem.parseQuote(msg.content);
+          const parsed = await window.quoteSystem.parseQuote(displayContent);
           if (parsed) {
             quoteHtml = parsed.quoteHtml;
             displayContent = parsed.cleanText;
-            if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
-              displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
-            }
           }
+        }
+        if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
+          displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
         }
         contentHtml = `<div class="msg-text" style="position: relative; margin-top: 4px; display: block;">${quoteHtml}${displayContent}</div>`;
       }
@@ -2310,10 +2678,11 @@ async function appendMessageToDOM(msg) {
         <div class="group-sender-name">${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
       ` : "";
 
-      // 核心自愈：群聊中双方均使用包装器呈现（名字居上，己方靠右，Char靠左）
+      // 核心自愈：包裹 msg-content-col 垂直列容器，彻底解决 CoT 与气泡横向挤压排列的 BUG
       let bubbleBodyHtml = "";
+      const alignStyle = msg.senderType === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;';
+
       if (sess && sess.isGroup === 1) {
-        const alignStyle = msg.senderType === 'user' ? 'align-items: flex-end;' : 'align-items: flex-start;';
         bubbleBodyHtml = `
           <div class="group-msg-wrapper" style="display: flex; flex-direction: column; ${alignStyle}">
             ${showSenderNameHtml}
@@ -2321,7 +2690,11 @@ async function appendMessageToDOM(msg) {
           </div>
         `;
       } else {
-        bubbleBodyHtml = finalContentHtml;
+        bubbleBodyHtml = `
+          <div class="msg-content-col" style="display: flex; flex-direction: column; ${alignStyle} max-width: 80%; gap: 4px; flex: 1;">
+            ${finalContentHtml}
+          </div>
+        `;
       }
 
   bubble.innerHTML = `
@@ -2893,10 +3266,40 @@ function bindChatAppEvents() {
 
         const sessObj = await db.sessions.get(activeSessionId);
 
-        // 异步映射历史记录，确保在群聊时，AI 角色的历史对白自带 [SENDER: 名字] 标头，进行 1:1 小样本（Few-shot）格式锚定
+        // 异步映射历史记录，智能计算设定/真实时间流逝，插入带精准场景虚拟时间的系统标块
+        const simNow = getSimulatedNow(sessObj);
+        let prevTime = null;
         for (let h of history) {
+          const simDate = getMessageDisplayDate(h, sessObj);
+          // 智能计算时间间隔插入系统标块 (超过15分钟自动提示时间流逝并附带当时虚拟场景时刻)
+          if (prevTime !== null && h.timestamp) {
+            const diffMs = h.timestamp - prevTime;
+            const diffMin = Math.floor(diffMs / 60000);
+            if (diffMin >= 15) {
+              let timeGapText = "";
+              const formattedSimTime = formatWeChatTime(simDate, simNow);
+              if (diffMin < 60) {
+                timeGapText = `[系统提示：距离上一条对话过去了 ${diffMin} 分钟，当前场景时间：${formattedSimTime}]`;
+              } else if (diffMin < 1440) {
+                const diffHours = (diffMin / 60).toFixed(1);
+                timeGapText = `[系统提示：距离上一条对话过去了 ${diffHours} 小时，当前场景时间：${formattedSimTime}]`;
+              } else {
+                const diffDays = Math.floor(diffMin / 1440);
+                timeGapText = `[系统提示：距离上一条对话过去了 ${diffDays} 天，当前场景时间：${formattedSimTime}]`;
+              }
+              messagesToSend.push({ role: "system", content: timeGapText });
+            }
+          }
+          prevTime = h.timestamp || prevTime;
+
           const prefix = `[MSG_ID: ${h.id}] `;
           let displayContent = h.content;
+
+          // 从历史消息中物理剥离旧思维链 <think>...</think>
+          if (typeof displayContent === 'string') {
+            displayContent = displayContent.replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "").trim();
+          }
+
           if (h.isRecalled === 1) {
             displayContent = "[已撤回该消息]";
           } else if (h.contentType === 'image') {
@@ -2918,34 +3321,65 @@ function bindChatAppEvents() {
             displayContent = `[SENDER: ${senderName}] ${displayContent}`;
           }
 
-          messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
+          if (displayContent) {
+            messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
+          }
         }
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: messagesToSend,
-            temperature: api.temperature
-          }),
-          signal: onlineAbortController.signal
-        });
+        // TODO (待以后优化解决): 群聊模式下由于多角色 (Multi-Char) 连续发言与流式/思维链容易卡死，
+        // 暂时在群聊场景关闭流式传输与思维链预显，采用单次响应。
+        const isGroupMode = sessObj && sessObj.isGroup === 1;
+        const activeApi = isGroupMode ? { ...api, disableStream: true } : api;
 
-        if (!response.ok) {
-          const errText = await response.text();
-          throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+        // 挂载流式渲染交互气泡 (单聊模式下正常预显)
+        let streamingBubble = null;
+        const handleStreamChunk = isGroupMode ? null : (delta, currentFullText) => {
+          const container = document.getElementById("dialog-messages-container");
+          if (!container) return;
+
+          if (!streamingBubble) {
+            streamingBubble = document.createElement("div");
+            streamingBubble.className = "msg-bubble other streaming";
+            streamingBubble.style.cssText = "position: relative; display: flex; align-items: flex-start;";
+            container.appendChild(streamingBubble);
+          }
+
+          const parsedCot = parseThoughtFromText(currentFullText);
+          let streamHtml = "";
+          
+          if (parsedCot.thought) {
+            streamHtml += `<div class="cot-thought-card" style="margin-bottom:6px; width:100%;"><div class="cot-thought-card-header"><div class="cot-thought-card-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg><span>深度思考中...</span></div></div><div class="cot-thought-card-body" style="display:block;">${escapeHtml(parsedCot.thought)}</div></div>`;
+          }
+          if (parsedCot.cleanText) {
+            streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(parsedCot.cleanText)}</div>`;
+          } else if (!parsedCot.thought) {
+            streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(currentFullText)}</div>`;
+          }
+
+          streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
+          container.scrollTop = container.scrollHeight;
+        };
+
+        let rawReply = await fetchStreamOrJson(activeApi.url, activeApi, messagesToSend, onlineAbortController.signal, handleStreamChunk);
+
+        if (streamingBubble) {
+          streamingBubble.remove();
+          streamingBubble = null;
         }
-
-        const result = await response.json();
-        if (!result.choices || result.choices.length === 0) {
-          throw new Error("模型服务返回数据异常，Choice 节点为空。");
-        }
-
-        let rawReply = result.choices[0].message.content;
 
         // 核心消除：自动擦除大模型在对白中误编或幻觉出来的 [MSG_ID: xxx] 标签
         rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+
+        // 核心：前置整块提取 CoT 思维链 (仅在当前会话开启思维链且非群聊时才保留保存，关闭时直接擦除)
+        let sessionCotHeader = "";
+        const masterCot = parseThoughtFromText(rawReply);
+        if (masterCot.thought) {
+          const isCotEnabled = sessObj && sessObj.cotToggle === 1 && !isGroupMode;
+          if (isCotEnabled) {
+            sessionCotHeader = `<think>\n${masterCot.thought}\n</think>\n`;
+          }
+          rawReply = masterCot.cleanText; // 清洗后，rawReply 只保留对白与指令，绝对不会包含被切断的 <think>
+        }
 
         // 核心自愈：检验首部是否包含 [QUOTE:消息ID]，若有，强制将引用原句清除并与后续真实回复并入单行，杜绝被回车切分为多条空卡片消息 [1.1]
         const firstQuoteMatch = rawReply.match(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]/i);
@@ -3228,169 +3662,6 @@ function bindChatAppEvents() {
           }
         }
 
-        // === 【微信交易及多媒体引擎核心逻辑：智能防掉格式托底解析器】：支持标准 JSON 与任何非标准全/半角括号格式的混合解析 ===
-        // 托底正则：同时捕获 [TOKEN] / 【TOKEN】格式
-        const transactionRegex = /(\[|【)(TRANSFER|RED_ENVELOPE|RECEIVE_TRANSFER|OPEN_RED_ENVELOPE|转账|红包|收钱|收转账|拆红包|领红包|OPEN_RED_ENVELOPE|VOICE|语音|IMAGE|图片)(\]|】)\s*([\s\S]*?)(?=(?:\[|【|$))/gi;
-        let match;
-        
-        const sessionObj = await db.sessions.get(activeSessionId);
-        const userName = sessionObj?.customUserName || "我";
-
-        while ((match = transactionRegex.exec(rawReply)) !== null) {
-          const tokenRaw = match[2].toUpperCase();
-          const contentRaw = match[4].trim();
-          
-          let token = "";
-          if (tokenRaw.includes("TRANSFER") || tokenRaw.includes("转账")) {
-            if (tokenRaw.includes("RECEIVE") || tokenRaw.includes("收")) {
-              token = "RECEIVE_TRANSFER";
-            } else {
-              token = "TRANSFER";
-            }
-          } else if (tokenRaw.includes("RED") || tokenRaw.includes("红包")) {
-            if (tokenRaw.includes("OPEN") || tokenRaw.includes("拆") || tokenRaw.includes("领")) {
-              token = "OPEN_RED_ENVELOPE";
-            } else {
-              token = "RED_ENVELOPE";
-            }
-          } else if (tokenRaw.includes("VOICE") || tokenRaw.includes("语音")) {
-            token = "VOICE";
-          } else if (tokenRaw.includes("IMAGE") || tokenRaw.includes("图片")) {
-            token = "IMAGE";
-          }
-
-          if (!token) continue;
-
-          let amount = 0;
-          let duration = 5;
-          let remark = "";
-          let url = ""; // 直接初始化为空，不再需要虚假 URL
-          let voiceText = "...";
-          let imageText = "";
-
-          // 1. 尝试执行标准的 JSON 解析
-          let isJsonParsed = false;
-          const jsonMatch = contentRaw.match(/\{[\s\S]*?\}/);
-          if (jsonMatch) {
-            try {
-              const parsed = JSON.parse(jsonMatch[0]);
-              amount = parseFloat(parsed.amount) || 0;
-              duration = parseInt(parsed.duration) || 5;
-              remark = parsed.remark || "";
-              url = parsed.url || url;
-              voiceText = parsed.text || parsed.voiceText || "...";
-              imageText = parsed.text || parsed.imageText || "";
-              isJsonParsed = true;
-            } catch(e) {
-              console.warn("托底解析：检测到 JSON 结构但解析失败，降级为文本正则提取", e);
-            }
-          }
-
-          // 2. 降级文本数值与备注正则提取：支持 "【转账：500.00】"、"【语音：5秒 | 对白】" 等极端格式
-          if (!isJsonParsed) {
-            const numMatch = contentRaw.match(/[0-9]+(?:\.[0-9]+)?/);
-            if (numMatch) {
-              const parsedNum = parseFloat(numMatch[0]);
-              amount = parsedNum;
-              duration = parseInt(parsedNum) || 5;
-            }
-            
-            let cleanRemark = contentRaw
-              .replace(/[0-9]+(?:\.[0-9]+)?/g, "")
-              .replace(/[:：|｜(（)）元秒\s]/g, "")
-              .trim();
-            remark = cleanRemark;
-            voiceText = cleanRemark || "...";
-            imageText = cleanRemark;
-          }
-
-          try {
-            if (token === 'TRANSFER' && amount > 0) {
-              const walletData = { amount: amount, status: 'pending', targetName: userName };
-              const transMsg = {
-                sessionId: activeSessionId,
-                senderType: 'char',
-                senderId: 0,
-                content: JSON.stringify(walletData),
-                contentType: 'transfer',
-                timestamp: Date.now()
-              };
-              const newId = await db.messages.add(transMsg);
-              transMsg.id = newId;
-              // 核心修复：即时追加渲染至屏幕
-              await appendMessageToDOM(transMsg);
-            } 
-            else if (token === 'RED_ENVELOPE' && amount > 0) {
-              const walletData = { amount: amount, status: 'pending', remark: remark || "恭喜发财" };
-              const redMsg = {
-                sessionId: activeSessionId,
-                senderType: 'char',
-                senderId: 0,
-                content: JSON.stringify(walletData),
-                contentType: 'red_envelope',
-                timestamp: Date.now()
-              };
-              const newId = await db.messages.add(redMsg);
-              redMsg.id = newId;
-              await appendMessageToDOM(redMsg);
-            } 
-            else if (token === 'RECEIVE_TRANSFER') {
-              const msgs = await db.messages.where('sessionId').equals(activeSessionId).toArray();
-              const pendingTransfer = msgs.find(m => m.senderType === 'user' && m.contentType === 'transfer' && JSON.parse(m.content).status === 'pending');
-              if (pendingTransfer) {
-                const transData = JSON.parse(pendingTransfer.content);
-                transData.status = 'received';
-                await db.messages.update(pendingTransfer.id, { content: JSON.stringify(transData) });
-                // 核心修复：即时重刷页面以更新卡片渲染状态
-                await renderDialogMessages();
-              }
-            } 
-            else if (token === 'OPEN_RED_ENVELOPE') {
-              const msgs = await db.messages.where('sessionId').equals(activeSessionId).toArray();
-              const pendingEnvelope = msgs.find(m => m.senderType === 'user' && m.contentType === 'red_envelope' && JSON.parse(m.content).status === 'pending');
-              if (pendingEnvelope) {
-                const envData = JSON.parse(pendingEnvelope.content);
-                envData.status = 'opened';
-                await db.messages.update(pendingEnvelope.id, { content: JSON.stringify(envData) });
-                await renderDialogMessages();
-              }
-            }
-            else if (token === 'VOICE') {
-              const msgData = { duration: duration, text: voiceText };
-              const voiceMsg = {
-                sessionId: activeSessionId,
-                senderType: 'char',
-                senderId: 0,
-                content: JSON.stringify(msgData),
-                contentType: 'voice',
-                timestamp: Date.now()
-              };
-              const newId = await db.messages.add(voiceMsg);
-              voiceMsg.id = newId;
-              await appendMessageToDOM(voiceMsg);
-            }
-            else if (token === 'IMAGE') {
-              const msgData = { url: url, text: imageText };
-              const imageMsg = {
-                sessionId: activeSessionId,
-                senderType: 'char',
-                senderId: 0,
-                content: JSON.stringify(msgData),
-                contentType: 'image',
-                timestamp: Date.now()
-              };
-              const newId = await db.messages.add(imageMsg);
-              imageMsg.id = newId;
-              await appendMessageToDOM(imageMsg);
-            }
-          } catch(e) {
-            console.error("微信交易及多媒体引擎：托底数据库操作失败:", e);
-          }
-        }
-
-        // 强力擦除所有解析过的指令文本以确保对白干净呈现
-        rawReply = rawReply.replace(transactionRegex, '').trim();
-
         // === 【MCP 连贯 Agent 循环与折叠卡片渲染引擎（支持嵌套 JSON 与裸 JSON 智能自愈）】 ===
         const isAgentLoopEnabled = localStorage.getItem("settings-mcp-agent-loop-enabled") !== "false";
         let maxAgentLoops = 5; // 安全深度限制
@@ -3398,7 +3669,6 @@ function bindChatAppEvents() {
         while (maxAgentLoops > 0) {
           const toolCallInfo = parseToolCallFromReply(rawReply);
           if (!toolCallInfo || !window.mcpClientSystem) {
-            // 没有进一步工具调用要求，跳出循环进入正常回复展示
             break;
           }
 
@@ -3406,25 +3676,28 @@ function bindChatAppEvents() {
             const fullMatchStr = toolCallInfo.fullMatchStr;
             const toolIndex = toolCallInfo.index;
 
-            // 1. 提取工具调用之前的“前半句台词”（如：“稍等哦，我帮你看一下……”）
-            const prefixText = rawReply.substring(0, toolIndex).trim();
+            // 提取工具调用之前的“前半句台词”
+            let prefixText = rawReply.substring(0, toolIndex).trim();
+
+            // 若思维链尚待绑定，将完整的 <think> 标签重新附着在第一句前置台词头部
+            if (sessionCotHeader) {
+              prefixText = sessionCotHeader + (prefixText ? ("\n" + prefixText) : "");
+              sessionCotHeader = ""; // 标记为已消耗，防止后续重复绑卡
+            }
+
             if (prefixText) {
-              // 关键：前半句台词即时落库存盘并上屏，展示自然流畅的时序对白！
               await saveAndRenderMessage('char', prefixText);
             }
 
-            // 提取 JSON 参数
             const toolCallPayload = toolCallInfo.payload;
             const serverName = toolCallPayload.server;
             const toolName = toolCallPayload.tool;
             const toolArgs = toolCallPayload.arguments || {};
 
-            // 切除前半句和已匹配的工具指令，留存后半段文本
             rawReply = rawReply.substring(toolIndex + fullMatchStr.length).trim();
 
             showToast(`正在调用 MCP 工具: [${serverName}] -> ${toolName}...`);
 
-            // 2. 发起物理工具调用 (JSON-RPC 2.0)
             let executionResult = null;
             let isSuccess = true;
             try {
@@ -3434,7 +3707,6 @@ function bindChatAppEvents() {
               executionResult = { error: execErr.message };
             }
 
-            // 3. 将工具调用记录作为 contentType === 'mcp_tool' 写入数据库并即时时序渲染上屏 (100% 永久保留且展开折叠)
             const toolCardData = {
               server: serverName,
               tool: toolName,
@@ -3453,7 +3725,6 @@ function bindChatAppEvents() {
             toolMsg.id = await db.messages.add(toolMsg);
             await appendMessageToDOM(toolMsg);
 
-            // 4. 将前半句发言、本次工具调用及反馈完整并入上下文，供 AI 决策后续对白
             const assistantRecord = prefixText ? `${prefixText}\n[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]` : `[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]`;
             messagesToSend.push({ role: "assistant", content: assistantRecord });
             messagesToSend.push({
@@ -3461,37 +3732,18 @@ function bindChatAppEvents() {
               content: `【MCP 工具执行反馈通知】\n工具 [${serverName}.${toolName}] 返回了以下执行结果：\n${JSON.stringify(executionResult)}\n\n请结合上述工具执行结果，继续顺着你刚才的话（如有）以自然角色的口吻接下去说。如果你认为还需要调用其他工具，可以继续嵌入 [CALL_TOOL: ...] 指令。`
             });
 
-            // 若关闭了多轮连贯循环，仅执行一次后便跳出
-            if (!isAgentLoopEnabled) {
-              break;
-            }
-
+            if (!isAgentLoopEnabled) break;
             maxAgentLoops--;
 
-            // 5. 自动再次向 API 发起请求，驱动 AI 连贯推理或接话
-            const followUpResp = await fetch(`${api.url}/chat/completions`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-              body: JSON.stringify({
-                model: api.model,
-                messages: messagesToSend,
-                temperature: api.temperature,
-                stream: false
-              }),
-              signal: onlineAbortController.signal
-            });
+            rawReply = await fetchStreamOrJson(api.url, api, messagesToSend, onlineAbortController.signal, handleStreamChunk);
 
-            if (!followUpResp.ok) {
-              const errText = await followUpResp.text();
-              throw new Error(`HTTP ${followUpResp.status}: ${errText}`);
+            if (streamingBubble) {
+              streamingBubble.remove();
+              streamingBubble = null;
             }
 
-            const followUpResult = await followUpResp.json();
-            if (followUpResult.choices && followUpResult.choices.length > 0) {
-              rawReply = followUpResult.choices[0].message.content.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
-            } else {
-              break;
-            }
+            rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+            if (!rawReply) break;
 
           } catch (e) {
             console.error("MCP 工具 Agent 循环异常:", e);
@@ -3515,62 +3767,109 @@ function bindChatAppEvents() {
           }
         }
 
-        // === 【消息层叠时序引擎 2.0】：多句拟真时间比例上屏，不再粗暴砍半 ===
-        let parts = textReply.split(/\[SPLIT\]|【SPLIT】/i);
-        if (parts.length < 2) {
-          parts = textReply.split(/[\n\r]+/);
+        // === 【全模态多语境时序渲染中枢 3.0】：绑定未消耗的 CoT + 顺序分发文本与多媒体指令 ===
+        if (sessionCotHeader) {
+          textReply = sessionCotHeader + (textReply ? ("\n" + textReply) : "");
+          sessionCotHeader = "";
         }
-        parts = parts.map(p => p.trim()).filter(p => p.length > 0);
 
-        // 托底合并：如果某子句仅仅是一个单独的引用标记 [QUOTE:xx]，则自动将其合并至下一句对白中，防止拆分上屏产生空卡片
-        let mergedParts = [];
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          const isOnlyQuote = /^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]$/i.test(part);
-          if (isOnlyQuote && i + 1 < parts.length) {
-            parts[i + 1] = part + " " + parts[i + 1];
-          } else {
-            mergedParts.push(part);
+        const parsedCotMaster = parseThoughtFromText(textReply);
+        let preservedThoughtHeader = "";
+        let cleanReplyText = textReply;
+        if (parsedCotMaster.thought) {
+          preservedThoughtHeader = `<think>\n${parsedCotMaster.thought}\n</think>\n`;
+          cleanReplyText = parsedCotMaster.cleanText;
+        }
+
+        // 1. 顺序解析出文本与多媒体卡片序列 (保持 AI 吐字的原生前后顺序，杜绝多媒体卡片置顶置乱)
+        const transactionRegex = /(\[|【)(TRANSFER|RED_ENVELOPE|RECEIVE_TRANSFER|OPEN_RED_ENVELOPE|转账|红包|收钱|收转账|拆红包|领红包|OPEN_RED_ENVELOPE|VOICE|语音|IMAGE|图片)(\]|】)\s*([\s\S]*?)(?=(?:\[|【|$))/gi;
+        
+        let responseItems = [];
+        let lastIndex = 0;
+        let tMatch;
+
+        while ((tMatch = transactionRegex.exec(cleanReplyText)) !== null) {
+          const matchIndex = tMatch.index;
+          if (matchIndex > lastIndex) {
+            const textSegment = cleanReplyText.substring(lastIndex, matchIndex).trim();
+            if (textSegment) {
+              let splitParts = textSegment.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+              splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
+            }
+          }
+
+          responseItems.push({
+            kind: 'special',
+            tokenRaw: tMatch[2].toUpperCase(),
+            contentRaw: tMatch[4].trim(),
+            fullMatch: tMatch[0]
+          });
+
+          lastIndex = transactionRegex.lastIndex;
+        }
+
+        if (lastIndex < cleanReplyText.length) {
+          const remainingText = cleanReplyText.substring(lastIndex).trim();
+          if (remainingText) {
+            let splitParts = remainingText.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+            splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
           }
         }
-        parts = mergedParts;
-        
-        if (parts.length < 2) {
-          // 利用正向预查断言，自动在句号、感叹号、问号后进行智能切分
-          parts = textReply.split(/(?<=[。！\？！!\?])\s*/);
-          parts = parts.map(p => p.trim()).filter(p => p.length > 0);
+
+        if (responseItems.length === 0 && cleanReplyText.trim()) {
+          let splitParts = cleanReplyText.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+          splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
         }
 
-        // 递归上屏处理队列，模仿真人输入时间过渡
-        let currentPartIndex = 0;
-        async function renderNextPart() {
-          if (currentPartIndex < parts.length) {
-            await saveAndRenderMessage('char', parts[currentPartIndex]);
-            currentPartIndex++;
-            if (currentPartIndex < parts.length) {
-              // 自动按照上一句对白字数的多少计算打字延迟量 (每字 60ms，最少 1000ms，最长 3000ms)
-              const previousPart = parts[currentPartIndex - 1];
-              const charCount = (previousPart && typeof previousPart === 'string') ? previousPart.length : 5;
-              const delay = Math.max(1000, Math.min(3000, charCount * 60));
-              setTimeout(renderNextPart, delay);
+        // 2. 将思维链 <think> 标签附着回首条文本消息，确保与气泡同属同一条消息记录（关掉思维链时完美恢复原状且防空气泡）
+        if (preservedThoughtHeader && responseItems.length > 0) {
+          if (responseItems[0].kind === 'text') {
+            responseItems[0].content = preservedThoughtHeader + responseItems[0].content;
+          } else {
+            responseItems.unshift({ kind: 'text', content: preservedThoughtHeader });
+          }
+        }
+
+        // 3. 顺序时序队列上屏
+        const sessionObj = await db.sessions.get(activeSessionId);
+        const userName = sessionObj?.customUserName || "我";
+
+        let currentItemIndex = 0;
+        async function processNextResponseItem() {
+          if (currentItemIndex < responseItems.length) {
+            const item = responseItems[currentItemIndex];
+            currentItemIndex++;
+
+            if (item.kind === 'text') {
+              await saveAndRenderMessage('char', item.content);
+            } else if (item.kind === 'special') {
+              await processAndRenderSpecialItem(item, userName, activeSessionId);
+            }
+
+            if (currentItemIndex < responseItems.length) {
+              const delay = 1000;
+              setTimeout(processNextResponseItem, delay);
             } else {
               header.classList.remove("header-typing");
               header.innerText = originalTitle;
-              
-              // 打字输出全部安全结束后，调用静默自动总结检测钩子
               if (typeof checkAndTriggerAutoSummary !== 'undefined') {
                 checkAndTriggerAutoSummary(activeSessionId);
               }
             }
+          } else {
+            header.classList.remove("header-typing");
+            header.innerText = originalTitle;
+            if (typeof checkAndTriggerAutoSummary !== 'undefined') {
+              checkAndTriggerAutoSummary(activeSessionId);
+            }
           }
         }
 
-        if (parts.length > 0) {
-          await renderNextPart();
+        if (responseItems.length > 0) {
+          await processNextResponseItem();
         } else {
           header.classList.remove("header-typing");
           header.innerText = originalTitle;
-
           if (typeof checkAndTriggerAutoSummary !== 'undefined') {
             checkAndTriggerAutoSummary(activeSessionId);
           }
@@ -4015,6 +4314,8 @@ function triggerTheaterMode() {
   renderTheaterList();
 }
 
+let editingTheaterId = null;
+
 async function renderTheaterList() {
   const container = document.getElementById("theater-list-container");
   if (!container) return;
@@ -4029,17 +4330,17 @@ async function renderTheaterList() {
   theaters.forEach(th => {
     const card = document.createElement("div");
     card.className = "archive-card";
-    card.style.style = "margin-bottom: 10px;";
+    card.style.cssText = "margin-bottom: 10px;";
     card.innerHTML = `
       <div class="card-info" onclick="enterTheater(${th.id})" style="cursor:pointer; flex: 1;">
-        <div class="card-name">${th.name}</div>
-        <div class="card-desc">每轮字数: ${th.minWordCount}-${th.maxWordCount} | 视角 (Char/User): ${th.charPOV || '第三人称'}/${th.userPOV || '第二人称'}</div>
+        <div class="card-name">${escapeHtml(th.name)}</div>
+        <div class="card-desc">每轮字数: ${th.minWordCount}-${th.maxWordCount} | 视角: ${th.charPOV || '第三人称'}/${th.userPOV || '第二人称'}</div>
       </div>
       <div class="card-actions">
-        <button class="btn-icon" onclick="editArchiveItem(${th.id})">
+        <button class="btn-icon" onclick="openEditTheaterForm(${th.id})" title="编辑剧场">
           <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
         </button>
-        <button class="btn-icon btn-delete" onclick="deleteTheater(${th.id})">
+        <button class="btn-icon btn-delete" onclick="deleteTheater(${th.id})" title="删除剧场">
           <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
         </button>
       </div>
@@ -4049,11 +4350,35 @@ async function renderTheaterList() {
 }
 
 function openNewTheaterForm() {
+  editingTheaterId = null;
+  document.getElementById("theater-name").value = "";
+  document.getElementById("theater-scenario").value = "";
+  document.getElementById("theater-min-word").value = 50;
+  document.getElementById("theater-max-word").value = 300;
+  document.getElementById("theater-carry-memory").checked = true;
+  document.getElementById("theater-char-pov").value = "第三人称";
+  document.getElementById("theater-user-pov").value = "第二人称";
+  document.getElementById("new-theater-overlay").classList.add("active");
+}
+
+async function openEditTheaterForm(theaterId) {
+  editingTheaterId = theaterId;
+  const th = await db.theaters.get(Number(theaterId));
+  if (!th) return;
+
+  document.getElementById("theater-name").value = th.name || "";
+  document.getElementById("theater-scenario").value = th.scenario || "";
+  document.getElementById("theater-min-word").value = th.minWordCount || 50;
+  document.getElementById("theater-max-word").value = th.maxWordCount || 300;
+  document.getElementById("theater-carry-memory").checked = !!th.carryMemory;
+  document.getElementById("theater-char-pov").value = th.charPOV || "第三人称";
+  document.getElementById("theater-user-pov").value = th.userPOV || "第二人称";
   document.getElementById("new-theater-overlay").classList.add("active");
 }
 
 function closeNewTheaterForm() {
   document.getElementById("new-theater-overlay").classList.remove("active");
+  editingTheaterId = null;
 }
 
 async function saveNewTheater() {
@@ -4066,25 +4391,40 @@ async function saveNewTheater() {
   const userPOV = document.getElementById("theater-user-pov").value;
 
   if (!name || !scenario) {
-    alert("请完整填写剧场名称与情景设定！");
+    showToast("请完整填写剧场名称与情景设定！");
     return;
   }
 
-  const theaterId = await db.theaters.add({
-    sessionId: activeSessionId,
-    name,
-    scenario,
-    minWordCount: minWord,
-    maxWordCount: maxWord,
-    carryMemory: carryMemory ? 1 : 0,
-    charPOV,
-    userPOV,
-    createdAt: Date.now()
-  });
+  if (editingTheaterId) {
+    await db.theaters.update(Number(editingTheaterId), {
+      name,
+      scenario,
+      minWordCount: minWord,
+      maxWordCount: maxWord,
+      carryMemory: carryMemory ? 1 : 0,
+      charPOV,
+      userPOV
+    });
+    showToast("剧场配置更新成功！");
+    closeNewTheaterForm();
+    renderTheaterList();
+  } else {
+    const theaterId = await db.theaters.add({
+      sessionId: activeSessionId,
+      name,
+      scenario,
+      minWordCount: minWord,
+      maxWordCount: maxWord,
+      carryMemory: carryMemory ? 1 : 0,
+      charPOV,
+      userPOV,
+      createdAt: Date.now()
+    });
 
-  closeNewTheaterForm();
-  closeTheaterList();
-  enterTheater(theaterId);
+    closeNewTheaterForm();
+    closeTheaterList();
+    enterTheater(theaterId);
+  }
 }
 
 async function deleteTheater(id) {
@@ -4150,7 +4490,20 @@ function exitOfflineChat() {
   document.getElementById("win-offline-chat").classList.remove("active");
 }
 
-// 渲染线下独立白描段落卡片
+// 线下折叠思维链交互开关 (控制卡片延伸与小三角旋转)
+window.toggleOfflineCotBody = function(cardId) {
+  const body = document.getElementById(`${cardId}-body`);
+  const chevron = document.getElementById(`${cardId}-chevron`);
+  if (body) {
+    const isHidden = body.style.display === "none";
+    body.style.display = isHidden ? "block" : "none";
+    if (chevron) {
+      chevron.style.transform = isHidden ? "rotate(180deg)" : "rotate(0deg)";
+    }
+  }
+};
+
+// 渲染线下独立白描段落卡片 (支持卡片内嵌式思维链 CoT 动态折叠)
 async function renderOfflineMessages() {
   const container = document.getElementById("offline-messages-flow");
   if (!container) return;
@@ -4175,7 +4528,9 @@ async function renderOfflineMessages() {
   const userName = sess.customUserName || user?.name || "我";
 
   const fragment = document.createDocumentFragment();
-  msgs.forEach(m => {
+  for (const m of msgs) {
+    const parsedCot = parseThoughtFromText(m.content, activeSessionId);
+
     const card = document.createElement("div");
     card.className = `offline-card ${m.senderType === 'user' ? 'user' : 'char'}`;
     card.setAttribute("data-msg-id", m.id);
@@ -4190,6 +4545,28 @@ async function renderOfflineMessages() {
     const senderLabel = m.senderType === 'user' ? userName : charName;
     const timeStr = new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    let cotHtml = "";
+    if (parsedCot.thought) {
+      const cardId = "cot-off-" + m.id;
+      cotHtml = `
+        <div class="offline-cot-toggle" onclick="window.toggleOfflineCotBody('${cardId}')" style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:rgba(0,0,0,0.03); border-radius:6px; font-size:11px; font-weight:700; color:#64748b; cursor:pointer; user-select:none; margin: 4px 0 8px 0;">
+          <div style="display:flex; align-items:center; gap:4px;">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+            <span>心理活动 (点击展开/折叠)</span>
+          </div>
+          <svg id="${cardId}-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.2s ease;"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <div id="${cardId}-body" style="display:none; font-size:11px; color:#475569; background:rgba(0,0,0,0.02); border-left:2.5px solid var(--primary); padding:8px 10px; border-radius:4px; margin-bottom:8px; line-height:1.5; white-space:pre-wrap; word-break:break-all; text-align:justify;">
+          ${escapeHtml(parsedCot.thought)}
+        </div>
+      `;
+    }
+
+    const displayContent = parsedCot.cleanText;
+    if (!displayContent && !parsedCot.thought) {
+      continue;
+    }
+
     card.innerHTML = `
       <div class="offline-select-checkbox" style="display: ${isOfflineMultiSelectMode ? 'flex' : 'none'};">
         <input type="checkbox" class="offline-msg-checkbox" data-msg-id="${m.id}" onchange="updateOfflineSelectedCount()">
@@ -4198,10 +4575,11 @@ async function renderOfflineMessages() {
         <span>${senderLabel}</span>
         <span>${timeStr}</span>
       </div>
-      <div class="offline-card-body">${m.content}</div>
+      ${cotHtml}
+      <div class="offline-card-body">${escapeHtml(displayContent)}</div>
     `;
     fragment.appendChild(card);
-  });
+  }
 
   container.appendChild(fragment);
   container.scrollTop = container.scrollHeight;
@@ -4415,96 +4793,150 @@ async function triggerOfflineReply() {
     const api = await db.api_presets.get(Number(presetId));
     if (!api) throw new Error("所选的 API 预设可能已被删除，请重新配置！");
 
-    let rawList = [];
+    let offlineMsgs = [];
         let carryMemory = false;
+        let onlineSummaryPrompt = "";
         
         if (isOfflineTheater) {
           const theater = await db.theaters.get(Number(activeTheaterId));
           carryMemory = theater ? !!theater.carryMemory : false;
+          offlineMsgs = await db.offline_messages.where('theaterId').equals(activeTheaterId).sortBy('timestamp');
         } else {
-          carryMemory = true; // 赴约模式强制开启 carryMemory 以实现与线上同步
+          carryMemory = true; // 赴约模式
+          offlineMsgs = await db.offline_messages.where('sessionId').equals(activeSessionId).and(m => m.isTheater === 0).sortBy('timestamp');
         }
 
+        // 核心隔离：若开启携带记忆，将线上微信聊天转化为独立 System 参考背景，绝不塞入对话轮次压制白描！
         if (carryMemory) {
-          // 混合线上与线下对话历史，保障连续可变的平滑对话过渡
-          const onlineMsgs = await db.messages.where('sessionId').equals(activeSessionId).toArray();
-          let offlineMsgs = [];
-          if (isOfflineTheater) {
-            offlineMsgs = await db.offline_messages.where('theaterId').equals(activeTheaterId).toArray();
-          } else {
-            offlineMsgs = await db.offline_messages.where('sessionId').equals(activeSessionId).and(m => m.isTheater === 0).toArray();
+          const recentOnlineMsgs = (await db.messages.where('sessionId').equals(activeSessionId).reverse().limit(10).toArray()).reverse();
+          if (recentOnlineMsgs.length > 0) {
+            let onlineText = "";
+            const sess = await db.sessions.get(activeSessionId);
+            const user = await db.archives.get(sess.userId);
+            const char = await db.archives.get(sess.charId);
+            const cName = sess.customCharName || char?.name || "对方";
+            const uName = sess.customUserName || user?.name || "我";
+
+            recentOnlineMsgs.forEach(om => {
+              let cleanStr = om.content
+                .replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "")
+                .replace(/[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/gi, "")
+                .replace(/【表情包：[^】]+】/g, "")
+                .replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+              if (cleanStr) {
+                onlineText += `[${om.senderType === 'user' ? uName : cName}]: ${cleanStr}\n`;
+              }
+            });
+
+            if (onlineText) {
+              onlineSummaryPrompt = `【往期线上微信聊天背景参考（注意：这是过去在手机上的聊天记录，仅供了解近期话题与态度参考，当前已切换至线下真实场景！）：】\n${onlineText}\n`;
+            }
           }
-          rawList = [...onlineMsgs, ...offlineMsgs].sort((a, b) => a.timestamp - b.timestamp);
-        } else {
-          // 独立剧场未开启 carryMemory 状态：仅依赖剧场内部线下对话
-          rawList = await db.offline_messages.where('theaterId').equals(activeTheaterId).sortBy('timestamp');
         }
 
-        const history = rawList.slice(-15); 
         const systemPrompt = await buildOfflineSystemPrompt(activeSessionId, activeTheaterId, isOfflineTheater);
+        const messagesToSend = [{ role: "system", content: systemPrompt + (onlineSummaryPrompt ? "\n\n" + onlineSummaryPrompt : "") }];
 
-        const messagesToSend = [{ role: "system", content: systemPrompt }];
+        // 仅取真正的线下白描对话轮次塞入历史，计算场景设定时间推演，彻底斩断微信格式污染
+        const sessObj = await db.sessions.get(activeSessionId);
+        const simNowOffline = getSimulatedNow(sessObj);
+        const history = offlineMsgs.slice(-15);
+        let prevTime = null;
+
         history.forEach(h => {
-          let displayContent = h.content;
-          if (h.isRecalled === 1) {
-            displayContent = "[已撤回该消息]";
-          } else if (h.contentType === 'image') {
-            try {
-              const data = JSON.parse(h.content);
-              displayContent = `[图片描述: ${data.text}]`;
-            } catch(e) {}
-          } else if (h.contentType === 'voice') {
-            try {
-              const data = JSON.parse(h.content);
-              displayContent = `[语音转文字: ${data.text}]`;
-            } catch(e) {}
-          } else if (h.contentType === 'transfer') {
-            try {
-              const data = JSON.parse(h.content);
-              displayContent = `[微信转账: ￥${parseFloat(data.amount).toFixed(2)}]`;
-            } catch(e) {}
-          } else if (h.contentType === 'red_envelope') {
-            try {
-              const data = JSON.parse(h.content);
-              displayContent = `[微信红包: ${data.remark || '恭喜发财'}]`;
-            } catch(e) {}
+          if (prevTime !== null && h.timestamp) {
+            const diffMin = Math.floor((h.timestamp - prevTime) / 60000);
+            if (diffMin >= 15) {
+              const simDate = getMessageDisplayDate(h, sessObj);
+              const formattedSimTime = formatWeChatTime(simDate, simNowOffline);
+              let gapLabel = diffMin < 60 ? `${diffMin} 分钟` : (diffMin < 1440 ? `${(diffMin / 60).toFixed(1)} 小时` : `${Math.floor(diffMin / 1440)} 天`);
+              messagesToSend.push({ role: "system", content: `[场景提示：线下情节推进过去了 ${gapLabel}，当前场景时间演断至：${formattedSimTime}]` });
+            }
           }
-          messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: displayContent });
+          prevTime = h.timestamp || prevTime;
+
+          let displayContent = h.content;
+          if (typeof displayContent === 'string') {
+            displayContent = displayContent.replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "").trim();
+          }
+
+          if (displayContent) {
+            messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: displayContent });
+          }
         });
 
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "system", content: systemPrompt }, ...messagesToSend.slice(1)],
-        temperature: api.temperature
-      }),
-      signal: offlineAbortController.signal
-    });
+        // 核心注入：在历史对话最末尾注入线下白描格式重置隔离墙，确保 100% 顺从情景设定与当前白描
+        messagesToSend.push({
+          role: "system",
+          content: "【最高指令：线下场景小说白描强制规范】\n你们现在处于真实物理线下面对面场景！手机打字交流已完全结束。\n你接下来的回复必须且只能严格按照【情景设定】和【叙事视角】进行小说白描与神态动作描写！【绝对严禁】输出任何微信短句、引用 [QUOTE]、表情包【表情包：...】或 [MSG_ID] 标签！"
+        });
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`HTTP ${response.status} 错误: ${errText}`);
-    }
+    const sess = await db.sessions.get(activeSessionId);
+        const char = await db.archives.get(sess.charId);
+        const charName = sess?.customCharName || char?.name || "对方";
 
-    const result = await response.json();
-    if (!result.choices || result.choices.length === 0) {
-      throw new Error("模型服务返回数据异常，Choice 节点为空。");
-    }
+        let streamingCard = null;
+        const handleOfflineStreamChunk = (delta, currentFullText) => {
+          const container = document.getElementById("offline-messages-flow");
+          if (!container) return;
 
-    const rawReply = result.choices[0].message.content.trim();
+          if (!streamingCard) {
+            streamingCard = document.createElement("div");
+            streamingCard.className = "offline-card char streaming";
+            container.appendChild(streamingCard);
+          }
 
-    const msg = {
-      theaterId: isOfflineTheater ? activeTheaterId : 0,
-      sessionId: activeSessionId,
-      isTheater: isOfflineTheater ? 1 : 0,
-      senderType: 'char',
-      content: rawReply,
-      timestamp: Date.now()
-    };
-    await db.offline_messages.add(msg);
-    await renderOfflineMessages();
+          const parsedCot = parseThoughtFromText(currentFullText, activeSessionId);
+          const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+          let cotHtml = "";
+          if (parsedCot.thought) {
+            cotHtml = `
+              <div class="offline-cot-toggle" onclick="window.toggleOfflineCotBody('cot-stream-off')" style="display:flex; align-items:center; justify-content:space-between; padding:6px 10px; background:rgba(0,0,0,0.03); border-radius:6px; font-size:11px; font-weight:700; color:#64748b; cursor:pointer; user-select:none; margin: 4px 0 8px 0;">
+                <div style="display:flex; align-items:center; gap:4px;">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg>
+                  <span>心理活动 (思考中...)</span>
+                </div>
+                <svg id="cot-stream-off-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition: transform 0.2s ease; transform: rotate(180deg);"><polyline points="6 9 12 15 18 9"/></svg>
+              </div>
+              <div id="cot-stream-off-body" style="display:block; font-size:11px; color:#475569; background:rgba(0,0,0,0.02); border-left:2.5px solid var(--primary); padding:8px 10px; border-radius:4px; margin-bottom:8px; line-height:1.5; white-space:pre-wrap; word-break:break-all; text-align:justify;">
+                ${escapeHtml(parsedCot.thought)}
+              </div>
+            `;
+          }
+
+          streamingCard.innerHTML = `
+            <div class="offline-card-header">
+              <span>${escapeHtml(charName)}</span>
+              <span>${timeStr}</span>
+            </div>
+            ${cotHtml}
+            <div class="offline-card-body">${escapeHtml(parsedCot.cleanText)}</div>
+          `;
+
+          container.scrollTop = container.scrollHeight;
+        };
+
+        let rawReply = await fetchStreamOrJson(api.url, api, messagesToSend, offlineAbortController.signal, handleOfflineStreamChunk);
+
+        if (streamingCard) {
+          streamingCard.remove();
+          streamingCard = null;
+        }
+
+        rawReply = rawReply.trim();
+        if (!rawReply) return;
+
+        const msg = {
+          theaterId: isOfflineTheater ? activeTheaterId : 0,
+          sessionId: activeSessionId,
+          isTheater: isOfflineTheater ? 1 : 0,
+          senderType: 'char',
+          content: rawReply,
+          timestamp: Date.now()
+        };
+        await db.offline_messages.add(msg);
+        await renderOfflineMessages();
 
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -5157,6 +5589,7 @@ window.setupExpandPanel = function(mode) {
   const btnHtml = document.getElementById("btn-chat-html-widget");
   const btnPlot = document.getElementById("btn-chat-plot-engine");
   const btnMcp = document.getElementById("btn-chat-mcp");
+  const btnCot = document.getElementById("btn-chat-cot");
   const btnPoll = document.getElementById("btn-chat-group-poll");
   const btnHelper = document.getElementById("btn-chat-group-helper");
   const btnAnnounce = document.getElementById("btn-chat-group-announce");
@@ -5165,7 +5598,7 @@ window.setupExpandPanel = function(mode) {
   const allItems = [
     btnSticker, btnPhoto, btnVoice, btnCall, btnTransfer, btnRedEnvelope,
     btnFocus, btnOffline, btnCheckPhone, btnMemory, btnSummary, btnHtml,
-    btnPlot, btnMcp, btnPoll, btnHelper, btnAnnounce, btnMembers
+    btnPlot, btnMcp, btnCot, btnPoll, btnHelper, btnAnnounce, btnMembers
   ];
   allItems.forEach(item => {
     if (item) item.style.display = "none";
@@ -5190,11 +5623,12 @@ window.setupExpandPanel = function(mode) {
       page2.appendChild(btnHtml);
       page2.appendChild(btnPlot);
       page2.appendChild(btnMcp);
+      page2.appendChild(btnCot);
     }
     const activeItems = [
       btnSticker, btnPhoto, btnVoice, btnCall, btnTransfer, btnRedEnvelope,
       btnFocus, btnOffline, btnCheckPhone, btnMemory, btnSummary, btnHtml,
-      btnPlot, btnMcp
+      btnPlot, btnMcp, btnCot
     ];
     activeItems.forEach(item => { if (item) item.style.display = "flex"; });
     if (page1) page1.style.display = "grid";
@@ -5219,10 +5653,11 @@ window.setupExpandPanel = function(mode) {
       page2.appendChild(btnMemory);
       page2.appendChild(btnSummary);
       page2.appendChild(btnMembers);
+      page2.appendChild(btnCot);
     }
     const activeItems = [
       btnSticker, btnPhoto, btnVoice, btnTransfer, btnRedEnvelope, btnOffline,
-      btnPlot, btnPoll, btnHelper, btnAnnounce, btnMemory, btnSummary, btnMembers
+      btnPlot, btnPoll, btnHelper, btnAnnounce, btnMemory, btnSummary, btnMembers, btnCot
     ];
     activeItems.forEach(item => { if (item) item.style.display = "flex"; });
     if (page1) page1.style.display = "grid";
@@ -5230,12 +5665,13 @@ window.setupExpandPanel = function(mode) {
     if (dots) dots.style.display = "flex";
 
   } else if (mode === 'narrator') {
-    // 3. 群聊上帝旁白专属：只保留 2 项，隐藏翻页和 Page 2
+    // 3. 群聊上帝旁白专属：保留记忆、总结与思维链
     if (page1) {
       page1.appendChild(btnMemory);
       page1.appendChild(btnSummary);
+      page1.appendChild(btnCot);
     }
-    const activeItems = [btnMemory, btnSummary];
+    const activeItems = [btnMemory, btnSummary, btnCot];
     activeItems.forEach(item => { if (item) item.style.display = "flex"; });
     if (page1) page1.style.display = "grid";
     if (page2) page2.style.display = "none";

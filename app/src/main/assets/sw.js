@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v21'; // 离线 PWA 升级至 v21 引入 MCP 服务器工具接入
+const CACHE_NAME = 'story-phone-v22'; // 离线 PWA 升级至 v22 引入思维链 (CoT) 中枢引擎
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -24,6 +24,7 @@ const ASSETS = [
   './app_chat_plot_engine.js',// 剧情引擎逻辑
   './app_chat_mcp.js',
   './app_mcp_client.js',     // MCP 客户端逻辑 (新加入)
+  './app_chat_cot.js',       // 思维链 CoT 逻辑 (新加入)
   './app_desktop_pet.js',
   './app_reader.js',
   './app_chat_focus.js',

@@ -346,6 +346,17 @@ ${relationshipDesc}`;
     }
   }
 
+  // === 思维链 (CoT) 强制思考步骤动态注入 (depth: -90，紧贴思考与生成前线) ===
+  if (window.cotSystem && typeof window.cotSystem.buildCotPromptSegment === 'function') {
+    const cotPromptStr = await window.cotSystem.buildCotPromptSegment(sessionId, 'online');
+    if (cotPromptStr) {
+      segments.push({
+        depth: -90,
+        content: cotPromptStr
+      });
+    }
+  }
+
   // === 智能拉黑指令状态动态注入 (depth: -475) ===
   if (sess.isBlockedByUser === 1) {
     segments.push({
@@ -740,6 +751,17 @@ ${relationshipDesc}`;
     content: offlineTimePrompt
   });
 
+  // === 线下思维链 (CoT) 思考步骤动态注入 (depth: -40) ===
+  if (window.cotSystem && typeof window.cotSystem.buildCotPromptSegment === 'function') {
+    const cotOfflinePromptStr = await window.cotSystem.buildCotPromptSegment(sessionId, 'offline');
+    if (cotOfflinePromptStr) {
+      segments.push({
+        depth: -40,
+        content: cotOfflinePromptStr
+      });
+    }
+  }
+
   // 2.5 世界书条目载入
   uniqueEntries.forEach(entry => {
     const entryDepth = Number(entry.depth) ?? 10;
@@ -859,7 +881,7 @@ async function buildGroupOnlineSystemPrompt(sessionId) {
     "3. 名字匹配：每个 [SENDER: 名字] 中的“名字”必须和下方【活跃群成员列表】里登记的角色本名（如：林栖、夜影等）完全一致！\n" +
     "4. 禁言限制：如果某角色被标记为禁言状态（上下文会有系统通知提示），该被禁言角色在本轮及禁言期限内绝对不能在 [SENDER: ...] 中发言！\n\n" +
     "【发言及身份隔离规则（极其严格）】\n" +
-    "1. 【群像创作】：每人势均力敌。不是每轮所有人都要说话，最多1-5个人发言即可，不需要每个人都说一句，该谁沉默谁沉默。与当前矛盾无关的人，选择沉默而不是硬凑。\n" +
+    "1. 【多人热烈互动 (强制至少2-4人发言)】：本次回复你【必须至少让 2 至 4 位不同的群成员角色接连出场发言】！绝对严禁整轮只让 1 个角色说一句话就结束！请模拟真实微信群热闹热烈的讨论气氛，让不同性格的角色对话题发表各自的态度、吐槽或争论（每人输出 1-3 句短消息）。\n" +
     "2. 【消息风格】：回复要简短，像发微信一样。每条消息 1-2 句话。一个角色可以连续发2-3条短消息，而不要发长篇幅段落。\n" +
     "3. 【绝对禁止】：严厉禁止在群聊闲聊中使用任何括号（如 (笑) ）或星号（如 *点头* ）包裹的动作、神态、心理描写！你只能且必须发送干净、纯粹的对白台词文本。\n" +
     "4. 【身份隔离】：每个角色只能以自己的人设说话，禁止角色串味！\n" +
