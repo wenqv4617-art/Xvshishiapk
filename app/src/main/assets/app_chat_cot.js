@@ -14,6 +14,12 @@
     activeModeTab: 'online', // 'online' 或 'offline'
     currentPresetId: null,
 
+    // 自定义提示词临时缓存
+    activePromptTab: 'online',
+    currentPromptPresetId: null,
+    customOnlinePromptText: "",
+    customOfflinePromptText: "",
+
     // 内存中维护的临时步骤与正则队列
     onlineSteps: [],
     offlineSteps: [],
@@ -61,7 +67,7 @@
       if (panel) panel.classList.remove("active");
     },
 
-    // 3. 加载当前 Session 的思维链配置
+    // 3. 加载当前 Session 的思维链与自定义提示词配置
     loadSessionConfig: async function() {
       const sess = await db.sessions.get(activeSessionId);
       if (!sess) return;
@@ -71,7 +77,6 @@
 
       this.currentPresetId = sess.cotPresetId || null;
 
-      // 如果 Session 中已有自定义步骤则读取，否则载入默认
       this.onlineSteps = (sess.cotOnlineSteps && sess.cotOnlineSteps.length > 0)
         ? JSON.parse(JSON.stringify(sess.cotOnlineSteps))
         : JSON.parse(JSON.stringify(this.defaultOnlineSteps));
@@ -83,6 +88,11 @@
       this.customRegexRules = (sess.cotRegexRules && Array.isArray(sess.cotRegexRules))
         ? JSON.parse(JSON.stringify(sess.cotRegexRules))
         : [];
+
+      // 提取当前 Session 绑定的提示词文本与预设 ID
+      this.currentPromptPresetId = sess.promptPresetId || null;
+      this.customOnlinePromptText = sess.customOnlinePromptText || "";
+      this.customOfflinePromptText = sess.customOfflinePromptText || "";
     },
 
     // 4. 保存配置到当前 Session
@@ -95,11 +105,488 @@
         cotPresetId: this.currentPresetId,
         cotOnlineSteps: this.onlineSteps,
         cotOfflineSteps: this.offlineSteps,
-        cotRegexRules: this.customRegexRules
+        cotRegexRules: this.customRegexRules,
+        promptPresetId: this.currentPromptPresetId,
+        customOnlinePromptText: this.customOnlinePromptText,
+        customOfflinePromptText: this.customOfflinePromptText
       });
 
-      showToast("思维链与正则配置已成功保存！");
+      showToast("思维链配置已成功保存！");
       this.closePanel();
+    },
+
+    // 打开自定义提示词管理专属面板
+    openPromptManager: async function() {
+      const panel = document.getElementById("chat-prompt-panel");
+      if (!panel) return;
+
+      await this.loadPromptPresetsDropdown();
+
+      // 赋初值文本
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        textarea.value = (this.activePromptTab === 'online')
+          ? this.customOnlinePromptText
+          : this.customOfflinePromptText;
+      }
+
+      panel.classList.add("active");
+    },
+
+    // 关闭自定义提示词管理面板
+    closePromptManager: function() {
+      const panel = document.getElementById("chat-prompt-panel");
+      if (panel) panel.classList.remove("active");
+    },
+
+    // 切换提示词模式选项卡 (线上 / 线下)
+    switchPromptTab: function(mode) {
+      // 保存当前文本框内容到内存
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        if (this.activePromptTab === 'online') {
+          this.customOnlinePromptText = textarea.value;
+        } else {
+          this.customOfflinePromptText = textarea.value;
+        }
+      }
+
+      this.activePromptTab = mode;
+      const btnOnline = document.getElementById("prompt-tab-btn-online");
+      const btnOffline = document.getElementById("prompt-tab-btn-offline");
+      const titleEl = document.getElementById("prompt-editor-mode-title");
+
+      if (mode === 'online') {
+        if (btnOnline) { btnOnline.className = "btn"; btnOnline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px; background:var(--primary); color:#fff;"; }
+        if (btnOffline) { btnOffline.className = "btn btn-outline"; btnOffline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px;"; }
+        if (titleEl) titleEl.innerText = "线上聊天提示词内容";
+        if (textarea) textarea.value = this.customOnlinePromptText;
+      } else {
+        if (btnOffline) { btnOffline.className = "btn"; btnOffline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px; background:var(--primary); color:#fff;"; }
+        if (btnOnline) { btnOnline.className = "btn btn-outline"; btnOnline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px;"; }
+        if (titleEl) titleEl.innerText = "线下剧场提示词内容";
+        if (textarea) textarea.value = this.customOfflinePromptText;
+      }
+    },
+
+    // 加载全局提示词预设下拉列表
+    loadPromptPresetsDropdown: async function() {
+      const select = document.getElementById("prompt-preset-select");
+      if (!select) return;
+
+      select.innerHTML = '<option value="">-- 系统默认提示词 (恢复默认) --</option>';
+      if (typeof db !== 'undefined' && db.prompt_presets) {
+        const presets = await db.prompt_presets.toArray();
+        presets.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.innerText = p.name;
+          if (this.currentPromptPresetId && Number(this.currentPromptPresetId) === p.id) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+      }
+    },
+
+    // 下拉选择提示词预设
+    onPromptPresetChange: async function(presetIdVal) {
+      if (!presetIdVal) {
+        this.currentPromptPresetId = null;
+        this.customOnlinePromptText = "";
+        this.customOfflinePromptText = "";
+        showToast("已重置为系统默认提示词模板");
+      } else {
+        const preset = await db.prompt_presets.get(Number(presetIdVal));
+        if (preset) {
+          this.currentPromptPresetId = preset.id;
+          this.customOnlinePromptText = preset.onlinePrompt || "";
+          this.customOfflinePromptText = preset.offlinePrompt || "";
+          showToast(`已载入提示词预设 [${preset.name}]`);
+        }
+      }
+
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        textarea.value = (this.activePromptTab === 'online')
+          ? this.customOnlinePromptText
+          : this.customOfflinePromptText;
+      }
+    },
+
+    // 存为新提示词预设
+    savePromptAsNewPreset: function() {
+      // 先同步当前 textarea
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        if (this.activePromptTab === 'online') this.customOnlinePromptText = textarea.value;
+        else this.customOfflinePromptText = textarea.value;
+      }
+
+      showCustomPrompt("请输入提示词预设名称", "例如：极致病娇型、高冷克制型", async (name) => {
+        if (!name || !name.trim()) return;
+        const newPreset = {
+          name: name.trim(),
+          onlinePrompt: this.customOnlinePromptText,
+          offlinePrompt: this.customOfflinePromptText
+        };
+        const newId = await db.prompt_presets.add(newPreset);
+        this.currentPromptPresetId = newId;
+        showToast(`提示词预设 [${name}] 已成功保存！`);
+        await this.loadPromptPresetsDropdown();
+      });
+    },
+
+    // 更新当前选中的提示词预设
+    updateCurrentPromptPreset: async function() {
+      if (!this.currentPromptPresetId) {
+        showToast("请先在下拉框中选择要更新的预设！");
+        return;
+      }
+
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        if (this.activePromptTab === 'online') this.customOnlinePromptText = textarea.value;
+        else this.customOfflinePromptText = textarea.value;
+      }
+
+      await db.prompt_presets.update(Number(this.currentPromptPresetId), {
+        onlinePrompt: this.customOnlinePromptText,
+        offlinePrompt: this.customOfflinePromptText
+      });
+
+      showToast("已成功更新当前提示词预设！");
+    },
+
+    // 删除当前提示词预设
+    deletePromptPreset: async function() {
+      if (!this.currentPromptPresetId) {
+        showToast("请先在下拉框中选择要删除的预设！");
+        return;
+      }
+
+      showCustomConfirm("确认删除", "确定要删除该提示词预设吗？", async () => {
+        await db.prompt_presets.delete(Number(this.currentPromptPresetId));
+        this.currentPromptPresetId = null;
+        this.customOnlinePromptText = "";
+        this.customOfflinePromptText = "";
+        showToast("预设已彻底删除，已重置为默认");
+        await this.loadPromptPresetsDropdown();
+        
+        const textarea = document.getElementById("prompt-editor-textarea");
+        if (textarea) textarea.value = "";
+      });
+    },
+
+    // 重置当前模式提示词文本
+    resetCurrentPromptText: function() {
+      if (this.activePromptTab === 'online') {
+        this.customOnlinePromptText = "";
+      } else {
+        this.customOfflinePromptText = "";
+      }
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) textarea.value = "";
+      showToast("已清空当前模式提示词，保存后将恢复系统默认");
+    },
+
+    // 保存并应用提示词到当前对话 Session
+    savePromptToSession: async function() {
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        if (this.activePromptTab === 'online') this.customOnlinePromptText = textarea.value;
+        else this.customOfflinePromptText = textarea.value;
+      }
+
+      await db.sessions.update(activeSessionId, {
+        promptPresetId: this.currentPromptPresetId,
+        customOnlinePromptText: this.customOnlinePromptText,
+        customOfflinePromptText: this.customOfflinePromptText
+      });
+
+      showToast("自定义提示词已成功应用到本对话！");
+      this.closePromptManager();
+    },
+
+    // 加载并渲染当前对话绑定的线上/线下提示词下拉菜单
+    loadPromptSelects: async function(sess) {
+      const onlineSelect = document.getElementById("cot-online-prompt-select");
+      const offlineSelect = document.getElementById("cot-offline-prompt-select");
+      if (!onlineSelect || !offlineSelect) return;
+
+      onlineSelect.innerHTML = '<option value="">-- 系统默认线上提示词 --</option>';
+      offlineSelect.innerHTML = '<option value="">-- 系统默认线下提示词 --</option>';
+
+      if (typeof db !== 'undefined' && db.prompt_presets) {
+        const presets = await db.prompt_presets.toArray();
+        presets.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.innerText = p.name;
+
+          if (p.type === 'online') {
+            if (sess && Number(sess.onlinePromptId) === p.id) opt.selected = true;
+            onlineSelect.appendChild(opt);
+          } else {
+            if (sess && Number(sess.offlinePromptId) === p.id) opt.selected = true;
+            offlineSelect.appendChild(opt);
+          }
+        });
+      }
+    },
+
+    // 切换线上提示词绑定
+    onOnlinePromptChange: function(val) {
+      showToast(val ? "已选择线上自定义提示词" : "已恢复系统默认线上提示词");
+    },
+
+    // 切换线下提示词绑定
+    onOfflinePromptChange: function(val) {
+      showToast(val ? "已选择线下自定义提示词" : "已恢复系统默认线下提示词");
+    },
+
+    // 打开自定义提示词管理专属面板 (直接平滑切入页面，彻底保护线下提示词不被重写)
+    openPromptManager: async function() {
+      const panel = document.getElementById("chat-prompt-panel");
+      if (!panel) return;
+
+      const sess = await db.sessions.get(activeSessionId);
+      if (sess) {
+        this.currentPromptPresetId = sess.promptPresetId || null;
+        this.customOnlinePromptText = sess.customOnlinePromptText || "";
+        this.customOfflinePromptText = sess.customOfflinePromptText || "";
+
+        // 若本对话关联了预设且自定义文本为空，自动拉取预设文本兜底回显
+        if (this.currentPromptPresetId && (!this.customOnlinePromptText || !this.customOfflinePromptText) && typeof db !== 'undefined' && db.prompt_presets) {
+          try {
+            const preset = await db.prompt_presets.get(Number(this.currentPromptPresetId));
+            if (preset) {
+              if (!this.customOnlinePromptText) this.customOnlinePromptText = preset.onlinePrompt || "";
+              if (!this.customOfflinePromptText) this.customOfflinePromptText = preset.offlinePrompt || "";
+            }
+          } catch(e) {}
+        }
+      }
+
+      await this.loadPromptPresetsDropdown();
+
+      // 填充标题
+      const nameInput = document.getElementById("prompt-preset-name-input");
+      if (nameInput) {
+        if (this.currentPromptPresetId) {
+          const p = await db.prompt_presets.get(Number(this.currentPromptPresetId));
+          nameInput.value = p ? p.name : "";
+        } else {
+          nameInput.value = "";
+        }
+      }
+
+      // 纯净挂载：默认锁定为线上模式，直接写值，绝不触发切签重写逻辑
+      this.activePromptTab = 'online';
+      const btnOnline = document.getElementById("prompt-tab-btn-online");
+      const btnOffline = document.getElementById("prompt-tab-btn-offline");
+      const titleEl = document.getElementById("prompt-editor-mode-title");
+      const textarea = document.getElementById("prompt-editor-textarea");
+
+      if (btnOnline) { btnOnline.className = "btn"; btnOnline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px; background:var(--primary); color:#fff;"; }
+      if (btnOffline) { btnOffline.className = "btn btn-outline"; btnOffline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px;"; }
+      if (titleEl) titleEl.innerText = "线上聊天提示词内容";
+      if (textarea) textarea.value = this.customOnlinePromptText || "";
+
+      panel.classList.add("active");
+    },
+
+    // 关闭自定义提示词管理面板
+    closePromptManager: function() {
+      const panel = document.getElementById("chat-prompt-panel");
+      if (panel) panel.classList.remove("active");
+    },
+
+    // 切换提示词模式选项卡 (线上 / 线下)
+    switchPromptTab: function(mode) {
+      if (this.activePromptTab === mode) return;
+
+      const textarea = document.getElementById("prompt-editor-textarea");
+      
+      // 仅在手动点击切换 Tab 时，才将文本框现有内容同步保存回对应的变量中
+      if (textarea) {
+        if (this.activePromptTab === 'online') {
+          this.customOnlinePromptText = textarea.value;
+        } else if (this.activePromptTab === 'offline') {
+          this.customOfflinePromptText = textarea.value;
+        }
+      }
+
+      this.activePromptTab = mode;
+      const btnOnline = document.getElementById("prompt-tab-btn-online");
+      const btnOffline = document.getElementById("prompt-tab-btn-offline");
+      const titleEl = document.getElementById("prompt-editor-mode-title");
+
+      if (mode === 'online') {
+        if (btnOnline) { btnOnline.className = "btn"; btnOnline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px; background:var(--primary); color:#fff;"; }
+        if (btnOffline) { btnOffline.className = "btn btn-outline"; btnOffline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px;"; }
+        if (titleEl) titleEl.innerText = "线上聊天提示词内容";
+        if (textarea) textarea.value = this.customOnlinePromptText || "";
+      } else {
+        if (btnOffline) { btnOffline.className = "btn"; btnOffline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px; background:var(--primary); color:#fff;"; }
+        if (btnOnline) { btnOnline.className = "btn btn-outline"; btnOnline.style.cssText = "flex:1; height:36px; font-size:12px; font-weight:700; border-radius:10px;"; }
+        if (titleEl) titleEl.innerText = "线下剧场提示词内容";
+        if (textarea) textarea.value = this.customOfflinePromptText || "";
+      }
+    },
+
+    // 加载全局提示词预设下拉列表
+    loadPromptPresetsDropdown: async function() {
+      const select = document.getElementById("prompt-preset-select");
+      if (!select) return;
+
+      select.innerHTML = '<option value="">-- 系统默认提示词 (未绑定预设) --</option>';
+      if (typeof db !== 'undefined' && db.prompt_presets) {
+        const presets = await db.prompt_presets.toArray();
+        presets.forEach(p => {
+          const opt = document.createElement("option");
+          opt.value = p.id;
+          opt.innerText = p.name;
+          if (this.currentPromptPresetId && Number(this.currentPromptPresetId) === p.id) {
+            opt.selected = true;
+          }
+          select.appendChild(opt);
+        });
+      }
+    },
+
+    // 下拉选择提示词预设
+    onPromptPresetChange: async function(presetIdVal) {
+      const nameInput = document.getElementById("prompt-preset-name-input");
+      const textarea = document.getElementById("prompt-editor-textarea");
+
+      if (!presetIdVal) {
+        this.currentPromptPresetId = null;
+        this.customOnlinePromptText = "";
+        this.customOfflinePromptText = "";
+        if (nameInput) nameInput.value = "";
+        if (textarea) textarea.value = "";
+        showToast("已重置为系统默认提示词");
+      } else {
+        const preset = await db.prompt_presets.get(Number(presetIdVal));
+        if (preset) {
+          this.currentPromptPresetId = preset.id;
+          this.customOnlinePromptText = preset.onlinePrompt || "";
+          this.customOfflinePromptText = preset.offlinePrompt || "";
+          if (nameInput) nameInput.value = preset.name || "";
+          if (textarea) {
+            textarea.value = (this.activePromptTab === 'online') ? this.customOnlinePromptText : this.customOfflinePromptText;
+          }
+          showToast(`已载入提示词预设 [${preset.name}]`);
+        }
+      }
+    },
+
+    // 打包存为新提示词预设 (包含标题 + 线上提示词 + 线下提示词)
+    savePromptAsNewPreset: async function() {
+      const nameInput = document.getElementById("prompt-preset-name-input");
+      const textarea = document.getElementById("prompt-editor-textarea");
+
+      if (textarea) {
+        if (this.activePromptTab === 'online') this.customOnlinePromptText = textarea.value;
+        else this.customOfflinePromptText = textarea.value;
+      }
+
+      const presetName = nameInput ? nameInput.value.trim() : "";
+      if (!presetName) {
+        showToast("请先在上方输入提示词预设标题！");
+        return;
+      }
+
+      const newPreset = {
+        name: presetName,
+        onlinePrompt: this.customOnlinePromptText,
+        offlinePrompt: this.customOfflinePromptText
+      };
+
+      const newId = await db.prompt_presets.add(newPreset);
+      this.currentPromptPresetId = newId;
+      showToast(`提示词预设包 [${presetName}] 保存成功！`);
+      await this.loadPromptPresetsDropdown();
+    },
+
+    // 更新当前选中的提示词预设
+    updateCurrentPromptPreset: async function() {
+      if (!this.currentPromptPresetId) {
+        showToast("请先在下拉框中选择要更新的预设！");
+        return;
+      }
+
+      const nameInput = document.getElementById("prompt-preset-name-input");
+      const textarea = document.getElementById("prompt-editor-textarea");
+
+      if (textarea) {
+        if (this.activePromptTab === 'online') this.customOnlinePromptText = textarea.value;
+        else this.customOfflinePromptText = textarea.value;
+      }
+
+      const presetName = nameInput ? nameInput.value.trim() : "未命名预设";
+
+      await db.prompt_presets.update(Number(this.currentPromptPresetId), {
+        name: presetName,
+        onlinePrompt: this.customOnlinePromptText,
+        offlinePrompt: this.customOfflinePromptText
+      });
+
+      showToast(`已更新提示词预设 [${presetName}]！`);
+      await this.loadPromptPresetsDropdown();
+    },
+
+    // 删除当前提示词预设
+    deletePromptPreset: async function() {
+      if (!this.currentPromptPresetId) {
+        showToast("请先在下拉框中选择要删除的预设！");
+        return;
+      }
+
+      showCustomConfirm("确认删除", "确定要彻底删除该提示词预设吗？", async () => {
+        await db.prompt_presets.delete(Number(this.currentPromptPresetId));
+        this.currentPromptPresetId = null;
+        this.customOnlinePromptText = "";
+        this.customOfflinePromptText = "";
+        showToast("预设已彻底删除");
+        await this.loadPromptPresetsDropdown();
+        
+        const nameInput = document.getElementById("prompt-preset-name-input");
+        const textarea = document.getElementById("prompt-editor-textarea");
+        if (nameInput) nameInput.value = "";
+        if (textarea) textarea.value = "";
+      });
+    },
+
+    // 重置当前模式提示词文本为默认
+    resetCurrentPromptText: function() {
+      if (this.activePromptTab === 'online') {
+        this.customOnlinePromptText = "";
+      } else {
+        this.customOfflinePromptText = "";
+      }
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) textarea.value = "";
+      showToast("已清空当前模式提示词");
+    },
+
+    // 保存并应用提示词到当前对话 Session
+    savePromptToSession: async function() {
+      const textarea = document.getElementById("prompt-editor-textarea");
+      if (textarea) {
+        if (this.activePromptTab === 'online') this.customOnlinePromptText = textarea.value;
+        else this.customOfflinePromptText = textarea.value;
+      }
+
+      await db.sessions.update(activeSessionId, {
+        promptPresetId: this.currentPromptPresetId,
+        customOnlinePromptText: this.customOnlinePromptText,
+        customOfflinePromptText: this.customOfflinePromptText
+      });
+
+      showToast("自定义提示词已成功应用到本对话！");
+      this.closePromptManager();
     },
 
     // 思维链与文本正则替换引擎 (纯粹解析文本中的思维链，历史消息永久保留)

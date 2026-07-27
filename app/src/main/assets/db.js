@@ -187,3 +187,10 @@ db.version(21).stores({
 db.version(22).stores({
   cot_presets: 'id++, name'
 });
+
+// ============================================
+// 🎯 新增 Version 23：支持自定义系统提示词 (Prompt) 预设表
+// ============================================
+db.version(23).stores({
+  prompt_presets: 'id++, name, type'
+});

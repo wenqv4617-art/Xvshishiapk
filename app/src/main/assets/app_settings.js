@@ -1111,6 +1111,7 @@ async function clearAllAppData() {
           await db.table('couples_whispers').clear();
           if (db.mcp_servers) await db.mcp_servers.clear();
           if (db.cot_presets) await db.cot_presets.clear();
+          if (db.prompt_presets) await db.prompt_presets.clear();
           
           localStorage.clear();
       alert("所有本地数据与美化设置均已被格式化，系统即将重启。");
@@ -1331,6 +1332,7 @@ async function computeStorageUsage() {
         const forum_npc_accounts = await db.forum_npc_accounts.toArray();
         const mcp_servers = db.mcp_servers ? await db.mcp_servers.toArray() : [];
         const cot_presets = db.cot_presets ? await db.cot_presets.toArray() : [];
+        const prompt_presets = db.prompt_presets ? await db.prompt_presets.toArray() : [];
 
         // 1. 计算图片、美化方案与表情包所占容量
     const wallpaperStr = localStorage.getItem("beautify-wallpaper") || "";
@@ -1376,7 +1378,7 @@ async function computeStorageUsage() {
       forum_presets, forum_npc_accounts,
       groups, group_members, group_polls,
       couples_schedules, couples_albums, couples_journals, couples_whispers,
-      mcp_servers, cot_presets
+      mcp_servers, cot_presets, prompt_presets
     };
         const allBytes = new Blob([JSON.stringify(fullDataObj)]).size;
 
@@ -1535,6 +1537,7 @@ async function exportBackup() {
           couples_whispers: await db.table('couples_whispers').toArray(),
           mcp_servers: db.mcp_servers ? await db.mcp_servers.toArray() : [],
           cot_presets: db.cot_presets ? await db.cot_presets.toArray() : [],
+          prompt_presets: db.prompt_presets ? await db.prompt_presets.toArray() : [],
           localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1825,6 +1828,10 @@ async function performImportTransaction(rawData) {
         if (data.cot_presets && db.cot_presets) {
           await db.cot_presets.clear();
           await db.cot_presets.bulkAdd(data.cot_presets);
+        }
+        if (data.prompt_presets && db.prompt_presets) {
+          await db.prompt_presets.clear();
+          await db.prompt_presets.bulkAdd(data.prompt_presets);
         }
       });
   

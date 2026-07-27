@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v22'; // 离线 PWA 升级至 v22 引入思维链 (CoT) 中枢引擎
+const CACHE_NAME = 'story-phone-v23'; // 离线 PWA 升级至 v23 引入自定义提示词预设中枢
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

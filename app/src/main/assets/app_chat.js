@@ -4927,6 +4927,15 @@ async function triggerOfflineReply() {
         rawReply = rawReply.trim();
         if (!rawReply) return;
 
+        // 核心关停：校验当前 Session 思维链开关，若为关闭状态 (cotToggle !== 1)，直接擦除 <think> 标签，只保留纯净白描
+        const isCotEnabled = sessObj && sessObj.cotToggle === 1;
+        if (!isCotEnabled) {
+          const parsedCot = parseThoughtFromText(rawReply, activeSessionId);
+          rawReply = parsedCot.cleanText;
+        }
+
+        if (!rawReply) return;
+
         const msg = {
           theaterId: isOfflineTheater ? activeTheaterId : 0,
           sessionId: activeSessionId,
