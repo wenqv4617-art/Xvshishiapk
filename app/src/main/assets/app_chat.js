@@ -1736,21 +1736,72 @@ function closeChatDialog() {
   renderSessionList();
 }
 
-// 渲染仿真消息
-// 渲染仿真消息
-async function renderDialogMessages() {
+// 全局分页与内存预载字典变量
+let chatPageOffset = 0;
+const CHAT_PAGE_SIZE = 30;
+let isChatLoadingMore = false;
+let hasMoreChatMessages = true;
+
+// 绑定顶部触顶下拉加载历史消息监听器
+function initChatScrollListener(container) {
+  container.onscroll = async () => {
+    if (container.scrollTop < 30 && !isChatLoadingMore && hasMoreChatMessages) {
+      isChatLoadingMore = true;
+      let loader = document.getElementById("chat-history-loader-notice");
+      if (!loader) {
+        loader = document.createElement("div");
+        loader.id = "chat-history-loader-notice";
+        loader.style.cssText = "text-align:center; font-size:11px; color:#94a3b8; padding:8px 0; user-select:none; width:100%;";
+        loader.innerText = "正在加载更多历史对话...";
+        container.insertBefore(loader, container.firstChild);
+      }
+
+      try {
+        await renderDialogMessages(false);
+      } catch(e) {
+        console.error("分页加载历史消息异常:", e);
+      } finally {
+        if (loader) loader.remove();
+        isChatLoadingMore = false;
+      }
+    }
+  };
+}
+
+// 微信级“首屏 30 条分页” + “内存预载字典”极速渲染引擎
+async function renderDialogMessages(isInitial = true) {
   const container = document.getElementById("dialog-messages-container");
   if (!container) return;
   
+  if (isInitial) {
+    chatPageOffset = 0;
+    hasMoreChatMessages = true;
+    container.innerHTML = "";
+    initChatScrollListener(container);
+  }
+
   const sess = await db.sessions.get(activeSessionId);
   const user = await db.archives.get(sess.userId);
-  const msgs = await db.messages.where('sessionId').equals(activeSessionId).sortBy('timestamp');
+
+  // 1. 只拉取最新的 CHAT_PAGE_SIZE (30) 条消息，实现毫秒级秒开
+  const rawMsgs = await db.messages
+    .where('sessionId').equals(activeSessionId)
+    .reverse()
+    .offset(chatPageOffset)
+    .limit(CHAT_PAGE_SIZE)
+    .toArray();
+
+  if (rawMsgs.length < CHAT_PAGE_SIZE) {
+    hasMoreChatMessages = false;
+  }
+
+  chatPageOffset += rawMsgs.length;
+  const msgs = rawMsgs.reverse(); // 恢复正向时间流顺序
+
   const fragment = document.createDocumentFragment();
-  
   const charAvatarUrl = resolveAvatar(activeSessionCharAvatar);
   const userAvatarUrl = resolveAvatar(activeSessionUserAvatar);
 
-  // 预加载当前对话的表情包挂载配置
   let mountedGroupIds = [];
   if (window.stickerSystem && window.stickerSystem.getMountedGroupIds) {
     mountedGroupIds = await window.stickerSystem.getMountedGroupIds(activeSessionId);
@@ -1758,8 +1809,7 @@ async function renderDialogMessages() {
 
   let prevMsgDisplayTime = null;
 
-      // 核心修复：采用健康的 for...of 异步遍历，解决 forEach 内部 await 导致的编译死锁
-      for (const m of msgs) {
+  for (const m of msgs) {
         const currentDisplayTime = getMessageDisplayDate(m, sess);
         let showTimestamp = false;
         if (prevMsgDisplayTime === null) {
@@ -2215,9 +2265,16 @@ async function renderDialogMessages() {
     fragment.appendChild(bubble);
   }
 
-  container.innerHTML = "";
-  container.appendChild(fragment);
-  container.scrollTop = container.scrollHeight;
+  if (isInitial) {
+    container.innerHTML = "";
+    container.appendChild(fragment);
+    container.scrollTop = container.scrollHeight;
+  } else {
+    // 向上滑动加载时，精准锚定视角高度差，防止滚动条蹦跳
+    const oldScrollHeight = container.scrollHeight;
+    container.insertBefore(fragment, container.firstChild);
+    container.scrollTop = container.scrollHeight - oldScrollHeight;
+  }
 }
 
 // 动态追加消息
@@ -3788,12 +3845,87 @@ function bindChatAppEvents() {
         let lastIndex = 0;
         let tMatch;
 
+        // 辅助智能分发切片器：基于 Session 配置的【最少句数】与【最多气泡数】实施受控拟真分句
+        const minSentences = sessObj?.minSentenceCount || 1;
+        const maxSentences = sessObj?.maxSentenceCount || 3;
+
+        const splitTextIntoBubbles = (text, minCount = minSentences, maxCount = maxSentences) => {
+          if (!text || typeof text !== 'string') return [];
+          
+          let initialParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+          let rawBubbles = [];
+
+          initialParts.forEach(part => {
+            const quoteMatch = part.match(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i);
+            let quotePrefix = "";
+            let barePart = part;
+
+            if (quoteMatch) {
+              quotePrefix = quoteMatch[0];
+              barePart = part.substring(quoteMatch[0].length).trim();
+            }
+
+            // 按句末标点 (。！？!?) 拆分句项列表
+            const sentenceRegex = /([^。！？!?]+[。！？!?]+)/g;
+            let subSentences = barePart.match(sentenceRegex);
+
+            if (subSentences && subSentences.length > 0) {
+              let reassembledLen = 0;
+              let currentChunk = [];
+
+              subSentences.forEach((s, sIdx) => {
+                currentChunk.push(s.trim());
+                reassembledLen += s.length;
+
+                // 只有合并句数达到最少句数 minCount，或是最后一个标点句时，才打包为一个独立的组合气泡
+                if (currentChunk.length >= minCount || sIdx === subSentences.length - 1) {
+                  let chunkText = currentChunk.join("");
+                  currentChunk = [];
+
+                  if (rawBubbles.length === 0 && quotePrefix) {
+                    chunkText = quotePrefix + chunkText;
+                    quotePrefix = "";
+                  }
+
+                  if (chunkText) rawBubbles.push(chunkText);
+                }
+              });
+
+              // 补全末尾未带句末标点的残余尾巴
+              const leftover = barePart.substring(reassembledLen).trim();
+              if (leftover) {
+                if (rawBubbles.length > 0) {
+                  rawBubbles[rawBubbles.length - 1] += leftover;
+                } else {
+                  rawBubbles.push(leftover);
+                }
+              }
+            } else {
+              let singleText = part;
+              if (rawBubbles.length === 0 && quotePrefix) {
+                singleText = quotePrefix + singleText;
+              }
+              rawBubbles.push(singleText);
+            }
+          });
+
+          // 核心上限管控：如果拆出的气泡数超过上限 maxCount，把溢出的气泡全部合拢合并到最后一个气泡中
+          if (rawBubbles.length > maxCount) {
+            const allowedBubbles = rawBubbles.slice(0, maxCount - 1);
+            const overflowText = rawBubbles.slice(maxCount - 1).join("");
+            allowedBubbles.push(overflowText);
+            return allowedBubbles.filter(Boolean);
+          }
+
+          return rawBubbles.filter(Boolean);
+        };
+
         while ((tMatch = transactionRegex.exec(cleanReplyText)) !== null) {
           const matchIndex = tMatch.index;
           if (matchIndex > lastIndex) {
             const textSegment = cleanReplyText.substring(lastIndex, matchIndex).trim();
             if (textSegment) {
-              let splitParts = textSegment.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+              let splitParts = splitTextIntoBubbles(textSegment);
               splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
             }
           }
@@ -3811,13 +3943,13 @@ function bindChatAppEvents() {
         if (lastIndex < cleanReplyText.length) {
           const remainingText = cleanReplyText.substring(lastIndex).trim();
           if (remainingText) {
-            let splitParts = remainingText.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+            let splitParts = splitTextIntoBubbles(remainingText);
             splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
           }
         }
 
         if (responseItems.length === 0 && cleanReplyText.trim()) {
-          let splitParts = cleanReplyText.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+          let splitParts = splitTextIntoBubbles(cleanReplyText);
           splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
         }
 
@@ -4118,6 +4250,12 @@ if (btnDialogDetails) {
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
       document.getElementById("details-allow-char-block").checked = !!sess.allowCharToBlock;
 
+      // 渲染分句粒度控制设置
+      const minSentencesEl = document.getElementById("details-min-sentences");
+      const maxSentencesEl = document.getElementById("details-max-sentences");
+      if (minSentencesEl) minSentencesEl.value = sess.minSentenceCount || 1;
+      if (maxSentencesEl) maxSentencesEl.value = sess.maxSentenceCount || 3;
+
       // 更新拉黑状态按钮文本
       const btnDetailsBlockChar = document.getElementById("btn-details-block-char");
       if (btnDetailsBlockChar) {
@@ -4125,13 +4263,19 @@ if (btnDialogDetails) {
       }
       
       const timeToggle = document.getElementById("details-time-toggle");
-      // 核心修复：用 !== 0 表达式，精准阻断 0 的宽松映射，锁定详情页自定义关闭状态
-      timeToggle.checked = sess.timePerceptionToggle !== 0; 
-      
-      const customTimeContainer = document.getElementById("details-custom-time-container");
-      customTimeContainer.style.display = timeToggle.checked ? "none" : "block";
+          // 核心修复：用 !== 0 表达式，精准阻断 0 的宽松映射，锁定详情页自定义关闭状态
+          timeToggle.checked = sess.timePerceptionToggle !== 0; 
+          
+          const customTimeContainer = document.getElementById("details-custom-time-container");
+          if (customTimeContainer && timeToggle) {
+            customTimeContainer.style.display = timeToggle.checked ? "none" : "block";
+            // 核心绑定：开关切换瞬间即时展开/隐藏自定义时间栏
+            timeToggle.onchange = function() {
+              customTimeContainer.style.display = this.checked ? "none" : "block";
+            };
+          }
 
-      if (sess.customTimeData) {
+          if (sess.customTimeData) {
         try {
           const td = JSON.parse(sess.customTimeData);
           document.getElementById("details-time-year").value = td.year || 2026;
@@ -4227,6 +4371,9 @@ if (btnSaveDetails) {
       minute: parseInt(document.getElementById("details-time-minute").value) || 0
     };
 
+    const minSentenceCount = parseInt(document.getElementById("details-min-sentences")?.value) || 1;
+    const maxSentenceCount = parseInt(document.getElementById("details-max-sentences")?.value) || 3;
+
     await db.sessions.update(activeSessionId, {
       customCharName: charName,
       customCharAvatar: charAvatar,
@@ -4241,6 +4388,8 @@ if (btnSaveDetails) {
       allowCharRecall: allowCharRecall ? 1 : 0,
       allowCharReaction: allowCharReaction ? 1 : 0,
       allowCharToBlock: allowCharToBlock ? 1 : 0,
+      minSentenceCount: minSentenceCount,
+      maxSentenceCount: maxSentenceCount,
       customTimeData: JSON.stringify(timeData),
       customTimeSavedAt: Date.now() // 核心写入：场景自定义时间的物理起始基准时间戳
     });

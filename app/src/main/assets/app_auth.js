@@ -25,15 +25,16 @@ async function initAuthCheck() {
     return;
   }
 
-  // 已登录，执行设备数量校验及实时通道监听
-  await verifyDeviceSession(session.user.id);
+  // 已有本地 Session 凭证，立即放行显示主界面，不再弹出遮罩层
+  hideLoginScreen();
+
+  // 后台无感校验设备队列与开启踢出监听
+  verifyDeviceSession(session.user.id);
 }
 
 // 设备排队与踢出逻辑 (FIFO 队列)
 async function verifyDeviceSession(userId) {
   if (!navigator.onLine) {
-    // 离线状态下放行本地缓存登录，不执行在线排队
-    hideLoginScreen();
     return;
   }
 
@@ -64,7 +65,7 @@ async function verifyDeviceSession(userId) {
       sessions.unshift(newSess);
     }
 
-    // 3. 核心限制队列：如果活跃设备数大于 2 台，踢出最老的设备
+    // 3. 核心限制队列：如果活跃设备数大于 2 台，踢出最老的设备（动态保留最新2台）
     if (sessions.length > 2) {
       const oldestSessions = sessions.slice(2); // 截取索引 2 往后的所有老会话
       const idsToDelete = oldestSessions.map(s => s.id);
@@ -88,13 +89,9 @@ async function verifyDeviceSession(userId) {
 
     // 5. 开启实时监听：一旦属于自己的 user_devices 被其他设备抢占并删除，立刻在桌面上踢出
     subscribeToKickOut(userId);
-    
-    hideLoginScreen();
 
   } catch (e) {
-    console.error("设备鉴权同步失败:", e);
-    showToast("身份同步失败，请重新登录");
-    showLoginScreen();
+    console.error("设备鉴权后台同步异常（保持本地使用状态）:", e);
   }
 }
 
@@ -137,13 +134,19 @@ async function handleKickOut() {
   showLoginScreen();
 }
 
-// 登录 UI 遮罩层控制
+// 登录 UI 遮罩层控制（与手机主界面联动控制，防止直接删遮罩 DOM 绕过登录）
 function showLoginScreen() {
-  document.getElementById("auth-login-overlay").style.display = "flex";
+  const overlay = document.getElementById("auth-login-overlay");
+  const phone = document.getElementById("phone-container");
+  if (overlay) overlay.style.display = "flex";
+  if (phone) phone.style.display = "none";
 }
 
 function hideLoginScreen() {
-  document.getElementById("auth-login-overlay").style.display = "none";
+  const overlay = document.getElementById("auth-login-overlay");
+  const phone = document.getElementById("phone-container");
+  if (overlay) overlay.style.display = "none";
+  if (phone) phone.style.display = "block";
 }
 
 // 用户手动登录动作
@@ -164,6 +167,7 @@ async function handleUserLogin(email, password) {
     localStorage.setItem("cached_user_password", password);
 
     showToast("登录成功！正在建立安全神经连接...");
+    hideLoginScreen();
     await verifyDeviceSession(data.user.id);
 
   } catch (e) {

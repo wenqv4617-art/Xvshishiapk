@@ -39,6 +39,11 @@ const ASSETS = [
   './app_forum_loader.js',   // 论坛层栈管理器 (新加入)
   './app_forum_posts.js',    // 论坛帖子与互动机制 (新加入)
   './app_forum_messages.js', // 论坛私信机制 (新加入)
+  './images/wallpaper_summer.jpg',
+  './images/widget_top_photo.jpg',
+  './images/widget_polaroid_photo.jpg',
+  './images/avatar_char1.jpg',
+  './images/avatar_char2.jpg',
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js'

@@ -114,7 +114,7 @@
       </div>
     </div>
   </div>
-  <div id="phone-container">
+  <div id="phone-container" style="display: none;">
     <!-- 桌面网格 -->
     <main id="desktop">
       <div class="app-grid" id="desktop-grid">
@@ -407,6 +407,17 @@
 
 <!-- 二级：桌面美化设置 -->
           <div id="settings-lv2-beautify" class="settings-lv2-panel" style="display:none;">
+            <div class="form-group" style="background: var(--surface); padding: 12px; border-radius: 12px; border: 1px solid var(--border); margin-bottom: 14px;">
+              <label style="font-weight: 700; color: var(--text-primary); margin-bottom: 8px; display: block;">系统内置UI主题预设</label>
+              <div style="display: flex; gap: 8px;">
+                <select id="beautify-builtin-preset-select" style="flex: 1; height: 38px; border-radius: 8px; border: 1.5px solid var(--border); font-size: 12px; padding: 0 8px; background: #fff;">
+                  <option value="">-- 选择内置UI预设 --</option>
+                  <option value="clear_cool_summer">清透凉夏 (Ins拟物风)</option>
+                </select>
+                <button class="btn btn-primary" id="btn-apply-builtin-preset" style="padding: 0 14px; font-size: 12px; border-radius: 8px; font-weight: 700;">应用预设</button>
+              </div>
+            </div>
+
             <div class="form-group">
               <label>设置桌面背景图 (壁纸)</label>
               <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 8px;">
@@ -1884,6 +1895,22 @@
               </label>
             </div>
 
+            <!-- 新增：气泡分句粒度与数量限制设置 -->
+            <div class="form-group" style="border-top: 1px solid var(--border); padding-top: 10px;">
+              <label style="font-weight:700; margin-bottom:6px; display:block;">消息气泡分句粒度控制</label>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <div style="flex: 1;">
+                  <label style="font-size:10px; color:var(--text-secondary); font-weight:700;">最少合并句数 (合并气泡)</label>
+                  <input type="number" id="details-min-sentences" value="1" min="1" max="10" style="padding:6px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center; width:100%; box-sizing:border-box;">
+                </div>
+                <div style="flex: 1;">
+                  <label style="font-size:10px; color:var(--text-secondary); font-weight:700;">最多拆分气泡数 (上限)</label>
+                  <input type="number" id="details-max-sentences" value="3" min="1" max="10" style="padding:6px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center; width:100%; box-sizing:border-box;">
+                </div>
+              </div>
+              <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">设置 AI 连续发消息时单气泡最少包含几句话，以及单轮最多拆出几个气泡。</div>
+            </div>
+
            <!-- 新增：允许对方撤回消息开关 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
@@ -2389,7 +2416,7 @@
                       </div>
                       <div class="form-group">
                         <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">所属分组 (可输入新建或自定义分组)</label>
-                        <input type="text" id="mcp-server-input-group" placeholder="例如：默认、生活服务、小A专属" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
+                        <input type="text" id="mcp-server-input-group" placeholder="例如：默认、生活服务、林栖专属" style="font-size:13px; padding:8px; border-radius:8px; border:1.5px solid var(--border); width:100%; box-sizing:border-box;">
                       </div>
                       <div class="form-group">
                         <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">传输协议类型</label>
@@ -4310,6 +4337,7 @@
   <script src="app_chat_search.js"></script>
   <script src="app_chat_couples.js"></script>
   <script src="app_chat_beautify.js"></script>
+  <script src="app_desktop_presets.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {
