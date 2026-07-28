@@ -1,6 +1,6 @@
 /**
- * app_music.js - 听歌应用 (网易云真机 Native 授权扫码、歌单分组、大听歌卡片与 Char 陪听中枢)
- * 遵循规范：纯原生全矢量 SVG 图标、禁用 Emoji、真机原生特权网络穿透
+ * app_music.js - 听歌应用 (网易云真实 OAuth 授权、红心/收藏歌单全自动同步、大听歌卡片与 Char 陪听中枢)
+ * 遵循规范：纯原生全矢量 SVG 图标、禁用 Emoji、真实 API 与网易云红心曲目无感同步
  */
 
 (function() {
@@ -25,9 +25,14 @@
       await this.loadPlaylistsFromStorage();
       this.renderMine();
       this.updateIslandCompanionUI();
+
+      // 冷启动自愈：若已有登录 Cookie，自动刷新同步一次网易云个人歌单
+      if (this.ncmCookie) {
+        this.syncNcmUserData(this.ncmCookie);
+      }
     },
 
-    // 真机 Native 网络特权穿透通道 (伪装官方 Header 绕过风控，彻底根治二维码失效)
+    // 真机 Native 网络特权穿透通道 (伪装官方 Header 绕过风控)
     async ncmNativeFetch(url, method = "POST", customHeaders = {}, bodyStr = "") {
       const defaultHeaders = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
@@ -277,8 +282,7 @@
 
     closeImportFormModal() {
       const overlay = document.getElementById("ncm-import-form-overlay");
-      if (!overlay) return;
-      overlay.classList.remove("active");
+      if (overlay) overlay.classList.remove("active");
     },
 
     populatePlaylistDropdownOptions(selectId) {
@@ -458,7 +462,15 @@
       const nameEl = document.getElementById("ncm-mine-user-name");
       const remarkEl = document.getElementById("ncm-mine-user-remark");
 
-      if (activeMeId && typeof db !== 'undefined') {
+      // 1. 如果有已授权同步的网易云用户资料，优先展现网易云昵称与头像
+      const ncmNick = localStorage.getItem("ncm_user_nickname");
+      const ncmAvatar = localStorage.getItem("ncm_user_avatar");
+
+      if (ncmNick) {
+        if (avatarEl && ncmAvatar) avatarEl.src = ncmAvatar;
+        if (nameEl) nameEl.innerText = ncmNick;
+        if (remarkEl) remarkEl.innerText = this.isVip ? "网易云黑胶 VIP 会员 (已同频)" : "网易云账号已同步";
+      } else if (activeMeId && typeof db !== 'undefined') {
         try {
           const userArc = await db.archives.get(Number(activeMeId));
           if (userArc) {
@@ -815,7 +827,7 @@
       }
     },
 
-    // 真实网易云三步 OAuth 扫码授权链路 (含 Native 特权请求伪装)
+    // 真实网易云 3 步扫码登录授权 & 状态轮询
     openNcmLoginModal() {
       const overlay = document.getElementById("ncm-qrcode-overlay");
       if (overlay) {
@@ -833,10 +845,9 @@
     async startNcmQrAuthPipeline() {
       const qrImg = document.getElementById("ncm-qrcode-img");
       const statusText = document.getElementById("ncm-qrcode-status");
-      if (statusText) statusText.innerText = "正在建立网易云安全连接...";
+      if (statusText) statusText.innerText = "正在请求网易云授权 Key...";
 
       try {
-        // 1. 申请 UniKey
         const timestamp = Date.now();
         const keyUrl = `https://music.163.com/api/login/qrcode/unikey?type=1&timestamp=${timestamp}`;
         const keyRes = await this.ncmNativeFetch(keyUrl, "POST", {}, "type=1");
@@ -849,14 +860,12 @@
         if (!unikey) unikey = "ncm_key_" + Date.now();
         this.unikey = unikey;
 
-        // 2. 生成网易云官方扫码 URL 与高清二维码
         const qrCodeTargetUrl = `https://music.163.com/login?codekey=${unikey}`;
         if (qrImg) {
           qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrCodeTargetUrl)}`;
         }
         if (statusText) statusText.innerText = "请使用网易云 App 扫描二维码授权登录";
 
-        // 3. 轮询授权状态 (800:失效, 801:等待, 802:授权中, 803:授权成功)
         if (this.qrPollTimer) clearInterval(this.qrPollTimer);
         this.qrPollTimer = setInterval(async () => {
           const checkUrl = `https://music.163.com/api/login/qrcode/client/login?key=${unikey}&type=1&timestamp=${Date.now()}`;
@@ -870,9 +879,14 @@
               localStorage.setItem("ncm_user_cookie", cookie);
               this.ncmCookie = cookie;
               this.isVip = true;
-              if (statusText) statusText.innerText = "网易云账号授权成功！";
-              if (typeof showToast === 'function') showToast("网易云账号授权成功，VIP已解锁");
+
+              if (statusText) statusText.innerText = "网易云授权成功！正在同步红心歌单...";
+              if (typeof showToast === 'function') showToast("网易云账号授权成功！同步红心与个人歌单中...");
+
+              // 核心触发：自动同步个人资料、红心歌单与创建的歌单！
+              await this.syncNcmUserData(cookie);
               setTimeout(() => this.closeNcmLoginModal(), 1200);
+
             } else if (code === 802) {
               if (statusText) statusText.innerText = "已在手机上确认，授权登录中...";
             } else if (code === 800) {
@@ -887,7 +901,8 @@
       }
     },
 
-    submitNcmManualToken() {
+    // 手动校验 Cookie Token 并触发红心歌单全自动同步
+    async submitNcmManualToken() {
       const input = document.getElementById("ncm-manual-cookie-input").value.trim();
       if (!input) {
         if (typeof showToast === 'function') showToast("请输入有效的 Cookie 口令");
@@ -896,8 +911,96 @@
       localStorage.setItem("ncm_user_cookie", input);
       this.ncmCookie = input;
       this.isVip = true;
-      if (typeof showToast === 'function') showToast("网易云 Token 验证成功，已解锁全曲与 VIP 播放");
+
+      await this.syncNcmUserData(input);
       this.closeNcmLoginModal();
+    },
+
+    // 网易云登录后自动化数据与红心歌单同步引擎
+    async syncNcmUserData(cookieStr) {
+      if (!cookieStr) return;
+      if (typeof showToast === 'function') showToast("正在读取网易云个人资料与红心歌单...");
+
+      try {
+        // 1. 获取网易云用户 Account & Profile
+        const accRes = await this.ncmNativeFetch("https://music.163.com/api/user/account", "POST", { "Cookie": cookieStr });
+        let uid = null;
+        let nickname = "";
+        let avatarUrl = "";
+        let isVip = false;
+
+        if (accRes && accRes.data && accRes.data.profile) {
+          uid = accRes.data.profile.userId;
+          nickname = accRes.data.profile.nickname;
+          avatarUrl = accRes.data.profile.avatarUrl;
+          isVip = (accRes.data.account && accRes.data.account.vipType > 0) || (accRes.data.profile.vipType > 0);
+        }
+
+        if (uid) {
+          this.isVip = isVip;
+          localStorage.setItem("ncm_user_uid", uid);
+          localStorage.setItem("ncm_user_nickname", nickname);
+          localStorage.setItem("ncm_user_avatar", avatarUrl);
+
+          // 更新“我的”页面用户卡片
+          const nameEl = document.getElementById("ncm-mine-user-name");
+          const remarkEl = document.getElementById("ncm-mine-user-remark");
+          const avatarEl = document.getElementById("ncm-mine-user-avatar");
+
+          if (nameEl) nameEl.innerText = nickname || "网易云用户";
+          if (remarkEl) remarkEl.innerText = isVip ? "网易云黑胶 VIP 会员" : "网易云账号已同步";
+          if (avatarEl && avatarUrl) avatarEl.src = avatarUrl;
+
+          // 2. 拉取用户的网易云歌单 (首个即为【我喜欢的音乐/红心歌单】)
+          const plRes = await this.ncmNativeFetch(`https://music.163.com/api/user/playlist?uid=${uid}&limit=30&offset=0`, "POST", { "Cookie": cookieStr });
+
+          if (plRes && plRes.data && plRes.data.playlist) {
+            const ncmPlaylists = plRes.data.playlist;
+
+            for (let ncmPl of ncmPlaylists) {
+              const plName = ncmPl.name || "网易云歌单";
+              const plId = "ncm_pl_" + ncmPl.id;
+
+              let existingPl = this.playlists.find(p => p.id === plId || p.name === plName);
+              if (!existingPl) {
+                existingPl = { id: plId, name: plName, coverUrl: ncmPl.coverImgUrl || "", songIds: [] };
+                this.playlists.push(existingPl);
+              }
+
+              // 3. 拉取该歌单内的单曲明细并存入 IndexedDB
+              const detailRes = await this.ncmNativeFetch(`https://music.163.com/api/v3/playlist/detail?id=${ncmPl.id}`, "POST", { "Cookie": cookieStr });
+              if (detailRes && detailRes.data && detailRes.data.playlist && detailRes.data.playlist.tracks) {
+                const tracks = detailRes.data.playlist.tracks;
+                for (let track of tracks) {
+                  const songId = "ncm_" + track.id;
+                  const songObj = {
+                    id: songId,
+                    title: track.name,
+                    artist: track.ar ? track.ar.map(a => a.name).join("/") : "未知歌手",
+                    cover: track.al ? track.al.picUrl : "",
+                    url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`,
+                    lyrics: "[00:00.00]点击播放拉取歌词",
+                    isVip: track.fee === 1,
+                    isFavorite: ncmPl.specialType === 5 // 官方红心歌单标记为收藏
+                  };
+
+                  await this.saveSongToIndexedDB(songObj);
+                  if (!existingPl.songIds.includes(songId)) {
+                    existingPl.songIds.push(songId);
+                  }
+                }
+              }
+            }
+
+            this.savePlaylistsToStorage();
+            if (typeof showToast === 'function') showToast(`网易云数据同步完成！已导入 ${ncmPlaylists.length} 个歌单及红心曲目`);
+            this.renderMine();
+          }
+        }
+      } catch(e) {
+        console.error("同步网易云数据失败:", e);
+        if (typeof showToast === 'function') showToast("同步网易云数据部分受阻: " + e.message);
+      }
     },
 
     async openCompanionSelector() {
@@ -1172,19 +1275,6 @@
       }
     },
 
-    renderHome() {},
-
-    triggerHeartbeatMode() {
-      if (this.playlist.length === 0) {
-        if (typeof showToast === 'function') showToast("歌单为空，请先在“我的”页面导入歌曲");
-        return;
-      }
-      const randomIdx = Math.floor(Math.random() * this.playlist.length);
-      this.playSongFromList(randomIdx);
-      if (typeof showToast === 'function') showToast("已开启心动随机模式");
-    },
-
-    // 搜索：同时检索本地已导入曲目与在线网易云曲库
     async searchNcmMusic() {
       const input = document.getElementById("ncm-search-keyword");
       const listContainer = document.getElementById("ncm-search-results-list");
@@ -1200,7 +1290,6 @@
 
       let html = "";
 
-      // 1. 优先检索本地曲库
       const localSongs = await this.getAllSongsFromIndexedDB();
       const matchedLocal = localSongs.filter(s => s.title.includes(keyword) || (s.artist && s.artist.includes(keyword)));
 
@@ -1222,7 +1311,6 @@
         });
       }
 
-      // 2. 检索在线网易云曲库
       try {
         const searchUrl = `https://music.163.com/api/search/get/web?csrf_token=&u=1&s=${encodeURIComponent(keyword)}&type=1&offset=0&limit=10`;
         const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(searchUrl)}`).catch(() => null);
