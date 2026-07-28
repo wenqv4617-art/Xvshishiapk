@@ -682,12 +682,19 @@
       if (!song) return;
 
       const titleSm = document.getElementById("island-title-sm");
-      if (titleSm) titleSm.innerText = `${song.title} - ${song.artist}`;
+      const artistSm = document.getElementById("island-artist-sm");
+      const miniCover = document.getElementById("island-cover-img");
+
+      if (titleSm) titleSm.innerText = song.title || "未知歌名";
+      if (artistSm) artistSm.innerText = song.artist || "未知歌手";
+      if (miniCover) {
+        miniCover.src = song.cover || "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' fill='%23ec4141'/></svg>";
+      }
 
       const titleCard = document.getElementById("island-card-song-title");
       const artistCard = document.getElementById("island-card-song-artist");
-      if (titleCard) titleCard.innerText = song.title;
-      if (artistCard) artistCard.innerText = song.artist;
+      if (titleCard) titleCard.innerText = song.title || "未知歌名";
+      if (artistCard) artistCard.innerText = song.artist || "未知歌手";
 
       const coverImg = document.getElementById("island-card-cover-img");
       if (coverImg) {

@@ -33,17 +33,33 @@
   color: #ffffff;
 }
 
+/* 灵动岛 - 收起胶囊态 */
 #dynamic-island-container.collapsed {
-  width: 190px;
+  width: 200px;
   height: 38px;
   border-radius: 20px;
-  padding: 4px 10px;
+  padding: 5px 12px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
+/* 核心隔离：收起模式下强行隐藏所有大卡片内容，防止任何元素溢出 */
+#dynamic-island-container.collapsed .island-card-header,
+#dynamic-island-container.collapsed .island-card-center-stage,
+#dynamic-island-container.collapsed .island-seekbar-container,
+#dynamic-island-container.collapsed .island-controls-row,
+#dynamic-island-container.collapsed .island-companion-pill {
+  display: none !important;
+}
+
+/* 展开模式下隐藏收起胶囊视图 */
+#dynamic-island-container.expanded .island-mini-content {
+  display: none !important;
+}
+
+/* 灵动岛 - 展开 310x340px 大听歌卡片 */
 #dynamic-island-container.expanded {
   width: 310px;
   height: 340px;
@@ -57,8 +73,36 @@
 .island-mini-content {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   width: 100%;
+  overflow: hidden;
+}
+
+.island-text-box-sm {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 1;
+  overflow: hidden;
+}
+
+.island-title-sm {
+  font-size: 11px;
+  font-weight: 800;
+  color: #ffffff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
+}
+
+.island-artist-sm {
+  font-size: 9.5px;
+  color: rgba(255, 255, 255, 0.6);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
 }
 
 .island-cover-sm {
