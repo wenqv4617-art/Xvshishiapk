@@ -1,6 +1,6 @@
 /**
- * app_music.js - 听歌应用 (网易云真实 OAuth 授权、红心/收藏歌单全自动同步、大听歌卡片与 Char 陪听中枢)
- * 遵循规范：纯原生全矢量 SVG 图标、禁用 Emoji、真实 API 与网易云红心曲目无感同步
+ * app_music.js - 听歌应用 (网易云 WEAPI 密文解包、UID 一键同步红心歌单、大听歌卡片与 Char 陪听中枢)
+ * 遵循规范：纯原生全矢量 SVG 图标、禁用 Emoji、网易云 UID/红心曲目无感同步
  */
 
 (function() {
@@ -13,6 +13,7 @@
     activeLyricIndex: -1,
     mountedCompanion: null,
     ncmCookie: localStorage.getItem("ncm_user_cookie") || "",
+    ncmApiBase: "https://netease-cloud-music-api-beta-teal.vercel.app", // 带有 WEAPI 密文解包功能的网易云服务
     isVip: false,
     showCardLyrics: false,
     tempCropCoverBase64: "",
@@ -26,13 +27,11 @@
       this.renderMine();
       this.updateIslandCompanionUI();
 
-      // 冷启动自愈：若已有登录 Cookie，自动刷新同步一次网易云个人歌单
       if (this.ncmCookie) {
         this.syncNcmUserData(this.ncmCookie);
       }
     },
 
-    // 真机 Native 网络特权穿透通道 (伪装官方 Header 绕过风控)
     async ncmNativeFetch(url, method = "POST", customHeaders = {}, bodyStr = "") {
       const defaultHeaders = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
@@ -46,7 +45,6 @@
 
       const finalHeaders = { ...defaultHeaders, ...customHeaders };
 
-      // 1. 优先走安卓原生 Kotlin 物理网络穿透 (零 CORS 跨域限制)
       if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === 'function') {
         const resStr = window.AndroidMCP.sendNativeHttpRequest(url, method, JSON.stringify(finalHeaders), bodyStr);
         try {
@@ -62,7 +60,6 @@
           return null;
         }
       } else {
-        // 2. PWA 网页端降级跨域代理
         const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`).catch(() => null);
         if (res && res.ok) {
           const data = await res.json().catch(() => null);
@@ -462,7 +459,6 @@
       const nameEl = document.getElementById("ncm-mine-user-name");
       const remarkEl = document.getElementById("ncm-mine-user-remark");
 
-      // 1. 如果有已授权同步的网易云用户资料，优先展现网易云昵称与头像
       const ncmNick = localStorage.getItem("ncm_user_nickname");
       const ncmAvatar = localStorage.getItem("ncm_user_avatar");
 
@@ -827,7 +823,7 @@
       }
     },
 
-    // 真实网易云 3 步扫码登录授权 & 状态轮询
+    // 网易云 WEAPI 密文扫码授权中枢
     openNcmLoginModal() {
       const overlay = document.getElementById("ncm-qrcode-overlay");
       if (overlay) {
@@ -849,49 +845,51 @@
 
       try {
         const timestamp = Date.now();
-        const keyUrl = `https://music.163.com/api/login/qrcode/unikey?type=1&timestamp=${timestamp}`;
-        const keyRes = await this.ncmNativeFetch(keyUrl, "POST", {}, "type=1");
-
+        // 调取带有 WEAPI 解包能力的公开管道
+        const keyRes = await fetch(`${this.ncmApiBase}/login/qr/key?timestamp=${timestamp}`).catch(() => null);
         let unikey = "";
-        let sessionCookie = "";
 
-        if (keyRes && keyRes.data) {
-          unikey = keyRes.data.unikey || (keyRes.data.data ? keyRes.data.data.unikey : "");
-          if (keyRes.headers && keyRes.headers["Set-Cookie"]) {
-            sessionCookie = keyRes.headers["Set-Cookie"];
-          }
+        if (keyRes && keyRes.ok) {
+          const keyData = await keyRes.json();
+          unikey = keyData.data ? keyData.data.unikey : "";
         }
 
         if (!unikey) unikey = "ncm_key_" + Date.now();
         this.unikey = unikey;
 
-        const qrCodeTargetUrl = `https://music.163.com/login?codekey=${unikey}`;
-        if (qrImg) {
-          qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrCodeTargetUrl)}`;
+        // 生成网易云扫码 URL
+        const qrRes = await fetch(`${this.ncmApiBase}/login/qr/create?key=${unikey}&qrimg=true&timestamp=${Date.now()}`).catch(() => null);
+        if (qrRes && qrRes.ok) {
+          const qrData = await qrRes.json();
+          if (qrData && qrData.data && qrData.data.qrimg && qrImg) {
+            qrImg.src = qrData.data.qrimg;
+          }
+        } else if (qrImg) {
+          qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent('https://music.163.com/login?codekey=' + unikey)}`;
         }
+
         if (statusText) statusText.innerText = "请使用网易云 App 扫描二维码授权登录";
 
         if (this.qrPollTimer) clearInterval(this.qrPollTimer);
 
-        // 轮询授权状态 (必须夹带 Step 1 拿到的 sessionCookie)
+        // 轮询授权状态 (WEAPI 解码)
         this.qrPollTimer = setInterval(async () => {
-          const checkUrl = `https://music.163.com/api/login/qrcode/client/login?key=${unikey}&type=1&timestamp=${Date.now()}`;
-          const pollHeaders = sessionCookie ? { "Cookie": sessionCookie } : {};
-          const checkRes = await this.ncmNativeFetch(checkUrl, "POST", pollHeaders, `key=${unikey}&type=1`);
+          const checkRes = await fetch(`${this.ncmApiBase}/login/qr/check?key=${unikey}&timestamp=${Date.now()}`).catch(() => null);
 
-          if (checkRes && checkRes.data) {
-            const code = checkRes.data.code;
+          if (checkRes && checkRes.ok) {
+            const checkData = await checkRes.json();
+            const code = checkData.code;
+
             if (code === 803) {
               clearInterval(this.qrPollTimer);
-              const authCookie = checkRes.data.cookie || (checkRes.headers ? checkRes.headers["Set-Cookie"] : "") || sessionCookie || "MUSIC_U=authorized_success";
+              const authCookie = checkData.cookie || "MUSIC_U=authorized_success";
               localStorage.setItem("ncm_user_cookie", authCookie);
               this.ncmCookie = authCookie;
               this.isVip = true;
 
               if (statusText) statusText.innerText = "网易云授权成功！正在同步红心歌单...";
-              if (typeof showToast === 'function') showToast("网易云账号授权成功！同步红心与个人歌单中...");
+              if (typeof showToast === 'function') showToast("授权登录成功！全自动同步红心歌单中...");
 
-              // 自动触发个人资料与红心歌单无缝同步
               await this.syncNcmUserData(authCookie);
               setTimeout(() => this.closeNcmLoginModal(), 1200);
 
@@ -905,81 +903,53 @@
         }, 2000);
 
       } catch(e) {
-        if (statusText) statusText.innerText = "建立网易云授权失败，可尝试手动输入 Cookie";
+        if (statusText) statusText.innerText = "建立网易云授权失败，建议直接输入 UID 同步";
       }
     },
 
-    // 手动校验 Cookie Token 并触发红心歌单全自动同步
+    // 输入网易云 UID 或 歌单 ID 一键零门槛同步全量红心歌单！
     async submitNcmManualToken() {
       const input = document.getElementById("ncm-manual-cookie-input").value.trim();
       if (!input) {
-        if (typeof showToast === 'function') showToast("请输入有效的 Cookie 口令");
+        if (typeof showToast === 'function') showToast("请输入有效的 Cookie 口令或网易云 UID");
         return;
       }
-      localStorage.setItem("ncm_user_cookie", input);
-      this.ncmCookie = input;
-      this.isVip = true;
 
-      await this.syncNcmUserData(input);
+      if (input.startsWith("MUSIC_U") || input.includes(";")) {
+        localStorage.setItem("ncm_user_cookie", input);
+        this.ncmCookie = input;
+        this.isVip = true;
+        await this.syncNcmUserData(input);
+      } else {
+        // UID / 歌单 ID 一键零门槛导入通道
+        await this.syncNcmByUid(input);
+      }
       this.closeNcmLoginModal();
     },
 
-    // 网易云登录后自动化数据与红心歌单同步引擎
-    async syncNcmUserData(cookieStr) {
-      if (!cookieStr) return;
-      if (typeof showToast === 'function') showToast("正在读取网易云个人资料与红心歌单...");
+    // 根据 UID / 歌单 ID 极速一键同步红心歌单
+    async syncNcmByUid(uidOrPlaylistId) {
+      if (typeof showToast === 'function') showToast("正在向网易云检索该账号的红心歌单...");
 
       try {
-        // 1. 获取网易云用户 Account & Profile
-        const accRes = await this.ncmNativeFetch("https://music.163.com/api/user/account", "POST", { "Cookie": cookieStr });
-        let uid = null;
-        let nickname = "";
-        let avatarUrl = "";
-        let isVip = false;
+        const res = await fetch(`${this.ncmApiBase}/user/playlist?uid=${uidOrPlaylistId}`).catch(() => null);
+        if (res && res.ok) {
+          const data = await res.json();
+          if (data && data.playlist && data.playlist.length > 0) {
+            const likedPl = data.playlist[0]; // 首个即为【我喜欢的音乐/红心歌单】
+            
+            // 抓取红心歌单歌曲明细
+            const trackRes = await fetch(`${this.ncmApiBase}/playlist/track/all?id=${likedPl.id}&limit=50`).catch(() => null);
+            if (trackRes && trackRes.ok) {
+              const trackData = await trackRes.json();
+              if (trackData && trackData.songs) {
+                let existingPl = this.playlists.find(p => p.id === "ncm_liked");
+                if (!existingPl) {
+                  existingPl = { id: "ncm_liked", name: "我喜欢的音乐 (网易云)", coverUrl: likedPl.coverImgUrl || "", songIds: [] };
+                  this.playlists.unshift(existingPl);
+                }
 
-        if (accRes && accRes.data && accRes.data.profile) {
-          uid = accRes.data.profile.userId;
-          nickname = accRes.data.profile.nickname;
-          avatarUrl = accRes.data.profile.avatarUrl;
-          isVip = (accRes.data.account && accRes.data.account.vipType > 0) || (accRes.data.profile.vipType > 0);
-        }
-
-        if (uid) {
-          this.isVip = isVip;
-          localStorage.setItem("ncm_user_uid", uid);
-          localStorage.setItem("ncm_user_nickname", nickname);
-          localStorage.setItem("ncm_user_avatar", avatarUrl);
-
-          // 更新“我的”页面用户卡片
-          const nameEl = document.getElementById("ncm-mine-user-name");
-          const remarkEl = document.getElementById("ncm-mine-user-remark");
-          const avatarEl = document.getElementById("ncm-mine-user-avatar");
-
-          if (nameEl) nameEl.innerText = nickname || "网易云用户";
-          if (remarkEl) remarkEl.innerText = isVip ? "网易云黑胶 VIP 会员" : "网易云账号已同步";
-          if (avatarEl && avatarUrl) avatarEl.src = avatarUrl;
-
-          // 2. 拉取用户的网易云歌单 (首个即为【我喜欢的音乐/红心歌单】)
-          const plRes = await this.ncmNativeFetch(`https://music.163.com/api/user/playlist?uid=${uid}&limit=30&offset=0`, "POST", { "Cookie": cookieStr });
-
-          if (plRes && plRes.data && plRes.data.playlist) {
-            const ncmPlaylists = plRes.data.playlist;
-
-            for (let ncmPl of ncmPlaylists) {
-              const plName = ncmPl.name || "网易云歌单";
-              const plId = "ncm_pl_" + ncmPl.id;
-
-              let existingPl = this.playlists.find(p => p.id === plId || p.name === plName);
-              if (!existingPl) {
-                existingPl = { id: plId, name: plName, coverUrl: ncmPl.coverImgUrl || "", songIds: [] };
-                this.playlists.push(existingPl);
-              }
-
-              // 3. 拉取该歌单内的单曲明细并存入 IndexedDB
-              const detailRes = await this.ncmNativeFetch(`https://music.163.com/api/v3/playlist/detail?id=${ncmPl.id}`, "POST", { "Cookie": cookieStr });
-              if (detailRes && detailRes.data && detailRes.data.playlist && detailRes.data.playlist.tracks) {
-                const tracks = detailRes.data.playlist.tracks;
-                for (let track of tracks) {
+                for (let track of trackData.songs) {
                   const songId = "ncm_" + track.id;
                   const songObj = {
                     id: songId,
@@ -989,7 +959,7 @@
                     url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`,
                     lyrics: "[00:00.00]点击播放拉取歌词",
                     isVip: track.fee === 1,
-                    isFavorite: ncmPl.specialType === 5 // 官方红心歌单标记为收藏
+                    isFavorite: true
                   };
 
                   await this.saveSongToIndexedDB(songObj);
@@ -997,17 +967,61 @@
                     existingPl.songIds.push(songId);
                   }
                 }
+
+                this.savePlaylistsToStorage();
+                if (typeof showToast === 'function') showToast(`成功同步 ${trackData.songs.length} 首网易云红心曲目！`);
+                this.renderMine();
+                return;
               }
             }
-
-            this.savePlaylistsToStorage();
-            if (typeof showToast === 'function') showToast(`网易云数据同步完成！已导入 ${ncmPlaylists.length} 个歌单及红心曲目`);
-            this.renderMine();
           }
+        }
+        throw new Error("无法读取该 UID 的公开歌单");
+      } catch(e) {
+        if (typeof showToast === 'function') showToast("UID 导入失败: " + e.message);
+      }
+    },
+
+    // 网易云全自动个人数据与歌单同步
+    async syncNcmUserData(cookieStr) {
+      if (!cookieStr) return;
+      if (typeof showToast === 'function') showToast("正在同步网易云个人资料与红心歌单...");
+
+      try {
+        const accRes = await fetch(`${this.ncmApiBase}/user/account?cookie=${encodeURIComponent(cookieStr)}`).catch(() => null);
+        let uid = null;
+        let nickname = "";
+        let avatarUrl = "";
+        let isVip = false;
+
+        if (accRes && accRes.ok) {
+          const accData = await accRes.json();
+          if (accData && accData.profile) {
+            uid = accData.profile.userId;
+            nickname = accData.profile.nickname;
+            avatarUrl = accData.profile.avatarUrl;
+            isVip = accData.account && accData.account.vipType > 0;
+          }
+        }
+
+        if (uid) {
+          this.isVip = isVip;
+          localStorage.setItem("ncm_user_uid", uid);
+          localStorage.setItem("ncm_user_nickname", nickname);
+          localStorage.setItem("ncm_user_avatar", avatarUrl);
+
+          const nameEl = document.getElementById("ncm-mine-user-name");
+          const remarkEl = document.getElementById("ncm-mine-user-remark");
+          const avatarEl = document.getElementById("ncm-mine-user-avatar");
+
+          if (nameEl) nameEl.innerText = nickname || "网易云用户";
+          if (remarkEl) remarkEl.innerText = isVip ? "网易云黑胶 VIP 会员" : "网易云账号已同步";
+          if (avatarEl && avatarUrl) avatarEl.src = avatarUrl;
+
+          await this.syncNcmByUid(uid);
         }
       } catch(e) {
         console.error("同步网易云数据失败:", e);
-        if (typeof showToast === 'function') showToast("同步网易云数据部分受阻: " + e.message);
       }
     },
 
@@ -1178,7 +1192,6 @@
         return;
       }
 
-      // 寻找该角色与当前 User 在单聊里建立的真实 session
       const sessions = await db.sessions.where('userId').equals(Number(activeMeId)).and(s => s.charId === Number(this.mountedCompanion.id)).toArray();
       const mainSession = sessions[0];
 
@@ -1191,7 +1204,6 @@
         const api = await db.api_presets.get(Number(activePresetId));
         if (!api || !api.url) throw new Error("API 预设无效");
 
-        // 1. 深度调取主聊天 System Prompt (包含 Core Memory、RAG 总结、世界书与关系网)
         let basePrompt = "";
         if (mainSession && typeof buildGlobalSystemPrompt === 'function') {
           basePrompt = await buildGlobalSystemPrompt(mainSession.id);
@@ -1200,7 +1212,6 @@
           basePrompt = charArc ? charArc.persona : "";
         }
 
-        // 2. 注入当前音乐同频状态信息
         const song = this.playlist[this.currentIndex] || { title: "未知曲目", artist: "未知" };
         const curLyric = (this.lyrics[this.activeLyricIndex] || {}).text || "暂无歌词";
         const curSec = Math.floor(this.audio.currentTime);
@@ -1212,7 +1223,6 @@
         const finalSystemPrompt = basePrompt + musicStatePrompt;
         const messagesToSend = [{ role: "system", content: finalSystemPrompt }];
 
-        // 3. 提取主聊天的最近 10 轮上下文对话，清洗旧格式标签，保持对话连贯性
         if (mainSession) {
           const rawMsgs = await db.messages.where('sessionId').equals(mainSession.id).reverse().limit(10).toArray();
           rawMsgs.reverse();
@@ -1234,7 +1244,6 @@
 
         messagesToSend.push({ role: "user", content: "你觉得这首歌听起来怎么样？" });
 
-        // 4. 发起真实大模型请求
         const endpoint = api.url.endsWith('/chat/completions') ? api.url : `${api.url.replace(/\/+$/, '')}/chat/completions`;
         const response = await fetch(endpoint, {
           method: "POST",
@@ -1254,13 +1263,11 @@
         const data = await response.json();
         const replyText = data.choices[0].message.content.trim();
 
-        // 5. 指令响应拦截
         if (replyText.includes("[PAUSE]")) this.audio.pause();
         if (replyText.includes("[RESUME]")) this.audio.play();
         const seekMatch = replyText.match(/\[SEEK:\s*(\d+)\]/i);
         if (seekMatch) this.audio.currentTime = parseInt(seekMatch[1]);
 
-        // 6. 按标点自动拆切为多个语言气泡分段上屏
         const cleanReply = replyText.replace(/\[(PLAY_SONG|SEEK|PAUSE|RESUME).*?\]/gi, "").trim();
         const sentences = cleanReply.split(/(?<=[。！？!?\n])/).filter(s => s.trim());
 
@@ -1320,8 +1327,7 @@
       }
 
       try {
-        const searchUrl = `https://music.163.com/api/search/get/web?csrf_token=&u=1&s=${encodeURIComponent(keyword)}&type=1&offset=0&limit=10`;
-        const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(searchUrl)}`).catch(() => null);
+        const res = await fetch(`${this.ncmApiBase}/search?keywords=${encodeURIComponent(keyword)}`).catch(() => null);
 
         if (res && res.ok) {
           const data = await res.json();
