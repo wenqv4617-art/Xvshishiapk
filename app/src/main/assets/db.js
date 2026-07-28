@@ -194,3 +194,12 @@ db.version(22).stores({
 db.version(23).stores({
   prompt_presets: 'id++, name, type'
 });
+
+// ============================================
+// 🎯 新增 Version 24：支持听歌应用与网易云歌单物理表
+// ============================================
+db.version(24).stores({
+  music_playlists: 'id++, userId, name, coverUrl, isNcm, ncmPlaylistId',
+  music_songs: 'id++, playlistId, title, artist, cover, url, lyrics, isVip',
+  music_logs: 'id++, sessionId, charId, songId, timestamp'
+});

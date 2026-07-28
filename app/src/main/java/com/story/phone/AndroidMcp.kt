@@ -253,7 +253,11 @@ class AndroidMcp(private val context: Context) {
             val resHeaders = JSONObject()
             conn.headerFields?.forEach { (k, v) ->
                 if (k != null && v.isNotEmpty()) {
-                    resHeaders.put(k, v[0])
+                    if (k.equals("Set-Cookie", ignoreCase = true)) {
+                        resHeaders.put("Set-Cookie", v.joinToString("; "))
+                    } else {
+                        resHeaders.put(k, v[0])
+                    }
                 }
             }
 

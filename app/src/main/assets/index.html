@@ -24,6 +24,7 @@
   <link rel="stylesheet" href="check_phone.css">
   <link rel="stylesheet" href="forum.css">
   <link rel="stylesheet" href="couples.css">
+  <link rel="stylesheet" href="music.css">
   <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
   <style>
     /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
@@ -115,6 +116,79 @@
     </div>
   </div>
   <div id="phone-container" style="display: none;">
+    <!-- 微信/iOS 网页全页面顶层悬浮灵动岛 & 310x340px 大听歌卡片 -->
+    <div id="dynamic-island-container" class="collapsed" style="display:none;" onclick="musicSystem.toggleIslandExpand()">
+      <!-- 1. 收起状态 mini 胶囊视图 -->
+      <div class="island-mini-content">
+        <img class="island-cover-sm playing" id="island-cover-img" src="data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' fill='%23ec4141'/></svg>" />
+        <span class="island-text-sm" id="island-title-sm">网易云音乐 - 听歌中</span>
+      </div>
+
+      <!-- 2. 展开状态 310x340px 大听歌卡片视图 -->
+      <div class="island-card-header" style="width:100%;">
+        <div class="island-card-title-box">
+          <div class="island-card-title" id="island-card-song-title">网易云同频曲目</div>
+          <div class="island-card-artist" id="island-card-song-artist">歌手名</div>
+        </div>
+        <div class="island-card-top-actions" onclick="event.stopPropagation()">
+          <button class="btn-icon" style="color:rgba(255,255,255,0.7);" title="收起卡片" onclick="event.stopPropagation(); musicSystem.toggleIslandExpand()">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="18 15 12 9 6 15"/></svg>
+          </button>
+          <button class="btn-icon" style="color:#ef4444;" title="彻底停止听歌并关闭灵动岛" onclick="musicSystem.closeAndStopMusic(event)">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 中央舞台：黑胶唱片 vs 实时歌词 相互切换 (点击封面直接切换) -->
+      <div class="island-card-center-stage" title="点击切换歌词/唱片视图" onclick="musicSystem.toggleCardLyricsView(event)">
+        <div class="island-card-vinyl-box" id="island-card-vinyl-box">
+          <div class="island-card-vinyl playing" id="island-card-vinyl-disc">
+            <img class="island-card-cover" id="island-card-cover-img" src="data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><rect width='100' height='100' fill='%23ec4141'/></svg>" />
+          </div>
+        </div>
+        <div class="island-card-lyrics-box" id="island-card-lyrics-box" style="display:none;">
+          <div class="island-lyric-line active">轻触加载歌词...</div>
+        </div>
+      </div>
+
+      <div class="island-seekbar-container" onclick="event.stopPropagation()">
+        <input type="range" class="island-seekbar" id="island-card-seekbar" value="0" min="0" max="100" oninput="musicSystem.onSeekbarChange(this.value)">
+        <div class="island-seekbar-times">
+          <span id="island-card-time-cur">00:00</span>
+          <span id="island-card-time-dur">00:00</span>
+        </div>
+      </div>
+
+      <!-- 5 按钮单行对称控制栏 -->
+      <div class="island-controls-row" onclick="event.stopPropagation()">
+        <button class="btn-icon" id="island-card-heart-btn" style="color:rgba(255,255,255,0.7);" title="收藏/爱心" onclick="musicSystem.toggleFavoriteCurrentSong(event)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+        </button>
+        <button class="btn-icon" style="color:#ffffff;" title="上一首" onclick="musicSystem.prevSong()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
+        </button>
+        <button class="btn-icon" id="island-card-play-btn" style="color:#ec4141; background:#ffffff; border-radius:50%; width:34px; height:34px;" title="播放/暂停" onclick="musicSystem.togglePlayPause()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        </button>
+        <button class="btn-icon" style="color:#ffffff;" title="下一首" onclick="musicSystem.nextSong()">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/></svg>
+        </button>
+        <button class="btn-icon" id="island-card-mode-btn" style="color:rgba(255,255,255,0.8);" title="切换播放模式" onclick="musicSystem.cyclePlayMode(event)">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor"><path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z"/></svg>
+        </button>
+      </div>
+
+      <!-- 常驻挂载的 Char 陪听胶囊按钮 -->
+      <div class="island-companion-pill" id="island-companion-pill" onclick="musicSystem.handleCompanionButtonClick(event)">
+        <div style="display:flex; align-items:center; gap:6px; font-size:11px; font-weight:700; color:#ec4141;">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+          <span>邀请角色与你一起听歌</span>
+        </div>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+    </div>
+
     <!-- 桌面网格 -->
     <main id="desktop">
       <div class="app-grid" id="desktop-grid">
@@ -898,6 +972,7 @@
                 <div id="form-general-fields">
                   <div class="form-group"><label>姓名</label><input type="text" id="archive-name" required placeholder="姓名"></div>
                   <div class="form-group"><label>备注 (不发给 AI)</label><input type="text" id="archive-remark" placeholder="仅自己可见"></div>
+                  <div class="form-group"><label>母语 / 语言偏好 (留空默认为中文)</label><input type="text" id="archive-language" placeholder="例如：日语、英语、粤语、法语"></div>
                   <div class="form-group"><label>分组</label><input type="text" id="archive-group" placeholder="如：主角团、反派"></div>
                   <div class="form-group"><label>人设</label><textarea id="archive-persona" rows="3" placeholder="System Prompt 人设底料"></textarea></div>
                 </div>
@@ -1243,6 +1318,7 @@
             </div>
 
             <div class="multi-select-action-bar" id="multi-select-bar" style="display: none;">
+              <button id="btn-multi-translate" class="btn btn-outline" style="flex:1; border-color:#0284c7; color:#0284c7; font-weight:700;">批量翻译</button>
               <button id="btn-multi-delete" class="btn btn-danger-outline" style="flex:1;">删除选中 (<span id="selected-count">0</span>)</button>
               <button id="btn-multi-cancel" class="btn" style="flex:1;">退出多选</button>
             </div>
@@ -2784,6 +2860,8 @@
 
                 <div id="bubble-context-menu" class="bubble-menu-overlay" style="display: none;">
                   <div class="bubble-menu-content">
+                    <button id="btn-menu-repair-format" style="color: #8b5cf6; font-weight: 700;">格式修复</button>
+                    <button id="btn-menu-translate" style="color: #0284c7; font-weight: 700;">翻译此条 (Translate)</button>
                     <button id="btn-menu-edit">编辑消息</button>
                     <button id="btn-menu-reroll">回溯重回 (Reroll)</button>
                     <button id="btn-menu-favorite">收藏消息</button>
@@ -3560,6 +3638,7 @@
 
           <!-- 线下多选 -->
           <div class="multi-select-action-bar" id="offline-multi-select-bar" style="display: none; padding:0;">
+            <button id="btn-offline-multi-translate" class="btn btn-outline" style="flex:1; border-color:#0284c7; color:#0284c7; font-weight:700;">批量翻译</button>
             <button id="btn-offline-multi-delete" class="btn btn-danger-outline" style="flex:1;">删除选中 (<span id="offline-selected-count">0</span>)</button>
             <button id="btn-offline-multi-cancel" class="btn" style="flex:1;">退出多选</button>
           </div>
@@ -3567,6 +3646,7 @@
 
         <div id="offline-bubble-context-menu" class="bubble-menu-overlay" style="display: none;">
           <div class="bubble-menu-content">
+            <button id="btn-offline-menu-translate" style="color: #0284c7; font-weight: 700;">翻译此条 (Translate)</button>
             <button id="btn-offline-menu-edit">编辑消息</button>
             <button id="btn-offline-menu-reroll">回溯重回 (Reroll)</button>
             <button id="btn-offline-menu-favorite">收藏消息</button>
@@ -3665,6 +3745,98 @@
           <div class="form-group" style="flex: 1; display: flex; flex-direction: column; min-height: 250px;">
             <label style="font-weight:700; margin-bottom: 6px;">对话回顾 (只读)</label>
             <div id="archive-detail-messages-flow" class="offline-messages-container" style="flex: 1; background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; overflow-y: auto; max-height: 350px;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 格式修复专属模态窗 (重塑掉格式消息) -->
+      <div id="custom-format-repair-overlay" class="modal-overlay" style="z-index: 1600; align-items: center !important; justify-content: center !important;">
+        <div class="modal" style="max-width: 330px; border-radius: 16px; border: 1px solid var(--border); background: #ffffff; padding: 20px; box-shadow: 0 10px 30px rgba(0,0,0,0.2);">
+          <header class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+            <h4 style="font-size: 15px; font-weight: 800; color: #1e293b; margin: 0;">消息格式修复</h4>
+            <button class="btn-icon" onclick="document.getElementById('custom-format-repair-overlay').classList.remove('active')">
+              <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+            </button>
+          </header>
+
+          <div class="win-body" style="display: flex; flex-direction: column; gap: 12px; margin-top: 14px; padding: 0;">
+            <!-- 目标格式快捷药丸按钮行 -->
+            <div class="form-group" style="margin-bottom: 0;">
+              <label style="font-size: 11px; font-weight: 700; color: var(--text-secondary); margin-bottom: 6px; display: block;">选择重塑目标格式：</label>
+              <input type="hidden" id="repair-format-type-val" value="text">
+              <div id="repair-format-pills-row" style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;">
+                <button type="button" class="btn btn-outline repair-pill-btn active" data-type="text" onclick="selectRepairFormat('text', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">文本</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="image" onclick="selectRepairFormat('image', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">图片</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="voice" onclick="selectRepairFormat('voice', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">语音</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="sticker" onclick="selectRepairFormat('sticker', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">表情包</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="transfer" onclick="selectRepairFormat('transfer', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">转账</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="red_envelope" onclick="selectRepairFormat('red_envelope', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">红包</button>
+              </div>
+            </div>
+
+            <!-- 动态字段表单区域 -->
+            <div id="repair-format-fields-container" style="display:flex; flex-direction:column; gap:10px;">
+              <!-- 文本 -->
+              <div id="repair-field-text" class="repair-sub-field">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">对白文本内容</label>
+                <textarea id="repair-input-text" rows="4" style="width:100%; border:1.5px solid var(--border); border-radius:8px; padding:8px; font-size:12px; resize:none; box-sizing:border-box;"></textarea>
+              </div>
+
+              <!-- 图片 -->
+              <div id="repair-field-image" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">画面具体描述 (原文已自动带入)</label>
+                <textarea id="repair-input-image-text" rows="3" style="width:100%; border:1.5px solid var(--border); border-radius:8px; padding:8px; font-size:12px; resize:none; box-sizing:border-box; margin-bottom:6px;"></textarea>
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">本地上传图片 (可选)</label>
+                <div style="display:flex; gap:6px;">
+                  <button type="button" class="btn btn-outline" onclick="document.getElementById('repair-file-image').click()" style="padding:6px 10px; font-size:11px; border-radius:6px; flex:1;">选择本地图</button>
+                  <span id="repair-image-filename" style="font-size:10px; color:var(--text-secondary); align-self:center; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">无附件</span>
+                  <input type="file" id="repair-file-image" accept="image/*" style="display:none;">
+                </div>
+              </div>
+
+              <!-- 语音 -->
+              <div id="repair-field-voice" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">语音时长: <span id="repair-val-voice-dur">5</span>"</label>
+                <input type="range" id="repair-input-voice-dur" min="1" max="60" value="5" oninput="document.getElementById('repair-val-voice-dur').innerText = this.value" style="margin-bottom:8px;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">语音转文字内容 (原文已自动带入)</label>
+                <textarea id="repair-input-voice-text" rows="3" style="width:100%; border:1.5px solid var(--border); border-radius:8px; padding:8px; font-size:12px; resize:none; box-sizing:border-box;"></textarea>
+              </div>
+
+              <!-- 表情包 -->
+              <div id="repair-field-sticker" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary); margin-bottom:4px; display:block;">从本对话挂载的图柜中选择表情包：</label>
+                <div id="repair-sticker-picker-grid" style="display:grid; grid-template-columns:repeat(4, 1fr); gap:8px; max-height:160px; overflow-y:auto; padding:4px; border:1.5px solid var(--border); border-radius:8px; background:#f8fafc;">
+                  <!-- 由 JS 渲染挂载的表情包列表 -->
+                </div>
+                <input type="hidden" id="repair-selected-sticker-caption">
+              </div>
+
+              <!-- 转账 -->
+              <div id="repair-field-transfer" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">转账金额 (元)</label>
+                <input type="number" id="repair-input-transfer-amount" step="0.01" value="100.00" style="width:100%; height:36px; border:1.5px solid var(--border); border-radius:8px; font-size:14px; font-weight:700; padding:0 8px; box-sizing:border-box; margin-bottom:6px;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">指定收款人 (可选)</label>
+                <input type="text" id="repair-input-transfer-target" placeholder="例如：我" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; padding:0 8px; box-sizing:border-box;">
+              </div>
+
+              <!-- 红包 -->
+              <div id="repair-field-red-envelope" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">红包类型</label>
+                <select id="repair-input-red-type" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; margin-bottom:6px; background:#fff;">
+                  <option value="normal">普通等额红包</option>
+                  <option value="lucky">拼手气红包</option>
+                </select>
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">红包金额 (元)</label>
+                <input type="number" id="repair-input-red-amount" step="0.01" value="50.00" style="width:100%; height:36px; border:1.5px solid var(--border); border-radius:8px; font-size:14px; font-weight:700; padding:0 8px; box-sizing:border-box; margin-bottom:6px;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">红包祝福语 (原文已自动带入)</label>
+                <input type="text" id="repair-input-red-remark" placeholder="恭喜发财" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; padding:0 8px; box-sizing:border-box;">
+              </div>
+            </div>
+
+            <div style="display: flex; gap: 8px; margin-top: 10px;">
+              <button class="btn btn-outline" onclick="document.getElementById('custom-format-repair-overlay').classList.remove('active')" style="flex: 1; padding: 10px; font-size: 12px; border-radius: 8px;">取消</button>
+              <button class="btn btn-primary" onclick="submitFormatRepair()" style="flex: 1; padding: 10px; font-size: 12px; font-weight: 700; background-color: #8b5cf6; border: none; border-radius: 8px;">确认重写格式</button>
+            </div>
           </div>
         </div>
       </div>
@@ -4412,8 +4584,292 @@
             </div>
           </header>
           <div class="couples-assets-grid" id="couples-assets-thumbs-container"></div>
+        </div> <!-- couples-materials-library-drawer 结束 -->
+      </div> <!-- 情侣空间(win-couples)结束 -->
+
+      <!-- === 网易云听歌应用 (win-music) === -->
+      <div id="win-music" class="app-window">
+        <header class="music-header">
+          <button class="btn-icon" onclick="closeApp('music')">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+          </button>
+          <span class="music-header-title">网易云音乐</span>
+          <div style="width:24px;"></div>
+        </header>
+
+        <div class="music-body-scroll">
+          <!-- Tab 1: 我的 (默认主页) -->
+          <section id="music-tab-mine" class="music-tab-panel active">
+            <div class="ncm-user-profile-card">
+              <img id="ncm-mine-user-avatar" class="ncm-user-avatar" src="" />
+              <div style="flex:1; overflow:hidden;">
+                <div id="ncm-mine-user-name" style="font-size:15px; font-weight:800; color:var(--ncm-text-main);">我的账号</div>
+                <div id="ncm-mine-user-remark" style="font-size:11px; color:var(--ncm-text-sub); margin-top:2px;">继承当前聊天面具</div>
+              </div>
+              <button class="btn btn-outline" onclick="musicSystem.openNcmLoginModal()" style="padding:6px 10px; font-size:10px; border-color:#ec4141; color:#ec4141; border-radius:12px; font-weight:700;">网易云扫码</button>
+            </div>
+
+            <div class="ncm-section-title" style="margin-top:8px;">
+              <span>我的歌单分组</span>
+              <button class="btn-icon" onclick="musicSystem.openCreatePlaylistModal()" title="新建歌单">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+            
+            <div class="ncm-section-title" style="margin-top:8px;">
+              <span>本地与导入曲库</span>
+              <button class="btn-icon" onclick="musicSystem.openImportChoiceModal()" title="导入歌曲">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+            <div id="ncm-mine-songs-container" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </section>
+
+          <!-- Tab 2: 搜索 -->
+          <section id="music-tab-search" class="music-tab-panel">
+            <div class="ncm-search-bar">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#94a3b8" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              <input type="text" class="ncm-search-input" id="ncm-search-keyword" placeholder="输入歌名、歌手或网易云 ID..." onkeyup="if(event.key==='Enter') musicSystem.searchNcmMusic()" />
+              <button class="btn btn-primary" onclick="musicSystem.searchNcmMusic()" style="padding:4px 10px; font-size:11px; background:#ec4141; border:none; border-radius:12px;">检索</button>
+            </div>
+            <div class="ncm-section-title" style="margin-top:10px;">
+              <span>网易云搜索结果</span>
+            </div>
+            <div id="ncm-search-results-list" style="display:flex; flex-direction:column; gap:8px;">
+              <div style="text-align:center; padding:20px; font-size:11px; color:#94a3b8;">输入关键词搜索网易云音乐曲库</div>
+            </div>
+          </section>
+
+          <!-- Tab 3: 我的 -->
+          <section id="music-tab-mine" class="music-tab-panel">
+            <div class="ncm-user-profile-card">
+              <img id="ncm-mine-user-avatar" class="ncm-user-avatar" src="" />
+              <div style="flex:1; overflow:hidden;">
+                <div id="ncm-mine-user-name" style="font-size:15px; font-weight:800; color:var(--ncm-text-main);">我的账号</div>
+                <div id="ncm-mine-user-remark" style="font-size:11px; color:var(--ncm-text-sub); margin-top:2px;">继承当前聊天面具</div>
+              </div>
+              <button class="btn btn-outline" onclick="musicSystem.openNcmLoginModal()" style="padding:6px 10px; font-size:10px; border-color:#ec4141; color:#ec4141; border-radius:12px; font-weight:700;">网易云扫码</button>
+            </div>
+
+            <div class="ncm-section-title" style="margin-top:8px;">
+              <span>我的歌单与导入单曲</span>
+              <button class="btn-icon" onclick="musicSystem.openImportChoiceModal()" title="导入音乐">
+                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+            </div>
+            <div id="ncm-mine-songs-container" style="display:flex; flex-direction:column; gap:8px;"></div>
+          </section>
         </div>
-      </div>
+
+        <!-- 底部 Dock 栏 (极简双 Tab 模式) -->
+        <footer class="music-dock">
+          <button class="music-dock-tab active" data-tab="mine" onclick="musicSystem.switchTab('mine')">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>
+            <span>我的</span>
+          </button>
+          <button class="music-dock-tab" data-tab="search" onclick="musicSystem.switchTab('search')">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <span>搜索</span>
+          </button>
+        </footer>
+
+        <!-- 1. 三通道导入类型选择 Modal -->
+        <div id="ncm-import-choice-overlay" class="modal-overlay" style="z-index:1550; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:300px; padding:20px; border-radius:16px; background:#fff; text-align:center;">
+            <h4 style="margin:0 0 14px 0; font-size:15px; font-weight:800; color:#1e293b;">选择音频导入方式</h4>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <button class="btn btn-primary" onclick="musicSystem.openImportFormModal('local')" style="padding:10px; font-size:12px; background:#ec4141; border:none; font-weight:700;">导入本地 MP3 文件</button>
+              <button class="btn btn-outline" onclick="musicSystem.openImportFormModal('url')" style="padding:10px; font-size:12px; font-weight:700;">输入音频网络直链 URL</button>
+              <button class="btn btn-outline" onclick="musicSystem.openImportFormModal('ncm')" style="padding:10px; font-size:12px; font-weight:700; border-color:#3b82f6; color:#3b82f6;">导入网易云分享链接 / ID</button>
+              <button class="btn btn-danger-outline" onclick="musicSystem.closeImportChoiceModal()" style="padding:8px; font-size:11px; margin-top:4px;">取消</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. 导入歌曲详细配置 Modal -->
+        <div id="ncm-import-form-overlay" class="modal-overlay" style="z-index:1600; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:320px; padding:20px; border-radius:16px; background:#fff;">
+            <h4 style="margin:0 0 12px 0; font-size:15px; font-weight:800; color:#1e293b; text-align:center;">完善歌曲信息</h4>
+            <input type="hidden" id="ncm-form-import-type" value="local">
+            
+            <div class="form-group" id="ncm-form-file-group" style="margin-bottom:10px;">
+              <label style="font-size:11px; font-weight:700;">选择本地音频文件</label>
+              <input type="file" id="ncm-form-file-input" accept="audio/*" style="font-size:11px;">
+            </div>
+
+            <div class="form-group" id="ncm-form-url-group" style="display:none; margin-bottom:10px;">
+              <label style="font-size:11px; font-weight:700;">音频直链 URL</label>
+              <input type="text" id="ncm-form-url-input" placeholder="https://example.com/song.mp3" style="width:100%; height:36px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+
+            <div class="form-group" id="ncm-form-ncm-group" style="display:none; margin-bottom:10px;">
+              <label style="font-size:11px; font-weight:700;">网易云分享链接或 ID</label>
+              <input type="text" id="ncm-form-ncm-input" placeholder="例如: 186016 或 https://music.163.com/#/song?id=186016" style="width:100%; height:36px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">歌名 (可选)</label>
+              <input type="text" id="ncm-form-title" placeholder="如不填则自动识别" style="width:100%; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">歌手 (可选)</label>
+              <input type="text" id="ncm-form-artist" placeholder="歌手名称" style="width:100%; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">归属歌单分组 (可选)</label>
+              <select id="ncm-form-playlist-select" style="width:100%; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box; background:#fff;"></select>
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">封面图 (URL 或 相册上传)</label>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input type="text" id="ncm-form-cover" placeholder="图片链接" style="flex:1; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+                <button type="button" class="btn btn-outline" style="padding:0 8px; font-size:10px; height:34px; border-radius:8px;" onclick="document.getElementById('ncm-form-cover-file').click()">相册选择</button>
+                <input type="file" id="ncm-form-cover-file" accept="image/*" style="display:none;" onchange="musicSystem.handleCoverFileUpload(this, 'ncm-form-cover-preview')">
+              </div>
+              <img id="ncm-form-cover-preview" style="width:40px; height:40px; border-radius:6px; object-fit:cover; margin-top:6px; display:block; border:1px solid #e2e8f0;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:14px;">
+              <label style="font-size:11px; font-weight:700;">LRC 歌词 (可选，格式 [00:12.34]歌词)</label>
+              <textarea id="ncm-form-lyrics" rows="3" placeholder="粘贴 LRC 文本..." style="width:100%; border:1px solid #e2e8f0; border-radius:8px; padding:6px; font-size:11px; resize:none; box-sizing:border-box;"></textarea>
+            </div>
+
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-outline" onclick="musicSystem.closeImportFormModal()" style="flex:1; padding:8px; font-size:12px; border-radius:8px;">取消</button>
+              <button class="btn btn-primary" onclick="musicSystem.submitImportSong()" style="flex:1; padding:8px; font-size:12px; background:#ec4141; border:none; border-radius:8px; font-weight:700;">保存并加入歌单</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3. 编辑歌曲属性 Modal (层级提升至 100005) -->
+        <div id="ncm-song-edit-overlay" class="modal-overlay" style="z-index:100005; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:320px; padding:20px; border-radius:16px; background:#fff;">
+            <h4 style="margin:0 0 12px 0; font-size:15px; font-weight:800; color:#1e293b; text-align:center;">修改歌曲资料</h4>
+            <input type="hidden" id="ncm-edit-song-id">
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">歌名</label>
+              <input type="text" id="ncm-edit-title" style="width:100%; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">歌手</label>
+              <input type="text" id="ncm-edit-artist" style="width:100%; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">归属歌单分组</label>
+              <select id="ncm-edit-playlist-select" style="width:100%; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box; background:#fff;"></select>
+            </div>
+
+            <div class="form-group" style="margin-bottom:8px;">
+              <label style="font-size:11px; font-weight:700;">封面图 (URL 或 相册上传)</label>
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input type="text" id="ncm-edit-cover" style="flex:1; height:34px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+                <button type="button" class="btn btn-outline" style="padding:0 8px; font-size:10px; height:34px; border-radius:8px;" onclick="document.getElementById('ncm-edit-cover-file').click()">相册选择</button>
+                <input type="file" id="ncm-edit-cover-file" accept="image/*" style="display:none;" onchange="musicSystem.handleCoverFileUpload(this, 'ncm-edit-cover-preview')">
+              </div>
+              <img id="ncm-edit-cover-preview" style="width:40px; height:40px; border-radius:6px; object-fit:cover; margin-top:6px; display:block; border:1px solid #e2e8f0;">
+            </div>
+
+            <div class="form-group" style="margin-bottom:14px;">
+              <label style="font-size:11px; font-weight:700;">LRC 歌词</label>
+              <textarea id="ncm-edit-lyrics" rows="4" style="width:100%; border:1px solid #e2e8f0; border-radius:8px; padding:6px; font-size:11px; resize:none; box-sizing:border-box;"></textarea>
+            </div>
+
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-outline" onclick="musicSystem.closeSongEditModal()" style="flex:1; padding:8px; font-size:12px; border-radius:8px;">取消</button>
+              <button class="btn btn-primary" onclick="musicSystem.submitSaveSongEdit()" style="flex:1; padding:8px; font-size:12px; background:#3b82f6; border:none; border-radius:8px; font-weight:700;">保存修改</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. 歌单分组明细 Modal (层级 100005) -->
+        <div id="ncm-playlist-detail-overlay" class="modal-overlay" style="z-index:100005; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:320px; padding:16px; border-radius:16px; background:#fff; max-height:80vh; display:flex; flex-direction:column;">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; border-bottom:1px solid #e2e8f0; padding-bottom:8px;">
+              <h4 id="ncm-playlist-detail-title" style="margin:0; font-size:15px; font-weight:800; color:#1e293b;">歌单名字</h4>
+              <button class="btn-icon" onclick="musicSystem.closePlaylistDetail()">
+                <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+              </button>
+            </div>
+            <div id="ncm-playlist-songs-flow" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:8px;"></div>
+          </div>
+        </div>
+
+        <!-- 3. 网易云扫码与 Cookie 登录 Modal -->
+        <div id="ncm-qrcode-overlay" class="modal-overlay" style="z-index:1500; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:310px; padding:20px; border-radius:16px; background:#fff; text-align:center;">
+            <h4 style="margin:0 0 10px 0; font-size:15px; font-weight:800; color:#1e293b;">网易云账号登录</h4>
+            <img id="ncm-qrcode-img" style="width:150px; height:150px; margin:0 auto; border-radius:10px; border:1px solid #e2e8f0; display:block;" />
+            <div id="ncm-qrcode-status" style="font-size:11px; color:#64748b; margin:8px 0 12px 0; font-weight:600;">使用网易云 App 扫码登录</div>
+            
+            <div style="border-top:1px dashed #e2e8f0; padding-top:10px; margin-top:10px; text-align:left;">
+              <label style="font-size:10px; font-weight:700; color:#64748b; display:block; margin-bottom:4px;">备用: 输入网易云 Cookie / Token / 口令</label>
+              <input type="text" id="ncm-manual-cookie-input" placeholder="MUSIC_U=..." style="width:100%; height:32px; font-size:11px; border:1px solid #e2e8f0; border-radius:6px; padding:0 6px; box-sizing:border-box; margin-bottom:8px;">
+              <button class="btn btn-outline" onclick="musicSystem.submitNcmManualCookie()" style="width:100%; padding:6px; font-size:11px; border-radius:6px;">校验登录并解锁 VIP</button>
+            </div>
+
+            <button class="btn btn-danger-outline" onclick="musicSystem.closeNcmLoginModal()" style="width:100%; padding:8px; font-size:11px; border-radius:8px; margin-top:10px;">关闭</button>
+          </div>
+        </div>
+
+        <!-- 4. 角色陪听选择器 Modal (层级拉高至 100005 避免压在听歌卡片下方) -->
+        <div id="ncm-companion-selector-overlay" class="modal-overlay" style="z-index:100005; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:320px; padding:16px; border-radius:16px; background:#fff;">
+            <h4 style="margin:0 0 12px 0; font-size:15px; font-weight:800; color:#1e293b; text-align:center;">选择角色与你一起听歌</h4>
+            <div id="ncm-companion-cards-container" style="max-height:220px; overflow-y:auto; margin-bottom:12px;"></div>
+            <button class="btn btn-outline" onclick="musicSystem.closeCompanionSelector()" style="width:100%; padding:10px; font-size:12px; border-radius:8px;">取消</button>
+          </div>
+        </div>
+
+        <!-- 新建歌单分组 Modal -->
+        <div id="ncm-playlist-create-overlay" class="modal-overlay" style="z-index:1550; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:300px; padding:20px; border-radius:16px; background:#fff;">
+            <h4 style="margin:0 0 12px 0; font-size:15px; font-weight:800; color:#1e293b; text-align:center;">新建歌单分组</h4>
+            <div class="form-group" style="margin-bottom:14px;">
+              <label style="font-size:11px; font-weight:700;">歌单名称</label>
+              <input type="text" id="ncm-playlist-name-input" placeholder="例如: 专属白噪音、摇滚心动" style="width:100%; height:36px; border:1px solid #e2e8f0; border-radius:8px; padding:0 8px; font-size:12px; box-sizing:border-box;">
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="btn btn-outline" onclick="musicSystem.closeCreatePlaylistModal()" style="flex:1; padding:8px; font-size:12px; border-radius:8px;">取消</button>
+              <button class="btn btn-primary" onclick="musicSystem.submitCreatePlaylist()" style="flex:1; padding:8px; font-size:12px; background:#ec4141; border:none; border-radius:8px; font-weight:700;">创建</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 陪听聊天室 Overlay (已彻底修复双按钮横向对齐) -->
+        <div id="ncm-music-chat-overlay" class="music-chat-overlay">
+          <header class="music-header">
+            <button class="btn-icon" onclick="musicSystem.closeCompanionRoom()">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <span class="music-header-title" id="ncm-chat-char-title">音乐共享聊天室</span>
+            <div style="width:24px;"></div>
+          </header>
+          <div class="music-chat-card-bar">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="#ec4141"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            <div style="flex:1; overflow:hidden;">
+              <div style="font-size:12px; font-weight:800; color:#1e293b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">当前正在同频播放中</div>
+            </div>
+          </div>
+          <div class="win-body" id="ncm-chat-messages-flow" style="flex:1; overflow-y:auto; padding:12px; display:flex; flex-direction:column;"></div>
+          <!-- 强拉为 Flex 单行布局 -->
+          <div class="music-chat-footer-row">
+            <input type="text" class="music-chat-input-field" id="ncm-chat-input" placeholder="与角色讨论当前音乐..." />
+            <button class="music-chat-btn-circle" onclick="musicSystem.sendCompanionUserMessage()" style="background:#ec4141;" title="发送">
+              <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+            <button class="music-chat-btn-circle" onclick="musicSystem.triggerCompanionAiReply()" style="background:#8b5cf6;" title="获取回复">
+              <svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>
+            </button>
+          </div>
+        </div>
+
+      </div> <!-- 听歌应用(win-music)结束 -->
 
             </div> <!-- app-window-container 结束 -->
 
@@ -4460,6 +4916,7 @@
   <script src="app_chat_couples.js"></script>
   <script src="app_chat_beautify.js"></script>
   <script src="app_desktop_presets.js"></script>
+  <script src="app_music.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {
