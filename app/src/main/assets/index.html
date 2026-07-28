@@ -748,10 +748,11 @@
           <h3 id="archive-title">档案库 - 角色</h3>
           <div style="display:flex; gap:4px; align-items:center;">
             <!-- 档案馆设定导入按键 (纯 SVG 矢量) -->
-            <button class="btn-icon" id="btn-archive-import" title="导入 .txt/.docx 设定">
+            <button class="btn-icon" id="btn-archive-import" title="导入设定 / 酒馆角色卡">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             </button>
             <input type="file" id="file-archive-import" accept=".txt,.docx" style="display:none;">
+            <input type="file" id="file-archive-png-import" accept=".png" style="display:none;">
             <button class="btn-icon" id="btn-add-archive">
               <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
@@ -759,6 +760,111 @@
         </header>
         <div class="win-body">
           <div id="archive-list-container" class="archive-main"></div>
+          <!-- 导入格式选择弹层 -->
+          <div id="archive-import-choice-overlay" class="modal-overlay" style="z-index: 1200; align-items: center !important; justify-content: center !important;">
+            <div class="modal" style="max-width: 300px; padding: 20px; border-radius: 16px; background: #ffffff; text-align: center;">
+              <h4 style="margin: 0 0 14px 0; font-size: 15px; font-weight: 700; color: var(--text-primary);">选择导入设定类型</h4>
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <button class="btn btn-primary" id="btn-choice-import-png" style="padding: 12px; font-size: 13px; font-weight: 700; background-color: #8b5cf6; border: none;">导入酒馆角色卡 (.png)</button>
+                <button class="btn btn-outline" id="btn-choice-import-doc" style="padding: 12px; font-size: 13px; font-weight: 700;">导入纯文本/Word (.txt / .docx)</button>
+                <button class="btn btn-danger-outline" onclick="document.getElementById('archive-import-choice-overlay').classList.remove('active')" style="padding: 8px; font-size: 12px; margin-top: 4px;">取消</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 酒馆 PNG 专属设备激活解锁弹层 -->
+          <div id="png-activation-overlay" class="modal-overlay" style="z-index: 1300; align-items: center !important; justify-content: center !important;">
+            <div class="modal" style="max-width: 320px; padding: 20px; border-radius: 16px; background: #ffffff; text-align: center;">
+              <div style="width: 44px; height: 44px; background: #f3e8ff; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px auto; color: #8b5cf6;">
+                <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              </div>
+              <h4 style="margin: 0 0 6px 0; font-size: 15px; font-weight: 700; color: #1e293b;">解锁酒馆 PNG 角色卡导入</h4>
+              <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.4;">此功能为高级扩展模块，请输入激活码为此设备解锁授权。</p>
+              
+              <div style="background: #f8fafc; border: 1.5px dashed var(--border); border-radius: 10px; padding: 8px; margin-bottom: 12px; text-align: left;">
+                <div style="font-size: 10px; color: var(--text-secondary); font-weight: 700;">本机唯一设备识别码 (Device ID)：</div>
+                <div id="png-device-id-display" style="font-size: 12px; font-family: monospace; font-weight: 800; color: #8b5cf6; word-break: break-all; margin-top: 2px;">读取中...</div>
+              </div>
+
+              <div class="form-group" style="margin-bottom: 16px; text-align: left;">
+                <label style="font-size: 11px; font-weight: 700; color: var(--text-secondary);">输入授权激活码</label>
+                <input type="text" id="png-activation-code-input" placeholder="请输入发给您的激活码" style="width: 100%; height: 40px; border: 1.5px solid var(--border); border-radius: 8px; font-size: 13px; font-weight: 700; padding: 0 10px; box-sizing: border-box; text-align: center;">
+              </div>
+
+              <div style="display: flex; gap: 8px;">
+                <button class="btn btn-outline" onclick="document.getElementById('png-activation-overlay').classList.remove('active')" style="flex: 1; padding: 10px; font-size: 12px;">取消</button>
+                <button class="btn btn-primary" id="btn-submit-png-activation" style="flex: 1; padding: 10px; font-size: 12px; background-color: #8b5cf6; border: none; font-weight: 700;">验证并解锁</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 全屏可视化图形关系网编辑器 (新页面级层级) -->
+          <div id="relation-network-editor" class="chat-details-overlay" style="z-index: 1500; background: #f8fafc;">
+            <header class="win-header">
+              <button class="btn-icon" onclick="closeRelationNetworkEditor()">
+                <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+              </button>
+              <input type="text" id="rel-network-title-input" placeholder="给这张关系网命名 (如: 学院核心人际网)" style="font-size: 15px; font-weight: 800; border: none; background: transparent; outline: none; text-align: center; flex: 1; color: var(--text-primary);">
+              <button class="btn btn-primary" onclick="saveRelationNetworkGraph()" style="padding: 6px 14px; font-size: 12px; font-weight: 700; border-radius: 8px; background-color: #07c160; border: none;">保存关系网</button>
+            </header>
+
+            <div class="win-body" style="display: flex; padding: 0; position: relative; overflow: hidden; height: calc(100% - 50px);">
+              <!-- 左侧 / 中间 Canvas 画布区 -->
+              <div id="rel-canvas-stage" style="flex: 1; height: 100%; position: relative; background-color: #f1f5f9; background-image: radial-gradient(#cbd5e1 1px, transparent 1px); background-size: 20px 20px; overflow: hidden; user-select: none;">
+                <!-- SVG 关系连线绘制层 -->
+                <svg id="rel-svg-layer" style="position: absolute; top:0; left:0; width: 100%; height: 100%; pointer-events: none; z-index: 1;"></svg>
+                <!-- 节点容器层 -->
+                <div id="rel-nodes-layer" style="position: absolute; top:0; left:0; width: 100%; height: 100%; z-index: 2;"></div>
+                <!-- 抽屉展开唤起浮动按钮 (隐藏时显示) -->
+                <button id="btn-open-rel-drawer" onclick="toggleRelDrawer(true)" style="display:none; position:absolute; top:12px; right:12px; z-index:10; padding:6px 12px; border-radius:20px; background:#ffffff; border:1.5px solid var(--border); font-size:11px; font-weight:800; color:var(--primary); box-shadow:0 2px 8px rgba(0,0,0,0.1); cursor:pointer;">
+                  添加角色 ◀
+                </button>
+              </div>
+
+              <!-- 右侧人物选择候选抽屉 (支持轻触顶部收起) -->
+              <div id="rel-candidate-drawer" style="width: 130px; height: 100%; background: #ffffff; border-left: 1.5px solid var(--border); display: flex; flex-direction: column; z-index: 3; box-shadow: -2px 0 10px rgba(0,0,0,0.04); transition: transform 0.2s ease;">
+                <div onclick="toggleRelDrawer(false)" style="padding: 10px 4px; font-size: 11px; font-weight: 800; color: var(--text-secondary); border-bottom: 1px solid var(--border); text-align: center; background: #fafbfc; cursor: pointer; display:flex; align-items:center; justify-content:center; gap:2px;" title="点击收起抽屉">
+                  <span>加入关系网</span>
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </div>
+                <div id="rel-candidate-list" style="flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px;">
+                  <!-- 由 JS 渲染可加入的角色节点卡片 -->
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 建立 / 编辑双视角羁绊关系弹窗卡片 -->
+          <div id="relation-edge-modal" class="modal-overlay" style="z-index: 1800; align-items: center !important; justify-content: center !important;">
+            <div class="modal" style="max-width: 320px; padding: 20px; border-radius: 16px; background: #ffffff; box-shadow: 0 10px 30px rgba(0,0,0,0.2);">
+              <header class="modal-header" style="border-bottom: none; padding-bottom: 0;">
+                <h4 style="font-size: 15px; font-weight: 800; color: #1e293b; margin: 0;">双向羁绊设定</h4>
+                <button class="btn-icon" onclick="document.getElementById('relation-edge-modal').classList.remove('active')">
+                  <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+              </header>
+
+              <div class="win-body" style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px; padding: 0;">
+                <!-- 视角 A -> B -->
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label id="edge-label-a-to-b" style="font-size: 11px; font-weight: 700; color: #3b82f6; margin-bottom: 4px; display: block;">在 A 视角，B 是……</label>
+                  <input type="text" id="edge-input-a-to-b" placeholder="例如：值得信任的盟友、暗恋对象" style="width: 100%; height: 38px; border-radius: 8px; border: 1.5px solid var(--border); padding: 0 10px; font-size: 12px; box-sizing: border-box;">
+                </div>
+
+                <!-- 视角 B -> A -->
+                <div class="form-group" style="margin-bottom: 0;">
+                  <label id="edge-label-b-to-a" style="font-size: 11px; font-weight: 700; color: #ec4899; margin-bottom: 4px; display: block;">在 B 视角，A 是……</label>
+                  <input type="text" id="edge-input-b-to-a" placeholder="例如：利用工具、警惕的对手" style="width: 100%; height: 38px; border-radius: 8px; border: 1.5px solid var(--border); padding: 0 10px; font-size: 12px; box-sizing: border-box;">
+                </div>
+
+                <div style="display: flex; gap: 8px; margin-top: 8px;">
+                  <button class="btn btn-danger-outline" id="btn-delete-edge" style="padding: 10px; font-size: 12px; color: #ef4444; border-color: #fca5a5;">断开连线</button>
+                  <button class="btn btn-primary" id="btn-save-edge" style="flex: 1; padding: 10px; font-size: 12px; font-weight: 700; background-color: #07c160; border: none;">确定并保存连线</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <!-- 档案表单弹层 -->
           <div id="archive-form-overlay" class="modal-overlay">
             <div class="modal">
@@ -783,13 +889,11 @@
                   <input type="text" id="archive-avatar-url" placeholder="https://example.com/avatar.png">
                 </div>
                 <div class="form-group" id="form-npc-parent-group" style="display: none;">
-                  <label>归属角色/用户</label>
-                  <select id="archive-parent-id"></select>
-                </div>
-                <div id="form-relation-fields" style="display: none;">
-                  <div class="form-group"><label>源端角色/用户 (From)</label><select id="relation-from"></select></div>
-                  <div class="form-group"><label>终端角色/用户 (To)</label><select id="relation-to"></select></div>
-                  <div class="form-group"><label>关系描述</label><input type="text" id="relation-desc" placeholder="关系名称 (例如: 挚友、宿敌)"></div>
+                  <label style="font-weight: 700; margin-bottom: 6px; display: block;">选择归属主体 (Char / User)</label>
+                  <input type="hidden" id="archive-parent-id">
+                  <div id="npc-parent-selector-cards" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; padding: 4px; border: 1.5px solid var(--border); border-radius: 10px; background: #fafbfc;">
+                    <!-- 由 JS 动态渲染带头像、姓名、备注的列表 -->
+                  </div>
                 </div>
                 <div id="form-general-fields">
                   <div class="form-group"><label>姓名</label><input type="text" id="archive-name" required placeholder="姓名"></div>
@@ -858,20 +962,38 @@
               <form id="world_book-form" onsubmit="return false;">
                 <input type="hidden" id="wb-entry-id">
                 <div class="form-group">
-                  <label>分组</label>
-                  <input type="text" id="wb-entry-group" required placeholder="留空或输入：常驻、地理、神话（常驻分组拥有全局开关按钮）">
+                  <label>分组名称</label>
+                  <input type="text" id="wb-entry-group" required placeholder="如：破限底料、地理、势力、设定">
                 </div>
                 <div class="form-group">
-                  <label>条目标题 (关键词)</label>
-                  <input type="text" id="wb-entry-title" required placeholder="标题名称">
+                  <label>条目标题 (仅作备注识别)</label>
+                  <input type="text" id="wb-entry-title" required placeholder="例如：破限前置法则、古代剑术">
+                </div>
+                <div class="form-group" style="display:flex; gap:10px;">
+                  <div style="flex:1;">
+                    <label>触发模式</label>
+                    <select id="wb-entry-mode" style="width:100%; padding:8px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; background:#fff;">
+                      <option value="selective">🟢 关键词触发 (Selective)</option>
+                      <option value="constant">🔵 永久触发 (Constant)</option>
+                      <option value="disabled">🔴 禁用 (Disabled)</option>
+                    </select>
+                  </div>
+                  <div style="flex:1;">
+                    <label>触发概率 (%)</label>
+                    <input type="number" id="wb-entry-prob" value="100" min="0" max="100" placeholder="100">
+                  </div>
                 </div>
                 <div class="form-group">
-                  <label>注入深度 (设定排序，深度越低，越优先注入 Prompt)</label>
-                  <input type="number" id="wb-entry-depth" required value="10" placeholder="例如：10">
+                  <label>触发关键词 (仅关键词模式生效，英文或中文逗号分隔多个词)</label>
+                  <input type="text" id="wb-entry-keywords" placeholder="例如：剑术, 拔刀, 佩剑">
                 </div>
                 <div class="form-group">
-                  <label>具体内容</label>
-                  <textarea id="wb-entry-content" rows="5" required placeholder="输入具体的设定描述..."></textarea>
+                  <label>注入深度 Depth (支持负数！数值越小越靠前，如 -900 可排在人设最前方)</label>
+                  <input type="number" id="wb-entry-depth" required value="10" placeholder="-900 或 10">
+                </div>
+                <div class="form-group">
+                  <label>设定文本内容</label>
+                  <textarea id="wb-entry-content" rows="5" required placeholder="输入具体的设定描述文本..."></textarea>
                 </div>
                 <div class="form-actions">
                   <button type="button" class="btn btn-outline" id="btn-cancel-wb-form">取消</button>
@@ -1333,8 +1455,8 @@
               </div>
             </div>
             <div class="form-group">
-              <label>挂载世界书设定 (多选卡片)</label>
-              <select id="group-details-wb-mounted" multiple style="height: 120px;"></select>
+              <label style="font-weight: 700; margin-bottom: 6px; display: block;">挂载世界书背景设定条目 (按分组折叠勾选)</label>
+              <div id="group-details-wb-mounted-accordion" style="max-height: 220px; overflow-y: auto; border: 1.5px solid var(--border); border-radius: 10px; background: #fafbfc; padding: 6px;"></div>
             </div>
             <div class="form-group">
               <label>挂载表情包分组</label>
@@ -1844,8 +1966,8 @@
             </div>
             
             <div class="form-group">
-              <label>挂载世界书背景设定条目 (在移动端轻触或多选添加)</label>
-              <select id="details-wb-mounted" multiple style="height: 120px;"></select>
+              <label style="font-weight: 700; margin-bottom: 6px; display: block;">挂载世界书背景设定条目 (按分组折叠勾选)</label>
+              <div id="details-wb-mounted-accordion" style="max-height: 220px; overflow-y: auto; border: 1.5px solid var(--border); border-radius: 10px; background: #fafbfc; padding: 6px;"></div>
             </div>
 
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
@@ -3493,8 +3615,8 @@
             </div>
           </div>
           <div class="form-group">
-            <label>自定义挂载世界书 (非强制，默认继承线上)</label>
-            <select id="offline-details-wb-mounted" multiple style="height: 120px;"></select>
+            <label style="font-weight: 700; margin-bottom: 6px; display: block;">自定义挂载世界书 (按分组折叠勾选，默认继承线上)</label>
+            <div id="offline-details-wb-mounted-accordion" style="max-height: 220px; overflow-y: auto; border: 1.5px solid var(--border); border-radius: 10px; background: #fafbfc; padding: 6px;"></div>
           </div>
           <div class="form-group">
             <label>自动总结轮数</label>

@@ -38,19 +38,23 @@ function initWorldBookApp() {
     const idVal = document.getElementById("wb-entry-id").value;
     const id = idVal ? Number(idVal) : null;
 
-    let group = document.getElementById("wb-entry-group").value.trim();
-    if (!group) group = "常驻"; // 默认分组强制分配为常驻 [1]
-
+    let group = document.getElementById("wb-entry-group").value.trim() || "默认分组";
     const title = document.getElementById("wb-entry-title").value.trim();
-    const depth = Number(document.getElementById("wb-entry-depth").value) || 10;
+    const mode = document.getElementById("wb-entry-mode").value;
+    const keywords = document.getElementById("wb-entry-keywords").value.trim();
+    const probability = Math.min(100, Math.max(0, parseInt(document.getElementById("wb-entry-prob").value) || 100));
+    const depth = Number(document.getElementById("wb-entry-depth").value) ?? 10;
     const content = document.getElementById("wb-entry-content").value.trim();
 
     const entryObj = {
       group,
       title,
+      mode,
+      keywords,
+      probability,
       depth,
       content,
-      isActive: id ? (await db.world_book_entries.get(id))?.isActive || false : false
+      isActive: mode !== 'disabled'
     };
 
     if (id) {
@@ -160,7 +164,38 @@ function readTxtFileSafe(file) {
   });
 }
 
-// 刷新加载列表数据（对分组折叠排版）
+// 循环切换世界书条目的三态模式 (Constant -> Selective -> Disabled)
+async function cycleWbMode(id) {
+  const entry = await db.world_book_entries.get(id);
+  if (!entry) return;
+
+  const currentMode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
+  let nextMode = 'constant';
+  if (currentMode === 'constant') nextMode = 'selective';
+  else if (currentMode === 'selective') nextMode = 'disabled';
+  else nextMode = 'constant';
+
+  await db.world_book_entries.update(id, {
+    mode: nextMode,
+    isActive: nextMode !== 'disabled'
+  });
+  loadWorldBookData();
+}
+window.cycleWbMode = cycleWbMode;
+
+// 独立分组遮断器 (仅控制该组别开启/挂起状态，绝对不篡改组内条目的原本三态数据)
+function toggleWbGroup(groupName, enable) {
+  const storageKey = 'wb_group_disabled_' + groupName;
+  if (enable) {
+    localStorage.removeItem(storageKey);
+  } else {
+    localStorage.setItem(storageKey, 'true');
+  }
+  loadWorldBookData();
+}
+window.toggleWbGroup = toggleWbGroup;
+
+// 刷新加载列表数据（全新 SVG 矢量三态图标 + 无损分组总开关）
 async function loadWorldBookData() {
   const container = document.getElementById("world_book-list-container");
   if (!container) return;
@@ -175,23 +210,35 @@ async function loadWorldBookData() {
   // 按照 group 进行折叠划分
   const groups = {};
   list.forEach(entry => {
-    const grp = entry.group || "常驻";
+    const grp = entry.group || "默认分组";
     if (!groups[grp]) groups[grp] = [];
     groups[grp].push(entry);
   });
+
+  // 三态纯矢量 SVG 图标集
+  const svgConstant = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" style="vertical-align:middle; flex-shrink:0;"><circle cx="12" cy="12" r="10" fill="#3b82f6"/><path d="M8 12l3 3 5-5" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const svgSelective = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" style="vertical-align:middle; flex-shrink:0;"><circle cx="12" cy="12" r="10" fill="#10b981"/><path d="M7 12h10M13 8l4 4-4 4" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+  const svgDisabled = `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" style="vertical-align:middle; flex-shrink:0;"><circle cx="12" cy="12" r="10" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 
   for (let key in groups) {
     const wrapper = document.createElement("div");
     wrapper.className = "archive-group-wrapper";
 
     const isCollapsed = localStorage.getItem(`collapse_wb_${key}`) === 'true';
+    const isGroupDisabled = localStorage.getItem(`wb_group_disabled_${key}`) === 'true';
 
     wrapper.innerHTML = `
-      <div class="archive-group-header" data-group="${key}">
-        <span>${key} (${groups[key].length})</span>
-        <svg viewBox="0 0 24 24" width="16" height="16" style="transform: ${isCollapsed ? 'rotate(-90deg)' : 'none'};"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+      <div class="archive-group-header" data-group="${key}" style="display:flex; justify-content:space-between; align-items:center;">
+        <span style="${isGroupDisabled ? 'opacity:0.5;' : ''}">${key} (${groups[key].length}) ${isGroupDisabled ? '<span style="font-size:10px; color:#ef4444; margin-left:4px;">(组别关停)</span>' : ''}</span>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <label class="switch" title="一键开启/停用整个分组 (不破坏内部条目三态)" onclick="event.stopPropagation()">
+            <input type="checkbox" ${!isGroupDisabled ? 'checked' : ''} onchange="toggleWbGroup('${key.replace(/'/g, "\\'")}', this.checked)">
+            <span class="slider"></span>
+          </label>
+          <svg class="group-arrow-icon" viewBox="0 0 24 24" width="16" height="16" style="transform: ${isCollapsed ? 'rotate(-90deg)' : 'none'}; transition: transform 0.2s;"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+        </div>
       </div>
-      <div class="archive-group-content ${isCollapsed ? 'collapsed' : ''}"></div>
+      <div class="archive-group-content ${isCollapsed ? 'collapsed' : ''}" style="${isGroupDisabled ? 'opacity:0.6;' : ''}"></div>
     `;
 
     const contentArea = wrapper.querySelector(".archive-group-content");
@@ -200,24 +247,27 @@ async function loadWorldBookData() {
       card.className = "archive-card";
       card.style.gap = "10px";
 
-      // 仅常驻分组呈现全局滑动开关 [1]
-      let toggleHtml = "";
-      if (entry.group === '常驻') {
-        toggleHtml = `
-          <label class="switch">
-            <input type="checkbox" class="wb-active-toggle" data-entry-id="${entry.id}" ${entry.isActive ? 'checked' : ''}>
-            <span class="slider"></span>
-          </label>
-        `;
-      }
+      const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
+      let modeIcon = svgConstant;
+      let modeLabel = "永久";
+      if (mode === 'selective') { modeIcon = svgSelective; modeLabel = "关键词"; }
+      else if (mode === 'disabled') { modeIcon = svgDisabled; modeLabel = "禁用"; }
+
+      const prob = entry.probability ?? 100;
+      const kwText = entry.keywords ? ` | 词: ${entry.keywords}` : "";
 
       card.innerHTML = `
-        <div class="card-info">
-          <div class="card-name">${entry.title} <span style="font-size: 10px; color: var(--text-secondary); font-weight:500;">(注入深度: ${entry.depth})</span></div>
+        <div style="cursor:pointer; display:flex; align-items:center; user-select:none; flex-shrink:0;" onclick="cycleWbMode(${entry.id})" title="轻触切换模式：🔵永久(蓝) 🟢关键词(绿) 🔴禁用(红)">
+          ${modeIcon}
+        </div>
+        <div class="card-info" style="flex:1; overflow:hidden;">
+          <div class="card-name" style="font-size:13px; font-weight:700;">
+            ${entry.title} 
+            <span style="font-size: 10px; color: var(--text-secondary); font-weight:500;">(深度: ${entry.depth} | ${modeLabel} | 概率: ${prob}%${kwText})</span>
+          </div>
           <div class="card-desc" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">${entry.content}</div>
         </div>
-        <div style="display:flex; align-items:center; gap: 4px;">
-          ${toggleHtml}
+        <div style="display:flex; align-items:center; gap: 4px; flex-shrink:0;">
           <button class="btn-icon" onclick="editWorldBookItem(${entry.id})">
             <svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z"/></svg>
           </button>
@@ -227,23 +277,15 @@ async function loadWorldBookData() {
         </div>
       `;
 
-      // 绑定滑动开关的状态同步变更事件
-      const toggle = card.querySelector(".wb-active-toggle");
-      if (toggle) {
-        toggle.onchange = async (e) => {
-          await db.world_book_entries.update(entry.id, { isActive: e.target.checked });
-        };
-      }
-
       contentArea.appendChild(card);
     });
 
-    // 绑定展开折叠点击事件
     wrapper.querySelector(".archive-group-header").onclick = (e) => {
+      if (e.target.closest(".switch") || e.target.closest("input")) return;
       const collapsed = contentArea.classList.toggle("collapsed");
       localStorage.setItem(`collapse_wb_${key}`, collapsed);
-      const icon = e.currentTarget.querySelector("svg");
-      icon.style.transform = collapsed ? "rotate(-90deg)" : "none";
+      const icon = e.currentTarget.querySelector(".group-arrow-icon");
+      if (icon) icon.style.transform = collapsed ? "rotate(-90deg)" : "none";
     };
 
     container.appendChild(wrapper);
@@ -252,8 +294,11 @@ async function loadWorldBookData() {
 
 async function openWorldBookForm(editId = null) {
   document.getElementById("wb-entry-id").value = "";
-  document.getElementById("wb-entry-group").value = "常驻";
+  document.getElementById("wb-entry-group").value = "破限底料";
   document.getElementById("wb-entry-title").value = "";
+  document.getElementById("wb-entry-mode").value = "selective";
+  document.getElementById("wb-entry-keywords").value = "";
+  document.getElementById("wb-entry-prob").value = "100";
   document.getElementById("wb-entry-depth").value = "10";
   document.getElementById("wb-entry-content").value = "";
 
@@ -263,10 +308,13 @@ async function openWorldBookForm(editId = null) {
     const entry = await db.world_book_entries.get(editId);
     if (entry) {
       document.getElementById("wb-entry-id").value = entry.id;
-      document.getElementById("wb-entry-group").value = entry.group || "常驻";
-      document.getElementById("wb-entry-title").value = entry.title;
-      document.getElementById("wb-entry-depth").value = entry.depth;
-      document.getElementById("wb-entry-content").value = entry.content;
+      document.getElementById("wb-entry-group").value = entry.group || "破限底料";
+      document.getElementById("wb-entry-title").value = entry.title || "";
+      document.getElementById("wb-entry-mode").value = entry.mode || (entry.isActive ? 'constant' : 'disabled');
+      document.getElementById("wb-entry-keywords").value = entry.keywords || "";
+      document.getElementById("wb-entry-prob").value = entry.probability ?? 100;
+      document.getElementById("wb-entry-depth").value = entry.depth ?? 10;
+      document.getElementById("wb-entry-content").value = entry.content || "";
     }
   }
 

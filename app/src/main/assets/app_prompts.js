@@ -102,24 +102,36 @@ ${behaviorRules}
 };
 
 /**
- * 助手函数：实时查询数据库中角色与用户的指定社会/亲疏关系
+ * 助手函数：实时检索数据库中所有的图形关系网，提取双方的双视角人际关系
  */
 async function queryRelationship(userId, charId, userName, charName) {
   if (!userId || !charId) return "你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
   try {
-    const rels = await db.relations.where('fromId').equals(Number(userId)).toArray();
-    const matchedRel = rels.find(r => r.toId === Number(charId));
-    if (matchedRel) {
-      return `【你们的关系】\n用户 [${userName}] 是 [${charName}] 的 [${matchedRel.relation}]。请将你们在对话中的语气、态度和亲疏感严格贴合这一层特定的情感/社交关系纽带。`;
+    const allGraphs = await db.relations.toArray();
+    let relPrompts = [];
+
+    for (let graph of allGraphs) {
+      if (Array.isArray(graph.edges)) {
+        for (let edge of graph.edges) {
+          const matchAIsUser = (edge.fromId === Number(userId) && edge.toId === Number(charId));
+          const matchAIsChar = (edge.fromId === Number(charId) && edge.toId === Number(userId));
+
+          if (matchAIsUser) {
+            if (edge.relAtoB) relPrompts.push(`- 在 [${userName}] 视角，[${charName}] 是：${edge.relAtoB}`);
+            if (edge.relBtoA) relPrompts.push(`- 在 [${charName}] 视角，[${userName}] 是：${edge.relBtoA}`);
+          } else if (matchAIsChar) {
+            if (edge.relAtoB) relPrompts.push(`- 在 [${charName}] 视角，[${userName}] 是：${edge.relAtoB}`);
+            if (edge.relBtoA) relPrompts.push(`- 在 [${userName}] 视角，[${charName}] 是：${edge.relBtoA}`);
+          }
+        }
+      }
     }
-    
-    const rels2 = await db.relations.where('fromId').equals(Number(charId)).toArray();
-    const matchedRel2 = rels2.find(r => r.toId === Number(userId));
-    if (matchedRel2) {
-      return `【你们的关系】\n[${charName}] 是用户 [${userName}] 的 [${matchedRel2.relation}]。请将你们在对话中的语气、态度和亲疏感严格贴合这一层特定的情感/社交关系纽带。`;
+
+    if (relPrompts.length > 0) {
+      return `【双方在关系网中的双向人际羁绊设定（务必精准遵守双方视角下的彼此定位）】：\n${relPrompts.join("\n")}`;
     }
   } catch (err) {
-    console.warn("查询关系边界失败:", err);
+    console.warn("查询关系网络失败:", err);
   }
   return "【你们的关系】\n你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
 }
@@ -147,25 +159,55 @@ async function buildGlobalSystemPrompt(sessionId) {
   // 动态检索关系网
   const relationshipDesc = await queryRelationship(sess.userId, sess.charId, userName, charName);
 
-  // 收集世界书设定
-  const alwaysActiveWB = await db.world_book_entries
-    .where('group').equals('常驻')
-    .and(entry => entry.isActive === true)
-    .toArray();
+  // 1. 提取当前会话在后台显式挂载的世界书条目 ID 列表
+  const mountedIds = sess.mountedEntryIds || [];
+  
+  // 2. 拉取全量世界书条目
+  const allWbEntries = await db.world_book_entries.toArray();
+  
+  // 3. 过滤出【在当前对话挂载了】或【属于“常驻/破限”默认全局组】的候选条目
+  const targetScopeEntries = allWbEntries.filter(entry => {
+    const isMounted = mountedIds.includes(entry.id);
+    const isAlwaysGroup = entry.group === '常驻' || entry.group === '破限底料';
+    return isMounted || isAlwaysGroup;
+  });
 
-  let mountedWB = [];
-  if (sess.mountedEntryIds && sess.mountedEntryIds.length > 0) {
-    for (let entryId of sess.mountedEntryIds) {
-      const entry = await db.world_book_entries.get(entryId);
-      if (entry) {
-        mountedWB.push(entry);
+  const candidateEntries = [];
+
+  // 获取最近 10 条聊天记录作为关键词匹配上下文
+  const recentChatMsgs = await db.messages.where('sessionId').equals(sessionId).reverse().limit(10).toArray();
+  const contextText = recentChatMsgs.map(m => m.content).join(" ");
+
+  for (let entry of targetScopeEntries) {
+    // 0. 大分组一键总开关校验 (若该大分组被设为关停，直接无损跳过，绝不修改条目本身的 mode 属性)
+    const isGroupDisabled = localStorage.getItem('wb_group_disabled_' + entry.group) === 'true';
+    if (isGroupDisabled) continue;
+
+    const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
+    if (mode === 'disabled') continue; // 🔴 节点单体禁用跳过
+
+    // 概率判定
+    const prob = entry.probability ?? 100;
+    if (prob < 100 && Math.random() * 100 > prob) continue;
+
+    if (mode === 'constant') {
+      // 🔵 永久触发
+      candidateEntries.push(entry);
+    } else if (mode === 'selective') {
+      // 🟢 关键词触发判定
+      const kwStr = entry.keywords || "";
+      if (kwStr) {
+        const kwList = kwStr.split(/[,，|\|;；]/).map(k => k.trim().toLowerCase()).filter(Boolean);
+        const isMatched = kwList.some(kw => contextText.toLowerCase().includes(kw));
+        if (isMatched) {
+          candidateEntries.push(entry);
+        }
       }
     }
   }
 
   const combinedMap = new Map();
-  alwaysActiveWB.forEach(e => combinedMap.set(e.id, e));
-  mountedWB.forEach(e => combinedMap.set(e.id, e));
+  candidateEntries.forEach(e => combinedMap.set(e.id, e));
   const uniqueEntries = Array.from(combinedMap.values());
 
   const segments = [];
@@ -796,12 +838,12 @@ ${relationshipDesc}`;
     }
   }
 
-  // 2.5 世界书条目载入
+  // 2.5 世界书条目载入 (支持负深度！如 -900 会自动排在人设和规则的前最上方)
   uniqueEntries.forEach(entry => {
     const entryDepth = Number(entry.depth) ?? 10;
     segments.push({
       depth: entryDepth,
-      content: `## 世界书背景设定：${entry.title} (优先级: 深度 ${entryDepth})\n${entry.content}`
+      content: `## 世界书背景设定：${entry.title}\n${entry.content}`
     });
   });
 
@@ -1032,5 +1074,52 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     }
   }
 
-  return PROMPT_TEMPLATES.DISCLAIMER + "\n\n" + context;
+  const segments = [{
+    depth: -1000,
+    content: PROMPT_TEMPLATES.DISCLAIMER
+  }, {
+    depth: -800,
+    content: context
+  }];
+
+  // 收集群聊线下挂载的世界书 (支持大分组总开关、三态与负数深度)
+  const mountedIds = isTheater ? (sess.mountedEntryIds || []) : (sess.offlineMountedEntryIds || group.mountedEntryIds || sess.mountedEntryIds || []);
+  const allWbEntries = await db.world_book_entries.toArray();
+
+  const targetScopeEntries = allWbEntries.filter(entry => {
+    const isMounted = mountedIds.includes(entry.id);
+    const isAlwaysGroup = entry.group === '常驻' || entry.group === '破限底料';
+    return isMounted || isAlwaysGroup;
+  });
+
+  const recentOfflineMsgs = await db.offline_messages.where('sessionId').equals(sessionId).reverse().limit(10).toArray();
+  const contextText = recentOfflineMsgs.map(m => m.content).join(" ");
+
+  for (let entry of targetScopeEntries) {
+    // 0. 大分组总开关校验
+    const isGroupDisabled = localStorage.getItem('wb_group_disabled_' + entry.group) === 'true';
+    if (isGroupDisabled) continue;
+
+    const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
+    if (mode === 'disabled') continue;
+
+    const prob = entry.probability ?? 100;
+    if (prob < 100 && Math.random() * 100 > prob) continue;
+
+    if (mode === 'constant') {
+      segments.push({ depth: entry.depth ?? 10, content: `## 世界书背景设定：${entry.title}\n${entry.content}` });
+    } else if (mode === 'selective') {
+      const kwStr = entry.keywords || "";
+      if (kwStr) {
+        const kwList = kwStr.split(/[,，|\|;；]/).map(k => k.trim().toLowerCase()).filter(Boolean);
+        if (kwList.some(kw => contextText.toLowerCase().includes(kw))) {
+          segments.push({ depth: entry.depth ?? 10, content: `## 世界书背景设定：${entry.title}\n${entry.content}` });
+        }
+      }
+    }
+  }
+
+  segments.sort((a, b) => a.depth - b.depth);
+
+  return segments.map(s => s.content).join("\n\n");
 }

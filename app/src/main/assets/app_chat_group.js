@@ -1159,20 +1159,10 @@
         document.getElementById("group-sync-to-single").checked = memberUser.syncToSingle !== 0;
       }
 
-      // 挂载世界书
-      const selectMounted = document.getElementById("group-details-wb-mounted");
-      if (selectMounted) {
-        selectMounted.innerHTML = "";
-        const wbEntries = await db.world_book_entries.toArray();
-        wbEntries.forEach(entry => {
-          const opt = document.createElement("option");
-          opt.value = entry.id;
-          opt.innerText = `[${entry.group}] ${entry.title}`;
-          if (group.mountedEntryIds && group.mountedEntryIds.includes(entry.id)) {
-            opt.selected = true;
-          }
-          selectMounted.appendChild(opt);
-        });
+      // 渲染群聊专属世界书手风琴选择器
+      const containerEl = document.getElementById("group-details-wb-mounted-accordion");
+      if (containerEl && typeof renderWbMountedAccordion === 'function') {
+        await renderWbMountedAccordion(containerEl, group.mountedEntryIds || [], "cb-group-details-wb-mount");
       }
 
       // 渲染表情包挂载列表
@@ -1272,12 +1262,9 @@
 
       const avatar = avatarUrlInput === "[本地上传图片]" ? window.tempGroupDetailsAvatarBlob : (avatarUrlInput || null);
 
-      // 保存世界书
-      const selectMounted = document.getElementById("group-details-wb-mounted");
-      let mountedEntryIds = [];
-      if (selectMounted) {
-        mountedEntryIds = Array.from(selectMounted.selectedOptions).map(opt => Number(opt.value));
-      }
+      // 保存群聊世界书挂载列表
+      const checkedBoxes = document.querySelectorAll(".cb-group-details-wb-mount:checked");
+      const mountedEntryIds = Array.from(checkedBoxes).map(cb => Number(cb.value));
 
       // 记忆双向同步
       const syncFromSingle = document.getElementById("group-sync-from-single").checked ? 1 : 0;

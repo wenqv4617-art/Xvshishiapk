@@ -2934,6 +2934,78 @@ function updateSelectedCount() {
   document.getElementById("selected-count").innerText = count;
 }
 
+// 通用自研世界书手风琴勾选渲染器 (单聊/群聊全独立隔离挂载)
+async function renderWbMountedAccordion(containerEl, currentMountedIds, checkboxClass) {
+  containerEl.innerHTML = "";
+  const allEntries = await db.world_book_entries.toArray();
+  if (allEntries.length === 0) {
+    containerEl.innerHTML = `<div style="font-size:11px; color:var(--text-secondary); text-align:center; padding:12px;">世界书内暂无任何知识条目，请先前往世界书应用创建。</div>`;
+    return;
+  }
+
+  const groups = {};
+  allEntries.forEach(e => {
+    const grp = e.group || "默认分组";
+    if (!groups[grp]) groups[grp] = [];
+    groups[grp].push(e);
+  });
+
+  for (let grpName in groups) {
+    const groupEntries = groups[grpName];
+    const wrapper = document.createElement("div");
+    wrapper.style.cssText = "border:1px solid var(--border); border-radius:8px; background:#ffffff; margin-bottom:6px; overflow:hidden;";
+
+    const mountedInGroupCount = groupEntries.filter(e => currentMountedIds.includes(e.id)).length;
+
+    wrapper.innerHTML = `
+      <div class="wb-mount-group-header" style="padding:8px 10px; font-size:12px; font-weight:700; color:var(--text-primary); background:#f8fafc; cursor:pointer; display:flex; justify-content:space-between; align-items:center; user-select:none;">
+        <span>${escapeHtml(grpName)} (${mountedInGroupCount}/${groupEntries.length})</span>
+        <svg viewBox="0 0 24 24" width="14" height="14" style="transition:transform 0.2s;" class="arrow-icon"><path fill="currentColor" d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/></svg>
+      </div>
+      <div class="wb-mount-group-body" style="padding:6px; display:flex; flex-direction:column; gap:6px;"></div>
+    `;
+
+    const header = wrapper.querySelector(".wb-mount-group-header");
+    const body = wrapper.querySelector(".wb-mount-group-body");
+    const arrow = wrapper.querySelector(".arrow-icon");
+
+    header.onclick = () => {
+      const isHidden = body.style.display === "none";
+      body.style.display = isHidden ? "flex" : "none";
+      arrow.style.transform = isHidden ? "rotate(0deg)" : "rotate(-90deg)";
+    };
+
+    groupEntries.forEach(entry => {
+      const isChecked = currentMountedIds.includes(entry.id);
+      const itemRow = document.createElement("label");
+      itemRow.style.cssText = "display:flex; align-items:center; gap:8px; padding:6px; border-radius:6px; background:#fafbfc; cursor:pointer; font-size:11.5px;";
+      
+      const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
+      let modeBadge = "🔵永久";
+      if (mode === 'selective') modeBadge = "🟢关键词";
+      else if (mode === 'disabled') modeBadge = "🔴禁用";
+
+      itemRow.innerHTML = `
+        <input type="checkbox" class="${checkboxClass}" value="${entry.id}" ${isChecked ? 'checked' : ''} style="width:15px; height:15px; cursor:pointer;">
+        <div style="flex:1; overflow:hidden; text-align:left;">
+          <span style="font-weight:700; color:var(--text-primary);">${escapeHtml(entry.title)}</span>
+          <span style="font-size:9.5px; color:var(--text-secondary); margin-left:4px;">(${modeBadge} | 深度:${entry.depth ?? 10})</span>
+        </div>
+      `;
+      body.appendChild(itemRow);
+    });
+
+    // 默认如果该分组下包含已挂载条目，则保持展开；若无挂载则自动收起
+    if (mountedInGroupCount === 0) {
+      body.style.display = "none";
+      arrow.style.transform = "rotate(-90deg)";
+    }
+
+    containerEl.appendChild(wrapper);
+  }
+}
+window.renderWbMountedAccordion = renderWbMountedAccordion;
+
 // 桥接函数：调用独立出去的 app_prompts.js 进行 Prompt 构建
 async function buildSystemPrompt(sessionId) {
   let basePrompt = await buildGlobalSystemPrompt(sessionId);
@@ -4228,19 +4300,10 @@ if (btnDialogDetails) {
 
       document.getElementById("details-user-persona").value = sess.customUserPersona || user?.persona || "";
       
-      const selectMounted = document.getElementById("details-wb-mounted");
-      if (selectMounted) {
-        selectMounted.innerHTML = "";
-        const wbEntries = await db.world_book_entries.toArray();
-        wbEntries.forEach(entry => {
-          const opt = document.createElement("option");
-          opt.value = entry.id;
-          opt.innerText = `[${entry.group}] ${entry.title}`;
-          if (sess.mountedEntryIds && sess.mountedEntryIds.includes(entry.id)) {
-            opt.selected = true;
-          }
-          selectMounted.appendChild(opt);
-        });
+      // 渲染单聊专属世界书手风琴选择器
+      const containerEl = document.getElementById("details-wb-mounted-accordion");
+      if (containerEl && typeof renderWbMountedAccordion === 'function') {
+        await renderWbMountedAccordion(containerEl, sess.mountedEntryIds || [], "cb-details-wb-mount");
       }
 
       // 渲染多媒体、时间感知等全新状态设置开关
@@ -4349,11 +4412,9 @@ if (btnSaveDetails) {
 
     const userPersona = document.getElementById("details-user-persona").value.trim();
 
-    const selectMounted = document.getElementById("details-wb-mounted");
-    let mountedEntryIds = [];
-    if (selectMounted) {
-      mountedEntryIds = Array.from(selectMounted.selectedOptions).map(opt => Number(opt.value));
-    }
+    // 从手风琴选择器中精准抓取选中的世界书条目 ID 列表
+    const checkedBoxes = document.querySelectorAll(".cb-details-wb-mount:checked");
+    const mountedEntryIds = Array.from(checkedBoxes).map(cb => Number(cb.value));
 
     // 获取并写入全新的多媒体、时间模拟器属性
     const statusAutoToggle = document.getElementById("details-status-auto").checked;
@@ -5134,21 +5195,11 @@ async function openOfflineDetails() {
     document.getElementById("btn-end-appointment").style.display = "block";
   }
 
-  // 渲染线下世界书
-  const selectMounted = document.getElementById("offline-details-wb-mounted");
-  if (selectMounted) {
-    selectMounted.innerHTML = "";
-    const wbEntries = await db.world_book_entries.toArray();
+  // 渲染线下专属世界书手风琴选择器
+  const containerEl = document.getElementById("offline-details-wb-mounted-accordion");
+  if (containerEl && typeof renderWbMountedAccordion === 'function') {
     const currentMounted = isOfflineTheater ? (sess.mountedEntryIds || []) : (sess.offlineMountedEntryIds || sess.mountedEntryIds || []);
-    wbEntries.forEach(entry => {
-      const opt = document.createElement("option");
-      opt.value = entry.id;
-      opt.innerText = `[${entry.group}] ${entry.title}`;
-      if (currentMounted.includes(entry.id)) {
-        opt.selected = true;
-      }
-      selectMounted.appendChild(opt);
-    });
+    await renderWbMountedAccordion(containerEl, currentMounted, "cb-offline-details-wb-mount");
   }
 
   document.getElementById("win-offline-details").classList.add("active");
@@ -5165,11 +5216,9 @@ async function saveOfflineDetails() {
   const charPOV = document.getElementById("offline-detail-char-pov").value;
   const userPOV = document.getElementById("offline-detail-user-pov").value;
 
-  const selectMounted = document.getElementById("offline-details-wb-mounted");
-  let mountedEntryIds = [];
-  if (selectMounted) {
-    mountedEntryIds = Array.from(selectMounted.selectedOptions).map(opt => Number(opt.value));
-  }
+  // 抓取线下手风琴选择器选中的世界书条目 ID 列表
+  const checkedBoxes = document.querySelectorAll(".cb-offline-details-wb-mount:checked");
+  const mountedEntryIds = Array.from(checkedBoxes).map(cb => Number(cb.value));
 
   if (isOfflineTheater) {
     await db.theaters.update(activeTheaterId, {
