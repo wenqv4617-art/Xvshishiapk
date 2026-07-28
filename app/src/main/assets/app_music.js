@@ -853,8 +853,13 @@
         const keyRes = await this.ncmNativeFetch(keyUrl, "POST", {}, "type=1");
 
         let unikey = "";
+        let sessionCookie = "";
+
         if (keyRes && keyRes.data) {
           unikey = keyRes.data.unikey || (keyRes.data.data ? keyRes.data.data.unikey : "");
+          if (keyRes.headers && keyRes.headers["Set-Cookie"]) {
+            sessionCookie = keyRes.headers["Set-Cookie"];
+          }
         }
 
         if (!unikey) unikey = "ncm_key_" + Date.now();
@@ -867,24 +872,27 @@
         if (statusText) statusText.innerText = "请使用网易云 App 扫描二维码授权登录";
 
         if (this.qrPollTimer) clearInterval(this.qrPollTimer);
+
+        // 轮询授权状态 (必须夹带 Step 1 拿到的 sessionCookie)
         this.qrPollTimer = setInterval(async () => {
           const checkUrl = `https://music.163.com/api/login/qrcode/client/login?key=${unikey}&type=1&timestamp=${Date.now()}`;
-          const checkRes = await this.ncmNativeFetch(checkUrl, "POST", {}, `key=${unikey}&type=1`);
+          const pollHeaders = sessionCookie ? { "Cookie": sessionCookie } : {};
+          const checkRes = await this.ncmNativeFetch(checkUrl, "POST", pollHeaders, `key=${unikey}&type=1`);
 
           if (checkRes && checkRes.data) {
             const code = checkRes.data.code;
             if (code === 803) {
               clearInterval(this.qrPollTimer);
-              const cookie = checkRes.data.cookie || (checkRes.headers ? checkRes.headers["Set-Cookie"] : "") || "MUSIC_U=authorized_success";
-              localStorage.setItem("ncm_user_cookie", cookie);
-              this.ncmCookie = cookie;
+              const authCookie = checkRes.data.cookie || (checkRes.headers ? checkRes.headers["Set-Cookie"] : "") || sessionCookie || "MUSIC_U=authorized_success";
+              localStorage.setItem("ncm_user_cookie", authCookie);
+              this.ncmCookie = authCookie;
               this.isVip = true;
 
               if (statusText) statusText.innerText = "网易云授权成功！正在同步红心歌单...";
               if (typeof showToast === 'function') showToast("网易云账号授权成功！同步红心与个人歌单中...");
 
-              // 核心触发：自动同步个人资料、红心歌单与创建的歌单！
-              await this.syncNcmUserData(cookie);
+              // 自动触发个人资料与红心歌单无缝同步
+              await this.syncNcmUserData(authCookie);
               setTimeout(() => this.closeNcmLoginModal(), 1200);
 
             } else if (code === 802) {
@@ -894,7 +902,7 @@
               clearInterval(this.qrPollTimer);
             }
           }
-        }, 3000);
+        }, 2000);
 
       } catch(e) {
         if (statusText) statusText.innerText = "建立网易云授权失败，可尝试手动输入 Cookie";
