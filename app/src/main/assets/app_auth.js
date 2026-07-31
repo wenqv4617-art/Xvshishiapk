@@ -1,8 +1,8 @@
 /**
- * app_auth.js - Supabase 账号管理、无感持久化与 2 台设备 Limit-2 FIFO 挤占中枢
+ * app_auth.js - Supabase 账号管理、多设备登录限制（限2台）与踢人逻辑中枢
  */
 
-// 1. 初始化 Supabase 客户端
+// 1. 初始化 Supabase 客户端 (这里把 supabase 改为了 supabaseClient，防止重名)
 const SUPABASE_URL = "https://itqigfuhxaqglnergizc.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_el5tQonGZp4ymQunND3Cqw_WSs5h8Bg";
 const supabaseClient = libSupabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -16,59 +16,43 @@ if (!myClientToken) {
 
 let activeRealtimeChannel = null;
 
-// 初始化检测：高优先凭证放行（一旦登录过绝不二次弹窗）
+// 初始化检测：验证登录态及设备合法性
 async function initAuthCheck() {
-  const isLocallyLoggedIn = localStorage.getItem("auth_logged_in") === "true";
+  const { data: { session }, error } = await supabaseClient.auth.getSession();
 
-  // 1. 优先读取本地登录标记：0毫秒秒开显示主界面，绝不弹出登录遮罩！
-  if (isLocallyLoggedIn) {
-    hideLoginScreen();
+  if (error || !session) {
+    showLoginScreen();
+    return;
   }
 
-  try {
-    const { data: { session }, error } = await supabaseClient.auth.getSession();
+  // 已有本地 Session 凭证，立即放行显示主界面，不再弹出遮罩层
+  hideLoginScreen();
 
-    if (error || !session) {
-      // 只有在确定未登录且不处于离线使用时，才展示登录页
-      if (!isLocallyLoggedIn) {
-        showLoginScreen();
-      }
-      return;
-    }
-
-    // 确定处于登录状态，刷新本地标记与后台会话
-    localStorage.setItem("auth_logged_in", "true");
-    hideLoginScreen();
-
-    // 后台静默校验设备队列
-    verifyDeviceSession(session.user.id);
-
-  } catch(e) {
-    console.warn("登录态后台无感静默校验中...", e);
-  }
+  // 后台无感校验设备队列与开启踢出监听
+  verifyDeviceSession(session.user.id);
 }
 
-// 设备排队与踢出逻辑 (精确 FIFO 队列：设备3登录 -> 踢出最老设备1)
+// 设备排队与踢出逻辑 (FIFO 队列)
 async function verifyDeviceSession(userId) {
   if (!navigator.onLine) {
     return;
   }
 
   try {
-    // 1. 按自增 ID 从小到大（从老到新）拉取该用户的所有在线设备
+    // 1. 获取当前用户在所有设备上的活跃会话，按时间从新到老排序
     const { data: sessions, error } = await supabaseClient
       .from('user_devices')
       .select('id, device_token')
       .eq('user_id', userId)
-      .order('id', { ascending: true });
+      .order('last_seen', { ascending: false });
 
     if (error) throw error;
 
-    // 2. 检测当前设备 token 是否已在库中
+    // 2. 检测当前设备是否已注册在此列表中
     const currentSession = sessions.find(s => s.device_token === myClientToken);
 
     if (!currentSession) {
-      // 插入新设备登记
+      // 当前设备不在列表中，说明是新设备登录，将其插入到数据库中
       const { data: newSess, error: insErr } = await supabaseClient
         .from('user_devices')
         .insert({ user_id: userId, device_token: myClientToken })
@@ -76,12 +60,14 @@ async function verifyDeviceSession(userId) {
         .single();
 
       if (insErr) throw insErr;
-      sessions.push(newSess); // 追加到数组最末尾（最新设备）
+      
+      // 将新会话插到数组最前面
+      sessions.unshift(newSess);
     }
 
-    // 3. 核心限制队列：如果总设备数 > 2，强剔最早登录的老设备
+    // 3. 核心限制队列：如果活跃设备数大于 2 台，踢出最老的设备（动态保留最新2台）
     if (sessions.length > 2) {
-      const oldestSessions = sessions.slice(0, sessions.length - 2); // 截出最老的那批设备
+      const oldestSessions = sessions.slice(2); // 截取索引 2 往后的所有老会话
       const idsToDelete = oldestSessions.map(s => s.id);
 
       await supabaseClient
@@ -90,22 +76,22 @@ async function verifyDeviceSession(userId) {
         .in('id', idsToDelete);
     }
 
-    // 4. 二次核查：如果自己的设备 ID 正好属于被强剔的最老设备，触发下线
-    const { data: finalCheck, error: chkErr } = await supabaseClient
+    // 4. 双重防漏：再次检测自己是否被踢
+    const { data: finalCheck } = await supabaseClient
       .from('user_devices')
       .select('id')
       .eq('device_token', myClientToken);
 
-    if (!chkErr && Array.isArray(finalCheck) && finalCheck.length === 0) {
+    if (!finalCheck || finalCheck.length === 0) {
       handleKickOut();
       return;
     }
 
-    // 5. 开启实时监听：一旦属于自己的 user_devices 被后续第3台设备挤掉删除，立刻下线
+    // 5. 开启实时监听：一旦属于自己的 user_devices 被其他设备抢占并删除，立刻在桌面上踢出
     subscribeToKickOut(userId);
 
   } catch (e) {
-    console.warn("设备鉴权后台同步中（不影响本地正常使用）:", e);
+    console.error("设备鉴权后台同步异常（保持本地使用状态）:", e);
   }
 }
 
@@ -126,7 +112,7 @@ function subscribeToKickOut(userId) {
         filter: `user_id=eq.${userId}`
       },
       (payload) => {
-        // 被删除的记录属于本设备 Token 时，执行被挤下线
+        // 如果被删除的会话 device_token 是我自己，执行强踢
         if (payload.old && payload.old.device_token === myClientToken) {
           handleKickOut();
         }
@@ -142,17 +128,13 @@ async function handleKickOut() {
     activeRealtimeChannel = null;
   }
   
-  localStorage.removeItem("auth_logged_in");
   localStorage.removeItem("cached_user_password");
-  try {
-    await supabaseClient.auth.signOut();
-  } catch(e) {}
-
-  showCustomAlert("⚠️ 账号异地登录下线通知", "由于您的账号在其他更多的设备上登录（超2台上限），本设备已自动下线。如需使用请重新登录。");
+  await supabaseClient.auth.signOut();
+  showCustomAlert("⚠️ 强制下线通知", "由于您的账号在其他更多的设备/浏览器上登录，本设备已被强制踢下线。");
   showLoginScreen();
 }
 
-// 登录 UI 遮罩层控制
+// 登录 UI 遮罩层控制（与手机主界面联动控制，防止直接删遮罩 DOM 绕过登录）
 function showLoginScreen() {
   const overlay = document.getElementById("auth-login-overlay");
   const phone = document.getElementById("phone-container");
@@ -181,11 +163,10 @@ async function handleUserLogin(email, password) {
 
     if (error) throw error;
 
-    // 记录永久登录与密码缓存
-    localStorage.setItem("auth_logged_in", "true");
+    // 临时本地缓存，方便在设置中查看密码
     localStorage.setItem("cached_user_password", password);
 
-    showToast("登录成功！已成功解锁并建立安全神经连接");
+    showToast("登录成功！正在建立安全神经连接...");
     hideLoginScreen();
     await verifyDeviceSession(data.user.id);
 
@@ -197,10 +178,10 @@ async function handleUserLogin(email, password) {
   }
 }
 
-// 用户注册动作 (强制校验激活码)
+// 用户注册动作 (强制校验激活码) - 修正版
 async function handleUserSignUp(email, password, activationCode) {
   if (!activationCode) {
-    showCustomAlert("注册被拦截", "注册必须输入系统激活码！");
+    showCustomAlert("注册被拦截", "注册必须输入一次性系统激活码！");
     return;
   }
 
@@ -209,6 +190,7 @@ async function handleUserSignUp(email, password, activationCode) {
   btn.innerText = "注册中...";
 
   try {
+    // 核心修正：激活码必须套在 options.data 里面传过去！
     const { data, error } = await supabaseClient.auth.signUp({
       email: email,
       password: password,
@@ -230,11 +212,8 @@ async function handleUserSignUp(email, password, activationCode) {
   }
 }
 
-// 主动心跳轮询检测 (增加容灾断言，只有在确定请求成功且已被库中删除时才触发踢人)
+// 每 15 秒执行一次主动心跳检测，防止由于网络波动导致 Realtime 断开漏踢
 setInterval(async () => {
-  if (!navigator.onLine) return;
-  if (localStorage.getItem("auth_logged_in") !== "true") return;
-
   const { data: { session } } = await supabaseClient.auth.getSession();
   if (!session) return;
 
@@ -243,8 +222,7 @@ setInterval(async () => {
     .select('id')
     .eq('device_token', myClientToken);
 
-  // 核心容灾：只有在 error 为 null (确定联网成功) 且 data 为空数组时，才认定为被第 3 台设备踢出
-  if (!error && Array.isArray(data) && data.length === 0) {
+  if (error || !data || data.length === 0) {
     handleKickOut();
   }
 }, 15000);

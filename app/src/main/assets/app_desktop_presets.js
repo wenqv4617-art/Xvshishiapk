@@ -408,7 +408,7 @@ window.DESKTOP_PRESETS = {
       null, null, null, null,
       null, null, null, null,
       null, null, null, null,
-      "couples", "deeptalk", "music", "world_book",
+      "couples", "deeptalk", "archive", "world_book",
       null, null, null, null
     ],
 

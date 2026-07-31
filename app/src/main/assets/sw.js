@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v24'; // 离线 PWA 升级至 v24 引入听歌应用与网易云陪听中枢
+const CACHE_NAME = 'story-phone-v23'; // 离线 PWA 升级至 v23 引入自定义提示词预设中枢
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -39,8 +39,6 @@ const ASSETS = [
   './app_forum_loader.js',   // 论坛层栈管理器 (新加入)
   './app_forum_posts.js',    // 论坛帖子与互动机制 (新加入)
   './app_forum_messages.js', // 论坛私信机制 (新加入)
-  './music.css',             // 听歌网易云样式表 (新加入)
-  './app_music.js',          // 听歌与陪听中枢逻辑 (新加入)
   './images/wallpaper_summer.jpg',
   './images/widget_top_photo.jpg',
   './images/widget_polaroid_photo.jpg',
