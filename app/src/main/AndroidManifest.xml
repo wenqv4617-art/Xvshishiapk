@@ -14,6 +14,12 @@
     <!-- ★ 修复点：前台服务权限声明，Android 14+ 必须 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
+    <!-- ★ 保活与定时唤醒：精确闹钟 + 开机自启 -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     
     <!-- 新增：申请读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -49,6 +55,29 @@
             android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="StoryPhone keepalive background chat polling service" />
         </service>
+
+        <!-- ★ 后台保活心跳 Receiver：由 AlarmManager.setAndAllowWhileIdle 唤醒，Doze 下仍可触发，链式重排下一次 -->
+        <receiver
+            android:name=".BgPollReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- ★ 应用内定时闹钟 Receiver：到点发通知 + 振动 + 唤醒 WebView -->
+        <receiver
+            android:name=".InAppAlarmReceiver"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- ★ 开机自启 Receiver：开机后重启前台守护服务，恢复保活 -->
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

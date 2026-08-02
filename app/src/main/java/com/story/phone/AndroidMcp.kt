@@ -25,6 +25,12 @@ class AndroidMcp(private val context: Context) {
     companion object {
         private const val TAG = "AndroidMcp"
         var mainActivity: MainActivity? = null
+        @Volatile private var instance: AndroidMcp? = null
+
+        /** 兜底释放后台 WakeLock，供 McpForegroundService.onDestroy 调用 */
+        fun releaseWakeLockIfHeld() {
+            try { instance?.releaseWakeLockSafe() } catch (e: Exception) { e.printStackTrace() }
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
@@ -64,7 +70,7 @@ class AndroidMcp(private val context: Context) {
                     wakeLock = powerManager.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "StoryPhone::BackgroundWakeLock")
                 }
                 if (wakeLock?.isHeld == false) {
-                    wakeLock?.acquire()
+                    wakeLock?.acquire(30 * 60 * 1000L) // 30 分钟超时，避免永久持锁耗电
                 }
             } else {
                 context.stopService(serviceIntent)
@@ -124,6 +130,7 @@ class AndroidMcp(private val context: Context) {
 
     // 初始化时自动创建本地物理存储文件夹：/Download/Storypoem 与 /Music/Storypoem
     init {
+        instance = this
         try {
             getDownloadDir()
             getMusicDir()
@@ -132,6 +139,15 @@ class AndroidMcp(private val context: Context) {
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    /** 释放后台 WakeLock（带异常保护），供 onDestroy / companion 兜底调用 */
+    fun releaseWakeLockSafe() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     private fun getDownloadDir(): File {
@@ -306,6 +322,13 @@ class AndroidMcp(private val context: Context) {
         } catch (e: Exception) { e.printStackTrace() }
     }
 
+    /** 注销媒体控制 BroadcastReceiver，避免内存泄漏；由 MainActivity.onDestroy 调用 */
+    fun unregisterMediaReceiver() {
+        try {
+            context.applicationContext.unregisterReceiver(mediaControlReceiver)
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
     private fun initMediaSession() {
         if (mediaSession != null) return
         try {
@@ -430,7 +453,7 @@ class AndroidMcp(private val context: Context) {
                 }
                 .build()
 
-            notificationManager.notify(1005, notification)
+            notificationManager.notify(1006, notification)
         } catch (e: Exception) { e.printStackTrace() }
     }
 
@@ -605,11 +628,28 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
+    // 7.5 应用内定时闹钟：用 AlarmManager 在指定时间唤醒，到点发通知 + 振动 + 唤醒 WebView 发消息
+    //     triggerTimeMillis 为绝对时间戳（System.currentTimeMillis() 语义）。
+    //     与 setAndroidSystemAlarm（仅调起系统闹钟App）互补，前端可按需选用。
+    @JavascriptInterface
+    fun setInAppAlarm(triggerTimeMillis: Long, message: String): Boolean {
+        Log.d(TAG, "setInAppAlarm() called, triggerTimeMillis=$triggerTimeMillis, message=${message.take(50)}")
+        return try {
+            if (triggerTimeMillis <= System.currentTimeMillis()) {
+                Log.e(TAG, "setInAppAlarm() trigger time already passed, ignored.")
+                return false
+            }
+            InAppAlarmReceiver.schedule(context, triggerTimeMillis, message)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
     private fun getWebView(): android.webkit.WebView? {
         return (context as? MainActivity)?.findViewById(R.id.webview)
     }
 
-    private var bgPollTimer: java.util.Timer? = null
     private var floatPetView: android.view.View? = null
     private var petImageView: android.widget.ImageView? = null
     private var bubbleTextView: android.widget.TextView? = null
@@ -642,32 +682,21 @@ class AndroidMcp(private val context: Context) {
     }
 
     /**
-     * 强力直写唤醒：在 Native 层开启高精度后台计时，每 30 秒从 Android 线程强行注入代码
-     * 这会迫使系统立即对 WebView 分配 CPU 时间片，确保 JS 定时发信调度不被系统打盹挂起。
+     * 强力直写唤醒：改用 AlarmManager.setAndAllowWhileIdle 做后台心跳调度。
+     * Doze 模式下 java.util.Timer 会被冻结，AlarmManager.RTC_WAKEUP 可在 Doze 下唤醒 CPU，
+     * 并由 BgPollReceiver 链式重排下一次触发，强制向 WebView 注入心跳 JS。
+     *
+     * 注意：intervalMinutes 按分钟语义处理（与前端 toast "每隔 X 分钟" 一致），默认 10 分钟
+     * （Doze 下 setAndAllowWhileIdle 最小调度窗口约 9 分钟，10 分钟可稳定触发）。
      */
     @JavascriptInterface
     fun startBackgroundPolling(intervalMinutes: Int) {
-        Log.d(TAG, "startBackgroundPolling() called. Core Native-to-JS heartbeat polling starting...")
+        Log.d(TAG, "startBackgroundPolling() called. AlarmManager-based heartbeat scheduling starting...")
         try {
             stopBackgroundPolling()
-            bgPollTimer = java.util.Timer().apply {
-                scheduleAtFixedRate(object : java.util.TimerTask() {
-                    override fun run() {
-                        mainActivity?.runOnUiThread {
-                            val webView = getWebView()
-                            if (webView != null) {
-                                Log.d(TAG, "Native heartbeat ticking: forcing execution in background WebView context.")
-                                webView.evaluateJavascript(
-                                    "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.triggerBackgroundActiveMessageNative === 'function') { window.desktopPetSystem.triggerBackgroundActiveMessageNative(); }",
-                                    null
-                                )
-                            } else {
-                                Log.e(TAG, "Native heartbeat skipped: WebView is null.")
-                            }
-                        }
-                    }
-                }, 30000L, 30000L) // 每 30 秒无差错强制激活唤醒一次
-            }
+            val minutes = if (intervalMinutes > 0) intervalMinutes.toLong() else 10L
+            val intervalMs = minutes * 60_000L
+            BgPollReceiver.scheduleNextPoll(context, intervalMs)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -677,8 +706,73 @@ class AndroidMcp(private val context: Context) {
     fun stopBackgroundPolling() {
         Log.d(TAG, "stopBackgroundPolling() called. Heartbeat polling stopped.")
         try {
-            bgPollTimer?.cancel()
-            bgPollTimer = null
+            BgPollReceiver.cancelPoll(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    // 8. 获取真机当前电量百分比（0-100）
+    @JavascriptInterface
+    fun getBatteryLevel(): Int {
+        return try {
+            val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+            bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            -1
+        }
+    }
+
+    // 8.1 判断设备是否正在充电
+    //    注意：BatteryManager.isCharging() 为 API 29+，minSdk=26 需做版本兼容降级。
+    @JavascriptInterface
+    fun isCharging(): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val bm = context.getSystemService(android.content.Context.BATTERY_SERVICE) as android.os.BatteryManager
+                bm.isCharging
+            } else {
+                // API 26-28：通过 ACTION_BATTERY_CHANGED 粘性广播判断充电状态
+                val intent = context.registerReceiver(
+                    null,
+                    android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED)
+                )
+                val status = intent?.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1) ?: -1
+                status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                    status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    // 9. 获取当前播放的媒体信息（仅本应用自身的 MediaSession，无需额外权限）
+    //    返回 JSON: {"packageName":"com.story.phone","songName":"xxx","isPlaying":true}
+    @JavascriptInterface
+    fun getCurrentMediaInfo(): String {
+        return try {
+            val obj = JSONObject()
+            obj.put("packageName", context.packageName)
+            obj.put("songName", currentSongName)
+            obj.put("isPlaying", mediaPlayer?.isPlaying == true)
+            obj.toString()
+        } catch (e: Exception) {
+            e.printStackTrace()
+            "{}"
+        }
+    }
+
+    // 9.1 跳转到系统"通知使用权"设置页，授权后可读取其他 App 的媒体会话（敏感权限，用户主动开启）
+    @JavascriptInterface
+    fun requestNotificationListenerPermission() {
+        Log.d(TAG, "requestNotificationListenerPermission() called")
+        try {
+            val intent = Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS").apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
         } catch (e: Exception) {
             e.printStackTrace()
         }

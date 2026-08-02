@@ -2,6 +2,8 @@ package com.story.phone
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -29,6 +31,7 @@ import com.story.phone.R
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var androidMcp: AndroidMcp
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private val FILE_CHOOSER_RESULT_CODE = 101
     private val PERMISSIONS_REQUEST_CODE = 102
@@ -101,7 +104,8 @@ class MainActivity : AppCompatActivity() {
 
         // 注入 window.AndroidMCP 原生接口并向静态通道注册主 Activity 引用
         AndroidMcp.mainActivity = this
-        webView.addJavascriptInterface(AndroidMcp(this), "AndroidMCP")
+        androidMcp = AndroidMcp(this)
+        webView.addJavascriptInterface(androidMcp, "AndroidMCP")
 
         // 加载 assets 本地打包的前端页面
         webView.loadUrl("file:///android_asset/index.html")
@@ -160,6 +164,17 @@ class MainActivity : AppCompatActivity() {
             super.onBackPressed()
         }
     }
+
+    override fun onDestroy() {
+        try {
+            // 停止 AlarmManager 后台心跳，并注销媒体控制 Receiver，避免内存泄漏
+            androidMcp.stopBackgroundPolling()
+            androidMcp.unregisterMediaReceiver()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        super.onDestroy()
+    }
 }
 
 /**
@@ -192,6 +207,16 @@ class McpForegroundService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onDestroy() {
+        // 兜底释放 AndroidMcp 持有的后台 WakeLock，防止服务被回收后 WakeLock 仍占用
+        try {
+            AndroidMcp.releaseWakeLockIfHeld()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        super.onDestroy()
+    }
 
     // ---------------------------------------------------------------
     // 通知构建
@@ -258,6 +283,217 @@ class McpForegroundService : Service() {
             )
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(serviceChannel)
+        }
+    }
+}
+
+// ============================================================
+//  后台保活 / 定时闹钟 / 开机自启 三个 BroadcastReceiver
+// ============================================================
+
+/**
+ * 后台心跳 Receiver：由 AlarmManager.setAndAllowWhileIdle 触发，
+ * Doze 下仍可唤醒 CPU。收到后链式重排下一次，并向 WebView 注入心跳 JS。
+ */
+class BgPollReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val intervalMs = intent?.getLongExtra(EXTRA_INTERVAL_MS, DEFAULT_INTERVAL_MS) ?: DEFAULT_INTERVAL_MS
+        // 链式重排下一次唤醒
+        scheduleNextPoll(context, intervalMs)
+        // 强制在 UI 线程向 WebView 注入心跳 JS
+        val activity = AndroidMcp.mainActivity ?: return
+        activity.runOnUiThread {
+            try {
+                val webView = activity.findViewById<WebView>(R.id.webview)
+                webView?.evaluateJavascript(
+                    "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.triggerBackgroundActiveMessageNative === 'function') { window.desktopPetSystem.triggerBackgroundActiveMessageNative(); }",
+                    null
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+
+    companion object {
+        private const val EXTRA_INTERVAL_MS = "interval_ms"
+        private const val DEFAULT_INTERVAL_MS = 10L * 60_000L
+        private const val REQUEST_CODE = 9991
+
+        fun scheduleNextPoll(context: Context, intervalMs: Long) {
+            try {
+                val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                val intent = Intent(context, BgPollReceiver::class.java).apply {
+                    action = "com.story.phone.ACTION_BG_POLL"
+                    putExtra(EXTRA_INTERVAL_MS, intervalMs)
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pi = android.app.PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)
+                val triggerAt = System.currentTimeMillis() + intervalMs
+                // setAndAllowWhileIdle 在 Doze 下仍能唤醒，且不需要 SCHEDULE_EXACT_ALARM 权限
+                am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAt, pi)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        fun cancelPoll(context: Context) {
+            try {
+                val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                val intent = Intent(context, BgPollReceiver::class.java).apply {
+                    action = "com.story.phone.ACTION_BG_POLL"
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pi = android.app.PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)
+                am.cancel(pi)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+    }
+}
+
+/**
+ * 应用内定时闹钟 Receiver：到点后发系统通知 + 振动 + 唤醒 WebView 发消息。
+ * 由 AndroidMcp.setInAppAlarm 通过 AlarmManager 调度。
+ */
+class InAppAlarmReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        val message = intent?.getStringExtra(EXTRA_MESSAGE) ?: "叙事诗闹钟提醒"
+        // 1. 振动
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+                vm.defaultVibrator.vibrate(android.os.VibrationEffect.createOneShot(1000L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                val v = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
+                v.vibrate(android.os.VibrationEffect.createOneShot(1000L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        // 2. 发系统通知
+        try {
+            showAlarmNotification(context, message)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        // 3. 唤醒 WebView 发送消息
+        val activity = AndroidMcp.mainActivity
+        if (activity != null) {
+            activity.runOnUiThread {
+                try {
+                    val webView = activity.findViewById<WebView>(R.id.webview)
+                    val quoted = org.json.JSONObject.quote(message)
+                    webView?.evaluateJavascript(
+                        "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
+                        null
+                    )
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
+
+    private fun showAlarmNotification(context: Context, message: String) {
+        val channelId = "story_phone_alarm_channel"
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            var channel = nm.getNotificationChannel(channelId)
+            if (channel == null) {
+                channel = android.app.NotificationChannel(channelId, "叙事诗闹钟提醒", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+                    description = "应用内定时闹钟到点提醒"
+                }
+                nm.createNotificationChannel(channel)
+            }
+        }
+        val notifyIntent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        } else {
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT
+        }
+        val pi = android.app.PendingIntent.getActivity(context, 0, notifyIntent, flags)
+        val smallIcon = try {
+            context.resources.getDrawable(R.drawable.ic_launcher, context.theme)
+            R.drawable.ic_launcher
+        } catch (e: Exception) {
+            android.R.drawable.ic_dialog_info
+        }
+        val notification = androidx.core.app.NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(smallIcon)
+            .setContentTitle("叙事诗闹钟")
+            .setContentText(message)
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pi)
+            .build()
+        nm.notify(1007, notification)
+    }
+
+    companion object {
+        private const val EXTRA_MESSAGE = "alarm_message"
+        private const val REQUEST_CODE = 9992
+
+        fun schedule(context: Context, triggerAtMillis: Long, message: String): Boolean {
+            return try {
+                val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                val intent = Intent(context, InAppAlarmReceiver::class.java).apply {
+                    action = "com.story.phone.ACTION_IN_APP_ALARM"
+                    putExtra(EXTRA_MESSAGE, message)
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pi = android.app.PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)
+                // 优先精确闹钟（需 SCHEDULE_EXACT_ALARM），无权限则降级 setAndAllowWhileIdle
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    if (am.canScheduleExactAlarms()) {
+                        am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                    } else {
+                        am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                    }
+                } else {
+                    am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                }
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+    }
+}
+
+/**
+ * 开机自启 Receiver：开机后重启前台守护服务，恢复保活。
+ * 需要 RECEIVE_BOOT_COMPLETED 权限（已在 AndroidManifest 声明）。
+ */
+class BootReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent?) {
+        try {
+            val serviceIntent = Intent(context, McpForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 }
