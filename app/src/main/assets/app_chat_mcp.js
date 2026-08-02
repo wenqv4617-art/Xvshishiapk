@@ -230,25 +230,52 @@
 
     // 3. 原生物理时钟直写闹钟 [1]（支持自定义铃声）
     setAlarm: function() {
-      const input = document.getElementById("mcp-timer-input");
-      const seconds = parseInt(input.value);
-      if (isNaN(seconds) || seconds <= 0) {
-        showToast("请输入合法的闹钟倒计时秒数！");
+      // 读取时分秒三个输入框，合并成总秒数
+      const hInput = document.getElementById("mcp-timer-hours");
+      const mInput = document.getElementById("mcp-timer-minutes");
+      const sInput = document.getElementById("mcp-timer-seconds");
+
+      // 兼容旧版单一输入框（如果存在）
+      const legacyInput = document.getElementById("mcp-timer-input");
+      if (legacyInput && !hInput) {
+        const seconds = parseInt(legacyInput.value);
+        if (isNaN(seconds) || seconds <= 0) {
+          showToast("请输入合法的闹钟倒计时秒数！");
+          return;
+        }
+        this._doSetAlarm(seconds, true);
         return;
       }
 
+      const hours = hInput ? Math.max(0, Math.min(23, parseInt(hInput.value) || 0)) : 0;
+      const minutes = mInput ? Math.max(0, Math.min(59, parseInt(mInput.value) || 0)) : 0;
+      const seconds = sInput ? Math.max(0, Math.min(59, parseInt(sInput.value) || 0)) : 0;
+
+      const totalSeconds = hours * 3600 + minutes * 60 + seconds;
+      if (totalSeconds <= 0) {
+        showToast("请至少设置一点时间（时/分/秒不能全为 0）！");
+        return;
+      }
+
+      this._doSetAlarm(totalSeconds, true);
+    },
+
+    /**
+     * 实际执行闹钟设定（内部方法，setAlarm 和 setAlarmByCommand 共用调度核心）。
+     */
+    _doSetAlarm: function(totalSeconds, isManual) {
       // 读取铃声下拉框（值为 "default" | "local:索引" | "library:索引" | "title:标题"）
       const ringtoneSelect = document.getElementById("mcp-alarm-ringtone");
       let ringtone = "default";
       if (ringtoneSelect) ringtone = ringtoneSelect.value || "default";
 
-      const targetDate = new Date(Date.now() + seconds * 1000);
+      const targetDate = new Date(Date.now() + totalSeconds * 1000);
       const hour = targetDate.getHours();
       const minute = targetDate.getMinutes();
       const triggerTimeMillis = targetDate.getTime();
       const alarmTitle = "叙事诗小手机：神经倒计时闹铃";
 
-      this._scheduleAlarm(seconds, hour, minute, triggerTimeMillis, alarmTitle, ringtone, true);
+      this._scheduleAlarm(totalSeconds, hour, minute, triggerTimeMillis, alarmTitle, ringtone, isManual);
     },
 
     /**

@@ -2864,10 +2864,20 @@
                         <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); display:flex; align-items:center; gap:6px; font-weight:700;">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/></svg>倒计时神经闹钟
                         </h4>
-                        <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
-                          <input type="number" id="mcp-timer-input" placeholder="输入秒数" style="width:80px; padding:8px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:13px; font-weight:700;">
-                          <span style="font-size:12px; color:var(--text-primary); font-weight:600;">秒后震动闹铃</span>
-                          <button class="btn btn-outline" onclick="mcpSystem.setAlarm()" style="flex:1; padding:8px; font-size:11px; border-radius:8px; font-weight:600; cursor:pointer;">设定闹钟</button>
+                        <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                          <div style="display:flex; gap:4px; align-items:center;">
+                            <input type="number" id="mcp-timer-hours" min="0" max="23" value="0" style="width:48px; padding:8px 4px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:13px; font-weight:700;">
+                            <span style="font-size:11px; color:var(--text-secondary); font-weight:600;">时</span>
+                          </div>
+                          <div style="display:flex; gap:4px; align-items:center;">
+                            <input type="number" id="mcp-timer-minutes" min="0" max="59" value="0" style="width:48px; padding:8px 4px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:13px; font-weight:700;">
+                            <span style="font-size:11px; color:var(--text-secondary); font-weight:600;">分</span>
+                          </div>
+                          <div style="display:flex; gap:4px; align-items:center;">
+                            <input type="number" id="mcp-timer-seconds" min="0" max="59" value="30" style="width:48px; padding:8px 4px; border:1.5px solid var(--border); border-radius:8px; text-align:center; font-size:13px; font-weight:700;">
+                            <span style="font-size:11px; color:var(--text-secondary); font-weight:600;">秒</span>
+                          </div>
+                          <button class="btn btn-outline" onclick="mcpSystem.setAlarm()" style="flex:1; min-width:80px; padding:8px; font-size:11px; border-radius:8px; font-weight:600; cursor:pointer;">设定闹钟</button>
                         </div>
                         <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
                           <span style="font-size:11px; color:var(--text-secondary); font-weight:600; flex-shrink:0;">闹钟铃声：</span>
