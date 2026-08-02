@@ -61,6 +61,9 @@
       if (listEl) {
         listEl.innerHTML = this._renderAccordionPlaylist();
       }
+
+      // 同步填充闹钟铃声下拉框（复用 mergedPlaylist）
+      this._populateAlarmRingtoneSelect();
     },
 
     /**
@@ -218,7 +221,7 @@
       }
     },
 
-    // 3. 原生物理时钟直写闹钟 [1]
+    // 3. 原生物理时钟直写闹钟 [1]（支持自定义铃声）
     setAlarm: function() {
       const input = document.getElementById("mcp-timer-input");
       const seconds = parseInt(input.value);
@@ -227,31 +230,70 @@
         return;
       }
 
+      // 读取铃声下拉框（值为 "default" | "local:索引" | "library:索引" | "title:标题"）
+      const ringtoneSelect = document.getElementById("mcp-alarm-ringtone");
+      let ringtone = "default";
+      if (ringtoneSelect) ringtone = ringtoneSelect.value || "default";
+
       const targetDate = new Date(Date.now() + seconds * 1000);
       const hour = targetDate.getHours();
       const minute = targetDate.getMinutes();
       const triggerTimeMillis = targetDate.getTime();
       const alarmTitle = "叙事诗小手机：神经倒计时闹铃";
 
+      this._scheduleAlarm(seconds, hour, minute, triggerTimeMillis, alarmTitle, ringtone, true);
+    },
+
+    /**
+     * AI 自主设闹钟指令封装（供 app_chat.js 解析 [SET_ALARM] 调用）。
+     * opts: { delay:秒数, title:标题, ringtone?:歌曲索引(数字)|歌曲标题(字符串) }
+     */
+    setAlarmByCommand: function(opts) {
+      const delay = parseInt(opts.delay);
+      if (isNaN(delay) || delay <= 0) {
+        console.warn("SET_ALARM delay 非法:", opts.delay);
+        return false;
+      }
+      const title = (opts.title || "AI 闹钟提醒").toString();
+      // ringtone: 数字索引 | 字符串标题 | undefined
+      let ringtone = "default";
+      if (opts.ringtone !== undefined && opts.ringtone !== null && opts.ringtone !== "") {
+        ringtone = opts.ringtone;
+      }
+
+      const targetDate = new Date(Date.now() + delay * 1000);
+      const hour = targetDate.getHours();
+      const minute = targetDate.getMinutes();
+      const triggerTimeMillis = targetDate.getTime();
+
+      return this._scheduleAlarm(delay, hour, minute, triggerTimeMillis, title, ringtone, false);
+    },
+
+    /**
+     * 闹钟调度核心：双通道（系统闹钟 + 应用内闹钟）+ 铃声字段透传。
+     * showToastFeedback=false 时静默（AI 指令路径，避免打扰）
+     */
+    _scheduleAlarm: function(seconds, hour, minute, triggerTimeMillis, title, ringtone, showToastFeedback) {
       let systemAlarmOk = false;
       let inAppAlarmOk = false;
 
       // 优先：写入 Android 系统时钟闹钟（app 被杀也能响，由系统闹钟App保证触发）
       if (window.AndroidMCP && typeof window.AndroidMCP.setAndroidSystemAlarm === 'function') {
         try {
-          window.AndroidMCP.setAndroidSystemAlarm(hour, minute, alarmTitle);
+          window.AndroidMCP.setAndroidSystemAlarm(hour, minute, title);
           systemAlarmOk = true;
         } catch(e) { console.warn("系统闹钟写入失败:", e); }
       }
 
-      // 补充：应用内精确闹钟（app 存活时到点回调 handleInAppAlarm 触发 AI 发信）
+      // 补充：应用内精确闹钟（app 存活时到点回调 handleInAppAlarm 触发铃声+AI发信）
       if (window.AndroidMCP && typeof window.AndroidMCP.setInAppAlarm === 'function') {
         const alarmMsg = JSON.stringify({
           type: "mcp_alarm",
-          title: alarmTitle,
+          title: title,
           triggerSeconds: seconds,
           triggerTime: triggerTimeMillis,
           sessionId: (typeof activeSessionId !== 'undefined') ? activeSessionId : null,
+          ringtone: ringtone,
           timestamp: Date.now()
         });
         try {
@@ -260,34 +302,107 @@
         } catch(e) { console.warn("应用内闹钟设定失败:", e); }
       }
 
-      if (systemAlarmOk && inAppAlarmOk) {
-        showToast(`双重闹钟已设定：系统时钟 ${hour}:${String(minute).padStart(2, '0')} 响铃 + 应用内 AI 发信（${seconds}秒后，需app存活）`);
-        this.closePanel();
-        return;
-      }
-      if (systemAlarmOk) {
-        showToast(`已写入系统时钟闹钟，${hour}:${String(minute).padStart(2, '0')} 响铃（app被杀也能响）`);
-        this.closePanel();
-        return;
-      }
-      if (inAppAlarmOk) {
-        showToast(`应用内闹钟已设定，${seconds} 秒后唤醒（需app存活，被杀则失效）`);
-        this.closePanel();
-        return;
-      }
-
-      // 降级：浏览器 setTimeout 模拟
-      showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒（请保持页面在前台）`);
-      this.closePanel();
-
-      setTimeout(() => {
-        if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
-          window.AndroidMCP.triggerHardwareVibrator(600);
-        } else if (navigator.vibrate) {
-          navigator.vibrate([400, 100, 400, 100, 600]);
+      const ok = systemAlarmOk || inAppAlarmOk;
+      if (showToastFeedback) {
+        if (systemAlarmOk && inAppAlarmOk) {
+          showToast(`双重闹钟已设定：系统时钟 ${hour}:${String(minute).padStart(2, '0')} 响铃 + 应用内 AI 发信（${seconds}秒后，需app存活）`);
+        } else if (systemAlarmOk) {
+          showToast(`已写入系统时钟闹钟，${hour}:${String(minute).padStart(2, '0')} 响铃（app被杀也能响）`);
+        } else if (inAppAlarmOk) {
+          showToast(`应用内闹钟已设定，${seconds} 秒后唤醒（需app存活，被杀则失效）`);
+        } else {
+          showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒（请保持页面在前台）`);
         }
-        showCustomAlert("⏰ MCP 警报通知", "您设定的倒计时神经闹钟已经唤醒！");
-      }, seconds * 1000);
+        this.closePanel();
+      }
+      console.log(`闹钟调度: ${seconds}秒后, 标题="${title}", 铃声=${ringtone}, 系统=${systemAlarmOk}, 应用内=${inAppAlarmOk}`);
+
+      // 浏览器降级兜底（仅无任何原生通道时）
+      if (!ok) {
+        setTimeout(() => {
+          if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
+            window.AndroidMCP.triggerHardwareVibrator(600);
+          } else if (navigator.vibrate) {
+            navigator.vibrate([400, 100, 400, 100, 600]);
+          }
+          showCustomAlert("⏰ MCP 警报通知", "您设定的倒计时神经闹钟已经唤醒！");
+        }, seconds * 1000);
+      }
+      return ok;
+    },
+
+    /**
+     * 闹钟到点播放自定义铃声（由 handleInAppAlarm 调用）。
+     * ringtone: "default" | 数字索引 | 字符串标题 | "local:索引" | "library:索引" | "title:标题"
+     */
+    playAlarmRingtone: function(ringtone) {
+      if (ringtone === undefined || ringtone === null || ringtone === "" || ringtone === "default") {
+        return; // 用系统默认铃声
+      }
+      try {
+        // 形如 "local:3" / "library:5"
+        if (typeof ringtone === 'string' && ringtone.indexOf(':') > 0) {
+          const parts = ringtone.split(':');
+          const src = parts[0];
+          const idx = parseInt(parts[1]);
+          if (!isNaN(idx) && this.mergedPlaylist.length > 0 && idx >= 0 && idx < this.mergedPlaylist.length) {
+            this.playTrackByIndex(idx);
+            return;
+          }
+          if (src === 'title') {
+            this.playTrackByTitle(parts.slice(1).join(':'));
+            return;
+          }
+        }
+        // 纯数字索引
+        if (typeof ringtone === 'number' || /^\d+$/.test(String(ringtone))) {
+          const idx = parseInt(ringtone);
+          if (this.mergedPlaylist.length > 0 && idx >= 0 && idx < this.mergedPlaylist.length) {
+            this.playTrackByIndex(idx);
+            return;
+          }
+        }
+        // 字符串标题模糊匹配
+        if (typeof ringtone === 'string' && ringtone.trim()) {
+          this.playTrackByTitle(ringtone.trim());
+          return;
+        }
+      } catch(e) {
+        console.warn("闹钟铃声播放失败:", e);
+      }
+    },
+
+    /**
+     * 填充闹钟铃声下拉框：从 mergedPlaylist（本地+乐库）生成选项。
+     */
+    _populateAlarmRingtoneSelect: function() {
+      const select = document.getElementById("mcp-alarm-ringtone");
+      if (!select) return;
+      const currentVal = select.value || "default";
+      let html = '<option value="default">默认铃声（系统提示音）</option>';
+      if (this.mergedPlaylist.length === 0) {
+        // 降级：按本地+乐库原始结构生成
+        this.localPlaylist.forEach((s, idx) => {
+          html += `<option value="local:${idx}">[本地] ${this._escapeHtml(s)}</option>`;
+        });
+        this.libraryPlaylists.forEach(pl => {
+          (pl.songs || []).forEach((song, idx) => {
+            html += `<option value="library:${idx}">[乐库:${this._escapeHtml(pl.name)}] ${this._escapeHtml(song.title)}</option>`;
+          });
+        });
+      } else {
+        // 优先用 mergedPlaylist 的全局索引（与 AI [PLAY_MUSIC] 索引一致）
+        this.mergedPlaylist.forEach((t, idx) => {
+          const tag = t.source === 'library' ? '[乐库]' : '[本地]';
+          const artist = t.artist ? ` - ${t.artist}` : '';
+          html += `<option value="${idx}">${tag} ${this._escapeHtml(t.title)}${artist}</option>`;
+        });
+      }
+      select.innerHTML = html;
+      // 尝试保留原选择
+      if (Array.from(select.options).some(o => o.value === currentVal)) {
+        select.value = currentVal;
+      }
     },
 
     // 4.1 静默扫描真机 /Music/Storypoem 物理目录并载入 + 加载乐库歌单 [1]
@@ -374,16 +489,36 @@
     },
 
     /**
-     * 从 IndexedDB 加载乐库（听歌应用）歌单及歌曲，合并到 MCP 歌曲列表。
+     * 加载乐库（听歌应用）歌单及歌曲，合并到 MCP 歌曲列表。
+     * 数据源对齐 app_music.js：歌单元数据在 localStorage["ncm_playlists"]，
+     * 歌曲 blob 在独立的原生 IndexedDB "StoryPhoneMusicDB.songs"。
+     * 旧实现误从 Dexie db.music_playlists/db.music_songs 读（仅备份恢复时才填充），导致永远为空。
      */
     _loadLibraryPlaylists: async function() {
       this.libraryPlaylists = [];
       try {
-        if (typeof db === 'undefined' || !db.music_playlists || !db.music_songs) return;
+        // 1. 优先复用 musicSystem 内存中已加载的歌单
+        let playlists = null;
+        if (window.musicSystem && Array.isArray(window.musicSystem.playlists) && window.musicSystem.playlists.length > 0) {
+          playlists = window.musicSystem.playlists;
+        } else {
+          // 降级从 localStorage 读取
+          try {
+            const localPL = JSON.parse(localStorage.getItem("ncm_playlists"));
+            if (localPL && Array.isArray(localPL)) playlists = localPL;
+          } catch(e) {}
+        }
+        if (!playlists || playlists.length === 0) return;
 
-        const playlists = await db.music_playlists.toArray();
-        const allSongs = await db.music_songs.toArray();
+        // 2. 从原生 IDB StoryPhoneMusicDB 读取歌曲元数据（不需要 blob）
+        let allSongs = [];
+        if (window.musicSystem && typeof window.musicSystem.getAllSongsFromIndexedDB === 'function') {
+          allSongs = await window.musicSystem.getAllSongsFromIndexedDB();
+        } else {
+          allSongs = await this._getAllSongsFromMusicIDB();
+        }
 
+        // 3. 按 songIds 关联构建乐库歌单结构
         for (const pl of playlists) {
           let songs = [];
           if (pl.songIds && Array.isArray(pl.songIds)) {
@@ -391,9 +526,6 @@
               const s = allSongs.find(x => x.id === sid);
               return s ? { id: s.id, title: s.title, artist: s.artist } : null;
             }).filter(Boolean);
-          } else {
-            // 旧数据结构：直接按 playlistId 查
-            songs = allSongs.filter(s => s.playlistId === pl.id).map(s => ({ id: s.id, title: s.title, artist: s.artist }));
           }
           if (songs.length > 0) {
             this.libraryPlaylists.push({ id: pl.id, name: pl.name || '未命名歌单', songs: songs });
@@ -402,6 +534,28 @@
       } catch(e) {
         console.error("加载乐库歌单失败:", e);
       }
+    },
+
+    /**
+     * 兜底：直接读原生 IndexedDB StoryPhoneMusicDB.songs（无 musicSystem 时使用）
+     */
+    _getAllSongsFromMusicIDB: function() {
+      return new Promise((resolve) => {
+        if (!window.indexedDB) { resolve([]); return; }
+        try {
+          const req = indexedDB.open("StoryPhoneMusicDB", 1);
+          req.onsuccess = (e) => {
+            const idb = e.target.result;
+            if (!idb.objectStoreNames.contains("songs")) { resolve([]); return; }
+            const tx = idb.transaction("songs", "readonly");
+            const store = tx.objectStore("songs");
+            const getAllReq = store.getAll();
+            getAllReq.onsuccess = () => resolve(getAllReq.result || []);
+            getAllReq.onerror = () => resolve([]);
+          };
+          req.onerror = () => resolve([]);
+        } catch(e) { resolve([]); }
+      });
     },
 
     // 4.2 统一播放接口：支持本地物理歌曲 + 乐库在线歌曲 [1]

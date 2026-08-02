@@ -301,6 +301,18 @@
         window.AndroidMCP.showSystemNotification("⏰ " + (info.title || "闹钟提醒"), info.message || "您设定的闹钟已唤醒");
       }
 
+      // 1.5 可选：播放自定义闹钟铃声（本地歌曲或乐库歌曲）
+      // ringtone 字段由 setAlarm/setAlarmByCommand 写入，支持索引/标题/"local:N"/"library:N"
+      if (info.ringtone !== undefined && info.ringtone !== null && info.ringtone !== "" && info.ringtone !== "default") {
+        try {
+          if (window.mcpSystem && typeof window.mcpSystem.playAlarmRingtone === 'function') {
+            window.mcpSystem.playAlarmRingtone(info.ringtone);
+          }
+        } catch(e) {
+          console.warn("闹钟铃声播放失败:", e);
+        }
+      }
+
       // 2. 弹窗提示（页面在前台时可见）
       try {
         if (typeof showCustomAlert === 'function') {

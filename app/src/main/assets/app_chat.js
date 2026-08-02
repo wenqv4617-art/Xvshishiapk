@@ -4193,6 +4193,22 @@ function bindChatAppEvents() {
           rawReply = rawReply.replace(playMusicRegex, "").trim();
         }
 
+        // === Char (AI) 自主设闹钟指令解析 ===
+        const setAlarmRegex = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
+        const setAlarmMatch = rawReply.match(setAlarmRegex);
+        if (setAlarmMatch) {
+          try {
+            const parsed = JSON.parse(setAlarmMatch[2]);
+            if (window.mcpSystem && typeof window.mcpSystem.setAlarmByCommand === 'function') {
+              window.mcpSystem.setAlarmByCommand(parsed);
+            }
+          } catch(e) {
+            console.warn("解析 AI 设闹钟指令 JSON 失败:", e);
+          }
+          // 擦除设闹钟指令，避免污染对话气泡
+          rawReply = rawReply.replace(setAlarmRegex, "").trim();
+        }
+
         // === Char (AI) 表情反应处理 ===
         const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
         const reactMatch = rawReply.match(reactRegex);
@@ -5782,6 +5798,21 @@ async function triggerOfflineReply() {
             console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
           }
           rawReply = rawReply.replace(playMusicRegexOffline, "").trim();
+        }
+
+        // === 离线剧场模式：解析并擦除 SET_ALARM 设闹钟指令 ===
+        const setAlarmRegexOffline = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
+        const setAlarmMatchOffline = rawReply.match(setAlarmRegexOffline);
+        if (setAlarmMatchOffline) {
+          try {
+            const parsed = JSON.parse(setAlarmMatchOffline[2]);
+            if (window.mcpSystem && typeof window.mcpSystem.setAlarmByCommand === 'function') {
+              window.mcpSystem.setAlarmByCommand(parsed);
+            }
+          } catch(e) {
+            console.warn("解析 AI 设闹钟指令 JSON 失败:", e);
+          }
+          rawReply = rawReply.replace(setAlarmRegexOffline, "").trim();
         }
 
         const msg = {

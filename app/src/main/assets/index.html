@@ -2859,6 +2859,12 @@
                           <span style="font-size:12px; color:var(--text-primary); font-weight:600;">秒后震动闹铃</span>
                           <button class="btn btn-outline" onclick="mcpSystem.setAlarm()" style="flex:1; padding:8px; font-size:11px; border-radius:8px; font-weight:600; cursor:pointer;">设定闹钟</button>
                         </div>
+                        <div style="display:flex; gap:6px; align-items:center; margin-bottom:8px;">
+                          <span style="font-size:11px; color:var(--text-secondary); font-weight:600; flex-shrink:0;">闹钟铃声：</span>
+                          <select id="mcp-alarm-ringtone" style="flex:1; padding:6px 8px; border:1.5px solid var(--border); border-radius:8px; font-size:11px; color:var(--text-primary); background:#fff; max-width:240px; overflow:hidden; text-overflow:ellipsis;">
+                            <option value="default">默认铃声（系统提示音）</option>
+                          </select>
+                        </div>
                         <button class="btn btn-danger-outline" onclick="mcpSystem.triggerVibration()" style="width:100%; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer; color:#ef4444; border-color:#fca5a5; background:none;">测试设备物理马达震动反馈</button>
                       </div>
 
