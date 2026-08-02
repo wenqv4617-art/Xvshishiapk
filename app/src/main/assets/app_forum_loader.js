@@ -212,6 +212,44 @@ function forumGetProfileEditTemplate() {
         <button class="btn btn-outline" onclick="document.getElementById('forum-edit-avatar-file').click()" style="margin-top:8px;">本地上传头像</button>
         <input type="file" id="forum-edit-avatar-file" accept="image/*" style="display:none;">
       </div>
+
+      <!-- ========== 同步聊天身份模块 ========== -->
+      <div style="border-top:1.5px dashed #cbd5e1; padding-top:14px; margin-top:6px; display:flex; flex-direction:column; gap:12px;">
+        <div style="display:flex; align-items:center; justify-content:space-between;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-9"/><path d="M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></svg>
+            <label style="font-size:13px; font-weight:700; color:#0f172a; margin:0;">同步聊天身份</label>
+          </div>
+          <label class="switch" style="transform:scale(0.85);">
+            <input type="checkbox" id="forum-edit-sync-identity-toggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p style="font-size:11px; color:#64748b; margin:0; line-height:1.5;">开启后，此论坛账户将与一个聊天面具（用户人设）绑定。绑定的身份将作为该账户的"现实身份"。</p>
+
+        <!-- 身份选择器 -->
+        <div id="forum-edit-persona-selector-wrap" style="display:none; flex-direction:column; gap:8px; padding:10px; background:#f8fafc; border:1.5px solid #e2e8f0; border-radius:10px;">
+          <label style="font-size:11px; font-weight:700; color:#475569; margin:0;">选择绑定的面具（现实身份）</label>
+          <div id="forum-edit-persona-cards" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto; padding:2px;"></div>
+          <input type="hidden" id="forum-edit-bound-persona-id">
+        </div>
+
+        <!-- 同步给 char 开关 -->
+        <div id="forum-edit-sync-to-char-wrap" style="display:none; flex-direction:column; gap:10px; padding:10px; background:#f0fdf4; border:1.5px solid #bbf7d0; border-radius:10px;">
+          <div style="display:flex; align-items:center; justify-content:space-between;">
+            <label style="font-size:12px; font-weight:700; color:#166534; margin:0;">是否同步此身份给 char</label>
+            <label class="switch" style="transform:scale(0.85);">
+              <input type="checkbox" id="forum-edit-sync-to-char-toggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p style="font-size:10.5px; color:#475569; margin:0; line-height:1.5;">开启后下方列出该面具下已建立单聊的 char。可多选——选中的 char 在私信/发帖/评论时会知道此账户的现实身份就是 user。每个 char 还可单独控制是否携带聊天记忆。</p>
+
+          <!-- char 多选列表 -->
+          <div id="forum-edit-sync-char-list" style="display:none; flex-direction:column; gap:8px; margin-top:4px;"></div>
+        </div>
+      </div>
+
       <div style="display:flex; flex-direction:column; gap:10px; margin-top:10px;">
         <button class="btn btn-primary" onclick="forumSaveProfileEdit()" style="width:100%;">保存资料</button>
         <button class="btn btn-danger-outline" onclick="forumDeleteAccountFromEdit()" style="width:100%;">删除此账户</button>
@@ -239,6 +277,239 @@ async function forumInitProfileEditPage(accountId) {
       reader.readAsDataURL(e.target.files[0]);
     }
   };
+
+  // ========== 同步聊天身份模块初始化 ==========
+  const syncIdentityToggle = document.getElementById("forum-edit-sync-identity-toggle");
+  const personaSelectorWrap = document.getElementById("forum-edit-persona-selector-wrap");
+  const syncToCharWrap = document.getElementById("forum-edit-sync-to-char-wrap");
+  const syncToCharToggle = document.getElementById("forum-edit-sync-to-char-toggle");
+  const syncCharList = document.getElementById("forum-edit-sync-char-list");
+  const boundPersonaIdInput = document.getElementById("forum-edit-bound-persona-id");
+
+  // 读取已保存的同步配置
+  let savedSyncConfig = account.syncChatConfig || null;
+  if (savedSyncConfig && typeof savedSyncConfig === "string") {
+    try { savedSyncConfig = JSON.parse(savedSyncConfig); } catch (e) { savedSyncConfig = null; }
+  }
+  const syncEnabled = !!(savedSyncConfig && savedSyncConfig.enabled);
+  const boundPersonaId = savedSyncConfig?.boundPersonaId ? Number(savedSyncConfig.boundPersonaId) : null;
+  const syncToCharEnabled = !!(savedSyncConfig && savedSyncConfig.syncToChar);
+  const savedSyncChars = Array.isArray(savedSyncConfig?.syncChars) ? savedSyncConfig.syncChars : [];
+
+  syncIdentityToggle.checked = syncEnabled;
+  personaSelectorWrap.style.display = syncEnabled ? "flex" : "none";
+  syncToCharWrap.style.display = (syncEnabled && boundPersonaId) ? "flex" : "none";
+
+  if (syncToCharToggle) {
+    syncToCharToggle.checked = syncToCharEnabled;
+    syncCharList.style.display = syncToCharEnabled ? "flex" : "none";
+  }
+
+  // 渲染身份选择器（面具列表 = db.archives type='user'）
+  await forumRenderPersonaSelector(boundPersonaId);
+
+  // 如果有已绑定的 persona，立即渲染对应 char 列表
+  if (boundPersonaId) {
+    await forumRenderSyncCharList(boundPersonaId, savedSyncChars);
+  }
+
+  // 主开关：是否同步聊天身份
+  syncIdentityToggle.onchange = async function () {
+    if (this.checked) {
+      personaSelectorWrap.style.display = "flex";
+      // 若已绑定 persona，显示同步给 char 区块
+      const curPid = boundPersonaIdInput.value;
+      if (curPid) {
+        syncToCharWrap.style.display = "flex";
+        await forumRenderSyncCharList(Number(curPid), savedSyncChars);
+      }
+    } else {
+      personaSelectorWrap.style.display = "none";
+      syncToCharWrap.style.display = "none";
+      syncCharList.style.display = "none";
+      syncToCharToggle.checked = false;
+    }
+  };
+
+  // 子开关：是否同步给 char
+  syncToCharToggle.onchange = function () {
+    if (this.checked) {
+      const curPid = boundPersonaIdInput.value;
+      if (!curPid) {
+        showToast("请先选择绑定的面具");
+        this.checked = false;
+        return;
+      }
+      syncCharList.style.display = "flex";
+    } else {
+      syncCharList.style.display = "none";
+    }
+  };
+}
+
+// 渲染身份选择器（面具列表 = db.archives type='user'）
+async function forumRenderPersonaSelector(selectedPersonaId) {
+  const container = document.getElementById("forum-edit-persona-cards");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const personas = await db.archives.where("type").equals("user").toArray();
+  const boundPersonaIdInput = document.getElementById("forum-edit-bound-persona-id");
+  const syncToCharWrap = document.getElementById("forum-edit-sync-to-char-wrap");
+
+  if (personas.length === 0) {
+    container.innerHTML = `<div style="font-size:11px; color:#94a3b8; text-align:center; padding:8px;">暂无面具，请先到档案库创建用户人设</div>`;
+    return;
+  }
+
+  personas.forEach(p => {
+    const card = document.createElement("div");
+    const isSelected = selectedPersonaId && Number(selectedPersonaId) === Number(p.id);
+    card.style.cssText = `display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; background:${isSelected ? '#f0fdf4' : '#ffffff'}; border:1.5px solid ${isSelected ? '#07c160' : '#e2e8f0'}; cursor:pointer; transition:all 0.15s;`;
+    card.className = "forum-persona-option-card";
+
+    let avatarUrl = "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%23cbd5e1'/></svg>";
+    if (p.avatar) {
+      avatarUrl = p.avatar instanceof Blob ? URL.createObjectURL(p.avatar) : p.avatar;
+    }
+
+    card.innerHTML = `
+      <img src="${avatarUrl}" style="width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0;">
+      <div style="flex:1; overflow:hidden; text-align:left;">
+        <div style="font-size:12px; font-weight:700; color:#0f172a;">${escapeHtml(p.name)}</div>
+        <div style="font-size:10.5px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(p.remark || '暂无备注')}</div>
+      </div>
+    `;
+
+    card.onclick = async () => {
+      container.querySelectorAll(".forum-persona-option-card").forEach(c => {
+        c.style.borderColor = "#e2e8f0";
+        c.style.backgroundColor = "#ffffff";
+      });
+      card.style.borderColor = "#07c160";
+      card.style.backgroundColor = "#f0fdf4";
+      boundPersonaIdInput.value = p.id;
+      // 显示同步给 char 区块
+      syncToCharWrap.style.display = "flex";
+      // 重置 char 列表
+      await forumRenderSyncCharList(p.id, []);
+    };
+
+    if (isSelected) {
+      boundPersonaIdInput.value = p.id;
+    }
+    container.appendChild(card);
+  });
+}
+
+// 渲染 char 多选列表（从选定面具已建立的单聊会话取值）
+async function forumRenderSyncCharList(personaId, preselectedSyncChars) {
+  const container = document.getElementById("forum-edit-sync-char-list");
+  if (!container) return;
+  container.innerHTML = "";
+
+  // 从 sessions 取该面具下所有非群聊会话，并拉取对应 char 信息
+  const sessions = await db.sessions
+    .where("userId").equals(Number(personaId))
+    .and(s => s.isGroup !== 1)
+    .toArray();
+
+  if (sessions.length === 0) {
+    container.innerHTML = `<div style="font-size:11px; color:#94a3b8; text-align:center; padding:8px;">该面具下尚未与任何 char 建立单聊</div>`;
+    return;
+  }
+
+  // 去重 charId
+  const seenCharIds = new Set();
+  const uniqueSessions = [];
+  for (const s of sessions) {
+    if (!seenCharIds.has(Number(s.charId))) {
+      seenCharIds.add(Number(s.charId));
+      uniqueSessions.push(s);
+    }
+  }
+
+  // preselectedSyncChars 形如 [{charId, carryMemory}]
+  const preselectedMap = {};
+  for (const item of preselectedSyncChars) {
+    preselectedMap[Number(item.charId)] = !!item.carryMemory;
+  }
+
+  for (const s of uniqueSessions) {
+    const char = await db.archives.get(s.charId);
+    if (!char) continue;
+
+    const charId = Number(char.id);
+    const isSelected = preselectedMap.hasOwnProperty(charId);
+    const carryMemory = !!preselectedMap[charId];
+
+    let avatarUrl = "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%23cbd5e1'/></svg>";
+    if (char.avatar) {
+      avatarUrl = char.avatar instanceof Blob ? URL.createObjectURL(char.avatar) : char.avatar;
+    }
+
+    const customName = s.customCharName || char.name;
+    const customRemark = s.customCharName ? `（自定义名：${escapeHtml(s.customCharName)}）` : "";
+
+    const row = document.createElement("div");
+    row.style.cssText = `display:flex; flex-direction:column; gap:8px; padding:8px; border-radius:8px; background:#ffffff; border:1.5px solid ${isSelected ? '#07c160' : '#e2e8f0'};`;
+    row.setAttribute("data-char-id", charId);
+
+    row.innerHTML = `
+      <div style="display:flex; align-items:center; gap:10px;">
+        <img src="${avatarUrl}" style="width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0;">
+        <div style="flex:1; overflow:hidden; text-align:left;">
+          <div style="font-size:12px; font-weight:700; color:#0f172a;">${escapeHtml(customName)}${customRemark}</div>
+          <div style="font-size:10.5px; color:#64748b; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(char.remark || '暂无备注')}</div>
+        </div>
+        <label class="switch" style="transform:scale(0.85);">
+          <input type="checkbox" class="forum-sync-char-toggle" ${isSelected ? 'checked' : ''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="forum-carry-memory-row" style="display:${isSelected ? 'flex' : 'none'}; align-items:center; justify-content:space-between; padding-left:42px;">
+        <span style="font-size:10.5px; color:#64748b;">携带聊天记忆</span>
+        <label class="switch" style="transform:scale(0.8);">
+          <input type="checkbox" class="forum-carry-memory-toggle" ${carryMemory ? 'checked' : ''}>
+          <span class="slider"></span>
+        </label>
+      </div>
+    `;
+
+    // char 主开关：勾选后显示"携带记忆"子开关
+    const charToggle = row.querySelector(".forum-sync-char-toggle");
+    const carryRow = row.querySelector(".forum-carry-memory-row");
+    charToggle.onchange = function () {
+      if (this.checked) {
+        row.style.borderColor = "#07c160";
+        carryRow.style.display = "flex";
+      } else {
+        row.style.borderColor = "#e2e8f0";
+        carryRow.style.display = "none";
+      }
+    };
+
+    container.appendChild(row);
+  }
+}
+
+// 收集表单中的同步 char 配置
+function forumCollectSyncChars() {
+  const container = document.getElementById("forum-edit-sync-char-list");
+  if (!container) return [];
+  const rows = container.querySelectorAll("[data-char-id]");
+  const result = [];
+  rows.forEach(row => {
+    const charToggle = row.querySelector(".forum-sync-char-toggle");
+    if (charToggle && charToggle.checked) {
+      const carryToggle = row.querySelector(".forum-carry-memory-toggle");
+      result.push({
+        charId: Number(row.getAttribute("data-char-id")),
+        carryMemory: !!(carryToggle && carryToggle.checked)
+      });
+    }
+  });
+  return result;
 }
 
 async function forumSaveProfileEdit() {
@@ -253,7 +524,22 @@ async function forumSaveProfileEdit() {
     return;
   }
 
-  await db.forum_accounts.update(forumEditingAccountId, { nickname, username, signature, setting, avatar });
+  // 收集同步聊天身份配置
+  const syncIdentityToggle = document.getElementById("forum-edit-sync-identity-toggle");
+  const syncToCharToggle = document.getElementById("forum-edit-sync-to-char-toggle");
+  const boundPersonaIdInput = document.getElementById("forum-edit-bound-persona-id");
+
+  const syncChatConfig = {
+    enabled: !!syncIdentityToggle.checked,
+    boundPersonaId: boundPersonaIdInput.value ? Number(boundPersonaIdInput.value) : null,
+    syncToChar: !!(syncIdentityToggle.checked && syncToCharToggle && syncToCharToggle.checked),
+    syncChars: (syncIdentityToggle.checked && syncToCharToggle && syncToCharToggle.checked) ? forumCollectSyncChars() : []
+  };
+
+  await db.forum_accounts.update(forumEditingAccountId, {
+    nickname, username, signature, setting, avatar,
+    syncChatConfig: JSON.stringify(syncChatConfig)
+  });
   showToast("资料更新成功");
   await forumLoadDrawerHeader();
   forumPopLayer();
@@ -663,18 +949,16 @@ async function forumInitSearchResultPage(keyword) {
     let authorName = "匿名成员";
     let authorAvatar = "";
 
-    const isSelf = Number(p.authorId) === Number(forumActiveAccountId);
-    if (isSelf) {
-      const acc = await db.forum_accounts.get(forumActiveAccountId);
+    // 修复 ID 碰撞：先查 NPC 表，未命中再查 User 表
+    const npc = await db.forum_npc_accounts.get(p.authorId);
+    if (npc) {
+      authorName = npc.nickname;
+      authorAvatar = npc.avatar || forumGenerateColorfulAvatar(npc.nickname);
+    } else {
+      const acc = await db.forum_accounts.get(p.authorId);
       if (acc) {
         authorName = acc.nickname;
         authorAvatar = acc.avatar || forumGenerateColorfulAvatar(acc.nickname);
-      }
-    } else {
-      const npc = await db.forum_npc_accounts.get(p.authorId);
-      if (npc) {
-        authorName = npc.nickname;
-        authorAvatar = npc.avatar || forumGenerateColorfulAvatar(npc.nickname);
       }
     }
 
@@ -778,6 +1062,69 @@ async function buildForumSystemPrompt(accountId) {
     }
   }
 
+  // ========== 同步聊天身份模块：注入"现实身份感知"上下文 ==========
+  // 当 user 账号开启了"同步聊天身份"且选择了面具和 char 时，被选中的 char 在论坛里
+  // 会知道此账户的现实身份就是 user（携带或不携带聊天记忆）。
+  let syncIdentityContext = "";
+  try {
+    let syncConfig = account?.syncChatConfig || null;
+    if (syncConfig && typeof syncConfig === "string") {
+      syncConfig = JSON.parse(syncConfig);
+    }
+    if (syncConfig && syncConfig.enabled && syncConfig.boundPersonaId && syncConfig.syncToChar && Array.isArray(syncConfig.syncChars) && syncConfig.syncChars.length > 0) {
+      const boundPersona = await db.archives.get(Number(syncConfig.boundPersonaId));
+      if (boundPersona) {
+        const personaName = boundPersona.name;
+        const personaRemark = boundPersona.remark || "";
+        const personaPersona = boundPersona.persona || "";
+
+        // 收集被同步的 char 信息
+        const syncedCharInfos = [];
+        for (const item of syncConfig.syncChars) {
+          const charId = Number(item.charId);
+          const char = await db.archives.get(charId);
+          if (!char) continue;
+          const carryMemory = !!item.carryMemory;
+
+          // 找到该 char 在当前论坛账户下的 NPC 小号（含主号）
+          const charNpcs = (await db.forum_npc_accounts.toArray())
+            .filter(n => Number(n.userId) === Number(accountId) && Number(n.charId) === charId);
+          const npcNicknames = charNpcs.map(n => `@${n.username}（${n.nickname}）`).join(" / ") || "（无分身）";
+
+          let charInfo = `- 角色 [${char.name}]（论坛分身：${npcNicknames}）`;
+          if (carryMemory) {
+            // 携带记忆：注入该 char 与该 persona 的所有单聊会话最近的核心心智摘要
+            const sessions = await db.sessions
+              .where("userId").equals(Number(syncConfig.boundPersonaId))
+              .and(s => Number(s.charId) === charId && s.isGroup !== 1)
+              .toArray();
+            let memoryText = "";
+            for (const s of sessions) {
+              if (s.coreRelationship) memoryText += `关系：${s.coreRelationship}；`;
+              if (s.coreUserInEyes) memoryText += `对用户印象：${s.coreUserInEyes}；`;
+            }
+            charInfo += memoryText ? `【携带聊天记忆：${memoryText}】` : "【携带聊天记忆：暂无核心记忆】";
+          } else {
+            charInfo += "【不携带聊天记忆：仅以档案馆人设为准】";
+          }
+          syncedCharInfos.push(charInfo);
+        }
+
+        syncIdentityContext = `\n\n【论坛现实身份同步通道（极重要）】
+当前论坛账户 "${account.nickname}" (@${account.username}) 已经被 user 主动绑定了现实身份：
+- 现实身份（面具）：${personaName}${personaRemark ? `（${personaRemark}）` : ""}
+- 现实身份人设：${personaPersona || "暂无"}
+
+以下 char 已经被 user 选中，"知道"此账户的现实身份就是 user。他们在论坛的私信/发帖/评论行为中，可以隐约或明显地体现出对 user 真实身份的认知（具体表现强度由 char 自身性格决定，但不可假装完全不认识）：
+${syncedCharInfos.join("\n")}
+
+未被列入此名单的 char 仍然不会明显地表示他知道这个账号是 user 的面具。`;
+      }
+    }
+  } catch (e) {
+    console.warn("构建同步聊天身份上下文失败:", e);
+  }
+
   return `你当前正运行着名为“${forumName}”的匿名活跃社交论坛。
 这里是一个有血有肉、极其真实活跃的互联网社交论坛（高度融合推特/X、微博、小红书和抖音评论区文化）。
 网民发言绝不应该死板说教，发帖与回帖中需要焕发极高的活人生命力：
@@ -791,6 +1138,7 @@ async function buildForumSystemPrompt(accountId) {
 ${worldBookContent}
 当前基础论坛背景资料描述：${atmosphere}
 当前论坛要求的网民语言风格：${style}
+${syncIdentityContext}
 
 网民对话规范：
 - 鼓励并在内容中合理加入当前风格所界定的语气、助词以及emoji，从而拉满真实的活人网感，但禁止频繁使用网梗。
@@ -998,11 +1346,29 @@ async function forumLoadNotificationsWithToast() {
 // === 17. 个人空间主页重绘（无碰撞识别与NPC触发API自发动态） ===
 let currentProfileViewId = null;
 let currentProfileSubTab = 'posts';
+// 记录当前查看的主页身份类型（0=user，1=NPC），用于在帖子列表中过滤 ID 碰撞的串扰帖子
+let currentProfileIsNpc = null;
 
-async function forumInitProfileViewPage(userId) {
+// 包装函数：明确传入身份类型，避免 ID 碰撞导致 user 主页被 NPC 拦截
+window.forumOpenProfile = function(id, isNpc) {
+  forumPushLayer('profile-view', { id: id, isNpc: isNpc });
+};
+
+async function forumInitProfileViewPage(userIdOrObj) {
+  // 支持对象传参 { id, isNpc } 以明确身份类型，兼容旧数字传参
+  let userId, forceIsNpc;
+  if (typeof userIdOrObj === 'object' && userIdOrObj !== null && !Array.isArray(userIdOrObj)) {
+    userId = userIdOrObj.id;
+    forceIsNpc = userIdOrObj.isNpc;
+  } else {
+    userId = userIdOrObj;
+    forceIsNpc = null;
+  }
+
   currentProfileViewId = userId;
   currentProfileSubTab = 'posts';
-  
+  currentProfileIsNpc = null;
+
   const nicknameEl = document.getElementById("forum-profile-nickname");
   const usernameEl = document.getElementById("forum-profile-username");
   const bioEl = document.getElementById("forum-profile-bio");
@@ -1018,15 +1384,30 @@ async function forumInitProfileViewPage(userId) {
 
   let isNpc = false;
   let profile = null;
-  
-  // 纯数字 ID 精准隔离：只有 ID 等于当前玩家时才是真实 User 账户，其余全判定为 NPC，杜绝碰撞 [1]
-  const isSelf = Number(userId) === Number(forumActiveAccountId);
-  if (isSelf) {
-    profile = await db.forum_accounts.get(forumActiveAccountId);
-  } else {
-    isNpc = true;
+
+  // 身份判定优先级：调用方明确传入 > userId === forumActiveAccountId 优先按 user > fallback 先查 NPC
+  if (forceIsNpc === true) {
     profile = await db.forum_npc_accounts.get(Number(userId));
+    isNpc = true;
+  } else if (forceIsNpc === false) {
+    profile = await db.forum_accounts.get(Number(userId));
+    isNpc = false;
+  } else if (Number(userId) === Number(forumActiveAccountId)) {
+    // 侧边栏/私信点击自己头像传入的是 forumActiveAccountId，明确按 user 处理
+    profile = await db.forum_accounts.get(Number(userId));
+    isNpc = false;
+  } else {
+    // fallback：先查 NPC 表，命中即 NPC，否则查 User 表
+    profile = await db.forum_npc_accounts.get(Number(userId));
+    if (profile) {
+      isNpc = true;
+    } else {
+      profile = await db.forum_accounts.get(Number(userId));
+    }
   }
+
+  // 记录当前主页身份类型，供 forumSwitchProfileSubTab 过滤串扰帖子使用
+  currentProfileIsNpc = isNpc ? 1 : 0;
 
   if (!profile) {
     showToast("用户或NPC不存在");
@@ -1048,7 +1429,9 @@ async function forumInitProfileViewPage(userId) {
   }
 
   actionsEl.innerHTML = "";
-  if (isSelf) {
+  // 修复 ID 碰撞：必须排除 NPC 身份后再做 user 账户匹配，否则 NPC id 数值等于 forumActiveAccountId 时会被误判为自己
+  const isSelfUserProfile = !isNpc && Number(userId) === Number(forumActiveAccountId);
+  if (isSelfUserProfile) {
     actionsEl.innerHTML = `
       <button class="forum-capsule-btn" onclick="forumPushLayer('profile-edit', ${userId})">编辑资料</button>
     `;
@@ -1112,6 +1495,27 @@ async function forumSwitchProfileSubTab(tab) {
 
   if (tab === 'posts') {
     let posts = await db.forum_posts.where('authorId').equals(currentProfileViewId).toArray();
+    // 修复 ID 碰撞导致的串扰：authorId 索引查询会同时返回 user 帖子和 id 撞上的 NPC 帖子，
+    // 必须根据 currentProfileIsNpc 过滤掉不属于当前身份类型的帖子。
+    // 对于历史无 isNpc 字段的旧帖子，通过查询 NPC id 集合来判断真实身份。
+    const allNpcIds = new Set((await db.forum_npc_accounts.toArray()).map(n => Number(n.id)));
+    posts = posts.filter(p => {
+      // 路人帖子（isPasserby === 1）没有个人主页，一律排除
+      if (p.isPasserby === 1) return false;
+      if (currentProfileIsNpc === 1) {
+        // 查看 NPC 主页：保留 NPC 帖子
+        if (p.isNpc === 1) return true;
+        if (p.isNpc === 0) return false;
+        // 历史数据：authorId 在 NPC 表中才算 NPC 帖子
+        return allNpcIds.has(Number(p.authorId));
+      } else {
+        // 查看 user 主页：保留 user 帖子
+        if (p.isNpc === 0) return true;
+        if (p.isNpc === 1) return false;
+        // 历史数据：authorId 不在 NPC 表中才算 user 帖子
+        return !allNpcIds.has(Number(p.authorId));
+      }
+    });
     posts.sort((a,b) => b.createdAt - a.createdAt);
 
     if (posts.length === 0) {
@@ -1155,13 +1559,20 @@ async function forumSwitchProfileSubTab(tab) {
 
     for (let p of likedPosts) {
       let authorName = "匿名成员";
-      const npc = await db.forum_npc_accounts.get(p.authorId);
-      if (npc) {
-        authorName = npc.nickname;
+      // 路人帖子直接用自带作者名，NPC/user 帖子查表
+      if (p.isPasserby === 1) {
+        authorName = p.authorNickname || "匿名路人";
       } else {
-        const acc = await db.forum_accounts.get(p.authorId);
-        if (acc) {
-          authorName = acc.nickname;
+        const npc = await db.forum_npc_accounts.get(p.authorId);
+        if (npc) {
+          authorName = npc.nickname;
+        } else {
+          const acc = await db.forum_accounts.get(p.authorId);
+          if (acc) {
+            authorName = acc.nickname;
+          } else if (p.authorNickname) {
+            authorName = p.authorNickname;
+          }
         }
       }
       const card = document.createElement("div");
@@ -1181,6 +1592,9 @@ async function forumSwitchProfileSubTab(tab) {
 }
 
 // === 18. NPC 小号管理与档案馆角色绑定真正引入 (同步零 Await 内存对齐重构，消除闪屏) ===
+// 支持单个 char 拥有最多 3 个小号（含主分身）。在聊天开关开启后由 char 自主建立的小号也会出现在这里。
+const FORUM_MAX_ALT_ACCOUNTS = 3;
+
 async function forumInitNpcsPage() {
   const archiveList = document.getElementById("forum-npcs-archive-list");
   const followsList = document.getElementById("forum-npcs-follows-list");
@@ -1203,11 +1617,14 @@ async function forumInitNpcsPage() {
     archiveFragment.appendChild(emptyP);
   } else {
     for (let c of chars) {
-      // 纯内存 lookup 检索，耗时 0ms 完美规避 OOC
-      const npc = allNpcs.find(n => n.charId === c.id);
+      // 取该 char 名下所有小号（最多 3 个），按 id 升序保持建立顺序
+      const charNpcs = allNpcs
+        .filter(n => Number(n.charId) === Number(c.id))
+        .sort((a, b) => Number(a.id) - Number(b.id));
+
       const row = document.createElement("div");
       row.className = "forum-msg-chat-item";
-      row.style.cssText = "display:flex; flex-direction:column; gap:8px; align-items:stretch;";
+      row.style.cssText = "display:flex; flex-direction:column; gap:8px; align-items:stretch; padding:10px; border:1.5px solid #e2e8f0; border-radius:10px; background:#fafbfc;";
 
       let avatarUrl = "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%23cbd5e1'/></svg>";
       if (c.avatar) {
@@ -1218,44 +1635,63 @@ async function forumInitNpcsPage() {
         }
       }
 
-      if (npc) {
-        row.innerHTML = `
-          <div style="display:flex; align-items:center; gap:12px; justify-content:space-between; width:100%;">
-            <div style="display:flex; align-items:center; gap:12px; flex:1;">
-              <img src="${avatarUrl}" style="width:36px; height:36px; border-radius:50%; object-fit:cover;">
-              <div style="flex:1;">
-                <span class="forum-msg-chat-name" style="font-weight:700;">${escapeHtml(c.name)} (马甲: ${escapeHtml(npc.nickname)})</span>
-                <span style="font-size:11px; color:#10b981; display:block;">已引入匿名身份：@${escapeHtml(npc.username || 'unknown')}</span>
+      // 角色头部行（头像 + 姓名 + 小号计数 + 建立按钮）
+      const altCount = charNpcs.length;
+      const canCreateMore = altCount < FORUM_MAX_ALT_ACCOUNTS;
+      const countLabel = altCount === 0
+        ? `<span style="font-size:11px; color:#94a3b8; display:block;">未引入任何分身</span>`
+        : `<span style="font-size:11px; color:#10b981; display:block;">已有 ${altCount}/${FORUM_MAX_ALT_ACCOUNTS} 个论坛分身</span>`;
+
+      let headerHtml = `
+        <div style="display:flex; align-items:center; gap:12px; justify-content:space-between; width:100%;">
+          <div style="display:flex; align-items:center; gap:12px; flex:1;">
+            <img src="${avatarUrl}" style="width:36px; height:36px; border-radius:50%; object-fit:cover;">
+            <div style="flex:1;">
+              <span class="forum-msg-chat-name" style="font-weight:700;">${escapeHtml(c.name)}</span>
+              ${countLabel}
+            </div>
+          </div>
+          ${canCreateMore ? `<button class="btn btn-primary" style="padding:5px 10px; font-size:11px; flex-shrink:0;" onclick="forumIntroduceNpc(${c.id}, '${escapeHtml(c.name)}', '${escapeHtml(avatarUrl)}')">+ 建立分身</button>` : `<span style="font-size:10.5px; color:#ef4444; flex-shrink:0;">已达上限</span>`}
+        </div>
+      `;
+
+      // 每个小号一行
+      let altsHtml = "";
+      if (charNpcs.length > 0) {
+        altsHtml = `<div style="display:flex; flex-direction:column; gap:6px; margin-top:6px; padding-top:8px; border-top:1px dashed #e2e8f0;">`;
+        charNpcs.forEach((npc, idx) => {
+          const npcAvatar = npc.avatar || forumGenerateColorfulAvatar(npc.nickname);
+          const isMain = idx === 0;
+          altsHtml += `
+            <div style="display:flex; flex-direction:column; gap:6px; padding:8px; background:#ffffff; border:1px solid #e2e8f0; border-radius:8px;">
+              <div style="display:flex; align-items:center; gap:10px; justify-content:space-between;">
+                <div style="display:flex; align-items:center; gap:10px; flex:1;">
+                  <img src="${npcAvatar}" style="width:28px; height:28px; border-radius:50%; object-fit:cover;">
+                  <div style="flex:1; overflow:hidden;">
+                    <span style="font-size:12px; font-weight:700; color:#0f172a;">${escapeHtml(npc.nickname)} ${isMain ? '<span style="font-size:9px; color:#6366f1; background:#eef2ff; padding:1px 4px; border-radius:4px;">主号</span>' : '<span style="font-size:9px; color:#f59e0b; background:#fef3c7; padding:1px 4px; border-radius:4px;">小号'+(idx)+'</span>'}</span>
+                    <span style="font-size:10.5px; color:#64748b; display:block; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">@${escapeHtml(npc.username || 'unknown')} · ${escapeHtml(npc.signature || '无签名')}</span>
+                  </div>
+                </div>
+                <button class="btn btn-outline" style="padding:3px 7px; font-size:10.5px; border-color:#ef4444; color:#ef4444; flex-shrink:0;" onclick="forumRemoveNpc(${npc.id})">移除</button>
+              </div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <span style="font-size:10.5px; color:#64748b; font-weight:700; flex-shrink:0;">发帖概率:</span>
+                <select style="font-size:10.5px; padding:3px; border:1px solid #cbd5e1; border-radius:6px; flex:1;" onchange="forumUpdateNpcSetting(${npc.id}, 'probability', this.value)">
+                  <option value="0" ${Number(npc.postProbability || 0) === 0 ? 'selected' : ''}>0%</option>
+                  <option value="10" ${Number(npc.postProbability || 0) === 10 ? 'selected' : ''}>10%</option>
+                  <option value="30" ${Number(npc.postProbability || 0) === 30 ? 'selected' : ''}>30% (默认)</option>
+                  <option value="50" ${Number(npc.postProbability || 0) === 50 ? 'selected' : ''}>50%</option>
+                  <option value="80" ${Number(npc.postProbability || 0) === 80 ? 'selected' : ''}>80%</option>
+                  <option value="100" ${Number(npc.postProbability || 0) === 100 ? 'selected' : ''}>100%</option>
+                </select>
               </div>
             </div>
-            <button class="btn btn-outline" style="padding:4px 8px; font-size:11px; border-color:#ef4444; color:#ef4444; flex-shrink:0;" onclick="forumRemoveNpc(${npc.id})">移除</button>
-          </div>
-          <div style="display:flex; gap:8px; border-top:1px dashed #e2e8f0; padding-top:8px; margin-top:4px; align-items:center;">
-            <span style="font-size:11px; color:#64748b; font-weight:700;">每次下拉刷新此NPC发帖概率:</span>
-            <select style="font-size:11px; padding:4px; border:1px solid #cbd5e1; border-radius:6px; flex:1;" onchange="forumUpdateNpcSetting(${npc.id}, 'probability', this.value)">
-              <option value="0" ${Number(npc.postProbability || 0) === 0 ? 'selected' : ''}>0% (从不主动发帖)</option>
-              <option value="10" ${Number(npc.postProbability || 0) === 10 ? 'selected' : ''}>10%</option>
-              <option value="30" ${Number(npc.postProbability || 0) === 30 ? 'selected' : ''}>30% (默认标准)</option>
-              <option value="50" ${Number(npc.postProbability || 0) === 50 ? 'selected' : ''}>50% (中频发布)</option>
-              <option value="80" ${Number(npc.postProbability || 0) === 80 ? 'selected' : ''}>80% (高频倾诉)</option>
-              <option value="100" ${Number(npc.postProbability || 0) === 100 ? 'selected' : ''}>100% (每次刷新必发)</option>
-            </select>
-          </div>
-        `;
-      } else {
-        row.innerHTML = `
-          <div style="display:flex; align-items:center; gap:12px; justify-content:space-between; width:100%;">
-            <div style="display:flex; align-items:center; gap:12px; flex:1;">
-              <img src="${avatarUrl}" style="width:36px; height:36px; border-radius:50%; object-fit:cover;">
-              <div style="flex:1;">
-                <span class="forum-msg-chat-name" style="font-weight:700;">${escapeHtml(c.name)}</span>
-                <span style="font-size:11px; color:#64748b; display:block;">未引入该分身</span>
-              </div>
-            </div>
-            <button class="btn btn-primary" style="padding:6px 12px; font-size:11px; flex-shrink:0;" onclick="forumIntroduceNpc(${c.id}, '${escapeHtml(c.name)}', '${escapeHtml(avatarUrl)}')">引入分身</button>
-          </div>
-        `;
+          `;
+        });
+        altsHtml += `</div>`;
       }
+
+      row.innerHTML = headerHtml + altsHtml;
       archiveFragment.appendChild(row);
     }
   }
@@ -1299,6 +1735,14 @@ async function forumInitNpcsPage() {
 }
 
 async function forumIntroduceNpc(charId, nickname, avatar) {
+  // 1. 校验小号上限：每个 char 最多 3 个分身
+  const existingAlts = (await db.forum_npc_accounts.toArray())
+    .filter(n => Number(n.userId) === Number(forumActiveAccountId) && Number(n.charId) === Number(charId));
+  if (existingAlts.length >= FORUM_MAX_ALT_ACCOUNTS) {
+    showToast(`该角色的论坛分身已达上限（${FORUM_MAX_ALT_ACCOUNTS} 个），无法继续建立`);
+    return;
+  }
+
   showToast("正在请求 AI 编译时空马甲中...");
   try {
     const char = await db.archives.get(charId);
@@ -1421,7 +1865,13 @@ async function forumLoadMessagesTabWithToast() {
     const userAccount = await db.forum_accounts.get(forumActiveAccountId);
     const userSetting = userAccount ? (userAccount.setting || "暂无特别设定") : "暂无";
     
-    const userPosts = await db.forum_posts.where('authorId').equals(forumActiveAccountId).toArray();
+    const userPostsRaw = await db.forum_posts.where('authorId').equals(forumActiveAccountId).toArray();
+    // 修复 ID 碰撞：排除 NPC 帖子（NPC ID 可能与 User ID 数值相同）
+    const userPosts = [];
+    for (const p of userPostsRaw) {
+      const isNpc = await db.forum_npc_accounts.get(p.authorId);
+      if (!isNpc) userPosts.push(p);
+    }
     userPosts.sort((a,b) => b.createdAt - a.createdAt);
     const recentPostsText = userPosts.slice(0, 2).map(p => p.content).join("\n");
 

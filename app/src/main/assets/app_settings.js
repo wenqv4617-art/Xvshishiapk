@@ -696,7 +696,7 @@ function loadBeautifyForm() {
   if (enterSendInput) enterSendInput.checked = enterSend;
 
   // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples"];
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -747,7 +747,7 @@ async function saveBeautifyConfig() {
   }
 
   // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples"];
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -788,7 +788,7 @@ function resetBeautifyConfig() {
     localStorage.removeItem("settings-enter-send");
     document.getElementById("beautify-bg-url").value = "";
     
-    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples"];
+    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
     apps.forEach(appId => {
       const input = document.getElementById(`beautify-icon-url-${appId}`);
       if (input) input.value = "";
@@ -1121,6 +1121,11 @@ async function clearAllAppData() {
           await db.table('couples_albums').clear();
           await db.table('couples_journals').clear();
           await db.table('couples_whispers').clear();
+          if (db.music_songs) await db.music_songs.clear();
+          if (db.music_playlists) await db.music_playlists.clear();
+          localStorage.removeItem("ncm_local_songs");
+          localStorage.removeItem("ncm_user_cookie");
+          localStorage.removeItem("ncm_playlists");
           if (db.mcp_servers) await db.mcp_servers.clear();
           if (db.cot_presets) await db.cot_presets.clear();
           if (db.prompt_presets) await db.prompt_presets.clear();
@@ -1831,6 +1836,11 @@ async function performImportTransaction(rawData) {
         }
         if (data.couples_whispers) {
           await db.table('couples_whispers').clear();
+          if (db.music_songs) await db.music_songs.clear();
+          if (db.music_playlists) await db.music_playlists.clear();
+          localStorage.removeItem("ncm_local_songs");
+          localStorage.removeItem("ncm_user_cookie");
+          localStorage.removeItem("ncm_playlists");
           await db.table('couples_whispers').bulkAdd(data.couples_whispers);
         }
         if (data.mcp_servers && db.mcp_servers) {

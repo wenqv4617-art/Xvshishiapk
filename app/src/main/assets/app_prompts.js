@@ -184,17 +184,17 @@ async function buildGlobalSystemPrompt(sessionId) {
     if (isGroupDisabled) continue;
 
     const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
-    if (mode === 'disabled') continue; // 🔴 节点单体禁用跳过
+    if (mode === 'disabled') continue; // 节点单体禁用跳过
 
     // 概率判定
     const prob = entry.probability ?? 100;
     if (prob < 100 && Math.random() * 100 > prob) continue;
 
     if (mode === 'constant') {
-      // 🔵 永久触发
+      // 永久触发
       candidateEntries.push(entry);
     } else if (mode === 'selective') {
-      // 🟢 关键词触发判定
+      // 关键词触发判定
       const kwStr = entry.keywords || "";
       if (kwStr) {
         const kwList = kwStr.split(/[,，|\|;；]/).map(k => k.trim().toLowerCase()).filter(Boolean);
@@ -256,12 +256,23 @@ async function buildGlobalSystemPrompt(sessionId) {
     });
   }
 
+  // 校验并构建母语与文化色彩约束指令
+  let languageCulturePrompt = "";
+  const lang = char?.nativeLanguage || sess.nativeLanguage;
+  if (lang && lang.trim() && !["中文", "普通话", "汉语"].includes(lang.trim())) {
+    languageCulturePrompt = `\n\n【角色母语与本国文化色彩强制约束（极其重要）】：\n` +
+      `角色 [${charName}] 的母语与文化属地为【${lang.trim()}】。\n` +
+      `1. 语言表达：你在所有的对话、台词、心理活动和白描中，必须且只能使用【${lang.trim()}】进行输出！（如母语为英语则输出英语，母语为日语则输出日语，母语为粤语则输出粤语）。绝对禁止直接输出中文对话！\n` +
+      `2. 文化色彩融入：请在你的言头语尾、用词习惯中深度融入【${lang.trim()}】属地特有的风土人情、常用俚语、情绪表达习惯与思考逻辑（例如日语的敬语/客套/细腻感情，英语的俚语/幽默/直率，粤语的口语俚语等），使其具备 100% 地道的本国人文风骨！`;
+  }
+
   // 1.2 身份控制防 OOC 隔离墙：深度 -800
   const identityWall = `【你是谁 · 严格遵守】
 你是 [${charName}]。你只有一个唯一的身体和身份，就是下面【扮演角色背景】描述的这个人。你绝对不是正在和你聊天的用户 [${userName}]。
 
 扮演角色人设设定：
 ${charPersona}
+${languageCulturePrompt}
 
 【身份隔离墙】
 下面描述的 [${userName}] 是另一个人，是你的聊天对象。
@@ -413,6 +424,62 @@ ${relationshipDesc}`;
       segments.push({
         depth: -90,
         content: cotPromptStr
+      });
+    }
+  }
+
+  // === char 主动发起语音/视频通话特权动态注入 (depth: -85) ===
+  if (window.callSystem && typeof window.callSystem.buildAutoCallPromptSegment === 'function') {
+    const autoCallPromptStr = await window.callSystem.buildAutoCallPromptSegment(sessionId);
+    if (autoCallPromptStr) {
+      segments.push({
+        depth: -85,
+        content: autoCallPromptStr
+      });
+    }
+  }
+
+  // === char 自动发朋友圈特权动态注入 (depth: -84) ===
+  if (window.socialActions && typeof window.socialActions.buildAutoMomentPromptSegment === 'function') {
+    const autoMomentPromptStr = await window.socialActions.buildAutoMomentPromptSegment(sessionId);
+    if (autoMomentPromptStr) {
+      segments.push({
+        depth: -84,
+        content: autoMomentPromptStr
+      });
+    }
+  }
+
+  // === char 论坛漫游特权动态注入 (depth: -83) ===
+  if (window.socialActions && typeof window.socialActions.buildForumRoamPromptSegment === 'function') {
+    const forumRoamPromptStr = await window.socialActions.buildForumRoamPromptSegment(sessionId);
+    if (forumRoamPromptStr) {
+      segments.push({
+        depth: -83,
+        content: forumRoamPromptStr
+      });
+    }
+  }
+
+  // === char 朋友圈历史动态并入上下文 (depth: -82) ===
+  // 无论开关是否开启，char 自己之前发过的朋友圈都按时间并入上下文（含互动）
+  if (window.socialActions && typeof window.socialActions.buildMomentHistoryContext === 'function') {
+    const momentHistoryStr = await window.socialActions.buildMomentHistoryContext(sessionId);
+    if (momentHistoryStr) {
+      segments.push({
+        depth: -82,
+        content: momentHistoryStr
+      });
+    }
+  }
+
+  // === char 论坛帖子历史并入上下文 (depth: -81)，仅在论坛漫游开启时 ===
+  if (window.socialActions && typeof window.socialActions.buildForumHistoryContext === 'function') {
+    const forumHistoryStr = await window.socialActions.buildForumHistoryContext(sessionId);
+    if (forumHistoryStr) {
+      segments.push({
+        depth: -81,
+        content: forumHistoryStr
       });
     }
   }

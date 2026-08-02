@@ -999,6 +999,7 @@ ${imagesText}
         const shareData = {
           momentId: moment.id,
           authorName: authorName,
+          forwarderName: char.name,
           summary: moment.content.substring(0, 30),
           commentText: shareText
         };

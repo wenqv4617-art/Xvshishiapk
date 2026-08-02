@@ -429,8 +429,9 @@
         sandboxCustomStyle.id = "chat-beautify-sandbox-custom-style";
         document.head.appendChild(sandboxCustomStyle);
       }
-      let sandboxCss = activeConfig.customCss || "";
-      sandboxCss = sandboxCss.replace(/#dialog-messages-container/g, "#beautify-chat-sandbox");
+      // 先把消息容器选择器映射到沙盒，再用 scopeCss 整体隔离到沙盒，杜绝预览 CSS 溢出到真实页面
+      let sandboxCss = (activeConfig.customCss || "").replace(/#dialog-messages-container/g, "#beautify-chat-sandbox");
+      sandboxCss = scopeCss(sandboxCss, "#beautify-chat-sandbox");
       sandboxCustomStyle.textContent = sandboxCss;
     },
 
@@ -619,8 +620,8 @@ ${u.tailToggle !== 0 ? `
 }
 ` : ''}
 
-/* 用户自定义 CSS */
-${config.customCss || ""}`;
+/* 用户自定义 CSS (已通过 scopeCss 前缀器整体隔离到 #chat-dialog-panel，阻断对页头/输入框/其它面板/其它对话的越权溢出) */
+${scopeCss(config.customCss || "", "#chat-dialog-panel")}`;
     },
 
     // 微信初始/原生页面最齐全的静态 CSS 属性映射结构蓝图 (不随滑块改变，提供给大模型完美无损调配) [1]
@@ -1175,6 +1176,76 @@ ${config.customCss || ""}`;
     const g = parseInt(hex.substring(2, 4), 16) || 0;
     const b = parseInt(hex.substring(4, 6), 16) || 0;
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+
+  /**
+   * CSS 作用域隔离前缀器：把任意 CSS 文本中每条普通规则的选择器统一加上 scope 前缀，
+   * 彻底阻断用户自定义 CSS 对页头/输入框/全局面板的越权溢出。
+   * - @media / @supports / @container / @layer 递归进入内部继续前缀；
+   * - @keyframes / @font-face / @page 等保持原样（其内部用百分比/标识符而非普通选择器）；
+   * - @import / @charset 等无块语句保持原样。
+   * 已带 scope 前缀的选择器不会被二次叠加，避免特异性膨胀。
+   */
+  function scopeCss(cssText, scope) {
+    if (!cssText || !cssText.trim()) return "";
+    const src = cssText.replace(/\/\*[\s\S]*?\*\//g, ""); // 剥离注释简化解析
+    const n = src.length;
+    let out = "";
+    let i = 0;
+
+    function prefixSelectorList(selList) {
+      return selList.split(",").map(function(sel) {
+        const s = sel.trim();
+        if (!s) return sel;
+        if (s === scope || s.indexOf(scope + " ") === 0 || s.indexOf(scope + ".") === 0 ||
+            s.indexOf(scope + "#") === 0 || s.indexOf(scope + ":") === 0 ||
+            s.indexOf(scope + ">") === 0 || s.indexOf(scope + "+") === 0 ||
+            s.indexOf(scope + "~") === 0) {
+          return s; // 已在作用域内，避免重复前缀
+        }
+        return scope + " " + s;
+      }).join(",");
+    }
+
+    function findClose(openIdx) {
+      let depth = 1;
+      let j = openIdx + 1;
+      while (j < n && depth > 0) {
+        const ch = src[j];
+        if (ch === "{") depth++;
+        else if (ch === "}") depth--;
+        j++;
+      }
+      return j - 1;
+    }
+
+    while (i < n) {
+      let j = i;
+      while (j < n && src[j] !== ";" && src[j] !== "{") j++;
+      if (j >= n) { out += src.slice(i); break; }
+      if (src[j] === ";") {
+        out += src.slice(i, j + 1); // 无块语句（@import 等）原样保留
+        i = j + 1;
+      } else {
+        const prelude = src.slice(i, j);
+        const closeIdx = findClose(j);
+        const body = src.slice(j + 1, closeIdx);
+        const trimmed = prelude.trim();
+        if (trimmed.charAt(0) === "@") {
+          const m = trimmed.match(/^@([a-zA-Z-]+)/);
+          const name = m ? m[1].toLowerCase() : "";
+          if (name === "media" || name === "supports" || name === "container" || name === "layer") {
+            out += prelude + "{" + scopeCss(body, scope) + "}";
+          } else {
+            out += prelude + "{" + body + "}"; // @keyframes / @font-face 等原样
+          }
+        } else {
+          out += prefixSelectorList(prelude) + "{" + body + "}";
+        }
+        i = closeIdx + 1;
+      }
+    }
+    return out;
   }
 
   if (document.readyState === "loading") {

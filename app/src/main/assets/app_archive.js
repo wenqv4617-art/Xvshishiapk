@@ -55,10 +55,11 @@ function initArchiveApp() {
     const id = idVal ? Number(idVal) : null;
 
     const name = document.getElementById("archive-name").value.trim();
-    const remark = document.getElementById("archive-remark").value.trim();
-    const group = document.getElementById("archive-group").value.trim();
-    const persona = document.getElementById("archive-persona").value.trim();
-    const urlAvatar = document.getElementById("archive-avatar-url").value.trim();
+      const remark = document.getElementById("archive-remark").value.trim();
+      const nativeLanguage = document.getElementById("archive-language").value.trim();
+      const group = document.getElementById("archive-group").value.trim();
+      const persona = document.getElementById("archive-persona").value.trim();
+      const urlAvatar = document.getElementById("archive-avatar-url").value.trim();
     const parentId = archiveCurrentTab === 'npc' ? Number(document.getElementById("archive-parent-id").value) : null;
 
     if (!name) {
@@ -74,14 +75,15 @@ function initArchiveApp() {
     const avatar = urlAvatar || temporaryAvatarFile || null;
 
     const arcObj = {
-      type: archiveCurrentTab,
-      name,
-      avatar,
-      remark,
-      group,
-      persona,
-      parentId
-    };
+        type: archiveCurrentTab,
+        name,
+        avatar,
+        remark,
+        nativeLanguage,
+        group,
+        persona,
+        parentId
+      };
 
     if (id) {
       await db.archives.update(id, arcObj);
@@ -200,6 +202,7 @@ async function openArchiveForm(editId = null) {
   document.getElementById("archive-id").value = "";
   document.getElementById("archive-name").value = "";
   document.getElementById("archive-remark").value = "";
+  document.getElementById("archive-language").value = "";
   document.getElementById("archive-group").value = "";
   document.getElementById("archive-persona").value = "";
   document.getElementById("archive-avatar-url").value = "";
@@ -278,6 +281,7 @@ async function openArchiveForm(editId = null) {
       document.getElementById("archive-id").value = item.id;
       document.getElementById("archive-name").value = item.name || "";
       document.getElementById("archive-remark").value = item.remark || "";
+      document.getElementById("archive-language").value = item.nativeLanguage || "";
       document.getElementById("archive-group").value = item.group || "";
       document.getElementById("archive-persona").value = item.persona || "";
       

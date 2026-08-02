@@ -11,6 +11,19 @@ let activeSessionUserAvatar = null;
 // 记录当前右键/双击被操作的消息节点 ID
 let selectedMsgId = null;
 let isMultiSelectMode = false;
+// 通话上下文标志：工具栏从通话面板打开时为 true，操作完成后需刷新通话面板而非线上对话
+window._callToolbarContext = false;
+// 暴露 selectedMsgId 设置接口供通话模块调用
+window._setSelectedMsgId = function(id) { selectedMsgId = id; };
+window._getSelectedMsgId = function() { return selectedMsgId; };
+// 工具栏操作后刷新：通话上下文刷新通话面板，否则刷新线上对话
+window._refreshAfterToolbarAction = function() {
+  if (window._callToolbarContext && window.callSystem && typeof window.callSystem.refreshCallBubbles === "function") {
+    window.callSystem.refreshCallBubbles();
+  } else {
+    renderDialogMessages();
+  }
+};
 
 // 专属详情页临时存储的 Blob 头像指针
 let detailsCharAvatarBlob = null;
@@ -1224,6 +1237,68 @@ function escapeHtml(str) {
             .replace(/'/g, '&#39;');
 }
 
+// 社交动作跳转卡片构建器：char 发了朋友圈/论坛帖后，系统消息以可点击卡片形式呈现
+function buildSocialNoticeCard(data) {
+  const wrap = document.createElement("div");
+  wrap.className = "group-system-notice-container";
+  wrap.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
+
+  let iconSvg = "";
+  let label = "";
+  let subLabel = "";
+
+  if (data.type === 'moment') {
+    iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#576b95" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>`;
+    label = `${data.charName} 发了一条朋友圈`;
+    subLabel = data.summary ? escapeHtml(data.summary) : "点击查看";
+  } else if (data.type === 'forum_post') {
+    iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#576b95" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>`;
+    label = `${data.charName} 在论坛发了帖子`;
+    subLabel = `《${escapeHtml(data.title)}》 · @${escapeHtml(data.username)}`;
+  } else if (data.type === 'forum_alt_create') {
+    iconSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#576b95" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>`;
+    label = `${data.charName} 建立了一个论坛小号`;
+    subLabel = `@${escapeHtml(data.username)}（${escapeHtml(data.nickname)}）`;
+  } else {
+    label = escapeHtml(data.label || JSON.stringify(data));
+  }
+
+  const hasJump = data.type === 'moment' || data.type === 'forum_post';
+  wrap.innerHTML = `
+    <div style="background-color: rgba(0,0,0,0.05); padding: 8px 14px; border-radius: 8px; font-size: 11.5px; color: #7f7f7f; max-width: 85%; text-align: center; line-height: 1.5; cursor: ${hasJump ? 'pointer' : 'default'}; ${hasJump ? 'transition: background 0.15s;' : ''}" ${hasJump ? `onclick="window.openSocialNotice('${data.type}', ${data.targetId})"` : ''}>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 5px;">
+        ${iconSvg}
+        <span style="font-weight: 600; color: #576b95;">${label}</span>
+      </div>
+      ${subLabel ? `<div style="margin-top: 3px; font-size: 11px; color: #999;">${subLabel}${hasJump ? ' · 点击查看' : ''}</div>` : ''}
+    </div>
+  `;
+  return wrap;
+}
+
+// 社交动作跳转：点击系统消息卡片跳转到对应的朋友圈动态/论坛帖子
+window.openSocialNotice = function(type, targetId) {
+  if (type === 'moment') {
+    if (typeof window.openMomentFromShare === 'function') {
+      window.openMomentFromShare(targetId);
+    }
+  } else if (type === 'forum_post') {
+    // 关闭单聊对话气泡 + 关闭整个 chat 应用窗口，否则论坛层会被 chat 应用盖住看不到
+    if (typeof closeChatDialog === 'function') closeChatDialog();
+    if (typeof closeApp === 'function') closeApp('chat');
+    if (typeof openApp === 'function') openApp('forum');
+    // 延迟等待论坛应用初始化后推送帖子详情层
+    setTimeout(() => {
+      if (typeof forumPushLayer === 'function') {
+        forumPushLayer('post-detail', targetId);
+        if (typeof forumInitPostDetailPage === 'function') {
+          forumInitPostDetailPage(targetId);
+        }
+      }
+    }, 300);
+  }
+};
+
 window.safeOpenMomentFromShare = function(momentId, e) {
   if (e) {
     e.preventDefault();
@@ -1314,13 +1389,15 @@ function showEmojiPicker(msgId, bubbleEl) {
 
   const picker = document.createElement("div");
   picker.className = "bubble-emoji-picker";
+
+  // 表情反应 emoji 列表（表情贴图保留 emoji，符合用户要求）
+  const emojis = ["😂", "😚", "😌", "😊", "👿", "😪", "😭", "😣", "🙄", "🥺", "🥵", "🥰", "😉", "😏"];
   
   const isSelf = bubbleEl.classList.contains("self");
   const alignStyle = isSelf ? "right: 0; transform: none;" : "left: 0; transform: none;";
   
   picker.style.cssText = "position: absolute; top: -38px; " + alignStyle + " display: flex; gap: 8px; background: #ffffff; border: 1.5px solid var(--border); border-radius: 20px; padding: 6px 12px; overflow-x: auto; white-space: nowrap; max-width: 220px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.15); scrollbar-width: none;";
   
-  const emojis = ["😂", "😚", "😌", "😊", "👿", "😪", "😭", "😣", "🙄", "🥺", "🥵", "🥰", "😉", "😏"];
   emojis.forEach(emo => {
     const span = document.createElement("span");
     span.className = "bubble-emoji-item";
@@ -1616,6 +1693,13 @@ async function renderSessionList() {
               latestText = "[语音消息]";
             } else if (latestMsg.contentType === 'moment_share') {
               latestText = "[转发了一条朋友圈]";
+            } else if (latestMsg.contentType === 'social_notice') {
+              try {
+                const sn = JSON.parse(latestMsg.content);
+                latestText = sn.type === 'moment' ? "[对方发了一条朋友圈]" :
+                             sn.type === 'forum_post' ? "[对方在论坛发了帖子]" :
+                             sn.type === 'forum_alt_create' ? "[对方建立了论坛小号]" : "[社交动态]";
+              } catch(e) { latestText = "[社交动态]"; }
             } else if (latestMsg.contentType === 'group_poll') {
               latestText = "[群投票]";
             } else if (latestMsg.contentType === 'mcp_tool') {
@@ -1772,8 +1856,25 @@ function initChatScrollListener(container) {
 async function renderDialogMessages(isInitial = true) {
   const container = document.getElementById("dialog-messages-container");
   if (!container) return;
-  
-  if (isInitial) {
+
+  // 判断是"全新打开会话"还是"操作后刷新当前视图"
+  // 若容器已有内容且 offset>0，说明用户已经浏览到某个位置，应保持视图不跳转
+  const isRefresh = isInitial && container.children.length > 0 && chatPageOffset > 0;
+
+  // 操作后刷新：保存当前首个可见消息 ID 及是否在底部，用于渲染后精准回滚滚动位置
+  let savedAnchorMsgId = null;
+  let wasNearBottom = false;
+  if (isRefresh) {
+    wasNearBottom = (container.scrollHeight - container.scrollTop - container.clientHeight) < 80;
+    // 仅当用户不在底部时才需要锚定（在底部则刷新后仍滚到底部）
+    if (!wasNearBottom) {
+      // 跳过时间戳分隔条等无 data-msg-id 的元素，找到第一个真正的消息元素
+      for (const child of container.children) {
+        const mid = child.getAttribute("data-msg-id");
+        if (mid) { savedAnchorMsgId = mid; break; }
+      }
+    }
+  } else if (isInitial) {
     chatPageOffset = 0;
     hasMoreChatMessages = true;
     container.innerHTML = "";
@@ -1783,19 +1884,32 @@ async function renderDialogMessages(isInitial = true) {
   const sess = await db.sessions.get(activeSessionId);
   const user = await db.archives.get(sess.userId);
 
-  // 1. 只拉取最新的 CHAT_PAGE_SIZE (30) 条消息，实现毫秒级秒开
-  const rawMsgs = await db.messages
-    .where('sessionId').equals(activeSessionId)
-    .reverse()
-    .offset(chatPageOffset)
-    .limit(CHAT_PAGE_SIZE)
-    .toArray();
+  // 操作后刷新：重新加载之前已加载的所有消息（从 offset 0 到当前 chatPageOffset）
+  let rawMsgs;
+  if (isRefresh) {
+    const previouslyLoaded = chatPageOffset;
+    rawMsgs = await db.messages
+      .where('sessionId').equals(activeSessionId)
+      .reverse()
+      .limit(previouslyLoaded)
+      .toArray();
+  } else {
+    // 1. 只拉取最新的 CHAT_PAGE_SIZE (30) 条消息，实现毫秒级秒开
+    rawMsgs = await db.messages
+      .where('sessionId').equals(activeSessionId)
+      .reverse()
+      .offset(chatPageOffset)
+      .limit(CHAT_PAGE_SIZE)
+      .toArray();
+  }
 
   if (rawMsgs.length < CHAT_PAGE_SIZE) {
     hasMoreChatMessages = false;
   }
 
-  chatPageOffset += rawMsgs.length;
+  if (!isRefresh) {
+    chatPageOffset += rawMsgs.length;
+  }
   const msgs = rawMsgs.reverse(); // 恢复正向时间流顺序
 
   const fragment = document.createDocumentFragment();
@@ -1810,6 +1924,9 @@ async function renderDialogMessages(isInitial = true) {
   let prevMsgDisplayTime = null;
 
   for (const m of msgs) {
+        // 通话中的对白消息（带 callId）不上屏，只在通话记录卡片内查看
+        if (m.callId) continue;
+
         const currentDisplayTime = getMessageDisplayDate(m, sess);
         let showTimestamp = false;
         if (prevMsgDisplayTime === null) {
@@ -1831,7 +1948,8 @@ async function renderDialogMessages(isInitial = true) {
         }
 
         // 核心支持：将 senderType === 'system' 的系统消息渲染为微信中间灰字
-        if (m.senderType === 'system') {
+        // 注意：contentType === 'call' / 'social_notice' 的卡片需走专用渲染分支，不能在此当纯文本显示
+        if (m.senderType === 'system' && m.contentType !== 'call' && m.contentType !== 'social_notice') {
           const sysEl = document.createElement("div");
           sysEl.className = "group-system-notice-container";
           sysEl.setAttribute("data-msg-id", m.id);
@@ -1923,6 +2041,12 @@ async function renderDialogMessages(isInitial = true) {
         const captionText = data.text || "场景画面";
         const isRealImage = data.url && data.url.startsWith("data:image/") && !data.url.includes("svg+xml");
 
+        const hasTrans = m.translatedContent && m.showTranslation === 1;
+        let imgTransHtml = escapeHtml(captionText);
+        if (hasTrans) {
+          imgTransHtml += `<div style="margin-top:6px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); font-size:11.5px; color:#0284c7; font-weight:normal; text-align:justify;"><span style="font-weight:700; color:#0284c7; margin-right:4px;">[译]</span>${escapeHtml(m.translatedContent)}</div>`;
+        }
+
         if (isRealImage) {
           contentHtml = `
             <div class="image-bubble-card" onclick="toggleImageText(${m.id}, this)" style="position: relative;">
@@ -1934,8 +2058,8 @@ async function renderDialogMessages(isInitial = true) {
                 </div>
                 <div class="msg-image-placeholder-sub">轻触可展示具体画面场景描述</div>
               </div>
-              <div class="image-description-text" id="image-desc-${m.id}" style="display: none; max-height: 120px; overflow-y: auto;">
-                ${escapeHtml(captionText)}
+              <div class="image-description-text" id="image-desc-${m.id}" style="display: ${hasTrans ? 'block' : 'none'}; max-height: 140px; overflow-y: auto;">
+                ${imgTransHtml}
               </div>
               ${emojiHtml}
             </div>
@@ -1948,8 +2072,8 @@ async function renderDialogMessages(isInitial = true) {
                 <span class="msg-image-placeholder-title">发送了画面图片</span>
               </div>
               <div class="msg-image-placeholder-sub">轻触可展示具体画面场景描述</div>
-              <div class="image-description-text" id="image-desc-${m.id}" style="display: none; max-height: 120px; overflow-y: auto; margin-top:8px;">
-                ${escapeHtml(captionText)}
+              <div class="image-description-text" id="image-desc-${m.id}" style="display: ${hasTrans ? 'block' : 'none'}; max-height: 140px; overflow-y: auto; margin-top:8px;">
+                ${imgTransHtml}
               </div>
               ${emojiHtml}
             </div>
@@ -1963,7 +2087,7 @@ async function renderDialogMessages(isInitial = true) {
               <span class="msg-image-placeholder-title">发送了画面图片</span>
             </div>
             <div class="msg-image-placeholder-sub">轻触可展示具体画面场景描述</div>
-            <div class="image-description-text" id="image-desc-${m.id}" style="display: none; max-height: 120px; overflow-y: auto; margin-top:8px;">
+            <div class="image-description-text" id="image-desc-${m.id}" style="display: ${m.showTranslation === 1 ? 'block' : 'none'}; max-height: 140px; overflow-y: auto; margin-top:8px;">
               ${escapeHtml(m.content)}
             </div>
             ${emojiHtml}
@@ -1975,6 +2099,13 @@ async function renderDialogMessages(isInitial = true) {
         const data = JSON.parse(m.content);
         const width = Math.min(180, 75 + data.duration * 2);
         const align = m.senderType === 'user' ? 'flex-end' : 'flex-start';
+
+        const hasTrans = m.translatedContent && m.showTranslation === 1;
+        let voiceTransHtml = escapeHtml(data.text);
+        if (hasTrans) {
+          voiceTransHtml += `<div style="margin-top:6px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); font-size:11.5px; color:#0284c7; font-weight:normal; text-align:justify;"><span style="font-weight:700; color:#0284c7; margin-right:4px;">[译]</span>${escapeHtml(m.translatedContent)}</div>`;
+        }
+
         contentHtml = `
           <div style="display:flex; flex-direction:column; align-items: ${align}; gap:4px; max-width:220px; position: relative;">
             <div class="voice-bubble-card" onclick="toggleVoiceTranslation(${m.id}, this)" style="width: ${width}px; position: relative;">
@@ -1986,8 +2117,8 @@ async function renderDialogMessages(isInitial = true) {
               <div class="voice-bubble-duration">${data.duration}"</div>
               ${emojiHtml}
             </div>
-            <div class="voice-translation-text" id="voice-trans-${m.id}" style="display: none;">
-              ${escapeHtml(data.text)}
+            <div class="voice-translation-text" id="voice-trans-${m.id}" style="display: ${hasTrans ? 'block' : 'none'};">
+              ${voiceTransHtml}
             </div>
           </div>
         `;
@@ -2074,6 +2205,31 @@ async function renderDialogMessages(isInitial = true) {
       } catch(e) {
         contentHtml = `<div class="msg-text" style="position: relative;">朋友圈分享格式错误${emojiHtml}</div>`;
       }
+    } else if (m.contentType === 'forum_post_share') {
+      try {
+        const data = JSON.parse(m.content);
+        contentHtml = `
+          <div class="wallet-bubble-card" style="background-color: #ffffff; border: 1.5px solid var(--border); border-radius: 8px; width: 220px; cursor: pointer; position: relative;" onclick="window.openSocialNotice('forum_post', ${data.postId})">
+            <div class="wallet-bubble-body" style="padding: 10px; display: flex; flex-direction: column; gap: 4px;">
+              <div style="font-size: 11px; color: var(--text-secondary); font-weight:700;">转发了论坛帖子</div>
+              <div style="font-size: 13px; font-weight: 700; color: #1e293b; border-bottom: 1.5px dashed var(--border); padding-bottom: 6px;">
+                ${escapeHtml(data.authorName)} 的帖子
+              </div>
+              <div style="font-size: 13px; font-weight: 600; color: var(--text-primary); margin-top: 4px;">
+                ${escapeHtml(data.title)}
+              </div>
+              <div style="font-size: 12px; color: var(--text-secondary); margin-top: 2px; font-style: italic;">
+                “ ${escapeHtml(data.summary)} ”
+              </div>
+              ${data.commentText ? `<div style="font-size: 12px; color: #576b95; margin-top: 6px; font-weight:700;">附言：${escapeHtml(data.commentText)}</div>` : ''}
+            </div>
+            <div style="background-color: #fafbfc; font-size: 10px; padding: 6px 10px; border-top: 1px solid var(--border); text-align: right; color: var(--text-secondary); border-radius: 0 0 8px 8px;">轻触在论坛中查看</div>
+            ${emojiHtml}
+          </div>
+        `;
+      } catch(e) {
+        contentHtml = `<div class="msg-text" style="position: relative;">论坛帖子分享格式错误${emojiHtml}</div>`;
+      }
     } else if (m.contentType === 'mcp_tool') {
       try {
         const toolData = JSON.parse(m.content);
@@ -2087,6 +2243,31 @@ async function renderDialogMessages(isInitial = true) {
       } catch(e) {
         contentHtml = `<div class="msg-text" style="position: relative;">工具调用记录解析异常${emojiHtml}</div>`;
       }
+    } else if (m.contentType === 'social_notice') {
+      // 社交动作跳转卡片（批量渲染分支）：char 发了朋友圈/论坛帖，点击跳转查看
+      try {
+        const data = JSON.parse(m.content);
+        const cardEl = buildSocialNoticeCard(data);
+        cardEl.setAttribute("data-msg-id", m.id);
+        fragment.appendChild(cardEl);
+      } catch(e) {
+        // 解析失败则降级为纯文本
+        const sysEl = document.createElement("div");
+        sysEl.className = "group-system-notice-container";
+        sysEl.setAttribute("data-msg-id", m.id);
+        sysEl.style.cssText = "display: flex; justify-content: center; width: 100%; margin: 8px 0; padding: 0 16px;";
+        sysEl.innerHTML = `<div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; max-width: 85%; text-align: center;">${escapeHtml(m.content)}</div>`;
+        fragment.appendChild(sysEl);
+      }
+      continue;
+    } else if (m.contentType === 'call') {
+      // 通话记录系统卡片（批量渲染分支）
+      if (window.callSystem && typeof window.callSystem.renderCallRecordCard === "function") {
+        const cardWrap = window.callSystem.renderCallRecordCard(m);
+        cardWrap.setAttribute("data-msg-id", m.id);
+        fragment.appendChild(cardWrap);
+      }
+      continue;
     } else {
       // 核心解耦：仅群聊会话支持表情包自动分割气泡；单聊会话 100% 保持原有不分割扁平布局，防止其被搞坏
       if (sess && sess.isGroup === 1) {
@@ -2174,7 +2355,11 @@ async function renderDialogMessages(isInitial = true) {
         if (window.stickerSystem && window.stickerSystem.renderStickerInMessageSync) {
           displayContent = window.stickerSystem.renderStickerInMessageSync(displayContent, mountedGroupIds);
         }
-        contentHtml = `<div class="msg-text" style="position: relative;">${quoteHtml}${displayContent}${emojiHtml}</div>`;
+        let translationHtml = "";
+        if (m.translatedContent && m.showTranslation === 1) {
+          translationHtml = `<div class="wechat-translation-block" style="margin-top:6px; padding-top:6px; border-top:1px dashed rgba(0,0,0,0.15); font-size:12px; color:#475569; text-align:justify; line-height:1.4;"><span style="font-size:10px; color:#0284c7; font-weight:700; margin-right:4px;">[译]</span>${escapeHtml(m.translatedContent)}</div>`;
+        }
+        contentHtml = `<div class="msg-text" style="position: relative;">${quoteHtml}${displayContent}${translationHtml}${emojiHtml}</div>`;
       }
       }
     }
@@ -2268,7 +2453,19 @@ async function renderDialogMessages(isInitial = true) {
   if (isInitial) {
     container.innerHTML = "";
     container.appendChild(fragment);
-    container.scrollTop = container.scrollHeight;
+
+    if (isRefresh && savedAnchorMsgId && !wasNearBottom) {
+      // 操作后刷新且用户不在底部：精准滚动回之前可见的首条消息位置
+      const anchorEl = container.querySelector(`[data-msg-id="${savedAnchorMsgId}"]`);
+      if (anchorEl) {
+        container.scrollTop = anchorEl.offsetTop - container.offsetTop - 4;
+      } else {
+        container.scrollTop = container.scrollHeight;
+      }
+    } else {
+      // 全新打开会话或用户在底部：滚动到底部
+      container.scrollTop = container.scrollHeight;
+    }
   } else {
     // 向上滑动加载时，精准锚定视角高度差，防止滚动条蹦跳
     const oldScrollHeight = container.scrollHeight;
@@ -2281,6 +2478,9 @@ async function renderDialogMessages(isInitial = true) {
 async function appendMessageToDOM(msg) {
   const container = document.getElementById("dialog-messages-container");
   if (!container) return;
+
+  // 通话中的对白消息（带 callId）不上屏，只在通话记录卡片内查看
+  if (msg && msg.callId) return;
 
   const sess = await db.sessions.get(activeSessionId);
   const user = await db.archives.get(sess.userId); // 补全 user 异步读取，彻底根治 user is not defined 异常 [1]
@@ -2314,23 +2514,8 @@ async function appendMessageToDOM(msg) {
   }
 
   // 核心支持：将 senderType === 'system' 的追加消息渲染为微信中间灰字
-  if (msg.senderType === 'system') {
-    const sysEl = document.createElement("div");
-    sysEl.className = "group-system-notice-container";
-    sysEl.setAttribute("data-msg-id", msg.id);
-    sysEl.style.cssText = "display: flex; justify-content: center; align-items: center; width: 100%; margin: 8px 0; box-sizing: border-box; padding: 0 16px;";
-    sysEl.innerHTML = `
-      <div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; user-select: none; max-width: 85%; text-align: center; line-height: 1.4;">
-        ${escapeHtml(msg.content)}
-      </div>
-    `;
-    container.appendChild(sysEl);
-    container.scrollTop = container.scrollHeight;
-    return;
-  }
-
-  // 核心支持：将 senderType === 'system' 的追加消息渲染为微信中间灰字 [3]
-  if (msg.senderType === 'system') {
+  // 注意：contentType === 'call' / 'social_notice' 的卡片需走专用渲染分支，不能在此当纯文本显示
+  if (msg.senderType === 'system' && msg.contentType !== 'call' && msg.contentType !== 'social_notice') {
     const sysEl = document.createElement("div");
     sysEl.className = "group-system-notice-container";
     sysEl.setAttribute("data-msg-id", msg.id);
@@ -2429,6 +2614,11 @@ async function appendMessageToDOM(msg) {
       const captionText = data.text || "场景画面";
       const isRealImage = data.url && data.url.startsWith("data:image/") && !data.url.includes("svg+xml");
 
+      let imgTransHtml = escapeHtml(captionText);
+      if (msg.translatedContent && msg.showTranslation === 1) {
+        imgTransHtml += `<div style="margin-top:4px; padding-top:4px; border-top:1px dashed rgba(0,0,0,0.15); font-size:11.5px; color:#0284c7; text-align:justify;"><span style="font-weight:700; margin-right:3px;">[译]</span>${escapeHtml(msg.translatedContent)}</div>`;
+      }
+
       if (isRealImage) {
         contentHtml = `
           <div class="image-bubble-card" onclick="toggleImageText(${msg.id}, this)">
@@ -2440,8 +2630,8 @@ async function appendMessageToDOM(msg) {
               </div>
               <div class="msg-image-placeholder-sub">轻触可展示具体画面场景描述</div>
             </div>
-            <div class="image-description-text" id="image-desc-${msg.id}" style="display: none; max-height: 120px; overflow-y: auto;">
-              ${escapeHtml(captionText)}
+            <div class="image-description-text" id="image-desc-${msg.id}" style="display: ${msg.showTranslation === 1 ? 'block' : 'none'}; max-height: 120px; overflow-y: auto;">
+              ${imgTransHtml}
             </div>
           </div>
         `;
@@ -2453,8 +2643,8 @@ async function appendMessageToDOM(msg) {
               <span class="msg-image-placeholder-title">发送了画面图片</span>
             </div>
             <div class="msg-image-placeholder-sub">轻触可展示具体画面场景描述</div>
-            <div class="image-description-text" id="image-desc-${msg.id}" style="display: none; max-height: 120px; overflow-y: auto; margin-top:8px;">
-              ${escapeHtml(captionText)}
+            <div class="image-description-text" id="image-desc-${msg.id}" style="display: ${msg.showTranslation === 1 ? 'block' : 'none'}; max-height: 120px; overflow-y: auto; margin-top:8px;">
+              ${imgTransHtml}
             </div>
           </div>
         `;
@@ -2467,7 +2657,7 @@ async function appendMessageToDOM(msg) {
             <span class="msg-image-placeholder-title">发送了画面图片</span>
           </div>
           <div class="msg-image-placeholder-sub">轻触可展示具体画面场景描述</div>
-          <div class="image-description-text" id="image-desc-${msg.id}" style="display: none; max-height: 120px; overflow-y: auto; margin-top:8px;">
+          <div class="image-description-text" id="image-desc-${msg.id}" style="display: ${msg.showTranslation === 1 ? 'block' : 'none'}; max-height: 120px; overflow-y: auto; margin-top:8px;">
             ${escapeHtml(msg.content)}
           </div>
         </div>
@@ -2478,6 +2668,12 @@ async function appendMessageToDOM(msg) {
       const data = JSON.parse(msg.content);
       const width = Math.min(180, 75 + data.duration * 2);
       const align = msg.senderType === 'user' ? 'flex-end' : 'flex-start';
+
+      let voiceTransHtml = escapeHtml(data.text);
+      if (msg.translatedContent && msg.showTranslation === 1) {
+        voiceTransHtml += `<div style="margin-top:4px; padding-top:4px; border-top:1px dashed rgba(0,0,0,0.15); font-size:11.5px; color:#0284c7; text-align:justify;"><span style="font-weight:700; margin-right:3px;">[译]</span>${escapeHtml(msg.translatedContent)}</div>`;
+      }
+
       contentHtml = `
         <div style="display:flex; flex-direction:column; align-items: ${align}; gap:4px; max-width:220px;">
           <div class="voice-bubble-card" onclick="toggleVoiceTranslation(${msg.id}, this)" style="width: ${width}px;">
@@ -2488,8 +2684,8 @@ async function appendMessageToDOM(msg) {
             </div>
             <div class="voice-bubble-duration">${data.duration}"</div>
           </div>
-          <div class="voice-translation-text" id="voice-trans-${msg.id}" style="display: none;">
-            ${escapeHtml(data.text)}
+          <div class="voice-translation-text" id="voice-trans-${msg.id}" style="display: ${msg.showTranslation === 1 ? 'block' : 'none'};">
+            ${voiceTransHtml}
           </div>
         </div>
       `;
@@ -2582,9 +2778,38 @@ async function appendMessageToDOM(msg) {
       tempDiv.innerHTML = cardHtml;
       tempDiv.setAttribute("data-msg-id", msg.id);
       container.appendChild(tempDiv);
-      container.scrollTop = container.scrollHeight;
+      const _d = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (_d < 150) container.scrollTop = container.scrollHeight;
       return;
     } catch(e) {}
+  } else if (msg.contentType === 'social_notice') {
+    // 社交动作跳转卡片（追加渲染分支）
+    try {
+      const data = JSON.parse(msg.content);
+      const cardEl = buildSocialNoticeCard(data);
+      cardEl.setAttribute("data-msg-id", msg.id);
+      container.appendChild(cardEl);
+    } catch(e) {
+      const sysEl = document.createElement("div");
+      sysEl.className = "group-system-notice-container";
+      sysEl.setAttribute("data-msg-id", msg.id);
+      sysEl.style.cssText = "display: flex; justify-content: center; width: 100%; margin: 8px 0; padding: 0 16px;";
+      sysEl.innerHTML = `<div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; max-width: 85%; text-align: center;">${escapeHtml(msg.content)}</div>`;
+      container.appendChild(sysEl);
+    }
+    const _d3 = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (_d3 < 150) container.scrollTop = container.scrollHeight;
+    return;
+  } else if (msg.contentType === 'call') {
+    // 通话记录系统卡片：居中灰底，可点击展开查看通话对话记录并反复播放 TTS
+    if (window.callSystem && typeof window.callSystem.renderCallRecordCard === "function") {
+      const cardWrap = window.callSystem.renderCallRecordCard(msg);
+      cardWrap.setAttribute("data-msg-id", msg.id);
+      container.appendChild(cardWrap);
+      const _d2 = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (_d2 < 150) container.scrollTop = container.scrollHeight;
+    }
+    return;
   } else {
     // 核心解耦：仅群聊会话支持表情包自动分割气泡；单聊会话 100% 保持原有不分割扁平布局，防止其被搞坏
     if (sess && sess.isGroup === 1) {
@@ -2763,7 +2988,108 @@ async function appendMessageToDOM(msg) {
     ${blockedIconHtml}
   `;
   container.appendChild(bubble);
-  container.scrollTop = container.scrollHeight;
+  // 仅在用户已在底部附近时才自动滚动到底部，避免打断查看历史消息
+  const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+  if (distFromBottom < 150) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+// 回溯重回要求输入卡片：返回用户输入的要求文本（空字符串表示不输入要求），null 表示取消
+function showRerollRequirementCard() {
+  return new Promise((resolve) => {
+    // 先注入专属 CSS
+    let styleEl = document.getElementById("reroll-card-css");
+    if (!styleEl) {
+      styleEl = document.createElement("style");
+      styleEl.id = "reroll-card-css";
+      styleEl.textContent = `
+        .reroll-card-mask {
+          position: fixed !important; top: 0 !important; left: 0 !important;
+          width: 100vw !important; height: 100vh !important;
+          z-index: 100005 !important;
+          background: rgba(0,0,0,0.5) !important;
+          display: flex !important; align-items: center !important; justify-content: center !important;
+          animation: rerollFadeIn 0.15s ease;
+        }
+        @keyframes rerollFadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .reroll-card-box {
+          background: #fff; border-radius: 16px; padding: 20px;
+          width: 320px; max-width: 90vw;
+          box-shadow: 0 10px 40px rgba(0,0,0,0.25);
+          animation: rerollSlideIn 0.2s ease;
+        }
+        @keyframes rerollSlideIn { from { opacity: 0; transform: translateY(-12px) scale(0.96); } to { opacity: 1; transform: none; } }
+        .reroll-card-title {
+          font-size: 15px; font-weight: 700; color: #0f172a;
+          display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+        }
+        .reroll-card-desc {
+          font-size: 12px; color: #64748b; line-height: 1.5; margin-bottom: 14px;
+        }
+        .reroll-card-textarea {
+          width: 100%; min-height: 72px; max-height: 140px;
+          border: 1.5px solid #e2e8f0; border-radius: 10px;
+          padding: 10px 12px; font-size: 13px; color: #0f172a;
+          resize: none; outline: none; box-sizing: border-box;
+          font-family: inherit; line-height: 1.5;
+          transition: border-color 0.15s;
+        }
+        .reroll-card-textarea:focus { border-color: #6366f1; }
+        .reroll-card-textarea::placeholder { color: #cbd5e1; }
+        .reroll-card-actions {
+          display: flex; gap: 10px; margin-top: 14px;
+        }
+        .reroll-card-btn {
+          flex: 1; padding: 10px 0; border-radius: 10px;
+          font-size: 13px; font-weight: 600; cursor: pointer;
+          border: none; transition: all 0.15s;
+        }
+        .reroll-card-btn-cancel {
+          background: #f1f5f9; color: #64748b;
+        }
+        .reroll-card-btn-cancel:hover { background: #e2e8f0; }
+        .reroll-card-btn-confirm {
+          background: #6366f1; color: #fff;
+        }
+        .reroll-card-btn-confirm:hover { background: #5558e3; }
+      `;
+      document.head.appendChild(styleEl);
+    }
+
+    const mask = document.createElement("div");
+    mask.className = "reroll-card-mask";
+    mask.innerHTML = `
+      <div class="reroll-card-box">
+        <div class="reroll-card-title">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 4 1 10 7 10"/>
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+          </svg>
+          回溯重回
+        </div>
+        <div class="reroll-card-desc">
+          此操作将擦除该消息之后的所有对话并重新获取 AI 回复。可在下方输入对此次重回的要求（可选），例如：温柔一点、不许再提这件事等。
+        </div>
+        <textarea class="reroll-card-textarea" id="reroll-requirement-input" placeholder="输入对此次重回的要求（可留空）..." autocomplete="off"></textarea>
+        <div class="reroll-card-actions">
+          <button class="reroll-card-btn reroll-card-btn-cancel" id="reroll-cancel">取消</button>
+          <button class="reroll-card-btn reroll-card-btn-confirm" id="reroll-confirm">确认重回</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(mask);
+
+    const textarea = mask.querySelector("#reroll-requirement-input");
+    const close = (val) => { mask.remove(); resolve(val); };
+
+    mask.querySelector("#reroll-cancel").onclick = () => close(null);
+    mask.querySelector("#reroll-confirm").onclick = () => close(textarea.value.trim());
+    mask.addEventListener("click", (e) => { if (e.target === mask) close(null); });
+
+    // 自动聚焦
+    setTimeout(() => { if (textarea) textarea.focus(); }, 100);
+  });
 }
 
 // 绑定操作中心事件
@@ -2797,6 +3123,26 @@ function initContextMenuHandlers() {
     };
   }
 
+  const btnRepairFormat = document.getElementById("btn-menu-repair-format");
+  if (btnRepairFormat) {
+    btnRepairFormat.onclick = () => {
+      menu.style.display = "none";
+      if (selectedMsgId) {
+        openFormatRepairModal(selectedMsgId, false);
+      }
+    };
+  }
+
+  const btnTranslate = document.getElementById("btn-menu-translate");
+  if (btnTranslate) {
+    btnTranslate.onclick = async () => {
+      menu.style.display = "none";
+      if (selectedMsgId) {
+        await translateChatMessage(selectedMsgId, false);
+      }
+    };
+  }
+
   const btnFav = document.getElementById("btn-menu-favorite");
   if (btnFav) {
     btnFav.onclick = async () => {
@@ -2825,7 +3171,7 @@ function initContextMenuHandlers() {
       
       if (msg.senderType === 'user') {
         await db.messages.update(selectedMsgId, { isRecalled: 1 });
-        renderDialogMessages();
+        window._refreshAfterToolbarAction();
       } else {
         showCustomAlert("撤回失败", "无法撤回，这不是您的发言！");
       }
@@ -2838,7 +3184,7 @@ function initContextMenuHandlers() {
       menu.style.display = "none";
       showCustomConfirm("确认删除", "确定要删除这条消息吗？此操作不可逆。", async () => {
         await db.messages.delete(selectedMsgId);
-        renderDialogMessages();
+        window._refreshAfterToolbarAction();
       });
     };
   }
@@ -2858,7 +3204,7 @@ function initContextMenuHandlers() {
         const history = rawList
           .filter(m => m.timestamp <= msg.timestamp)
           .sort((a, b) => a.timestamp - b.timestamp);
-        
+
         for (let i = history.length - 1; i >= 0; i--) {
           if (history[i].senderType === 'user') {
             targetUserMsg = history[i];
@@ -2872,19 +3218,24 @@ function initContextMenuHandlers() {
         return;
       }
 
-      showCustomConfirm("回溯重回", "确定要回溯重回吗？\n\n此操作将擦除该消息之后（包括当前消息）的所有对话并重新获取 AI 回复。", async () => {
-        const rawList = await db.messages.where('sessionId').equals(activeSessionId).toArray();
-        const toDelete = rawList.filter(m => m.timestamp > targetUserMsg.timestamp);
-        
-        for (let td of toDelete) {
-          await db.messages.delete(td.id);
-        }
+      // 弹出回溯重回要求输入卡片
+      const requirement = await showRerollRequirementCard();
+      if (requirement === null) return; // 用户取消
 
-        await renderDialogMessages();
+      const rawList = await db.messages.where('sessionId').equals(activeSessionId).toArray();
+      const toDelete = rawList.filter(m => m.timestamp > targetUserMsg.timestamp);
 
-        const btnReply = document.getElementById("btn-dialog-reply");
-        if (btnReply) btnReply.click();
-      });
+      for (let td of toDelete) {
+        await db.messages.delete(td.id);
+      }
+
+      await renderDialogMessages();
+
+      // 将回溯要求暂存，供 AI 回复函数注入 prompt
+      window._rerollRequirement = requirement || "";
+
+      const btnReply = document.getElementById("btn-dialog-reply");
+      if (btnReply) btnReply.click();
     };
   }
 
@@ -2893,6 +3244,11 @@ function initContextMenuHandlers() {
     btnMultiCancel.onclick = () => {
       exitMultiSelectMode();
     };
+  }
+
+  const btnMultiTranslate = document.getElementById("btn-multi-translate");
+  if (btnMultiTranslate) {
+    btnMultiTranslate.onclick = () => batchTranslateMessages(false);
   }
 
   const btnMultiDelete = document.getElementById("btn-multi-delete");
@@ -2981,9 +3337,9 @@ async function renderWbMountedAccordion(containerEl, currentMountedIds, checkbox
       itemRow.style.cssText = "display:flex; align-items:center; gap:8px; padding:6px; border-radius:6px; background:#fafbfc; cursor:pointer; font-size:11.5px;";
       
       const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
-      let modeBadge = "🔵永久";
-      if (mode === 'selective') modeBadge = "🟢关键词";
-      else if (mode === 'disabled') modeBadge = "🔴禁用";
+      let modeBadge = '<svg width="8" height="8" viewBox="0 0 24 24" style="vertical-align:middle; margin-right:2px;"><circle cx="12" cy="12" r="10" fill="#3b82f6"/></svg>永久';
+      if (mode === 'selective') modeBadge = '<svg width="8" height="8" viewBox="0 0 24 24" style="vertical-align:middle; margin-right:2px;"><circle cx="12" cy="12" r="10" fill="#22c55e"/></svg>关键词';
+      else if (mode === 'disabled') modeBadge = '<svg width="8" height="8" viewBox="0 0 24 24" style="vertical-align:middle; margin-right:2px;"><circle cx="12" cy="12" r="10" fill="#ef4444"/></svg>禁用';
 
       itemRow.innerHTML = `
         <input type="checkbox" class="${checkboxClass}" value="${entry.id}" ${isChecked ? 'checked' : ''} style="width:15px; height:15px; cursor:pointer;">
@@ -3134,7 +3490,7 @@ function bindChatAppEvents() {
         } else {
           if (newContent !== "") {
             await db.messages.update(currentEditingMsgId, { content: newContent });
-            renderDialogMessages();
+            window._refreshAfterToolbarAction();
           }
         }
       }
@@ -3383,8 +3739,15 @@ function bindChatAppEvents() {
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
         }
 
+        // 注入回溯重回要求（若存在），约束 char 本次重回的内容方向
+        if (window._rerollRequirement) {
+          finalSystemPrompt += `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
+          // 注入后立即清除，避免污染后续普通回复
+          window._rerollRequirement = "";
+        }
+
         const messagesToSend = [{ role: "system", content: finalSystemPrompt }];
-        
+
         // 核心注入：在消息对话前注入领取提醒，实现极其逼生的互动对白！
         if (autoReclaimContext) {
           messagesToSend.push({
@@ -3394,6 +3757,22 @@ function bindChatAppEvents() {
         }
 
         const sessObj = await db.sessions.get(activeSessionId);
+
+        // 预解析当前会话的角色名与用户名，用于转发卡片在上下文中的明确摘要（标注谁转发给谁）
+        let _chatCharName = "对方";
+        let _chatMyName = "我";
+        if (sessObj) {
+          if (sessObj.customCharName) {
+            _chatCharName = sessObj.customCharName;
+          } else if (sessObj.charId) {
+            const _charArch = await db.archives.get(sessObj.charId);
+            if (_charArch && _charArch.name) _chatCharName = _charArch.name;
+          }
+          if (sessObj.userId) {
+            const _userArch = await db.archives.get(sessObj.userId);
+            if (_userArch && _userArch.name) _chatMyName = _userArch.name;
+          }
+        }
 
         // 异步映射历史记录，智能计算设定/真实时间流逝，插入带精准场景虚拟时间的系统标块
         const simNow = getSimulatedNow(sessObj);
@@ -3441,6 +3820,58 @@ function bindChatAppEvents() {
               const data = JSON.parse(h.content);
               displayContent = `[语音转文字: ${data.text}]`;
             } catch(e) {}
+          } else if (h.contentType === 'call') {
+            // 通话记录卡片在上下文中转为简短可读摘要，避免裸 JSON 污染
+            try {
+              const c = JSON.parse(h.content);
+              if (c.rejected) {
+                displayContent = `[你拒绝了对方的${c.type === 'video' ? '视频' : '语音'}通话请求]`;
+              } else {
+                displayContent = `[${c.type === 'video' ? '视频' : '语音'}通话记录 · ${c.summary || ''}]`;
+              }
+            } catch(e) { displayContent = "[通话记录]"; }
+          } else if (h.contentType === 'social_notice') {
+            // 社交动作跳转卡片在上下文中转为简短摘要
+            try {
+              const sn = JSON.parse(h.content);
+              if (sn.type === 'moment') {
+                displayContent = `[你发了一条朋友圈：${sn.summary || ''}]`;
+              } else if (sn.type === 'forum_post') {
+                displayContent = `[你以 ${sn.roleLabel || ''} @${sn.username || ''} 身份在论坛发了帖子《${sn.title || ''}》]`;
+              } else if (sn.type === 'forum_alt_create') {
+                displayContent = `[你建立了一个论坛小号 @${sn.username || ''}（${sn.nickname || ''}）]`;
+              } else {
+                displayContent = `[社交动作记录]`;
+              }
+            } catch(e) { displayContent = "[社交动作记录]"; }
+          } else if (h.contentType === 'moment_share') {
+            // 朋友圈转发卡片在上下文中转为明确摘要，明确标注"谁转发给谁"
+            try {
+              const ms = JSON.parse(h.content);
+              const originalAuthor = ms.authorName || '某人';
+              const commentSuffix = ms.commentText ? `（附言：${ms.commentText}）` : '';
+              if (h.senderType === 'user') {
+                // 我转发给当前会话角色
+                displayContent = `[${_chatMyName} 向 ${_chatCharName} 转发了 ${originalAuthor} 的朋友圈动态：${ms.summary || ''}${commentSuffix}]`;
+              } else {
+                // 当前会话角色转发给我
+                const forwarderName = ms.forwarderName || _chatCharName;
+                displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的朋友圈动态：${ms.summary || ''}${commentSuffix}]`;
+              }
+            } catch(e) { displayContent = "[转发了一条朋友圈]"; }
+          } else if (h.contentType === 'forum_post_share') {
+            // 论坛帖子转发卡片在上下文中转为明确摘要，明确标注"谁转发给谁"
+            try {
+              const fps = JSON.parse(h.content);
+              const originalAuthor = fps.authorName || '某成员';
+              const commentSuffix = fps.commentText ? `（附言：${fps.commentText}）` : '';
+              if (h.senderType === 'user') {
+                displayContent = `[${_chatMyName} 向 ${_chatCharName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
+              } else {
+                const forwarderName = fps.forwarderName || _chatCharName;
+                displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
+              }
+            } catch(e) { displayContent = "[转发了一条论坛帖子]"; }
           }
 
           // 核心 Few-shot 历史格式对齐
@@ -3769,7 +4200,7 @@ function bindChatAppEvents() {
           const targetId = Number(reactMatch[1]);
           const emoji = reactMatch[2].trim();
           const validEmojis = ["😂", "😚", "😌", "😊", "👿", "😪", "😭", "😣", "🙄", "🥺", "🥵", "🥰", "😉", "😏"];
-          
+
           if (validEmojis.includes(emoji)) {
             const targetMsg = await db.messages.get(targetId);
             if (targetMsg && targetMsg.sessionId === activeSessionId) {
@@ -3789,6 +4220,17 @@ function bindChatAppEvents() {
           } else {
             rawReply = rawReply.replace(reactRegex, "").trim();
           }
+        }
+
+        // === 【社交动作指令预处理】在 MCP 循环之前提取并执行 [AUTO_MOMENT] / [FORUM_POST] 等 ===
+        // 避免 AI 同时输出 [CALL_TOOL] 和 [FORUM_POST] 时，MCP 循环先把 FORUM_POST 当作普通文本消耗掉
+        let pendingSocialNotices = [];
+        if (window.socialActions && typeof window.socialActions.detectAndExecute === 'function') {
+          try {
+            const saResult = await window.socialActions.detectAndExecute(rawReply, activeSessionId);
+            rawReply = saResult.cleanedText;
+            pendingSocialNotices = saResult.sysNotices || [];
+          } catch (e) { /* 静默 */ }
         }
 
         // === 【MCP 连贯 Agent 循环与折叠卡片渲染引擎（支持嵌套 JSON 与裸 JSON 智能自愈）】 ===
@@ -4045,7 +4487,12 @@ function bindChatAppEvents() {
             currentItemIndex++;
 
             if (item.kind === 'text') {
-              await saveAndRenderMessage('char', item.content);
+              // 检测 char 主动发起通话指令 [AUTO_CALL:voice|video]，触发后清洗指令文本
+              let textToSave = item.content;
+              if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
+                textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, activeSessionId);
+              }
+              await saveAndRenderMessage('char', textToSave);
             } else if (item.kind === 'special') {
               await processAndRenderSpecialItem(item, userName, activeSessionId);
             }
@@ -4054,6 +4501,13 @@ function bindChatAppEvents() {
               const delay = 1000;
               setTimeout(processNextResponseItem, delay);
             } else {
+              // 所有气泡上屏完毕后，写入社交动作系统消息（朋友圈/论坛发帖/建立小号等）
+              if (pendingSocialNotices.length > 0 && window.socialActions) {
+                for (const notice of pendingSocialNotices) {
+                  await window.socialActions.writeSysNoticeToChat(activeSessionId, notice);
+                }
+                pendingSocialNotices = [];
+              }
               header.classList.remove("header-typing");
               header.innerText = originalTitle;
               if (typeof checkAndTriggerAutoSummary !== 'undefined') {
@@ -4061,6 +4515,13 @@ function bindChatAppEvents() {
               }
             }
           } else {
+            // 空队列也需处理社交动作系统消息
+            if (pendingSocialNotices.length > 0 && window.socialActions) {
+              for (const notice of pendingSocialNotices) {
+                await window.socialActions.writeSysNoticeToChat(activeSessionId, notice);
+              }
+              pendingSocialNotices = [];
+            }
             header.classList.remove("header-typing");
             header.innerText = originalTitle;
             if (typeof checkAndTriggerAutoSummary !== 'undefined') {
@@ -4313,6 +4774,49 @@ if (btnDialogDetails) {
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
       document.getElementById("details-allow-char-block").checked = !!sess.allowCharToBlock;
 
+      // 渲染 TTS 语音开关与音色 ID，并绑定开关展开/收起
+      const ttsToggle = document.getElementById("details-tts-toggle");
+      const ttsVoiceContainer = document.getElementById("details-tts-voice-container");
+      if (ttsToggle) {
+        ttsToggle.checked = !!sess.ttsEnabled;
+        if (ttsVoiceContainer) ttsVoiceContainer.style.display = ttsToggle.checked ? "block" : "none";
+        ttsToggle.onchange = function() {
+          if (ttsVoiceContainer) ttsVoiceContainer.style.display = this.checked ? "block" : "none";
+        };
+      }
+      const ttsVoiceIdEl = document.getElementById("details-tts-voice-id");
+      if (ttsVoiceIdEl) ttsVoiceIdEl.value = sess.ttsVoiceId || "";
+
+      // 渲染 char 主动发起通话开关与视频通话子开关
+      const autoCallToggle = document.getElementById("details-autocall-toggle");
+      const autoCallVideoContainer = document.getElementById("details-autocall-video-container");
+      if (autoCallToggle) {
+        autoCallToggle.checked = !!sess.allowCharAutoCall;
+        if (autoCallVideoContainer) autoCallVideoContainer.style.display = autoCallToggle.checked ? "flex" : "none";
+        autoCallToggle.onchange = function() {
+          if (autoCallVideoContainer) autoCallVideoContainer.style.display = this.checked ? "flex" : "none";
+        };
+      }
+      const autoCallVideoToggle = document.getElementById("details-autocall-video-toggle");
+      if (autoCallVideoToggle) autoCallVideoToggle.checked = !!sess.allowCharAutoCallVideo;
+
+      // 渲染自动发朋友圈开关
+      const autoMomentToggle = document.getElementById("details-auto-moment-toggle");
+      if (autoMomentToggle) autoMomentToggle.checked = !!sess.allowCharAutoMoment;
+
+      // 渲染论坛漫游开关与建立小号子开关
+      const forumRoamToggle = document.getElementById("details-auto-forum-roam-toggle");
+      const forumAltContainer = document.getElementById("details-forum-alt-container");
+      if (forumRoamToggle) {
+        forumRoamToggle.checked = !!sess.allowCharForumRoam;
+        if (forumAltContainer) forumAltContainer.style.display = forumRoamToggle.checked ? "flex" : "none";
+        forumRoamToggle.onchange = function() {
+          if (forumAltContainer) forumAltContainer.style.display = this.checked ? "flex" : "none";
+        };
+      }
+      const forumAltAllowToggle = document.getElementById("details-forum-alt-allow-toggle");
+      if (forumAltAllowToggle) forumAltAllowToggle.checked = !!sess.allowCharForumAltAccount;
+
       // 渲染分句粒度控制设置
       const minSentencesEl = document.getElementById("details-min-sentences");
       const maxSentencesEl = document.getElementById("details-max-sentences");
@@ -4424,6 +4928,26 @@ if (btnSaveDetails) {
     const allowCharReaction = document.getElementById("details-allow-reaction-toggle").checked;
     const allowCharToBlock = document.getElementById("details-allow-char-block").checked;
 
+    // 读取 TTS 语音开关与音色 ID
+    const ttsToggleEl = document.getElementById("details-tts-toggle");
+    const ttsEnabled = ttsToggleEl ? (ttsToggleEl.checked ? 1 : 0) : 0;
+    const ttsVoiceIdEl = document.getElementById("details-tts-voice-id");
+    const ttsVoiceId = ttsVoiceIdEl ? (ttsVoiceIdEl.value || "").trim() : "";
+
+    // 读取 char 主动发起通话开关
+    const autoCallToggleEl = document.getElementById("details-autocall-toggle");
+    const allowCharAutoCall = autoCallToggleEl ? (autoCallToggleEl.checked ? 1 : 0) : 0;
+    const autoCallVideoToggleEl = document.getElementById("details-autocall-video-toggle");
+    const allowCharAutoCallVideo = autoCallVideoToggleEl ? (autoCallVideoToggleEl.checked ? 1 : 0) : 0;
+
+    // 读取自动发朋友圈、论坛漫游、建立小号开关
+    const autoMomentToggleEl = document.getElementById("details-auto-moment-toggle");
+    const allowCharAutoMoment = autoMomentToggleEl ? (autoMomentToggleEl.checked ? 1 : 0) : 0;
+    const forumRoamToggleEl = document.getElementById("details-auto-forum-roam-toggle");
+    const allowCharForumRoam = forumRoamToggleEl ? (forumRoamToggleEl.checked ? 1 : 0) : 0;
+    const forumAltAllowToggleEl = document.getElementById("details-forum-alt-allow-toggle");
+    const allowCharForumAltAccount = forumAltAllowToggleEl ? (forumAltAllowToggleEl.checked ? 1 : 0) : 0;
+
     const timeData = {
       year: parseInt(document.getElementById("details-time-year").value) || 2026,
       month: parseInt(document.getElementById("details-time-month").value) || 1,
@@ -4449,6 +4973,13 @@ if (btnSaveDetails) {
       allowCharRecall: allowCharRecall ? 1 : 0,
       allowCharReaction: allowCharReaction ? 1 : 0,
       allowCharToBlock: allowCharToBlock ? 1 : 0,
+      ttsEnabled: ttsEnabled,
+      ttsVoiceId: ttsVoiceId,
+      allowCharAutoCall: allowCharAutoCall,
+      allowCharAutoCallVideo: allowCharAutoCallVideo,
+      allowCharAutoMoment: allowCharAutoMoment,
+      allowCharForumRoam: allowCharForumRoam,
+      allowCharForumAltAccount: allowCharForumAltAccount,
       minSentenceCount: minSentenceCount,
       maxSentenceCount: maxSentenceCount,
       customTimeData: JSON.stringify(timeData),
@@ -4496,17 +5027,61 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text') {
   }
 }
 
-// 语音消息与图片场景描述展开机制挂载
-window.toggleVoiceTranslation = function(msgId, el) {
+// 语音消息与图片场景描述展开机制挂载（支持与翻译显示状态同步存库）
+// 当对话详情开启 TTS 时，点击 AI 语音消息会展开文字卡片并将文字转换为语音播放（本地缓存 3 天）
+window.toggleVoiceTranslation = async function(msgId, el) {
   const textEl = document.getElementById(`voice-trans-${msgId}`);
-  if (textEl) {
-    textEl.style.display = textEl.style.display === 'none' ? 'block' : 'none';
+  if (!textEl) return;
+  const isHidden = textEl.style.display === 'none';
+  textEl.style.display = isHidden ? 'block' : 'none';
+  const msg = await db.messages.get(Number(msgId));
+  if (msg && msg.translatedContent) {
+    await db.messages.update(Number(msgId), { showTranslation: isHidden ? 1 : 0 });
+  }
+
+  // TTS 语音转换播放：仅当本会话开启 TTS 且为对方(char)发送的语音消息时触发
+  if (typeof window.ttsSystem === 'undefined' || !activeSessionId) return;
+  try {
+    const sess = await db.sessions.get(activeSessionId);
+    if (!sess || sess.ttsEnabled !== 1) return;
+    if (!msg || msg.senderType !== 'char' || msg.contentType !== 'voice') return;
+
+    if (!isHidden) {
+      // 收起：停止当前 TTS 播放
+      window.ttsSystem.stop();
+      return;
+    }
+    // 展开：解析语音消息文字并合成播放
+    let voiceText = '';
+    try {
+      const data = JSON.parse(msg.content);
+      voiceText = (data && data.text) ? data.text : '';
+    } catch (e) { voiceText = ''; }
+    if (!voiceText) return;
+
+    let voiceId = (sess.ttsVoiceId || '').trim();
+    if (!voiceId) {
+      voiceId = 'male-qn-jingying';
+      showToast('未填写音色 ID，已使用默认音色。可在对话详情中设置。');
+    }
+    showToast('正在转换 TTS 语音…');
+    const blob = await window.ttsSystem.getOrSynthesize(voiceText, voiceId, activeSessionId);
+    if (blob) {
+      window.ttsSystem.playBlob(blob);
+    }
+  } catch (e) {
+    console.warn('[TTS] 语音播放失败', e);
   }
 };
-window.toggleImageText = function(msgId, el) {
+window.toggleImageText = async function(msgId, el) {
   const textEl = document.getElementById(`image-desc-${msgId}`);
   if (textEl) {
-    textEl.style.display = textEl.style.display === 'none' ? 'block' : 'none';
+    const isHidden = textEl.style.display === 'none';
+    textEl.style.display = isHidden ? 'block' : 'none';
+    const msg = await db.messages.get(Number(msgId));
+    if (msg && msg.translatedContent) {
+      await db.messages.update(Number(msgId), { showTranslation: isHidden ? 1 : 0 });
+    }
   }
 };
 
@@ -4786,7 +5361,10 @@ async function renderOfflineMessages() {
         <span>${timeStr}</span>
       </div>
       ${cotHtml}
-      <div class="offline-card-body">${escapeHtml(displayContent)}</div>
+      <div class="offline-card-body">
+        ${escapeHtml(displayContent)}
+        ${(m.translatedContent && m.showTranslation === 1) ? `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); font-size:12px; color:#0369a1; line-height:1.5;"><span style="font-weight:700; margin-right:4px;">[中文翻译]</span>${escapeHtml(m.translatedContent)}</div>` : ''}
+      </div>
     `;
     fragment.appendChild(card);
   }
@@ -4823,6 +5401,16 @@ function initOfflineContextMenuHandlers() {
       const msg = await db.offline_messages.get(activeOfflineSelectedMsgId);
       if (!msg) return;
       openCustomEditModal(activeOfflineSelectedMsgId, msg.content, true);
+    };
+  }
+
+  const btnOfflineTranslate = document.getElementById("btn-offline-menu-translate");
+  if (btnOfflineTranslate) {
+    btnOfflineTranslate.onclick = async () => {
+      menu.style.display = "none";
+      if (activeOfflineSelectedMsgId) {
+        await translateChatMessage(activeOfflineSelectedMsgId, true);
+      }
     };
   }
 
@@ -4906,6 +5494,11 @@ function initOfflineContextMenuHandlers() {
   const btnOfflineMultiCancel = document.getElementById("btn-offline-multi-cancel");
   if (btnOfflineMultiCancel) {
     btnOfflineMultiCancel.onclick = exitOfflineMultiSelectMode;
+  }
+
+  const btnOfflineMultiTranslate = document.getElementById("btn-offline-multi-translate");
+  if (btnOfflineMultiTranslate) {
+    btnOfflineMultiTranslate.onclick = () => batchTranslateMessages(true);
   }
 
   const btnOfflineMultiDelete = document.getElementById("btn-offline-multi-delete");
@@ -5971,6 +6564,408 @@ function bindMultimediaEvents() {
     };
   }
 }
+
+// 提取纯文本辅助器（自动智能剥离 [QUOTE:ID] 引用标签，并解析语音与图片 JSON 真正台词）
+function extractBareTextForTranslation(msg) {
+  if (!msg || !msg.content) return "";
+  let raw = msg.content;
+  if (msg.contentType === 'voice' || msg.contentType === 'image') {
+    try {
+      const data = JSON.parse(raw);
+      raw = data.text || data.voiceText || data.imageText || raw;
+    } catch(e) {}
+  }
+  if (typeof raw === 'string') {
+    // 物理剥离首部的 [QUOTE:消息ID] 或 【QUOTE:消息ID】 引用标签，防止引用标记被误送去翻译
+    raw = raw.replace(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i, '').trim();
+  }
+  return raw;
+}
+
+// 微信同款按需翻译引擎（支持文本、语音、图片智能解包与落盘）
+async function translateChatMessage(msgId, isOffline = false) {
+  const table = isOffline ? db.offline_messages : db.messages;
+  const msg = await table.get(Number(msgId));
+  if (!msg) return;
+
+  // 1. 如果已经翻译过，切换翻译文本的显示/隐藏状态
+  if (msg.translatedContent) {
+    const isShowing = msg.showTranslation === 1;
+    await table.update(Number(msgId), { showTranslation: isShowing ? 0 : 1 });
+    if (isOffline) await renderOfflineMessages();
+    else if (window._callToolbarContext && window.callSystem && typeof window.callSystem.refreshCallBubbles === "function") window.callSystem.refreshCallBubbles();
+    else await renderDialogMessages();
+    return;
+  }
+
+  const textToTranslate = extractBareTextForTranslation(msg);
+  if (!textToTranslate) return;
+
+  // 2. 发起 API 实时翻译
+  showToast("正在翻译台词中...");
+  try {
+    const presetId = localStorage.getItem("global_api_preset_id");
+    const api = await db.api_presets.get(Number(presetId));
+    if (!api) throw new Error("请先在设置中配置 API！");
+
+    const translatePrompt = `你是一个精准信达雅的专业同声翻译官。请将以下对话/文本内容无损翻译为流畅自然的中文。
+要求：
+- 如果文本中包含外文、俚语或方言（如粤语/日语/英语），请翻译为准确的中文意思。
+- 绝对禁止包含任何多余的解释、问候或 Markdown 格式（如不需要写“翻译如下：”），直接输出翻译后的中文文本本身。
+
+需要翻译的原文：
+${textToTranslate}`;
+
+    const response = await fetch(`${api.url}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+      body: JSON.stringify({
+        model: api.model,
+        messages: [{ role: "user", content: translatePrompt }],
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) throw new Error("翻译接口响应失败");
+
+    const result = await response.json();
+    const translationText = result.choices[0].message.content.trim();
+
+    // 3. 将翻译结果存入数据库，下次直接读取！
+    await table.update(Number(msgId), {
+      translatedContent: translationText,
+      showTranslation: 1
+    });
+
+    showToast("翻译完成！");
+    if (isOffline) await renderOfflineMessages();
+    else if (window._callToolbarContext && window.callSystem && typeof window.callSystem.refreshCallBubbles === "function") window.callSystem.refreshCallBubbles();
+    else await renderDialogMessages();
+
+  } catch(err) {
+    console.error(err);
+    showCustomAlert("翻译失败", err.message);
+  }
+}
+window.translateChatMessage = translateChatMessage;
+
+// 高性能多选批量翻译引擎 (位置索引绝对对齐算法，彻底根治大模型篡改 ID 导致的翻译丢失 BUG)
+async function batchTranslateMessages(isOffline = false) {
+  const selector = isOffline ? ".offline-msg-checkbox:checked" : ".msg-checkbox:checked";
+  const checked = document.querySelectorAll(selector);
+  if (checked.length === 0) {
+    showToast("请先勾选需要翻译的消息！");
+    return;
+  }
+
+  const table = isOffline ? db.offline_messages : db.messages;
+  const msgIds = Array.from(checked).map(c => Number(c.getAttribute("data-msg-id")));
+
+  showToast(`正在批量翻译 ${msgIds.length} 条选中的消息...`);
+
+  try {
+    const presetId = localStorage.getItem("global_api_preset_id");
+    const api = await db.api_presets.get(Number(presetId));
+    if (!api) throw new Error("请先在设置中配置 API！");
+
+    const untranslatedList = [];
+    for (let id of msgIds) {
+      const m = await table.get(id);
+      if (m) {
+        if (m.translatedContent) {
+          await table.update(id, { showTranslation: 1 });
+        } else {
+          const bareText = extractBareTextForTranslation(m);
+          if (bareText) {
+            untranslatedList.push({ id: id, text: bareText });
+          }
+        }
+      }
+    }
+
+    if (untranslatedList.length > 0) {
+      const pureTexts = untranslatedList.map(item => item.text);
+      const batchPrompt = `你是一个精准信达雅的同声翻译官。请将以下 JSON 数组中的多条文本依次翻译为流畅自然的中文。
+要求：
+- 提取俚语、方言或外文含义，翻译为准确的中文意思。
+- 请直接且仅返回与输入数组长度完全一致的中文翻译 JSON 文本数组（不要包含 Markdown 格式与解释说明）：
+[
+  "第一条的中文翻译",
+  "第二条的中文翻译"
+]
+
+需要翻译的文本数组：
+${JSON.stringify(pureTexts)}`;
+
+      const response = await fetch(`${api.url}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+        body: JSON.stringify({
+          model: api.model,
+          messages: [{ role: "user", content: batchPrompt }],
+          temperature: 0.3
+        })
+      });
+
+      if (!response.ok) throw new Error("批量翻译接口响应失败");
+
+      const result = await response.json();
+      const rawText = result.choices[0].message.content.trim();
+      const cleanJson = rawText.replace(/^```json/i, '').replace(/```$/i, '').trim();
+
+      let parsedArray = [];
+      try {
+        parsedArray = JSON.parse(cleanJson);
+      } catch(e) {
+        console.warn("批量 JSON 解析失败，开启自动降级补救", e);
+      }
+
+      if (Array.isArray(parsedArray) && parsedArray.length > 0) {
+        // 核心修正：按照物理位置数组索引 1:1 绝对映射，彻底杜绝 ID 丢失！
+        for (let i = 0; i < untranslatedList.length; i++) {
+          const targetId = untranslatedList[i].id;
+          const translatedText = parsedArray[i];
+          if (targetId && translatedText) {
+            const cleanTrans = typeof translatedText === 'string' ? translatedText : (translatedText.translation || translatedText.text || JSON.stringify(translatedText));
+            await table.update(targetId, {
+              translatedContent: cleanTrans,
+              showTranslation: 1
+            });
+          }
+        }
+      } else {
+        for (let item of untranslatedList) {
+          await translateChatMessage(item.id, isOffline);
+        }
+      }
+    }
+
+    showToast("批量翻译完成！");
+    if (isOffline) {
+      exitOfflineMultiSelectMode();
+      await renderOfflineMessages();
+    } else {
+      exitMultiSelectMode();
+      await renderDialogMessages();
+    }
+
+  } catch(err) {
+    console.error(err);
+    showCustomAlert("批量翻译失败", err.message);
+  }
+}
+window.batchTranslateMessages = batchTranslateMessages;
+
+// ============================================================
+//                 消息格式修写中枢 (Format Repair Engine)
+// ============================================================
+
+let currentRepairMsgId = null;
+let isRepairingOfflineMsg = false;
+let repairUploadedImageBlob = null;
+
+// 选择目标重塑格式（快捷药丸按键切换）
+function selectRepairFormat(type, btnEl) {
+  const container = document.getElementById("repair-format-pills-row");
+  if (container) {
+    container.querySelectorAll(".repair-pill-btn").forEach(b => {
+      b.style.borderColor = "var(--border)";
+      b.style.backgroundColor = "transparent";
+      b.style.color = "var(--text-primary)";
+    });
+  }
+  if (btnEl) {
+    btnEl.style.borderColor = "#8b5cf6";
+    btnEl.style.backgroundColor = "#f3e8ff";
+    btnEl.style.color = "#7c3aed";
+  }
+  document.getElementById("repair-format-type-val").value = type;
+  onRepairFormatTypeChange();
+}
+window.selectRepairFormat = selectRepairFormat;
+
+// 开启格式修写弹窗并自动填充原文
+async function openFormatRepairModal(msgId, isOffline = false) {
+  currentRepairMsgId = Number(msgId);
+  isRepairingOfflineMsg = isOffline;
+  repairUploadedImageBlob = null;
+
+  const table = isOffline ? db.offline_messages : db.messages;
+  const msg = await table.get(currentRepairMsgId);
+  if (!msg) return;
+
+  const bareText = extractBareTextForTranslation(msg);
+
+  // 1. 原文预填写至各个格式的文本框中
+  document.getElementById("repair-input-text").value = bareText;
+  document.getElementById("repair-input-image-text").value = bareText || "场景描述";
+  document.getElementById("repair-input-voice-text").value = bareText || "...";
+  document.getElementById("repair-input-red-remark").value = bareText || "恭喜发财，大吉大利";
+  document.getElementById("repair-input-transfer-target").value = "";
+  document.getElementById("repair-selected-sticker-caption").value = "";
+  document.getElementById("repair-image-filename").innerText = "无附件";
+
+  // 绑定图片选择回调
+  const fileImg = document.getElementById("repair-file-image");
+  if (fileImg) {
+    fileImg.onchange = (e) => {
+      if (e.target.files.length > 0) {
+        const file = e.target.files[0];
+        document.getElementById("repair-image-filename").innerText = file.name;
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+          repairUploadedImageBlob = evt.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    };
+  }
+
+  // 重置选择“文本”格式药丸按钮
+  const firstPill = document.querySelector(".repair-pill-btn[data-type='text']");
+  selectRepairFormat("text", firstPill);
+
+  document.getElementById("custom-format-repair-overlay").classList.add("active");
+}
+window.openFormatRepairModal = openFormatRepairModal;
+
+// 切换选择格式时的视图切分
+async function onRepairFormatTypeChange() {
+  const type = document.getElementById("repair-format-type-val").value;
+  const fields = ["text", "image", "voice", "sticker", "transfer", "red-envelope"];
+  
+  fields.forEach(f => {
+    const el = document.getElementById(`repair-field-${f}`);
+    if (el) el.style.display = (f === type || (f === 'red-envelope' && type === 'red_envelope')) ? "block" : "none";
+  });
+
+  if (type === 'sticker') {
+    await renderRepairStickerPicker();
+  }
+}
+window.onRepairFormatTypeChange = onRepairFormatTypeChange;
+
+// 加载已挂载图柜供修写选择
+async function renderRepairStickerPicker() {
+  const grid = document.getElementById("repair-sticker-picker-grid");
+  if (!grid) return;
+  grid.innerHTML = "";
+
+  let mountedGroupIds = [];
+  if (window.stickerSystem && window.stickerSystem.getMountedGroupIds) {
+    mountedGroupIds = await window.stickerSystem.getMountedGroupIds(activeSessionId);
+  }
+
+  if (mountedGroupIds.length === 0) {
+    grid.innerHTML = `<div style="grid-column: span 4; font-size:10.5px; color:var(--text-secondary); text-align:center; padding:12px;">当前对话尚未挂载表情包分组，请前往单聊/群聊设置中挂载。</div>`;
+    return;
+  }
+
+  const allStickers = [];
+  for (let grpId of mountedGroupIds) {
+    const items = await db.sticker_items.where('groupId').equals(grpId).toArray();
+    allStickers.push(...items);
+  }
+
+  if (allStickers.length === 0) {
+    grid.innerHTML = `<div style="grid-column: span 4; font-size:10.5px; color:var(--text-secondary); text-align:center; padding:12px;">已挂载的分组中暂无表情包条目。</div>`;
+    return;
+  }
+
+  allStickers.forEach(st => {
+    const item = document.createElement("div");
+    item.style.cssText = "display:flex; flex-direction:column; align-items:center; padding:4px; border-radius:6px; background:#fff; border:1.5px solid var(--border); cursor:pointer;";
+    item.innerHTML = `
+      <img src="${st.imageUrl}" style="width:36px; height:36px; object-fit:contain;">
+      <span style="font-size:9px; color:var(--text-primary); max-width:44px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:2px;">${escapeHtml(st.caption)}</span>
+    `;
+    item.onclick = () => {
+      grid.querySelectorAll("div").forEach(d => { d.style.borderColor = "var(--border)"; d.style.background = "#fff"; });
+      item.style.borderColor = "#8b5cf6";
+      item.style.background = "#f3e8ff";
+      document.getElementById("repair-selected-sticker-caption").value = st.caption;
+    };
+    grid.appendChild(item);
+  });
+}
+
+// 提交格式修写落盘
+async function submitFormatRepair() {
+  if (!currentRepairMsgId) return;
+
+  const type = document.getElementById("repair-format-type-val").value;
+  const table = isRepairingOfflineMsg ? db.offline_messages : db.messages;
+  const msg = await table.get(currentRepairMsgId);
+  if (!msg) return;
+
+  let newContentType = 'text';
+  let newContent = "";
+
+  if (type === 'text') {
+    newContentType = 'text';
+    newContent = document.getElementById("repair-input-text").value.trim();
+  } else if (type === 'image') {
+    newContentType = 'image';
+    const cap = document.getElementById("repair-input-image-text").value.trim() || "场景画面";
+    const imgData = {
+      url: repairUploadedImageBlob || "",
+      text: cap
+    };
+    newContent = JSON.stringify(imgData);
+  } else if (type === 'voice') {
+    newContentType = 'voice';
+    const dur = parseInt(document.getElementById("repair-input-voice-dur").value) || 5;
+    const txt = document.getElementById("repair-input-voice-text").value.trim() || "...";
+    newContent = JSON.stringify({ duration: dur, text: txt });
+  } else if (type === 'sticker') {
+    const caption = document.getElementById("repair-selected-sticker-caption").value.trim();
+    if (!caption) {
+      showToast("请先在方格中点击选中一个表情包！");
+      return;
+    }
+    newContentType = 'text';
+    newContent = `【表情包：${caption}】`;
+  } else if (type === 'transfer') {
+    newContentType = 'transfer';
+    const amt = parseFloat(document.getElementById("repair-input-transfer-amount").value) || 100;
+    const tgt = document.getElementById("repair-input-transfer-target").value.trim();
+    newContent = JSON.stringify({
+      amount: amt,
+      status: 'pending',
+      targetName: tgt || ""
+    });
+  } else if (type === 'red_envelope') {
+    newContentType = 'red_envelope';
+    const envType = document.getElementById("repair-input-red-type").value;
+    const amt = parseFloat(document.getElementById("repair-input-red-amount").value) || 50;
+    const rmk = document.getElementById("repair-input-red-remark").value.trim() || "恭喜发财";
+    newContent = JSON.stringify({
+      amount: amt,
+      status: 'pending',
+      remark: rmk,
+      type: envType
+    });
+  }
+
+  // 落盘重写数据库并重绘
+  await table.update(currentRepairMsgId, {
+    contentType: newContentType,
+    content: newContent
+  });
+
+  document.getElementById("custom-format-repair-overlay").classList.remove("active");
+  showToast("格式修复成功！");
+
+  if (isRepairingOfflineMsg) await renderOfflineMessages();
+  else {
+    if (window._callToolbarContext && window.callSystem && typeof window.callSystem.refreshCallBubbles === "function") {
+      window.callSystem.refreshCallBubbles();
+    } else {
+      await renderDialogMessages();
+    }
+  }
+}
+window.submitFormatRepair = submitFormatRepair;
 
 // 脚本载入时完成全局顶级、单次安全绑定
 initContextMenuHandlers();

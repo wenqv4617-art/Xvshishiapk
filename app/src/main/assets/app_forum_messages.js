@@ -420,7 +420,12 @@ async function forumLoadPrivateMessages() {
     avatarImg.src = avatar;
     avatarImg.style.cssText = "width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink: 0; cursor: pointer;";
     avatarImg.onclick = () => {
-      forumPushLayer('profile-view', isSelf ? Number(forumActiveAccountId) : Number(peer.id));
+      // 明确传入身份类型，避免 ID 碰撞导致 user 主页被 NPC 拦截
+      if (isSelf) {
+        forumPushLayer('profile-view', { id: Number(forumActiveAccountId), isNpc: false });
+      } else {
+        forumPushLayer('profile-view', { id: Number(peer.id), isNpc: true });
+      }
     };
 
     // 编译微信/推特多媒体智能交互卡片 
@@ -524,8 +529,13 @@ async function forumTriggerNpcDMReply(convId, npcId) {
     const userAccount = await db.forum_accounts.get(forumActiveAccountId);
     const userSetting = userAccount ? (userAccount.setting || "暂无特别设定") : "暂无";
     
-    // 实时查询当前 user 最近发表的动态
-    const userPosts = await db.forum_posts.where('authorId').equals(forumActiveAccountId).toArray();
+    // 实时查询当前 user 最近发表的动态（修复 ID 碰撞：排除 NPC 帖子）
+    const userPostsRaw = await db.forum_posts.where('authorId').equals(forumActiveAccountId).toArray();
+    const userPosts = [];
+    for (const p of userPostsRaw) {
+      const isNpc = await db.forum_npc_accounts.get(p.authorId);
+      if (!isNpc) userPosts.push(p);
+    }
     userPosts.sort((a,b) => b.createdAt - a.createdAt);
     const recentPosts = userPosts.slice(0, 3).map(p => `【标题】:${p.title} 【内容】:${p.content}`).join("\n");
 

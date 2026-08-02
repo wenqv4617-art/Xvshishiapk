@@ -606,6 +606,33 @@
         console.error("内置思维链正则预处理异常:", e);
       }
 
+      // 1.5 孤儿标签归一化：补全只有结束标签 / 只有开始标签的残缺思维链
+      // 场景：大模型偶尔只输出 </think> 结束标签而漏掉 <think>，或反之。
+      const endTags = ["</think>", "[/THINKING]", "【/思考】", "</thought>", "</thinking>"];
+      const startTags = ["<think>", "[THINKING]", "【思考】", "<thought>", "<thinking>"];
+      const hasAnyEnd = endTags.some(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(processedText));
+      const hasAnyStart = startTags.some(t => new RegExp(t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i").test(processedText));
+      if (hasAnyEnd && !hasAnyStart) {
+        // 仅有结束标签：把首个结束标签之前的全部内容视作思维链，在开头补一个 <think>
+        for (let k = 0; k < endTags.length; k++) {
+          const escEnd = endTags[k].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          const endIdx = processedText.search(new RegExp(escEnd, "i"));
+          if (endIdx >= 0) {
+            processedText = "<think>\n" + processedText.slice(0, endIdx).trim() + "\n" + endTags[k] + processedText.slice(endIdx + endTags[k].length);
+            break;
+          }
+        }
+      } else if (hasAnyStart && !hasAnyEnd) {
+        // 仅有开始标签：在文本末尾补一个 </think>
+        for (let k = 0; k < startTags.length; k++) {
+          const escStart = startTags[k].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          if (new RegExp(escStart, "i").test(processedText)) {
+            processedText = processedText + "\n" + endTags[k];
+            break;
+          }
+        }
+      }
+
       // 2. 核心隔离：优先提炼并剥离 <think>...</think>，防止自定义正则误触思维链内容
       let thought = "";
       let cleanText = processedText;
