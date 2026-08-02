@@ -112,35 +112,6 @@ class MainActivity : AppCompatActivity() {
 
         // 自动申请 Android 定位与通知的系统级运行时权限
         requestAppPermissions()
-
-        // 处理闹钟拉起冷启动场景
-        handleAlarmIntent(intent)
-    }
-
-    /**
-     * 闹钟到点后拉起 App 到前台时，通过 onNewIntent 接收闹钟消息。
-     * WebView 恢复活跃后执行 JS 触发 AI 发信。
-     */
-    override fun onNewIntent(intent: Intent?) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleAlarmIntent(intent)
-    }
-
-    private fun handleAlarmIntent(intent: Intent?) {
-        val alarmMsg = intent?.getStringExtra("IN_APP_ALARM_MSG") ?: return
-        // 延迟 500ms 执行，确保 WebView 完全恢复活跃
-        webView.postDelayed({
-            try {
-                val quoted = org.json.JSONObject.quote(alarmMsg)
-                webView.evaluateJavascript(
-                    "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
-                    null
-                )
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }, 500)
     }
 
     // 处理文件选择器弹窗的回调 
@@ -223,12 +194,18 @@ class McpForegroundService : Service() {
         private const val NOTIFICATION_ID = 1005
     }
 
+    // 静默音频保活：播放无声音频保持 WebView JS 环境活跃，防止后台被冻结
+    private var keepAliveAudioTrack: android.media.AudioTrack? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
 
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
+
+        // 启动静默音频保活，保持 WebView JS 环境活跃
+        startKeepAliveAudio()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -238,6 +215,8 @@ class McpForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        // 停止静默音频保活
+        stopKeepAliveAudio()
         // 兜底释放 AndroidMcp 持有的后台 WakeLock，防止服务被回收后 WakeLock 仍占用
         try {
             AndroidMcp.releaseWakeLockIfHeld()
@@ -245,6 +224,63 @@ class McpForegroundService : Service() {
             e.printStackTrace()
         }
         super.onDestroy()
+    }
+
+    /**
+     * 静默音频保活：使用 AudioTrack 播放无声音频，让系统认为应用正在播放媒体，
+     * 从而保持 WebView 的 JS 执行环境活跃，防止后台时 evaluateJavascript 和 fetch 被冻结。
+     * 这解决了"必须留在 APK 内才能触发发信"的核心问题。
+     */
+    private fun startKeepAliveAudio() {
+        try {
+            val sampleRate = 8000  // 低采样率省电
+            val frames = sampleRate  // 1秒的帧数
+            val bufferSizeInBytes = frames * 2  // 16bit mono = 2 bytes/frame
+
+            val audioTrack = android.media.AudioTrack.Builder()
+                .setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .build()
+                )
+                .setAudioFormat(
+                    android.media.AudioFormat.Builder()
+                        .setEncoding(android.media.AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(bufferSizeInBytes)
+                .setTransferMode(android.media.AudioTrack.MODE_STATIC)
+                .build()
+
+            // 写入静音 PCM 数据（全零）
+            val silentData = ByteArray(bufferSizeInBytes)
+            audioTrack.write(silentData, 0, silentData.size)
+
+            // 设置无限循环播放
+            audioTrack.setLoopPoints(0, frames, -1)
+
+            audioTrack.play()
+            keepAliveAudioTrack = audioTrack
+
+            android.util.Log.d("McpForegroundService", "静默音频保活已启动")
+        } catch (e: Exception) {
+            android.util.Log.e("McpForegroundService", "静默音频保活启动失败: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+
+    private fun stopKeepAliveAudio() {
+        try {
+            keepAliveAudioTrack?.stop()
+            keepAliveAudioTrack?.release()
+            keepAliveAudioTrack = null
+            android.util.Log.d("McpForegroundService", "静默音频保活已停止")
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     // ---------------------------------------------------------------
@@ -416,30 +452,20 @@ class InAppAlarmReceiver : BroadcastReceiver() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        // 3. 拉起 MainActivity 到前台，确保 WebView 恢复活跃后执行 JS
-        //    （后台时 WebView 的 JS 执行会被系统冻结，必须拉到前台才能可靠触发 AI 发信）
-        try {
-            val launchIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("IN_APP_ALARM_MSG", message)
-            }
-            context.startActivity(launchIntent)
-        } catch (e: Exception) {
-            // 拉起失败时降级：尝试直接注入 JS（仅在 Activity 存活时有效）
-            e.printStackTrace()
-            val activity = AndroidMcp.mainActivity
-            if (activity != null) {
-                activity.runOnUiThread {
-                    try {
-                        val webView = activity.findViewById<WebView>(R.id.webview)
-                        val quoted = org.json.JSONObject.quote(message)
-                        webView?.evaluateJavascript(
-                            "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
-                            null
-                        )
-                    } catch (ex: Exception) {
-                        ex.printStackTrace()
-                    }
+        // 3. 直接通过 evaluateJavascript 触发 AI 发信
+        //    配合 McpForegroundService 的静默音频保活，WebView JS 环境在后台保持活跃
+        val activity = AndroidMcp.mainActivity
+        if (activity != null) {
+            activity.runOnUiThread {
+                try {
+                    val webView = activity.findViewById<WebView>(R.id.webview)
+                    val quoted = org.json.JSONObject.quote(message)
+                    webView?.evaluateJavascript(
+                        "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
+                        null
+                    )
+                } catch (ex: Exception) {
+                    ex.printStackTrace()
                 }
             }
         }

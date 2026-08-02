@@ -745,10 +745,44 @@
       } catch(e) {
         console.error(`角色 [CharId: ${charId}] 定时发信调度失败:`, e);
       }
+    },
+
+    /**
+     * 原生层后台唤醒入口：供 Kotlin BgPollReceiver 通过 evaluateJavascript 调用。
+     * AlarmManager 到点唤醒 CPU 后注入此函数，弥补后台 setInterval 被冻结的问题。
+     * 逻辑与前端 setInterval 扫描完全一致，确保前后台行为统一。
+     */
+    triggerBackgroundActiveMessageNative: async function() {
+      if (typeof db === 'undefined' || !db.desktop_pets) return;
+      try {
+        console.log("[BgPoll] 原生层唤醒触发后台发信扫描");
+        const allPets = await db.desktop_pets.toArray();
+        const now = Date.now();
+
+        for (let pet of allPets) {
+          if (pet.activeMsgEnabled) {
+            const interval = parseInt(pet.activeMsgInterval) || 10;
+            const lastTimeKey = `mcp_last_msg_time_${pet.charId}`;
+            const lastTrigger = parseInt(localStorage.getItem(lastTimeKey) || "0") || now;
+
+            if (!localStorage.getItem(lastTimeKey)) {
+              localStorage.setItem(lastTimeKey, now);
+              continue;
+            }
+
+            if (now - lastTrigger >= interval * 60 * 1000) {
+              localStorage.setItem(lastTimeKey, now);
+              await this.triggerActiveMessageForChar(pet.charId);
+            }
+          }
+        }
+      } catch(e) {
+        console.error("[BgPoll] 原生层唤醒发信扫描异常:", e);
+      }
     }
   };
 
-  // 全局高精度定时扫描线程
+  // 全局高精度定时扫描线程（前台保底，后台由 BgPollReceiver 接管）
   if (!window.activeMsgSchedulerInterval) {
     window.activeMsgSchedulerInterval = setInterval(async () => {
       if (typeof db === 'undefined' || !db.desktop_pets) return;
@@ -761,7 +795,7 @@
             const interval = parseInt(pet.activeMsgInterval) || 10;
             const lastTimeKey = `mcp_last_msg_time_${pet.charId}`;
             const lastTrigger = parseInt(localStorage.getItem(lastTimeKey) || "0") || now;
-            
+
             if (!localStorage.getItem(lastTimeKey)) {
               localStorage.setItem(lastTimeKey, now);
               continue;
