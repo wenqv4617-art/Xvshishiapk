@@ -266,14 +266,7 @@ function initSettingsApp() {
 
   document.getElementById("btn-clear-all-data").onclick = clearAllAppData;
 
-  // 绑定：本地向量记忆检索总开关
-  const vectorGlobalToggle = document.getElementById("api-vector-enabled-toggle");
-  if (vectorGlobalToggle) {
-    vectorGlobalToggle.checked = localStorage.getItem("settings-vector-enabled") === "true";
-    vectorGlobalToggle.onchange = (e) => {
-      localStorage.setItem("settings-vector-enabled", e.target.checked ? "true" : "false");
-    };
-  }
+  // 注：本地向量记忆检索总开关已迁移至「向量化记忆设置」二级面板，由 vectorMemorySystem 统一接管
 
   // 绑定：流式传输 (Stream) 总开关
   const streamGlobalToggle = document.getElementById("api-stream-enabled-toggle");
@@ -2010,8 +2003,41 @@ function applyBackgroundState(enabled, isFirstLoad) {
     if (!isFirstLoad) {
       showToast(enabled ? "后台休眠已锁定，系统通知功能已就绪" : "后台运行已关闭");
     }
+    return;
+  }
+  // 浏览器环境 fallback：Notification 权限 + Wake Lock API 保活
+  if (enabled) {
+    // 请求通知权限
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+    // 启用屏幕常亮 Wake Lock，减轻浏览器对后台定时器的节流
+    if ('wakeLock' in navigator) {
+      navigator.wakeLock.request('screen').then((wl) => {
+        window._pwaWakeLock = wl;
+        // 页面切到后台后 wakeLock 会自动释放，监听可见性变化在回到前台时重新获取
+        if (!window._pwaWakeLockReboundBound) {
+          window._pwaWakeLockReboundBound = true;
+          document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && localStorage.getItem("settings-background-enabled") === "true") {
+              if ('wakeLock' in navigator) {
+                navigator.wakeLock.request('screen').then((wl) => { window._pwaWakeLock = wl; }).catch(() => {});
+              }
+            }
+          });
+        }
+      }).catch((e) => {
+        console.warn('Wake Lock 申请失败:', e);
+      });
+    }
+    if (!isFirstLoad) showToast("浏览器通知已开启");
   } else {
-    if (!isFirstLoad) showToast("当前非真机特权环境，无法开启系统不休眠锁定");
+    // 禁用时释放 wakeLock
+    if (window._pwaWakeLock) {
+      try { window._pwaWakeLock.release(); } catch (e) {}
+      window._pwaWakeLock = null;
+    }
+    if (!isFirstLoad) showToast("后台运行已关闭");
   }
 }
 

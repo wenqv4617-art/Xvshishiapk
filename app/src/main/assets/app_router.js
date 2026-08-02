@@ -130,6 +130,19 @@
         history.push({ type: "settings-lv2", id: subTab });
         return;
       }
+      if (subTab === "vector-memory") {
+        this._ensureVectorMemoryPanel();
+        if (typeof window._origOpenSettingsLv2 === "function") {
+          window._origOpenSettingsLv2(subTab);
+        }
+        const titleEl2 = document.getElementById("settings-title");
+        if (titleEl2) titleEl2.innerText = "向量化记忆设置";
+        if (typeof window.vectorMemorySystem !== "undefined" && typeof window.vectorMemorySystem.initPanel === "function") {
+          window.vectorMemorySystem.initPanel();
+        }
+        history.push({ type: "settings-lv2", id: subTab });
+        return;
+      }
       if (typeof window._origOpenSettingsLv2 === "function") {
         window._origOpenSettingsLv2(subTab);
       }
@@ -152,6 +165,27 @@
         wrap.innerHTML = html.trim();
         const node = wrap.firstElementChild;
         if (node) apiPanel.parentNode.insertBefore(node, apiPanel.nextSibling);
+      }
+    },
+
+    /**
+     * 懒注入「向量化记忆设置」二级面板（仅首次进入时创建）。
+     * 模板由 vectorMemorySystem 提供，避免在 index.html 中硬编码。
+     */
+    _ensureVectorMemoryPanel: function () {
+      if (document.getElementById("settings-lv2-vector-memory")) return;
+      const html = (typeof window.vectorMemorySystem !== "undefined" && typeof window.vectorMemorySystem.getPanelHTML === "function")
+        ? window.vectorMemorySystem.getPanelHTML()
+        : '<div id="settings-lv2-vector-memory" class="settings-lv2-panel" style="display:none;"><div class="form-group">向量化记忆模块加载中…</div></div>';
+      // 插入到 TTS 面板之后，保持菜单顺序（TTS → 向量化记忆）
+      const ttsPanel = document.getElementById("settings-lv2-tts");
+      const apiPanel = document.getElementById("settings-lv2-api");
+      const anchor = ttsPanel || apiPanel;
+      if (anchor && anchor.parentNode) {
+        const wrap = document.createElement("div");
+        wrap.innerHTML = html.trim();
+        const node = wrap.firstElementChild;
+        if (node) anchor.parentNode.insertBefore(node, anchor.nextSibling);
       }
     },
 

@@ -163,17 +163,37 @@
       const targetDate = new Date(Date.now() + seconds * 1000);
       const hour = targetDate.getHours();
       const minute = targetDate.getMinutes();
+      const triggerTimeMillis = targetDate.getTime();
 
-      // 物理级直写：绕过沙箱，直接写入手机系统的原生时钟闹钟！ [1]
+      // 优先：应用内精确闹钟（AlarmManager.setExactAndAllowWhileIdle，Doze 下也能唤醒，到点回调 handleInAppAlarm）
+      if (window.AndroidMCP && typeof window.AndroidMCP.setInAppAlarm === 'function') {
+        const alarmMsg = JSON.stringify({
+          type: "mcp_alarm",
+          title: "叙事诗小手机：神经倒计时闹铃",
+          triggerSeconds: seconds,
+          triggerTime: triggerTimeMillis,
+          sessionId: (typeof activeSessionId !== 'undefined') ? activeSessionId : null,
+          timestamp: Date.now()
+        });
+        const ok = window.AndroidMCP.setInAppAlarm(triggerTimeMillis, alarmMsg);
+        if (ok) {
+          showToast(`应用内闹钟已设定，将在 ${seconds} 秒后精确唤醒（Doze 不影响）`);
+          this.closePanel();
+          return;
+        }
+        // setInAppAlarm 返回 false（如无精确闹钟权限），降级到系统闹钟
+      }
+
+      // 次选：物理级直写系统时钟闹钟（调起系统闹钟App）
       if (window.AndroidMCP && typeof window.AndroidMCP.setAndroidSystemAlarm === 'function') {
         window.AndroidMCP.setAndroidSystemAlarm(hour, minute, "叙事诗小手机：神经倒计时闹铃");
-        showToast(`已成功写入系统时钟！物理闹钟已设定在 ${hour}:${String(minute).padStart(2, '0')}`);
+        showToast(`已写入系统时钟！物理闹钟设定在 ${hour}:${String(minute).padStart(2, '0')}`);
         this.closePanel();
         return;
       }
 
-      // 降级模拟
-      showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒`);
+      // 降级：浏览器 setTimeout 模拟
+      showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒（请保持页面在前台）`);
       this.closePanel();
 
       setTimeout(() => {

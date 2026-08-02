@@ -18,14 +18,64 @@ function cosineSimilarity(vecA, vecB) {
 }
 
 async function safeGetEmbedding(text) {
-  if (window.AndroidMCP && typeof window.AndroidMCP.getEmbedding === 'function') {
-    try {
-      const res = window.AndroidMCP.getEmbedding(text);
-      if (res) return JSON.parse(res);
-    } catch(e) {
-      console.error("生成本地 ONNX 向量失败:", e);
+  if (!text) return null;
+  const vectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  if (!vectorEnabled) return null;
+
+  const source = localStorage.getItem("vector-source") || "online";
+
+  // 1. 优先：在线 Embedding API（网页版与 APK 通用）
+  if (source === "online") {
+    const apiUrl = localStorage.getItem("vector-api-url");
+    const apiKey = localStorage.getItem("vector-api-key");
+    const model = localStorage.getItem("vector-api-model");
+    if (apiUrl && apiKey && model) {
+      try {
+        // 规整为 /v1/embeddings 端点
+        let endpoint = apiUrl.trim().replace(/\/+$/, "");
+        if (!/\/embeddings$/.test(endpoint)) {
+          endpoint += /\/v\d+$/.test(endpoint) ? "/embeddings" : "/v1/embeddings";
+        }
+        const resp = await fetch(endpoint, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({ model: model, input: text })
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const vec = data.data ? data.data[0].embedding : data.embedding;
+          if (vec && vec.length) return vec;
+        } else {
+          console.error("在线 Embedding API 返回异常:", resp.status);
+        }
+      } catch(e) {
+        console.error("在线 Embedding API 调用失败:", e);
+      }
     }
   }
+
+  // 2. 本地 ONNX 模型（仅 APK 真机环境，且需主动下载）
+  if (source === "local" || source === "online") {
+    // online 在线失败时也降级尝试本地模型，保证检索不中断
+    if (window.AndroidMCP && typeof window.AndroidMCP.getEmbedding === 'function') {
+      try {
+        // 仅当本地模型已就绪时才调用（避免无模型时报错）
+        if (typeof window.AndroidMCP.isLocalEmbeddingModelReady === 'function') {
+          const ready = window.AndroidMCP.isLocalEmbeddingModelReady();
+          const isReady = ready === true || ready === "true" || ready === 1 || ready === "1";
+          if (!isReady) return null;
+        }
+        const res = window.AndroidMCP.getEmbedding(text);
+        if (res) return JSON.parse(res);
+      } catch(e) {
+        console.error("生成本地 ONNX 向量失败:", e);
+      }
+    }
+  }
+
   return null;
 }
 

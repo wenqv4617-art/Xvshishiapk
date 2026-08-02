@@ -393,6 +393,11 @@
                 <span>TTS 语音设置</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
+              <!-- 新增：向量化记忆设置入口（二级面板由 app_router.js 懒注入） -->
+              <div class="menu-item" onclick="openSettingsLv2('vector-memory')">
+                <span>向量化记忆设置</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
               <div class="menu-item" onclick="openSettingsLv2('beautify')">
                 <span>桌面美化设置</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
@@ -499,13 +504,6 @@
             <div class="form-group">
               <label>模型温度 (Temperature: <span id="temp-val">0.7</span>)</label>
               <input type="range" id="api-temp" min="0" max="2" step="0.1" value="0.7">
-            </div>
-            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
-              <label style="margin-bottom:0; font-weight:700;">开启本地向量记忆检索</label>
-              <label class="switch">
-                <input type="checkbox" id="api-vector-enabled-toggle">
-                <span class="slider"></span>
-              </label>
             </div>
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
               <label style="margin-bottom:0; font-weight:700;">开启 API 流式传输 (Stream)</label>
@@ -841,7 +839,7 @@
                 <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
                 导入完整数据
               </button>
-              <input type="file" id="file-import-all" accept=".json" style="display:none;">
+              <input type="file" id="file-import-all" accept=".json,.zip" style="display:none;">
 
               <button id="btn-clear-all-data" class="btn" style="width:100%; background-color:#ef4444; color:white; border:none; margin-top:8px; display:flex; align-items:center; justify-content:center; gap:4px;">
                 <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
@@ -5054,6 +5052,8 @@
   <script src="app_chat.js"></script>
   <!-- 引入新写的总结与核心记忆关联召回脚本 -->
   <script src="app_summary_memory.js"></script>
+  <!-- 向量化记忆设置面板与 Embedding 模型来源管理（需在 app_router.js 之前加载） -->
+  <script src="app_vector_memory.js"></script>
   <script src="app_status.js"></script>
   <script src="app_sticker.js"></script>
   <script src="app_wallet.js"></script>

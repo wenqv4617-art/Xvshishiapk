@@ -281,6 +281,47 @@
       }
     },
 
+    // 应用内闹钟到点回调（由 Kotlin InAppAlarmReceiver 注入调用）
+    // messageJson 是 setInAppAlarm 时传入的 message 字符串
+    handleInAppAlarm: async function(messageJson) {
+      let info = null;
+      try {
+        info = typeof messageJson === 'string' ? JSON.parse(messageJson) : messageJson;
+      } catch(e) {
+        info = { title: "闹钟提醒", message: String(messageJson || "") };
+      }
+
+      // 1. 物理振动 + 系统通知
+      if (window.AndroidMCP && typeof window.AndroidMCP.triggerHardwareVibrator === 'function') {
+        window.AndroidMCP.triggerHardwareVibrator(800);
+      } else if (navigator.vibrate) {
+        navigator.vibrate([400, 100, 400, 100, 600]);
+      }
+      if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
+        window.AndroidMCP.showSystemNotification("⏰ " + (info.title || "闹钟提醒"), info.message || "您设定的闹钟已唤醒");
+      }
+
+      // 2. 弹窗提示（页面在前台时可见）
+      try {
+        if (typeof showCustomAlert === 'function') {
+          showCustomAlert("⏰ 闹钟唤醒", info.message || info.title || "您设定的闹钟已唤醒");
+        }
+      } catch(e) {}
+
+      // 3. 可选：触发 AI 主动发信（如果有 sessionId 且后台消息功能开启）
+      const targetSessionId = info.sessionId || (typeof activeSessionId !== 'undefined' ? activeSessionId : null);
+      if (targetSessionId && localStorage.getItem("settings-background-enabled") === "true") {
+        try {
+          // 唤醒桌宠主动消息系统，让 AI 发一句闹钟相关的提醒
+          if (typeof this.triggerActiveMessageForChar === 'function' && this.activePetCharId) {
+            await this.triggerActiveMessageForChar(this.activePetCharId);
+          }
+        } catch(e) {
+          console.warn("闹钟触发 AI 发信失败:", e);
+        }
+      }
+    },
+
     // 自定义对话触发 (作用于当前活跃活跃桌宠) [1]
     triggerCustomInteraction: function() {
       if (!this.activePetConfig) return;
@@ -739,6 +780,8 @@
   }
 
   window.desktopPetSystem = desktopPetSystem;
+  // 全局快捷入口：供 Kotlin InAppAlarmReceiver 通过 evaluateJavascript 直接调用
+  window.handleInAppAlarm = (messageJson) => desktopPetSystem.handleInAppAlarm(messageJson);
 
   const origOpenWeChatDialog = window.openWeChatDialog;
   window.openWeChatDialog = async function(sessionId) {

@@ -1041,30 +1041,137 @@ class AndroidMcp(private val context: Context) {
     }
     // ============================================================
     //  本地向量模型推理接口 (ONNX Runtime 核心推理与高保真自愈层)
+    //  改造：模型不再默认打包在 assets 中，改为用户主动下载到 filesDir 后按需加载
     // ============================================================
+
+    // 本地 ONNX 向量模型的下载源（all-MiniLM-L6-v2 量化版，384 维）
+    private val MODEL_DOWNLOAD_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/onnx/model_quantized.onnx"
+    private val VOCAB_DOWNLOAD_URL = "https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2/resolve/main/vocab.txt"
+    private val LOCAL_MODEL_FILENAME = "model_quantized.onnx"
+    private val LOCAL_VOCAB_FILENAME = "vocab.txt"
 
     private var ortEnv: ai.onnxruntime.OrtEnvironment? = null
     private var ortSession: ai.onnxruntime.OrtSession? = null
     private var modelFile: File? = null
     private var vocabMap: Map<String, Int>? = null
 
+    /** 本地模型存储目录：filesDir/models/ */
+    private fun getLocalModelDir(): File {
+        val dir = File(context.filesDir, "models")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    /** 本地模型文件路径：filesDir/models/model_quantized.onnx */
+    private fun getLocalModelFile(): File {
+        return File(getLocalModelDir(), LOCAL_MODEL_FILENAME)
+    }
+
+    /** 本地词表文件路径：filesDir/models/vocab.txt */
+    private fun getLocalVocabFile(): File {
+        return File(getLocalModelDir(), LOCAL_VOCAB_FILENAME)
+    }
+
+    /**
+     * 检测本地 ONNX 向量模型是否已下载就绪。
+     * 供前端 vectorMemorySystem._refreshLocalStatus() 调用。
+     */
+    @JavascriptInterface
+    fun isLocalEmbeddingModelReady(): Boolean {
+        return try {
+            getLocalModelFile().exists()
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 主动下载本地 ONNX 向量大模型（后台线程执行，不阻塞 WebView）。
+     * 下载完成后自动保存到 filesDir/models/，并重置 ONNX session 以便下次加载。
+     * 供前端 vectorMemorySystem.downloadLocalModel() 调用。
+     */
+    @JavascriptInterface
+    fun downloadLocalEmbeddingModel(): Boolean {
+        return try {
+            val modelFile = getLocalModelFile()
+            val vocabFile = getLocalVocabFile()
+
+            Thread {
+                try {
+                    modelFile.parentFile?.mkdirs()
+
+                    // 1. 下载 ONNX 模型
+                    Log.d(TAG, "开始下载本地 ONNX 向量模型: $MODEL_DOWNLOAD_URL")
+                    val modelUrl = java.net.URL(MODEL_DOWNLOAD_URL)
+                    val conn = modelUrl.openConnection() as java.net.HttpURLConnection
+                    conn.connectTimeout = 30000
+                    conn.readTimeout = 60000
+                    conn.instanceFollowRedirects = true
+                    conn.inputStream.use { input ->
+                        modelFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    Log.d(TAG, "ONNX 模型下载完成: ${modelFile.absolutePath}, 大小=${modelFile.length() / 1024}KB")
+
+                    // 2. 下载词表 vocab.txt（失败不阻断，会降级为哈希分词）
+                    try {
+                        val vocabUrl = java.net.URL(VOCAB_DOWNLOAD_URL)
+                        val vocabConn = vocabUrl.openConnection() as java.net.HttpURLConnection
+                        vocabConn.connectTimeout = 15000
+                        vocabConn.readTimeout = 15000
+                        vocabConn.instanceFollowRedirects = true
+                        vocabConn.inputStream.use { input ->
+                            vocabFile.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                        Log.d(TAG, "词表下载完成: ${vocabFile.absolutePath}")
+                    } catch (ve: Exception) {
+                        Log.w(TAG, "词表下载失败（不影响模型推理，将降级哈希分词）: ${ve.message}")
+                    }
+
+                    // 3. 重置 session，以便下次 getEmbedding 时重新加载
+                    synchronized(this) {
+                        try { ortSession?.close() } catch (_: Exception) {}
+                        ortSession = null
+                        vocabMap = null
+                    }
+
+                    // 4. 通知前端下载完成
+                    mainActivity?.runOnUiThread {
+                        try {
+                            getWebView()?.evaluateJavascript(
+                                "javascript:if(window.vectorMemorySystem && typeof window.vectorMemorySystem._refreshLocalStatus === 'function') { window.vectorMemorySystem._refreshLocalStatus(); }",
+                                null
+                            )
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "下载本地 ONNX 向量模型失败: ${e.message}", e)
+                }
+            }.start()
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "downloadLocalEmbeddingModel() 启动失败: ${e.message}", e)
+            false
+        }
+    }
+
     @Synchronized
     private fun initOnnxSession() {
         if (ortSession != null) return
         try {
-            ortEnv = ai.onnxruntime.OrtEnvironment.getEnvironment()
-            
-            val cacheModelFile = File(context.cacheDir, "model_quantized.onnx")
-            if (!cacheModelFile.exists()) {
-                context.assets.open("models/model_quantized.onnx").use { input ->
-                    cacheModelFile.outputStream().use { output ->
-                        input.copyTo(output)
-                    }
-                }
+            val localModel = getLocalModelFile()
+            if (!localModel.exists()) {
+                // 模型未下载，不再从 assets 自动复制
+                Log.w(TAG, "本地 ONNX 模型未下载，请在「向量化记忆设置」中主动下载。")
+                return
             }
-            modelFile = cacheModelFile
-            ortSession = ortEnv?.createSession(cacheModelFile.absolutePath)
-            Log.d(TAG, "ONNX Runtime model successfully loaded from cache path.")
+            ortEnv = ai.onnxruntime.OrtEnvironment.getEnvironment()
+            modelFile = localModel
+            ortSession = ortEnv?.createSession(localModel.absolutePath)
+            Log.d(TAG, "ONNX Runtime model successfully loaded from: ${localModel.absolutePath}")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to initialize ONNX session: ${e.message}", e)
         }
@@ -1074,15 +1181,20 @@ class AndroidMcp(private val context: Context) {
         if (vocabMap != null) return
         val map = HashMap<String, Int>()
         try {
-            context.assets.open("models/vocab.txt").bufferedReader().useLines { lines ->
-                lines.forEachIndexed { index, line ->
-                    map[line.trim()] = index
+            val vocabFile = getLocalVocabFile()
+            if (vocabFile.exists()) {
+                vocabFile.bufferedReader().useLines { lines ->
+                    lines.forEachIndexed { index, line ->
+                        map[line.trim()] = index
+                    }
                 }
+                vocabMap = map
+                Log.d(TAG, "Successfully loaded vocabulary from filesDir: ${map.size} tokens.")
+            } else {
+                Log.d(TAG, "Vocabulary file not found in filesDir, using fallback hash mapping.")
             }
-            vocabMap = map
-            Log.d(TAG, "Successfully loaded vocabulary from assets: ${map.size} tokens.")
         } catch (e: Exception) {
-            Log.d(TAG, "Vocabulary file models/vocab.txt not found in assets, using fallback hash mapping.")
+            Log.d(TAG, "Failed to load vocabulary, using fallback hash mapping: ${e.message}")
         }
     }
 
@@ -1220,15 +1332,14 @@ class AndroidMcp(private val context: Context) {
     @JavascriptInterface
     fun testOnnxModel(): String {
         return try {
-            val assetManager = context.assets
-            val inputStream = assetManager.open("models/model_quantized.onnx")
-            val size = inputStream.available() / 1024
-            inputStream.close()
-            "✅ 模型文件存在！大小: $size KB"
-        } catch (e: java.io.FileNotFoundException) {
-            "❌ 找不到模型文件: ${e.message}。请确保 assets/models/model_quantized.onnx 文件存在！"
+            val modelFile = getLocalModelFile()
+            if (modelFile.exists()) {
+                "✅ 本地模型已下载！大小: ${modelFile.length() / 1024} KB，路径: ${modelFile.absolutePath}"
+            } else {
+                "❌ 本地模型未下载，请在「向量化记忆设置」中点击下载。"
+            }
         } catch (e: Exception) {
-            "❌ 模型无法读取: ${e.message}"
+            "❌ 检测本地模型失败: ${e.message}"
         }
     }
 
@@ -1244,6 +1355,12 @@ class AndroidMcp(private val context: Context) {
             
             val session = ortSession
             val env = ortEnv
+            
+            // 模型未下载就绪时返回空数组，让前端降级到在线 Embedding API
+            if (session == null || env == null) {
+                Log.w(TAG, "本地 ONNX 模型未就绪，返回空向量（前端将降级到在线 API）")
+                return "[]"
+            }
             
             if (session != null && env != null) {
                 val inputNames = session.inputNames
