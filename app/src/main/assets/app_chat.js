@@ -4193,17 +4193,12 @@ function bindChatAppEvents() {
           rawReply = rawReply.replace(playMusicRegex, "").trim();
         }
 
-        // === Char (AI) 自主设闹钟指令解析 ===
+        // === Char (AI) 自主设闹钟指令解析（容错：JSON 解析失败也能提取 delay 设闹钟）===
         const setAlarmRegex = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
         const setAlarmMatch = rawReply.match(setAlarmRegex);
         if (setAlarmMatch) {
-          try {
-            const parsed = JSON.parse(setAlarmMatch[2]);
-            if (window.mcpSystem && typeof window.mcpSystem.setAlarmByCommand === 'function') {
-              window.mcpSystem.setAlarmByCommand(parsed);
-            }
-          } catch(e) {
-            console.warn("解析 AI 设闹钟指令 JSON 失败:", e);
+          if (window.mcpSystem && typeof window.mcpSystem.setAlarmFromRawJson === 'function') {
+            window.mcpSystem.setAlarmFromRawJson(setAlarmMatch[2]);
           }
           // 擦除设闹钟指令，避免污染对话气泡
           rawReply = rawReply.replace(setAlarmRegex, "").trim();
@@ -5800,17 +5795,12 @@ async function triggerOfflineReply() {
           rawReply = rawReply.replace(playMusicRegexOffline, "").trim();
         }
 
-        // === 离线剧场模式：解析并擦除 SET_ALARM 设闹钟指令 ===
+        // === 离线剧场模式：解析并擦除 SET_ALARM 设闹钟指令（容错版）===
         const setAlarmRegexOffline = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
         const setAlarmMatchOffline = rawReply.match(setAlarmRegexOffline);
         if (setAlarmMatchOffline) {
-          try {
-            const parsed = JSON.parse(setAlarmMatchOffline[2]);
-            if (window.mcpSystem && typeof window.mcpSystem.setAlarmByCommand === 'function') {
-              window.mcpSystem.setAlarmByCommand(parsed);
-            }
-          } catch(e) {
-            console.warn("解析 AI 设闹钟指令 JSON 失败:", e);
+          if (window.mcpSystem && typeof window.mcpSystem.setAlarmFromRawJson === 'function') {
+            window.mcpSystem.setAlarmFromRawJson(setAlarmMatchOffline[2]);
           }
           rawReply = rawReply.replace(setAlarmRegexOffline, "").trim();
         }

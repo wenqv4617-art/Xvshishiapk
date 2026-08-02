@@ -252,6 +252,32 @@
     },
 
     /**
+     * 从原始 JSON 字符串解析并执行 SET_ALARM（容错版）。
+     * 先尝试 JSON.parse；失败则用子正则提取 delay/title/ringtone，
+     * 确保即使 AI 输出畸形 JSON（如未加引号的 ringtone）也能设闹钟。
+     */
+    setAlarmFromRawJson: function(jsonStr) {
+      let opts = null;
+      try {
+        opts = JSON.parse(jsonStr);
+      } catch(e) {
+        console.warn("SET_ALARM JSON 解析失败，启用容错提取:", e);
+        const delayMatch = jsonStr.match(/"delay"\s*:\s*(\d+)/);
+        if (!delayMatch) {
+          console.warn("容错提取失败：未找到 delay 字段");
+          return false;
+        }
+        opts = { delay: parseInt(delayMatch[1]) };
+        const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]*)"/);
+        if (titleMatch) opts.title = titleMatch[1];
+        const ringtoneMatch = jsonStr.match(/"ringtone"\s*:\s*(?:"([^"]*)"|(\d+))/);
+        if (ringtoneMatch) opts.ringtone = ringtoneMatch[1] !== undefined ? ringtoneMatch[1] : parseInt(ringtoneMatch[2]);
+        console.log("容错提取 SET_ALARM 参数:", opts);
+      }
+      return this.setAlarmByCommand(opts);
+    },
+
+    /**
      * AI 自主设闹钟指令封装（供 app_chat.js 解析 [SET_ALARM] 调用）。
      * opts: { delay:秒数, title:标题, ringtone?:歌曲索引(数字)|歌曲标题(字符串) }
      */
