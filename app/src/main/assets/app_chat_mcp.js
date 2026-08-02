@@ -15,6 +15,10 @@
     libraryPlaylists: [],
     // 全局扁平歌曲列表（本地+乐库按分类顺序合并），供 AI [PLAY_MUSIC]{"index":N} 直接索引
     mergedPlaylist: [],
+    // 当前活动闹钟状态：{ triggerTime, title, ringtone, setByAI } 或 null
+    activeAlarm: null,
+    // 闹钟倒计时刷新定时器句柄
+    alarmCountdownTimer: null,
 
     // 开启中枢控制面板
     openPanel: function() {
@@ -64,6 +68,9 @@
 
       // 同步填充闹钟铃声下拉框（复用 mergedPlaylist）
       this._populateAlarmRingtoneSelect();
+
+      // 渲染活动闹钟状态（倒计时 + 取消按钮）
+      this._renderAlarmStatus();
     },
 
     /**
@@ -266,7 +273,16 @@
       const minute = targetDate.getMinutes();
       const triggerTimeMillis = targetDate.getTime();
 
-      return this._scheduleAlarm(delay, hour, minute, triggerTimeMillis, title, ringtone, false);
+      const ok = this._scheduleAlarm(delay, hour, minute, triggerTimeMillis, title, ringtone, false);
+
+      // AI 路径也给 toast 提示（不关面板，方便用户看到 AI 设了闹钟）
+      if (ok) {
+        const timeStr = hour + ":" + String(minute).padStart(2, '0');
+        showToast(`AI 已设定闹钟：${timeStr} 响铃（${delay}秒后，标题"${title}"）`);
+      } else {
+        showToast(`AI 闹钟设定失败，已降级为模拟模式（${delay}秒后提醒）`);
+      }
+      return ok;
     },
 
     /**
@@ -298,7 +314,11 @@
         });
         try {
           const ok = window.AndroidMCP.setInAppAlarm(triggerTimeMillis, alarmMsg);
-          if (ok) inAppAlarmOk = true;
+          if (ok) {
+            inAppAlarmOk = true;
+            // 注册活动闹钟状态，启动倒计时 UI
+            this._registerActiveAlarm(triggerTimeMillis, title, ringtone, showToastFeedback);
+          }
         } catch(e) { console.warn("应用内闹钟设定失败:", e); }
       }
 
@@ -403,6 +423,143 @@
       if (Array.from(select.options).some(o => o.value === currentVal)) {
         select.value = currentVal;
       }
+    },
+
+    /**
+     * 注册活动闹钟状态并启动倒计时刷新。
+     * setByAI: 是否由 AI 指令设定（影响 UI 标签）
+     */
+    _registerActiveAlarm: function(triggerTimeMillis, title, ringtone, showToastFeedback) {
+      this.activeAlarm = {
+        triggerTime: triggerTimeMillis,
+        title: title,
+        ringtone: ringtone,
+        setByAI: !showToastFeedback  // showToastFeedback=true 表示手动按钮路径
+      };
+      this._startAlarmCountdown();
+      this._renderAlarmStatus();
+    },
+
+    /**
+     * 启动倒计时定时器，每秒刷新 UI。
+     */
+    _startAlarmCountdown: function() {
+      this._stopAlarmCountdown();
+      const self = this;
+      this.alarmCountdownTimer = setInterval(() => {
+        if (!self.activeAlarm) {
+          self._stopAlarmCountdown();
+          return;
+        }
+        const remaining = self.activeAlarm.triggerTime - Date.now();
+        if (remaining <= 0) {
+          // 闹钟已到点（由原生 InAppAlarmReceiver 触发，这里兜底清状态）
+          self._stopAlarmCountdown();
+          self.activeAlarm = null;
+          self._renderAlarmStatus();
+          return;
+        }
+        self._renderAlarmStatus();
+      }, 1000);
+    },
+
+    /**
+     * 停止倒计时定时器。
+     */
+    _stopAlarmCountdown: function() {
+      if (this.alarmCountdownTimer) {
+        clearInterval(this.alarmCountdownTimer);
+        this.alarmCountdownTimer = null;
+      }
+    },
+
+    /**
+     * 渲染闹钟状态区（倒计时 + 取消按钮）。
+     */
+    _renderAlarmStatus: function() {
+      const statusEl = document.getElementById("mcp-alarm-status");
+      if (!statusEl) return;
+
+      if (!this.activeAlarm) {
+        statusEl.style.display = "none";
+        statusEl.innerHTML = "";
+        return;
+      }
+
+      const remaining = this.activeAlarm.triggerTime - Date.now();
+      if (remaining <= 0) {
+        statusEl.style.display = "none";
+        statusEl.innerHTML = "";
+        return;
+      }
+
+      // 格式化倒计时：时分秒
+      const totalSec = Math.ceil(remaining / 1000);
+      const h = Math.floor(totalSec / 3600);
+      const m = Math.floor((totalSec % 3600) / 60);
+      const s = totalSec % 60;
+      let timeStr;
+      if (h > 0) {
+        timeStr = `${h}时${String(m).padStart(2,'0')}分${String(s).padStart(2,'0')}秒`;
+      } else if (m > 0) {
+        timeStr = `${m}分${String(s).padStart(2,'0')}秒`;
+      } else {
+        timeStr = `${s}秒`;
+      }
+
+      const triggerDate = new Date(this.activeAlarm.triggerTime);
+      const clockStr = `${triggerDate.getHours()}:${String(triggerDate.getMinutes()).padStart(2,'0')}`;
+      const sourceTag = this.activeAlarm.setByAI ? "AI 设定" : "手动设定";
+      const ringtoneNote = (this.activeAlarm.ringtone && this.activeAlarm.ringtone !== "default")
+        ? "（含自定义铃声）" : "（默认铃声）";
+
+      statusEl.style.display = "block";
+      statusEl.innerHTML = `
+        <div style="margin-top:8px; padding:10px; border-radius:10px; background:linear-gradient(135deg,#fef3c7,#fde68a); border:1.5px solid #f59e0b;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:11px; color:#92400e; font-weight:700; margin-bottom:2px;">
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="vertical-align:-1px; margin-right:3px;"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/></svg>
+                闹钟倒计时 · ${sourceTag}${ringtoneNote}
+              </div>
+              <div style="font-size:16px; color:#78350f; font-weight:800; line-height:1.2;">${timeStr}</div>
+              <div style="font-size:10px; color:#92400e; margin-top:2px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+                ${clockStr} 响铃 · ${this._escapeHtml(this.activeAlarm.title)}
+              </div>
+            </div>
+            <button onclick="mcpSystem.cancelActiveAlarm()" style="flex-shrink:0; padding:6px 10px; font-size:11px; font-weight:700; border-radius:8px; border:1.5px solid #ef4444; background:#fee2e2; color:#dc2626; cursor:pointer;">取消闹钟</button>
+          </div>
+        </div>`;
+    },
+
+    /**
+     * 用户主动取消活动闹钟（取消应用内闹钟 + 清状态）。
+     * 注意：系统闹钟App的闹钟需用户手动去系统时钟App删除。
+     */
+    cancelActiveAlarm: function() {
+      let inAppCancelled = false;
+      if (window.AndroidMCP && typeof window.AndroidMCP.cancelInAppAlarm === 'function') {
+        try {
+          inAppCancelled = window.AndroidMCP.cancelInAppAlarm();
+        } catch(e) { console.warn("取消应用内闹钟失败:", e); }
+      }
+      this._stopAlarmCountdown();
+      this.activeAlarm = null;
+      this._renderAlarmStatus();
+      if (inAppCancelled) {
+        showToast("已取消应用内闹钟（系统时钟App的闹钟需手动删除）");
+      } else {
+        showToast("闹钟状态已清除（系统时钟App的闹钟需手动删除）");
+      }
+    },
+
+    /**
+     * 清除活动闹钟状态（供 handleInAppAlarm 到点后调用，不调原生 cancel）。
+     */
+    clearAlarmStatus: function() {
+      this._stopAlarmCountdown();
+      this.activeAlarm = null;
+      this._renderAlarmStatus();
     },
 
     // 4.1 静默扫描真机 /Music/Storypoem 物理目录并载入 + 加载乐库歌单 [1]

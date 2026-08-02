@@ -313,6 +313,13 @@
         }
       }
 
+      // 1.6 清除 MCP 中枢的活动闹钟状态（倒计时 UI 收起）
+      try {
+        if (window.mcpSystem && typeof window.mcpSystem.clearAlarmStatus === 'function') {
+          window.mcpSystem.clearAlarmStatus();
+        }
+      } catch(e) { console.warn("清除闹钟状态失败:", e); }
+
       // 2. 弹窗提示（页面在前台时可见）
       try {
         if (typeof showCustomAlert === 'function') {

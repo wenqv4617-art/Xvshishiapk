@@ -523,6 +523,27 @@ class InAppAlarmReceiver : BroadcastReceiver() {
         private const val EXTRA_MESSAGE = "alarm_message"
         private const val REQUEST_CODE = 9992
 
+        // 取消应用内闹钟：用相同 REQUEST_CODE 重建 PendingIntent 并 cancel
+        fun cancel(context: Context): Boolean {
+            return try {
+                val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                val intent = Intent(context, InAppAlarmReceiver::class.java).apply {
+                    action = "com.story.phone.ACTION_IN_APP_ALARM"
+                }
+                val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                } else {
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT
+                }
+                val pi = android.app.PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)
+                am.cancel(pi)
+                true
+            } catch (e: Exception) {
+                e.printStackTrace()
+                false
+            }
+        }
+
         fun schedule(context: Context, triggerAtMillis: Long, message: String): Boolean {
             return try {
                 val am = context.getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager

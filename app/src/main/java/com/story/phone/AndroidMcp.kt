@@ -657,6 +657,19 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
+    // 7.6 取消应用内定时闹钟：通过相同 REQUEST_CODE 的 PendingIntent 取消 AlarmManager 调度。
+    //     注意：仅能取消应用内闹钟通道，系统闹钟App的闹钟需用户手动删除。
+    @JavascriptInterface
+    fun cancelInAppAlarm(): Boolean {
+        Log.d(TAG, "cancelInAppAlarm() called")
+        return try {
+            InAppAlarmReceiver.cancel(context)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
     private fun getWebView(): android.webkit.WebView? {
         return (context as? MainActivity)?.findViewById(R.id.webview)
     }
