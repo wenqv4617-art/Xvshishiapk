@@ -164,30 +164,47 @@
       const hour = targetDate.getHours();
       const minute = targetDate.getMinutes();
       const triggerTimeMillis = targetDate.getTime();
+      const alarmTitle = "叙事诗小手机：神经倒计时闹铃";
 
-      // 优先：应用内精确闹钟（AlarmManager.setExactAndAllowWhileIdle，Doze 下也能唤醒，到点回调 handleInAppAlarm）
+      let systemAlarmOk = false;
+      let inAppAlarmOk = false;
+
+      // 优先：写入 Android 系统时钟闹钟（app 被杀也能响，由系统闹钟App保证触发）
+      if (window.AndroidMCP && typeof window.AndroidMCP.setAndroidSystemAlarm === 'function') {
+        try {
+          window.AndroidMCP.setAndroidSystemAlarm(hour, minute, alarmTitle);
+          systemAlarmOk = true;
+        } catch(e) { console.warn("系统闹钟写入失败:", e); }
+      }
+
+      // 补充：应用内精确闹钟（app 存活时到点回调 handleInAppAlarm 触发 AI 发信）
       if (window.AndroidMCP && typeof window.AndroidMCP.setInAppAlarm === 'function') {
         const alarmMsg = JSON.stringify({
           type: "mcp_alarm",
-          title: "叙事诗小手机：神经倒计时闹铃",
+          title: alarmTitle,
           triggerSeconds: seconds,
           triggerTime: triggerTimeMillis,
           sessionId: (typeof activeSessionId !== 'undefined') ? activeSessionId : null,
           timestamp: Date.now()
         });
-        const ok = window.AndroidMCP.setInAppAlarm(triggerTimeMillis, alarmMsg);
-        if (ok) {
-          showToast(`应用内闹钟已设定，将在 ${seconds} 秒后精确唤醒（Doze 不影响）`);
-          this.closePanel();
-          return;
-        }
-        // setInAppAlarm 返回 false（如无精确闹钟权限），降级到系统闹钟
+        try {
+          const ok = window.AndroidMCP.setInAppAlarm(triggerTimeMillis, alarmMsg);
+          if (ok) inAppAlarmOk = true;
+        } catch(e) { console.warn("应用内闹钟设定失败:", e); }
       }
 
-      // 次选：物理级直写系统时钟闹钟（调起系统闹钟App）
-      if (window.AndroidMCP && typeof window.AndroidMCP.setAndroidSystemAlarm === 'function') {
-        window.AndroidMCP.setAndroidSystemAlarm(hour, minute, "叙事诗小手机：神经倒计时闹铃");
-        showToast(`已写入系统时钟！物理闹钟设定在 ${hour}:${String(minute).padStart(2, '0')}`);
+      if (systemAlarmOk && inAppAlarmOk) {
+        showToast(`双重闹钟已设定：系统时钟 ${hour}:${String(minute).padStart(2, '0')} 响铃 + 应用内 AI 发信（${seconds}秒后，需app存活）`);
+        this.closePanel();
+        return;
+      }
+      if (systemAlarmOk) {
+        showToast(`已写入系统时钟闹钟，${hour}:${String(minute).padStart(2, '0')} 响铃（app被杀也能响）`);
+        this.closePanel();
+        return;
+      }
+      if (inAppAlarmOk) {
+        showToast(`应用内闹钟已设定，${seconds} 秒后唤醒（需app存活，被杀则失效）`);
         this.closePanel();
         return;
       }

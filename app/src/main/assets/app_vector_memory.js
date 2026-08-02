@@ -116,6 +116,17 @@
             <div class="form-group" style="background:#fffbeb; padding:12px; border-radius:12px; border:1px solid #fde68a;">
               <label style="font-weight:700; color:#92400e; display:block; margin-bottom:6px;">本地向量大模型管理</label>
               <div id="vm-local-status" style="font-size:11px; color:#92400e; margin-bottom:10px;">正在检测本地模型状态…</div>
+              <!-- 下载进度条 -->
+              <div id="vm-download-progress-wrap" style="display:none; margin-bottom:10px;">
+                <div style="display:flex; justify-content:space-between; font-size:10px; color:#92400e; margin-bottom:4px;">
+                  <span id="vm-download-stage">准备下载…</span>
+                  <span id="vm-download-percent">0%</span>
+                </div>
+                <div style="width:100%; height:8px; background:#fde68a; border-radius:4px; overflow:hidden;">
+                  <div id="vm-download-bar" style="width:0%; height:100%; background:#d97706; transition:width 0.3s ease;"></div>
+                </div>
+                <div id="vm-download-size" style="font-size:9px; color:#a16207; margin-top:3px;"></div>
+              </div>
               <div style="display:flex; gap:8px; flex-wrap:wrap;">
                 <button id="btn-vm-download-local" class="btn btn-primary" style="font-size:12px;">下载本地向量大模型</button>
                 <button id="btn-vm-check-local" class="btn btn-outline" style="font-size:12px;">刷新状态</button>
@@ -356,6 +367,7 @@
 
     /**
      * 主动下载本地 ONNX 向量大模型（仅在 APK 真机环境可用）。
+     * 带实时进度条，由 Kotlin 通过 onEmbeddingModelDownloadProgress 回调驱动。
      */
     downloadLocalModel: function () {
       if (!(window.AndroidMCP && typeof window.AndroidMCP.downloadLocalEmbeddingModel === 'function')) {
@@ -366,22 +378,104 @@
         "下载本地向量大模型",
         "即将下载本地 ONNX 向量大模型（约数十 MB），下载完成后自动安装到应用私有目录。\n\n建议在 Wi-Fi 环境下进行，是否继续？",
         async () => {
-          showToast("开始下载本地向量大模型，请保持网络畅通…");
+          // 显示进度条
+          this._showDownloadProgress("准备下载…", 0, 0, 0);
+          const btn = document.getElementById("btn-vm-download-local");
+          if (btn) btn.disabled = true;
           try {
             const ok = window.AndroidMCP.downloadLocalEmbeddingModel();
             if (ok === true || ok === "true" || ok === 1 || ok === "1") {
-              showToast("本地模型下载任务已启动，稍后请点击「刷新状态」确认");
+              this._showDownloadProgress("下载任务已启动…", 0, 0, 0);
             } else {
+              this._hideDownloadProgress();
+              if (btn) btn.disabled = false;
               showToast("本地模型下载启动失败，请检查网络或存储空间");
             }
-            // 稍后刷新一次状态
-            setTimeout(() => this._refreshLocalStatus(), 2000);
           } catch (e) {
+            this._hideDownloadProgress();
+            if (btn) btn.disabled = false;
             console.error("下载本地向量大模型失败:", e);
             showToast("下载失败：" + e.message);
           }
         }
       );
+    },
+
+    /**
+     * 显示下载进度（供 Kotlin 通过 onEmbeddingModelDownloadProgress 回调调用）。
+     * @param {string} stage - 阶段描述：下载模型/下载词表/安装中/完成/失败
+     * @param {number} percent - 0~100
+     * @param {number} downloadedBytes - 已下载字节数
+     * @param {number} totalBytes - 总字节数（未知为0）
+     */
+    _showDownloadProgress: function (stage, percent, downloadedBytes, totalBytes) {
+      const wrap = document.getElementById("vm-download-progress-wrap");
+      if (!wrap) return;
+      wrap.style.display = "block";
+      const stageEl = document.getElementById("vm-download-stage");
+      const pctEl = document.getElementById("vm-download-percent");
+      const barEl = document.getElementById("vm-download-bar");
+      const sizeEl = document.getElementById("vm-download-size");
+      if (stageEl) stageEl.innerText = stage || "下载中…";
+      const pct = Math.max(0, Math.min(100, parseInt(percent) || 0));
+      if (pctEl) pctEl.innerText = pct + "%";
+      if (barEl) barEl.style.width = pct + "%";
+      if (sizeEl) {
+        const fmt = (b) => {
+          if (!b) return "0B";
+          if (b < 1024) return b + "B";
+          if (b < 1024 * 1024) return (b / 1024).toFixed(1) + "KB";
+          return (b / 1024 / 1024).toFixed(2) + "MB";
+        };
+        if (totalBytes > 0) {
+          sizeEl.innerText = `${fmt(downloadedBytes)} / ${fmt(totalBytes)}`;
+        } else if (downloadedBytes > 0) {
+          sizeEl.innerText = `已下载 ${fmt(downloadedBytes)}`;
+        }
+      }
+    },
+
+    _hideDownloadProgress: function () {
+      const wrap = document.getElementById("vm-download-progress-wrap");
+      if (wrap) wrap.style.display = "none";
+    }
+  };
+
+  /**
+   * 全局下载进度回调入口：供 Kotlin DownloadThread 通过 evaluateJavascript 实时调用。
+   * @param {string} stage - 阶段：downloading_model / downloading_vocab / installing / done / error
+   * @param {number} percent - 0~100
+   * @param {number} downloadedBytes
+   * @param {number} totalBytes
+   * @param {string} errorMsg - 仅 stage=error 时有值
+   */
+  window.onEmbeddingModelDownloadProgress = function (stage, percent, downloadedBytes, totalBytes, errorMsg) {
+    const vms = window.vectorMemorySystem;
+    if (!vms) return;
+    const stageMap = {
+      downloading_model: "下载 ONNX 模型中",
+      downloading_vocab: "下载词表中",
+      installing: "安装中…",
+      done: "下载完成",
+      error: "下载失败"
+    };
+    const stageText = stageMap[stage] || stage || "下载中…";
+    vms._showDownloadProgress(stageText, percent, downloadedBytes, totalBytes);
+
+    if (stage === "done") {
+      const btn = document.getElementById("btn-vm-download-local");
+      if (btn) { btn.disabled = false; btn.innerText = "重新下载本地向量大模型"; }
+      showToast("本地向量大模型下载完成！");
+      setTimeout(() => {
+        vms._refreshLocalStatus();
+        vms._hideDownloadProgress();
+      }, 1500);
+    } else if (stage === "error") {
+      const btn = document.getElementById("btn-vm-download-local");
+      if (btn) btn.disabled = false;
+      showToast("下载失败：" + (errorMsg || "未知错误"));
+      // 保留进度条和错误状态5秒后隐藏
+      setTimeout(() => vms._hideDownloadProgress(), 5000);
     }
   };
 

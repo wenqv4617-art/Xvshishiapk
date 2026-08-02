@@ -1133,9 +1133,10 @@ class AndroidMcp(private val context: Context) {
     }
 
     /**
-     * 主动下载本地 ONNX 向量大模型（后台线程执行，不阻塞 WebView）。
+     * 主动下载本地 ONNX 向量大模型（后台线程执行，带实时进度回调）。
      * 下载完成后自动保存到 filesDir/models/，并重置 ONNX session 以便下次加载。
      * 供前端 vectorMemorySystem.downloadLocalModel() 调用。
+     * 进度通过 evaluateJavascript 调用 window.onEmbeddingModelDownloadProgress(stage, percent, downloaded, total, error) 实时回传前端。
      */
     @JavascriptInterface
     fun downloadLocalEmbeddingModel(): Boolean {
@@ -1146,22 +1147,50 @@ class AndroidMcp(private val context: Context) {
             Thread {
                 try {
                     modelFile.parentFile?.mkdirs()
+                    val activity = mainActivity
 
-                    // 1. 下载 ONNX 模型
+                    // 1. 下载 ONNX 模型（带进度）
                     Log.d(TAG, "开始下载本地 ONNX 向量模型: $MODEL_DOWNLOAD_URL")
                     val modelUrl = java.net.URL(MODEL_DOWNLOAD_URL)
                     val conn = modelUrl.openConnection() as java.net.HttpURLConnection
                     conn.connectTimeout = 30000
                     conn.readTimeout = 60000
                     conn.instanceFollowRedirects = true
+                    val totalModelBytes = conn.contentLengthLong  // 可能返回-1（未知）
+                    var downloadedModelBytes = 0L
+                    val buffer = ByteArray(8192)
+                    var lastReportPercent = -1
+
                     conn.inputStream.use { input ->
                         modelFile.outputStream().use { output ->
-                            input.copyTo(output)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read <= 0) break
+                                output.write(buffer, 0, read)
+                                downloadedModelBytes += read
+
+                                // 计算进度并回调（每变化2%回调一次，避免频繁evaluateJavascript）
+                                if (totalModelBytes > 0) {
+                                    val percent = (downloadedModelBytes * 100 / totalModelBytes).toInt()
+                                    if (percent >= lastReportPercent + 2 || percent == 100) {
+                                        lastReportPercent = percent
+                                        reportDownloadProgress(activity, "downloading_model", percent, downloadedModelBytes, totalModelBytes, null)
+                                    }
+                                } else {
+                                    // 总大小未知，每下载100KB回调一次
+                                    if (downloadedModelBytes - (lastReportPercent * 10240L) >= 100 * 1024) {
+                                        lastReportPercent = (downloadedModelBytes / 10240).toInt()
+                                        reportDownloadProgress(activity, "downloading_model", -1, downloadedModelBytes, 0, null)
+                                    }
+                                }
+                            }
                         }
                     }
                     Log.d(TAG, "ONNX 模型下载完成: ${modelFile.absolutePath}, 大小=${modelFile.length() / 1024}KB")
+                    reportDownloadProgress(activity, "downloading_model", 100, modelFile.length(), modelFile.length(), null)
 
                     // 2. 下载词表 vocab.txt（失败不阻断，会降级为哈希分词）
+                    reportDownloadProgress(activity, "downloading_vocab", 0, 0, 0, null)
                     try {
                         val vocabUrl = java.net.URL(VOCAB_DOWNLOAD_URL)
                         val vocabConn = vocabUrl.openConnection() as java.net.HttpURLConnection
@@ -1174,11 +1203,13 @@ class AndroidMcp(private val context: Context) {
                             }
                         }
                         Log.d(TAG, "词表下载完成: ${vocabFile.absolutePath}")
+                        reportDownloadProgress(activity, "downloading_vocab", 100, vocabFile.length(), vocabFile.length(), null)
                     } catch (ve: Exception) {
                         Log.w(TAG, "词表下载失败（不影响模型推理，将降级哈希分词）: ${ve.message}")
                     }
 
                     // 3. 重置 session，以便下次 getEmbedding 时重新加载
+                    reportDownloadProgress(activity, "installing", 0, 0, 0, null)
                     synchronized(this) {
                         try { ortSession?.close() } catch (_: Exception) {}
                         ortSession = null
@@ -1186,22 +1217,40 @@ class AndroidMcp(private val context: Context) {
                     }
 
                     // 4. 通知前端下载完成
-                    mainActivity?.runOnUiThread {
-                        try {
-                            getWebView()?.evaluateJavascript(
-                                "javascript:if(window.vectorMemorySystem && typeof window.vectorMemorySystem._refreshLocalStatus === 'function') { window.vectorMemorySystem._refreshLocalStatus(); }",
-                                null
-                            )
-                        } catch (e: Exception) { e.printStackTrace() }
-                    }
+                    reportDownloadProgress(activity, "done", 100, modelFile.length(), modelFile.length(), null)
                 } catch (e: Exception) {
                     Log.e(TAG, "下载本地 ONNX 向量模型失败: ${e.message}", e)
+                    reportDownloadProgress(mainActivity, "error", 0, 0, 0, e.message ?: "未知错误")
+                    // 清理半成品文件
+                    try { if (getLocalModelFile().exists() && getLocalModelFile().length() == 0L) getLocalModelFile().delete() } catch (_: Exception) {}
                 }
             }.start()
             true
         } catch (e: Exception) {
             Log.e(TAG, "downloadLocalEmbeddingModel() 启动失败: ${e.message}", e)
             false
+        }
+    }
+
+    /**
+     * 向前端回传下载进度（通过 evaluateJavascript 调用 window.onEmbeddingModelDownloadProgress）。
+     */
+    private fun reportDownloadProgress(activity: android.app.Activity?, stage: String, percent: Int, downloaded: Long, total: Long, error: String?) {
+        if (activity == null) return
+        try {
+            activity.runOnUiThread {
+                try {
+                    val webView = getWebView() ?: return@runOnUiThread
+                    val p = if (percent < 0) 0 else percent
+                    val errJson = if (error != null) org.json.JSONObject.quote(error) else "null"
+                    val js = "javascript:if(window.onEmbeddingModelDownloadProgress){window.onEmbeddingModelDownloadProgress(${org.json.JSONObject.quote(stage)},$p,$downloaded,$total,$errJson);}"
+                    webView.evaluateJavascript(js, null)
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
