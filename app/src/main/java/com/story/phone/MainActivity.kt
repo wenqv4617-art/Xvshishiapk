@@ -112,6 +112,35 @@ class MainActivity : AppCompatActivity() {
 
         // 自动申请 Android 定位与通知的系统级运行时权限
         requestAppPermissions()
+
+        // 处理闹钟拉起冷启动场景
+        handleAlarmIntent(intent)
+    }
+
+    /**
+     * 闹钟到点后拉起 App 到前台时，通过 onNewIntent 接收闹钟消息。
+     * WebView 恢复活跃后执行 JS 触发 AI 发信。
+     */
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAlarmIntent(intent)
+    }
+
+    private fun handleAlarmIntent(intent: Intent?) {
+        val alarmMsg = intent?.getStringExtra("IN_APP_ALARM_MSG") ?: return
+        // 延迟 500ms 执行，确保 WebView 完全恢复活跃
+        webView.postDelayed({
+            try {
+                val quoted = org.json.JSONObject.quote(alarmMsg)
+                webView.evaluateJavascript(
+                    "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
+                    null
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }, 500)
     }
 
     // 处理文件选择器弹窗的回调 
@@ -387,19 +416,30 @@ class InAppAlarmReceiver : BroadcastReceiver() {
         } catch (e: Exception) {
             e.printStackTrace()
         }
-        // 3. 唤醒 WebView 发送消息
-        val activity = AndroidMcp.mainActivity
-        if (activity != null) {
-            activity.runOnUiThread {
-                try {
-                    val webView = activity.findViewById<WebView>(R.id.webview)
-                    val quoted = org.json.JSONObject.quote(message)
-                    webView?.evaluateJavascript(
-                        "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
-                        null
-                    )
-                } catch (e: Exception) {
-                    e.printStackTrace()
+        // 3. 拉起 MainActivity 到前台，确保 WebView 恢复活跃后执行 JS
+        //    （后台时 WebView 的 JS 执行会被系统冻结，必须拉到前台才能可靠触发 AI 发信）
+        try {
+            val launchIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("IN_APP_ALARM_MSG", message)
+            }
+            context.startActivity(launchIntent)
+        } catch (e: Exception) {
+            // 拉起失败时降级：尝试直接注入 JS（仅在 Activity 存活时有效）
+            e.printStackTrace()
+            val activity = AndroidMcp.mainActivity
+            if (activity != null) {
+                activity.runOnUiThread {
+                    try {
+                        val webView = activity.findViewById<WebView>(R.id.webview)
+                        val quoted = org.json.JSONObject.quote(message)
+                        webView?.evaluateJavascript(
+                            "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
+                            null
+                        )
+                    } catch (ex: Exception) {
+                        ex.printStackTrace()
+                    }
                 }
             }
         }

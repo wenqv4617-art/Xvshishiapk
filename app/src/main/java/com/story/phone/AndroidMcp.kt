@@ -1074,13 +1074,60 @@ class AndroidMcp(private val context: Context) {
 
     /**
      * 检测本地 ONNX 向量模型是否已下载就绪。
+     * 兼容老版本覆盖安装：自动从 cacheDir 或 assets 迁移模型到 filesDir。
      * 供前端 vectorMemorySystem._refreshLocalStatus() 调用。
      */
     @JavascriptInterface
     fun isLocalEmbeddingModelReady(): Boolean {
         return try {
-            getLocalModelFile().exists()
+            val localModel = getLocalModelFile()
+            if (localModel.exists()) return true
+
+            // 迁移路径1：老版本把模型复制到了 cacheDir，迁移到 filesDir
+            val cacheModel = File(context.cacheDir, "model_quantized.onnx")
+            if (cacheModel.exists()) {
+                localModel.parentFile?.mkdirs()
+                cacheModel.copyTo(localModel, overwrite = true)
+                Log.d(TAG, "从 cacheDir 迁移 ONNX 模型到 filesDir: ${localModel.absolutePath}")
+                return true
+            }
+
+            // 迁移路径2：更老版本把模型打包在 assets 里，提取到 filesDir
+            try {
+                context.assets.open("models/model_quantized.onnx").use { input ->
+                    localModel.parentFile?.mkdirs()
+                    localModel.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                Log.d(TAG, "从 assets 迁移 ONNX 模型到 filesDir: ${localModel.absolutePath}")
+                return true
+            } catch (assetErr: Exception) {
+                // assets 里也没有模型，需要用户主动下载
+            }
+
+            // 同步迁移词表 vocab.txt（从 cacheDir 或 assets）
+            val localVocab = getLocalVocabFile()
+            if (!localVocab.exists()) {
+                val cacheVocab = File(context.cacheDir, "vocab.txt")
+                if (cacheVocab.exists()) {
+                    localVocab.parentFile?.mkdirs()
+                    cacheVocab.copyTo(localVocab, overwrite = true)
+                } else {
+                    try {
+                        context.assets.open("models/vocab.txt").use { input ->
+                            localVocab.parentFile?.mkdirs()
+                            localVocab.outputStream().use { output ->
+                                input.copyTo(output)
+                            }
+                        }
+                    } catch (ve: Exception) { /* 词表缺失不阻断，会降级哈希分词 */ }
+                }
+            }
+
+            false
         } catch (e: Exception) {
+            Log.e(TAG, "isLocalEmbeddingModelReady() 检测失败: ${e.message}")
             false
         }
     }

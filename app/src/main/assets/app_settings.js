@@ -1548,6 +1548,9 @@ async function exportBackup() {
           mcp_servers: db.mcp_servers ? await db.mcp_servers.toArray() : [],
           cot_presets: db.cot_presets ? await db.cot_presets.toArray() : [],
           prompt_presets: db.prompt_presets ? await db.prompt_presets.toArray() : [],
+          music_playlists: db.music_playlists ? await db.music_playlists.toArray() : [],
+          music_songs: db.music_songs ? await db.music_songs.toArray() : [],
+          music_logs: db.music_logs ? await db.music_logs.toArray() : [],
           localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1653,7 +1656,8 @@ async function performImportTransaction(rawData) {
     db.forum_presets, db.forum_npc_accounts,
     db.groups, db.group_members, db.group_polls,
     db.table('couples_schedules'), db.table('couples_albums'), db.table('couples_journals'), db.table('couples_whispers'),
-    db.mcp_servers, db.cot_presets
+    db.mcp_servers, db.cot_presets, db.prompt_presets,
+    db.music_playlists, db.music_songs, db.music_logs
   ], async () => {
     if (data.api_presets) {
       await db.api_presets.clear();
@@ -1829,11 +1833,6 @@ async function performImportTransaction(rawData) {
         }
         if (data.couples_whispers) {
           await db.table('couples_whispers').clear();
-          if (db.music_songs) await db.music_songs.clear();
-          if (db.music_playlists) await db.music_playlists.clear();
-          localStorage.removeItem("ncm_local_songs");
-          localStorage.removeItem("ncm_user_cookie");
-          localStorage.removeItem("ncm_playlists");
           await db.table('couples_whispers').bulkAdd(data.couples_whispers);
         }
         if (data.mcp_servers && db.mcp_servers) {
@@ -1847,6 +1846,19 @@ async function performImportTransaction(rawData) {
         if (data.prompt_presets && db.prompt_presets) {
           await db.prompt_presets.clear();
           await db.prompt_presets.bulkAdd(data.prompt_presets);
+        }
+        // 音乐应用数据导入（无备份数据时仅清空旧数据）
+        if (data.music_playlists) {
+          await db.music_playlists.clear();
+          await db.music_playlists.bulkAdd(data.music_playlists);
+        }
+        if (data.music_songs) {
+          await db.music_songs.clear();
+          await db.music_songs.bulkAdd(data.music_songs);
+        }
+        if (data.music_logs) {
+          await db.music_logs.clear();
+          await db.music_logs.bulkAdd(data.music_logs);
         }
       });
   
