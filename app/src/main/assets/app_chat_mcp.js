@@ -11,6 +11,10 @@
   const mcpSystem = {
     // 自动扫描出的物理歌曲列表 (存放歌曲的真实文件名，如 "song.mp3") [1]
     localPlaylist: [],
+    // 乐库歌单缓存：[{ id, name, songs: [{id, title, artist}, ...] }]
+    libraryPlaylists: [],
+    // 全局扁平歌曲列表（本地+乐库按分类顺序合并），供 AI [PLAY_MUSIC]{"index":N} 直接索引
+    mergedPlaylist: [],
 
     // 开启中枢控制面板
     openPanel: function() {
@@ -52,15 +56,78 @@
         window.mcpClientSystem.updateSummaryText();
       }
 
-      // 回显本地扫描出的物理歌单 [1]
+      // 回显歌曲列表（本地+乐库），手风琴分类样式 [1]
       const listEl = document.getElementById("mcp-playlist-list");
       if (listEl) {
-        if (this.localPlaylist.length > 0) {
-          listEl.innerHTML = this.localPlaylist.map((s, idx) => `<div style="padding: 4px 6px; margin-bottom: 2px; border-radius:4px; background:rgba(0,0,0,0.03); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" onclick="mcpSystem.playTrackByIndex(${idx})">#${idx} - ${s}</div>`).join("");
-          return;
-        }
-        listEl.innerHTML = "歌单为空。请用手机文件管理器将 MP3/WAV 歌曲放入本地存储的 /Music/Storypoem/ 目录下，然后重新打开此页面即可自动刷新！";
+        listEl.innerHTML = this._renderAccordionPlaylist();
       }
+    },
+
+    /**
+     * 渲染手风琴分类歌曲列表（本地/歌单1/歌单2...）。
+     * 每个分类可折叠展开，歌曲条目高度固定可点击。
+     */
+    _renderAccordionPlaylist: function() {
+      // 构建全局扁平索引列表
+      const merged = [];
+      const sections = [];
+
+      // 本地歌曲分类
+      if (this.localPlaylist.length > 0) {
+        const localSongs = this.localPlaylist.map((s, idx) => {
+          const globalIdx = merged.length;
+          merged.push({ source: 'local', title: s, fileName: s });
+          return `<div style="padding:8px 10px; margin-bottom:3px; border-radius:6px; background:rgba(0,0,0,0.04); cursor:pointer; min-height:36px; display:flex; align-items:center; gap:6px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" onclick="mcpSystem.playTrackByIndex(${globalIdx})">
+            <span style="color:#6366f1; font-weight:700; min-width:24px;">${idx + 1}</span>
+            <span style="overflow:hidden; text-overflow:ellipsis;">${this._escapeHtml(s)}</span>
+          </div>`;
+        }).join("");
+        sections.push({ name: `本地歌曲（${this.localPlaylist.length}）`, songs: localSongs, color: "#6366f1" });
+      }
+
+      // 乐库歌单分类
+      this.libraryPlaylists.forEach(pl => {
+        if (!pl.songs || pl.songs.length === 0) return;
+        const plSongs = pl.songs.map((song, idx) => {
+          const globalIdx = merged.length;
+          merged.push({ source: 'library', title: song.title, artist: song.artist, playlistId: pl.id, songId: song.id });
+          return `<div style="padding:8px 10px; margin-bottom:3px; border-radius:6px; background:rgba(0,0,0,0.04); cursor:pointer; min-height:36px; display:flex; align-items:center; gap:6px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" onclick="mcpSystem.playTrackByIndex(${globalIdx})">
+            <span style="color:#ec4141; font-weight:700; min-width:24px;">${idx + 1}</span>
+            <span style="overflow:hidden; text-overflow:ellipsis; flex:1;">${this._escapeHtml(song.title)}</span>
+            <span style="color:#999; font-size:9px; flex-shrink:0;">${this._escapeHtml(song.artist || '')}</span>
+          </div>`;
+        }).join("");
+        sections.push({ name: `${this._escapeHtml(pl.name)}（${pl.songs.length}）`, songs: plSongs, color: "#ec4141" });
+      });
+
+      // 更新全局扁平索引
+      this.mergedPlaylist = merged;
+
+      if (sections.length === 0) {
+        return `<div style="padding:12px; text-align:center; color:var(--text-secondary); font-size:11px; line-height:1.6;">
+          歌单为空。<br>1. 本地：将 MP3 歌曲放入手机 /Music/Storypoem 目录<br>2. 乐库：在「听歌」应用中导入歌单
+        </div>`;
+      }
+
+      // 渲染手风琴（默认展开第一个分类）
+      return sections.map((sec, i) => {
+        const checked = i === 0 ? "checked" : "";
+        const secId = `mcp-acc-${i}`;
+        return `<details style="margin-bottom:6px;" ${checked}>
+          <summary style="padding:8px 10px; border-radius:6px; background:${sec.color}15; cursor:pointer; font-size:11px; font-weight:700; color:${sec.color}; display:flex; align-items:center; gap:4px; list-style:none; min-height:32px;">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" style="transition:transform 0.2s;"><path d="M9 18l6-6-6-6"/></svg>
+            <span>${sec.name}</span>
+          </summary>
+          <div style="padding:6px 4px 2px 4px; max-height:200px; overflow-y:auto;">
+            ${sec.songs}
+          </div>
+        </details>`;
+      }).join("");
+    },
+
+    _escapeHtml: function(text) {
+      if (!text) return "";
+      return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     },
 
     // MCP 神经注入开关切换
@@ -223,7 +290,7 @@
       }, seconds * 1000);
     },
 
-    // 4.1 静默扫描真机 /Music/Storypoem 物理目录并载入 [1]
+    // 4.1 静默扫描真机 /Music/Storypoem 物理目录并载入 + 加载乐库歌单 [1]
     scanAndSyncLocalMusic: function() {
       if (window.AndroidMCP && typeof window.AndroidMCP.scanLocalMusicFolder === 'function') {
         try {
@@ -235,8 +302,9 @@
 
           const titleEl = document.getElementById("mcp-music-title");
           if (titleEl) {
-            titleEl.innerText = this.localPlaylist.length > 0 
-              ? `已自动装载本地歌曲：${this.localPlaylist.length} 首` 
+            const total = this.localPlaylist.length;
+            titleEl.innerText = total > 0
+              ? `已自动装载本地歌曲：${total} 首`
               : "歌单就绪：尚未在手机 /Music/Storypoem 下放置歌曲";
           }
         } catch(e) {
@@ -249,23 +317,125 @@
           try { this.localPlaylist = JSON.parse(titles); } catch(e) {}
         }
       }
+      // 异步加载乐库歌单
+      this._loadLibraryPlaylists().then(() => {
+        // 构建 mergedPlaylist 并同步到 localStorage，供 AI 提示词读取
+        this._buildMergedPlaylist();
+        this._syncMergedPlaylistToStorage();
+        const titleEl = document.getElementById("mcp-music-title");
+        if (titleEl) {
+          const localCount = this.localPlaylist.length;
+          const libCount = this.mergedPlaylist.length;
+          if (localCount === 0 && libCount === 0) {
+            titleEl.innerText = "歌单就绪：尚未导入任何歌曲";
+          } else {
+            const parts = [];
+            if (localCount > 0) parts.push(`本地${localCount}首`);
+            const libSongs = this.libraryPlaylists.reduce((sum, pl) => sum + (pl.songs ? pl.songs.length : 0), 0);
+            if (libSongs > 0) parts.push(`乐库${libSongs}首`);
+            titleEl.innerText = `歌单已就绪：${parts.join(' + ')}（共${libCount}首）`;
+          }
+        }
+        this.loadMcpSettings();
+      });
       this.loadMcpSettings();
     },
 
-    // 4.2 通过原生 MediaPlayer 进行物理音频后台/锁屏播放 (彻底击穿 Origin 拦截) [1]
+    /**
+     * 构建全局扁平歌曲索引列表（本地+乐库按分类顺序合并）。
+     */
+    _buildMergedPlaylist: function() {
+      const merged = [];
+      this.localPlaylist.forEach(s => merged.push({ source: 'local', title: s, fileName: s }));
+      this.libraryPlaylists.forEach(pl => {
+        (pl.songs || []).forEach(song => merged.push({
+          source: 'library', title: song.title, artist: song.artist,
+          playlistId: pl.id, songId: song.id
+        }));
+      });
+      this.mergedPlaylist = merged;
+    },
+
+    /**
+     * 同步合并歌单信息到 localStorage，供 AI 提示词读取感知。
+     */
+    _syncMergedPlaylistToStorage: function() {
+      try {
+        const info = this.mergedPlaylist.map((t, idx) => ({
+          index: idx,
+          source: t.source,
+          title: t.title,
+          artist: t.artist || ''
+        }));
+        localStorage.setItem("mcp_merged_playlist_info", JSON.stringify(info));
+      } catch(e) {
+        console.error("同步合并歌单到 localStorage 失败:", e);
+      }
+    },
+
+    /**
+     * 从 IndexedDB 加载乐库（听歌应用）歌单及歌曲，合并到 MCP 歌曲列表。
+     */
+    _loadLibraryPlaylists: async function() {
+      this.libraryPlaylists = [];
+      try {
+        if (typeof db === 'undefined' || !db.music_playlists || !db.music_songs) return;
+
+        const playlists = await db.music_playlists.toArray();
+        const allSongs = await db.music_songs.toArray();
+
+        for (const pl of playlists) {
+          let songs = [];
+          if (pl.songIds && Array.isArray(pl.songIds)) {
+            songs = pl.songIds.map(sid => {
+              const s = allSongs.find(x => x.id === sid);
+              return s ? { id: s.id, title: s.title, artist: s.artist } : null;
+            }).filter(Boolean);
+          } else {
+            // 旧数据结构：直接按 playlistId 查
+            songs = allSongs.filter(s => s.playlistId === pl.id).map(s => ({ id: s.id, title: s.title, artist: s.artist }));
+          }
+          if (songs.length > 0) {
+            this.libraryPlaylists.push({ id: pl.id, name: pl.name || '未命名歌单', songs: songs });
+          }
+        }
+      } catch(e) {
+        console.error("加载乐库歌单失败:", e);
+      }
+    },
+
+    // 4.2 统一播放接口：支持本地物理歌曲 + 乐库在线歌曲 [1]
     playTrackByIndex: function(index) {
+      // 优先使用合并后的全局索引列表
+      if (this.mergedPlaylist.length > 0) {
+        if (index < 0 || index >= this.mergedPlaylist.length) {
+          showToast("指令点播的音乐索引超出界限");
+          return;
+        }
+        const track = this.mergedPlaylist[index];
+        if (track.source === 'library') {
+          this._playLibrarySong(track);
+        } else {
+          this._playLocalSong(track);
+        }
+        return;
+      }
+
+      // 兼容旧版：仅本地歌单
       if (this.localPlaylist.length === 0) {
-        showToast("本地歌单为空！请先将 MP3 歌曲丢入手机 /Music/Storypoem 目录下");
+        showToast("歌单为空！请先将 MP3 歌曲丢入手机 /Music/Storypoem 目录下，或在「听歌」应用中导入歌单");
         return;
       }
       if (index < 0 || index >= this.localPlaylist.length) {
         showToast("指令点播的音乐索引超出界限");
         return;
       }
+      this._playLocalSong({ source: 'local', title: this.localPlaylist[index], fileName: this.localPlaylist[index] });
+    },
 
-      const songName = this.localPlaylist[index];
-      
-      // 核心直连：调用原生 APK 的 Kotlin 媒体引擎，实现完美的后台放歌与锁屏驻留 [1]
+    // 播放本地物理歌曲（通过原生 MediaPlayer）
+    _playLocalSong: function(track) {
+      const songName = track.fileName || track.title;
       if (window.AndroidMCP && typeof window.AndroidMCP.playNativeMusic === 'function') {
         const success = window.AndroidMCP.playNativeMusic(songName);
         if (success) {
@@ -276,12 +446,36 @@
         }
         return;
       }
-
       showToast("当前环境暂不支持原生物理音频流后台播放，请在 APK 壳中运行。");
     },
 
-    // 按歌名进行模糊匹配播放
+    // 播放乐库在线歌曲（通过 musicSystem 网页播放器）
+    _playLibrarySong: function(track) {
+      if (window.musicSystem && typeof window.musicSystem.playSongFromPlaylist === 'function') {
+        window.musicSystem.playSongFromPlaylist(track.playlistId, track.songId);
+        const titleEl = document.getElementById("mcp-music-title");
+        if (titleEl) titleEl.innerText = `正在乐库播放：${track.title}`;
+        showToast(`已通过乐库播放：《${track.title}》`);
+      } else {
+        showToast("乐库播放器未就绪，请先打开「听歌」应用");
+      }
+    },
+
+    // 按歌名进行模糊匹配播放（跨本地+乐库搜索）
     playTrackByTitle: function(title) {
+      // 优先在合并列表中搜索
+      if (this.mergedPlaylist.length > 0) {
+        const index = this.mergedPlaylist.findIndex(t =>
+          (t.title || '').toLowerCase().includes(title.toLowerCase())
+        );
+        if (index !== -1) {
+          this.playTrackByIndex(index);
+          return;
+        }
+        showToast(`歌单中未找到包含 "${title}" 的歌曲`);
+        return;
+      }
+      // 兼容旧版
       if (this.localPlaylist.length === 0) return;
       const index = this.localPlaylist.findIndex(s => s.toLowerCase().includes(title.toLowerCase()));
       if (index !== -1) {

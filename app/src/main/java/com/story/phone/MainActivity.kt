@@ -472,13 +472,18 @@ class InAppAlarmReceiver : BroadcastReceiver() {
     }
 
     private fun showAlarmNotification(context: Context, message: String) {
-        val channelId = "story_phone_alarm_channel"
+        // 使用 _v2 后缀的新 channel ID，强制重建 importance
+        val channelId = "story_phone_alarm_channel_v2"
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             var channel = nm.getNotificationChannel(channelId)
             if (channel == null) {
+                nm.deleteNotificationChannel("story_phone_alarm_channel")
                 channel = android.app.NotificationChannel(channelId, "叙事诗闹钟提醒", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
-                    description = "应用内定时闹钟到点提醒"
+                    description = "应用内定时闹钟到点提醒（Heads-up 弹出式）"
+                    enableVibration(true)
+                    enableLights(true)
+                    lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                 }
                 nm.createNotificationChannel(channel)
             }
@@ -502,7 +507,12 @@ class InAppAlarmReceiver : BroadcastReceiver() {
             .setSmallIcon(smallIcon)
             .setContentTitle("叙事诗闹钟")
             .setContentText(message)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(message))
             .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setCategory(androidx.core.app.NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
+            .setVibrate(longArrayOf(0, 500, 300, 500))
+            .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_SOUND)
             .setAutoCancel(true)
             .setContentIntent(pi)
             .build()

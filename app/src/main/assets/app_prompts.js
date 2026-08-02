@@ -232,20 +232,28 @@ async function buildGlobalSystemPrompt(sessionId) {
     }
 
     // 将用户导入的本地 MP3/WAV 音乐列表同步喂给大模型！
+    // 优先读取合并后的歌单信息（本地+乐库），降级读取仅本地的歌单信息
+    const mcpMergedSongs = localStorage.getItem("mcp_merged_playlist_info");
     const mcpSongs = localStorage.getItem("mcp_playlist_titles");
-    if (mcpSongs) {
+    let songsForPrompt = [];
+    if (mcpMergedSongs) {
+      try { songsForPrompt = JSON.parse(mcpMergedSongs); } catch(e) {}
+    } else if (mcpSongs) {
       try {
-        const songs = JSON.parse(mcpSongs);
-        if (songs.length > 0) {
-          mcpPrompt += `- 当前用户手机内导入的设备本地歌单（共 ${songs.length} 首）：\n`;
-          songs.forEach((s, idx) => {
-            mcpPrompt += `  * [歌曲索引: ${idx}] - "${s}"\n`;
-          });
-          mcpPrompt += `\n【核心交互指令】：在聊天中，如果你觉得气氛合适，或者在探讨音乐、深夜闲聊等特定语境下，你可以主动挑选上述歌单里的任意一首歌播放给用户听。
+        const localSongs = JSON.parse(mcpSongs);
+        songsForPrompt = localSongs.map((s, idx) => ({ index: idx, source: 'local', title: s, artist: '' }));
+      } catch(e) {}
+    }
+    if (songsForPrompt.length > 0) {
+      mcpPrompt += `- 当前用户可播放的歌单（共 ${songsForPrompt.length} 首，含本地歌曲与乐库歌单）：\n`;
+      songsForPrompt.forEach(s => {
+        const srcTag = s.source === 'library' ? '[乐库]' : '[本地]';
+        const artist = s.artist ? ` - ${s.artist}` : '';
+        mcpPrompt += `  * [歌曲索引: ${s.index}] ${srcTag} "${s.title}"${artist}\n`;
+      });
+      mcpPrompt += `\n【核心交互指令】：在聊天中，如果你觉得气氛合适，或者在探讨音乐、深夜闲聊等特定语境下，你可以主动挑选上述歌单里的任意一首歌播放给用户听。
 若你想控制用户手机自动播放歌单中的某一首音乐，请在你的回复文本最末尾追加以下格式的播放指令（必须单独占一行）：
 [PLAY_MUSIC]{"index": 歌曲索引}\n`;
-        }
-      } catch(e) {}
     }
 
     mcpPrompt += `\n请你在后续的对白或动作白描中，极其自然地融入当前的天气气温或所处地理特征，或根据歌单里的歌名展开讨论，在对白中进行合乎人设的引导！`;

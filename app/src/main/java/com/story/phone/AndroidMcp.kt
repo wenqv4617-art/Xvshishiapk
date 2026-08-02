@@ -88,14 +88,20 @@ class AndroidMcp(private val context: Context) {
     fun showSystemNotification(title: String, message: String) {
         Log.d(TAG, "showSystemNotification() called, title=$title, message=${message.take(50)}...")
         try {
-            val channelId = "story_phone_bg_channel"
+            // 使用 _v2 后缀的新 channel ID，强制重建 importance（旧 channel 的 importance 一旦创建无法代码修改）
+            val channelId = "story_phone_bg_channel_v2"
             val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
             
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 var channel = notificationManager.getNotificationChannel(channelId)
                 if (channel == null) {
-                    channel = android.app.NotificationChannel(channelId, "叙事诗后台通知", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
-                        description = "用于接收后台聊天消息通知"
+                    // 先删除旧 channel（如果存在），确保新 channel 的 importance 生效
+                    notificationManager.deleteNotificationChannel("story_phone_bg_channel")
+                    channel = android.app.NotificationChannel(channelId, "叙事诗消息通知", android.app.NotificationManager.IMPORTANCE_HIGH).apply {
+                        description = "用于接收后台聊天消息通知（Heads-up 弹出式）"
+                        enableVibration(true)
+                        enableLights(true)
+                        lockscreenVisibility = android.app.Notification.VISIBILITY_PUBLIC
                     }
                     notificationManager.createNotificationChannel(channel)
                 }
@@ -117,7 +123,12 @@ class AndroidMcp(private val context: Context) {
                 .setSmallIcon(R.drawable.ic_launcher)
                 .setContentTitle(title)
                 .setContentText(message)
+                .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(message))
                 .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setCategory(androidx.core.app.NotificationCompat.CATEGORY_MESSAGE)
+                .setVisibility(androidx.core.app.NotificationCompat.VISIBILITY_PUBLIC)
+                .setVibrate(longArrayOf(0, 250, 200, 250))
+                .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_SOUND)
                 .setAutoCancel(true)
                 .setContentIntent(pendingIntent)
                 .build()

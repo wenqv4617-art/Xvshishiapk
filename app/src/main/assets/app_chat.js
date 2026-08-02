@@ -5013,16 +5013,43 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text') {
   await appendMessageToDOM(msg);
 
   if (senderType === 'char' && localStorage.getItem("settings-background-enabled") === "true") {
+    const sess = await db.sessions.get(activeSessionId);
+    const char = sess ? await db.archives.get(sess.charId) : null;
+    const senderName = sess?.customCharName || char?.name || "对方";
+    let cleanText = content;
+    if (contentType === 'voice') cleanText = "[语音消息]";
+    else if (contentType === 'image') cleanText = "[图片与描述]";
+    else if (contentType === 'transfer') cleanText = "[微信转账]";
+    else if (contentType === 'red_envelope') cleanText = "[微信红包]";
+    // APK 环境优先使用 AndroidMCP 原生通知
     if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
-      const sess = await db.sessions.get(activeSessionId);
-      const char = sess ? await db.archives.get(sess.charId) : null;
-      const senderName = sess?.customCharName || char?.name || "对方";
-      let cleanText = content;
-      if (contentType === 'voice') cleanText = "[语音消息]";
-      else if (contentType === 'image') cleanText = "[图片与描述]";
-      else if (contentType === 'transfer') cleanText = "[微信转账]";
-      else if (contentType === 'red_envelope') cleanText = "[微信红包]";
       window.AndroidMCP.showSystemNotification(senderName, cleanText);
+    } else if ('Notification' in window) {
+      // 浏览器环境 fallback：Web Notification API（页面后台/最小化时也能弹出）
+      try {
+        if (Notification.permission === 'default') {
+          await Notification.requestPermission();
+        }
+        if (Notification.permission === 'granted') {
+          // 头像优先用网络 URL 字符串，否则回落到 icon-192.png（Blob 类型无法跨 SW 传递）
+          const avatarSrc = (char && typeof char.avatar === 'string' && char.avatar) ? char.avatar : './icon-192.png';
+          const options = {
+            body: cleanText,
+            icon: avatarSrc,
+            tag: `chat-${activeSessionId}`,
+            requireInteraction: false
+          };
+          // 优先通过 service worker 显示（后台/最小化也能显示）
+          const reg = window._swRegistration || (await navigator.serviceWorker?.getRegistration?.());
+          if (reg && typeof reg.showNotification === 'function') {
+            reg.showNotification(senderName, options);
+          } else {
+            new Notification(senderName, options);
+          }
+        }
+      } catch (e) {
+        console.warn('Web Notification 发送失败:', e);
+      }
     }
   }
 }
@@ -5738,6 +5765,24 @@ async function triggerOfflineReply() {
         }
 
         if (!rawReply) return;
+
+        // === 离线剧场模式：擦除 PLAY_MUSIC 放歌指令，避免污染对话气泡 ===
+        const playMusicRegexOffline = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
+        const playMusicMatchOffline = rawReply.match(playMusicRegexOffline);
+        if (playMusicMatchOffline) {
+          try {
+            const parsed = JSON.parse(playMusicMatchOffline[2]);
+            const targetIndex = parseInt(parsed.index);
+            if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
+              window.mcpSystem.playTrackByIndex(targetIndex);
+            } else if (parsed.title && window.mcpSystem && typeof window.mcpSystem.playTrackByTitle === 'function') {
+              window.mcpSystem.playTrackByTitle(parsed.title);
+            }
+          } catch(e) {
+            console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
+          }
+          rawReply = rawReply.replace(playMusicRegexOffline, "").trim();
+        }
 
         const msg = {
           theaterId: isOfflineTheater ? activeTheaterId : 0,
