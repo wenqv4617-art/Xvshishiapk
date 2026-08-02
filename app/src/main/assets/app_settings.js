@@ -324,14 +324,16 @@ function openSettingsLv2(subTab) {
     beautify: '桌面美化设置',
     css: '全局 CSS 注入',
     widget: '组件工坊',
-    deeptalk: '深谈预设设置', 
+    deeptalk: '深谈预设设置',
     data: '数据分区管理',
-    'force-update': '系统强更新'
+    'force-update': '系统强更新',
+    changelog: '更新日志'
   };
   document.getElementById("settings-title").innerText = titles[subTab] || '系统设置';
-  
+
   if (subTab === 'data') computeStorageUsage();
   if (subTab === 'account') loadAccountSettingsInfo();
+  if (subTab === 'changelog' && window.changelogSystem) window.changelogSystem.initChangelogPanel();
 }
 
 async function loadAccountSettingsInfo() {

@@ -438,7 +438,17 @@
                   <span class="slider"></span>
                 </label>
               </div>
+              <!-- 更新日志入口 -->
+              <div class="menu-item" onclick="openSettingsLv2('changelog')">
+                <span>更新日志</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
             </div>
+
+          <!-- 二级：更新日志 -->
+          <div id="settings-lv2-changelog" class="settings-lv2-panel" style="display:none;">
+            <div id="changelog-content" style="padding:4px 0;"></div>
+          </div>
 
           <!-- 二级：账号安全管理 -->
           <div id="settings-lv2-account" class="settings-lv2-panel" style="display:none;">
@@ -5053,6 +5063,7 @@
   <script src="app_prompts.js"></script>
   <script src="app_desktop.js"></script>
   <script src="app_settings.js"></script>
+  <script src="app_changelog.js"></script>
   <script src="app_archive.js"></script>
   <script src="app_world_book.js"></script>
   <script src="app_tts.js"></script>

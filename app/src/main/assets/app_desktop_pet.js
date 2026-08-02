@@ -697,18 +697,71 @@
 请根据你当前的人设关系、世界书语境，发送一条极其自然、带有你特定情绪色彩的消息。控制在40字内。
 表现得就像在真实的微信聊天中，你突然想跟对方聊天一样自然，严禁刻板套话。`;
 
-        // 加载历史
+        // 加载历史（含时间间隔提示、contentType 处理、think 标签剥除）
         const history = await db.messages.where('sessionId').equals(sess.id).reverse().limit(10).toArray();
         history.reverse();
 
         const messagesToSend = [{ role: "system", content: systemPrompt }];
+        let prevTime = null;
         history.forEach(h => {
-          let cleanContent = h.content;
-          if (typeof cleanContent === 'string') {
-            cleanContent = cleanContent.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+          // 智能计算时间间隔插入系统提示（超过15分钟自动提示时间流逝）
+          if (prevTime !== null && h.timestamp) {
+            const diffMs = h.timestamp - prevTime;
+            const diffMin = Math.floor(diffMs / 60000);
+            if (diffMin >= 15) {
+              let timeGapText = "";
+              if (diffMin < 60) {
+                timeGapText = `[系统提示：距离上一条对话过去了 ${diffMin} 分钟]`;
+              } else if (diffMin < 1440) {
+                const diffHours = (diffMin / 60).toFixed(1);
+                timeGapText = `[系统提示：距离上一条对话过去了 ${diffHours} 小时]`;
+              } else {
+                const diffDays = Math.floor(diffMin / 1440);
+                timeGapText = `[系统提示：距离上一条对话过去了 ${diffDays} 天]`;
+              }
+              messagesToSend.push({ role: "system", content: timeGapText });
+            }
           }
-          messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: cleanContent });
+          prevTime = h.timestamp || prevTime;
+
+          let displayContent = h.content;
+          if (typeof displayContent === 'string') {
+            // 剥离 MSG_ID 标签
+            displayContent = displayContent.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+            // 剥离旧思维链 <think>...</think>
+            displayContent = displayContent.replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "").trim();
+          }
+
+          // contentType 处理：把图片/语音/通话/社交动作等转为可读摘要，避免裸 JSON 污染上下文
+          if (h.isRecalled === 1) {
+            displayContent = "[已撤回该消息]";
+          } else if (h.contentType === 'image') {
+            try { const d = JSON.parse(h.content); displayContent = `[图片描述: ${d.text}]`; } catch(e) {}
+          } else if (h.contentType === 'voice') {
+            try { const d = JSON.parse(h.content); displayContent = `[语音转文字: ${d.text}]`; } catch(e) {}
+          } else if (h.contentType === 'call') {
+            try {
+              const c = JSON.parse(h.content);
+              displayContent = c.rejected ? `[你拒绝了对方的${c.type === 'video' ? '视频' : '语音'}通话请求]` : `[${c.type === 'video' ? '视频' : '语音'}通话记录 · ${c.summary || ''}]`;
+            } catch(e) { displayContent = "[通话记录]"; }
+          } else if (h.contentType === 'social_notice') {
+            try { const sn = JSON.parse(h.content); displayContent = `[你发了一条朋友圈：${sn.summary || ''}]`; } catch(e) { displayContent = "[社交动作记录]"; }
+          } else if (h.contentType === 'moment_share') {
+            try { const ms = JSON.parse(h.content); displayContent = `[转发了一条朋友圈：${ms.summary || ''}]`; } catch(e) { displayContent = "[转发了一条朋友圈]"; }
+          } else if (h.contentType === 'forum_post_share') {
+            try { const fps = JSON.parse(h.content); displayContent = `[转发了一条论坛帖子《${fps.title || ''}》]`; } catch(e) { displayContent = "[转发了一条论坛帖子]"; }
+          }
+
+          if (displayContent) {
+            messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: displayContent });
+          }
         });
+
+        // 末尾再插入一条系统提示，强调当前是主动发信场景，避免 AI 误把 user 最后一条当待回复消息
+        const lastMsg = history[history.length - 1];
+        if (lastMsg && lastMsg.senderType === 'user') {
+          messagesToSend.push({ role: "system", content: "【重要提醒：以上最后一条是用户之前发来的消息，你已经回复过了。现在是你主动发起一条新消息的时刻，不要回复或重复回应用户的最后那条消息，而是主动开启一个全新的自然话题。】" });
+        }
 
         // 查找 API Preset
         const presetId = localStorage.getItem("global_api_preset_id");
@@ -730,7 +783,39 @@
         const result = await response.json();
         let reply = result.choices[0].message.content.trim();
 
-        reply = reply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+        // 剥离 MSG_ID 标签 + think 标签 + AI 可能模仿输出的系统提示标签
+        reply = reply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "");
+        reply = reply.replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "");
+        reply = reply.replace(/[\[【]系统提示[：:][^\]】]*[\]】]/gi, "");
+
+        // === 解析并剥除 PLAY_MUSIC 放歌指令 ===
+        const playMusicRegex = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
+        const playMusicMatch = reply.match(playMusicRegex);
+        if (playMusicMatch) {
+          try {
+            const parsed = JSON.parse(playMusicMatch[2]);
+            const targetIndex = parseInt(parsed.index);
+            if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
+              window.mcpSystem.playTrackByIndex(targetIndex);
+            } else if (parsed.title && window.mcpSystem && typeof window.mcpSystem.playTrackByTitle === 'function') {
+              window.mcpSystem.playTrackByTitle(parsed.title);
+            }
+          } catch(e) { console.warn("主动发信：解析放歌指令失败:", e); }
+          reply = reply.replace(playMusicRegex, "").trim();
+        }
+
+        // === 解析并剥除 SET_ALARM 设闹钟指令（容错版）===
+        const setAlarmRegex = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
+        const setAlarmMatch = reply.match(setAlarmRegex);
+        if (setAlarmMatch) {
+          if (window.mcpSystem && typeof window.mcpSystem.setAlarmFromRawJson === 'function') {
+            window.mcpSystem.setAlarmFromRawJson(setAlarmMatch[2]);
+          }
+          reply = reply.replace(setAlarmRegex, "").trim();
+        }
+
+        reply = reply.trim();
+        if (!reply) return;  // 若剥除指令后为空，不存空消息
 
         const newMsg = {
           sessionId: sess.id,

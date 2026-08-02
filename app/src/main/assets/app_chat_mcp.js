@@ -253,7 +253,7 @@
 
     /**
      * 从原始 JSON 字符串解析并执行 SET_ALARM（容错版）。
-     * 先尝试 JSON.parse；失败则用子正则提取 delay/title/ringtone，
+     * 先尝试 JSON.parse；失败则用子正则提取 delay/title/ringtone/unit，
      * 确保即使 AI 输出畸形 JSON（如未加引号的 ringtone）也能设闹钟。
      */
     setAlarmFromRawJson: function(jsonStr) {
@@ -262,12 +262,16 @@
         opts = JSON.parse(jsonStr);
       } catch(e) {
         console.warn("SET_ALARM JSON 解析失败，启用容错提取:", e);
-        const delayMatch = jsonStr.match(/"delay"\s*:\s*(\d+)/);
-        if (!delayMatch) {
+        // 容错提取 delay（支持数字或带单位的字符串）
+        const delayNumMatch = jsonStr.match(/"delay"\s*:\s*(\d+(?:\.\d+)?)/);
+        const delayStrMatch = jsonStr.match(/"delay"\s*:\s*"(\d+(?:\.\d+)?\s*(?:秒|分钟|分|小时|时|天))"/i);
+        if (!delayNumMatch && !delayStrMatch) {
           console.warn("容错提取失败：未找到 delay 字段");
           return false;
         }
-        opts = { delay: parseInt(delayMatch[1]) };
+        opts = { delay: delayStrMatch ? delayStrMatch[1] : parseInt(delayNumMatch[1]) };
+        const unitMatch = jsonStr.match(/"unit"\s*:\s*"([^"]*)"/i);
+        if (unitMatch) opts.unit = unitMatch[1];
         const titleMatch = jsonStr.match(/"title"\s*:\s*"([^"]*)"/);
         if (titleMatch) opts.title = titleMatch[1];
         const ringtoneMatch = jsonStr.match(/"ringtone"\s*:\s*(?:"([^"]*)"|(\d+))/);
@@ -278,15 +282,54 @@
     },
 
     /**
+     * 将 delay 解析为秒数。支持：
+     * - 纯数字（秒，向后兼容）：1800
+     * - 带单位的字符串："30分钟"、"2小时"、"90秒"、"1.5小时"、"1天"
+     * - 配合 unit 字段：{delay: 30, unit: "分钟"}
+     */
+    _parseDelayToSeconds: function(delay, unit) {
+      if (delay === undefined || delay === null) return NaN;
+      // 如果有 unit 字段，delay 当数字处理
+      if (unit && typeof unit === 'string') {
+        const num = parseFloat(delay);
+        if (isNaN(num)) return NaN;
+        const u = unit.trim().toLowerCase();
+        if (u === '秒' || u === 's' || u === 'sec' || u === 'seconds') return num;
+        if (u === '分' || u === '分钟' || u === 'min' || u === 'minute' || u === 'minutes') return num * 60;
+        if (u === '时' || u === '小时' || u === 'h' || u === 'hour' || u === 'hours') return num * 3600;
+        if (u === '天' || u === 'day' || u === 'days') return num * 86400;
+        return num; // 未知单位按秒
+      }
+      // 字符串带单位
+      if (typeof delay === 'string') {
+        const m = delay.trim().match(/^(\d+(?:\.\d+)?)\s*(秒|秒钟|分|分钟|时|小时|天)?$/);
+        if (m) {
+          const num = parseFloat(m[1]);
+          const u = m[2];
+          if (!u || u === '秒' || u === '秒钟') return num;
+          if (u === '分' || u === '分钟') return num * 60;
+          if (u === '时' || u === '小时') return num * 3600;
+          if (u === '天') return num * 86400;
+        }
+        // 兜底：纯数字字符串
+        const pureNum = parseFloat(delay);
+        return pureNum;
+      }
+      // 纯数字（秒）
+      return parseFloat(delay);
+    },
+
+    /**
      * AI 自主设闹钟指令封装（供 app_chat.js 解析 [SET_ALARM] 调用）。
-     * opts: { delay:秒数, title:标题, ringtone?:歌曲索引(数字)|歌曲标题(字符串) }
+     * opts: { delay:秒数|带单位字符串, unit?:单位, title:标题, ringtone?:歌曲索引|歌曲标题 }
      */
     setAlarmByCommand: function(opts) {
-      const delay = parseInt(opts.delay);
+      const delay = this._parseDelayToSeconds(opts.delay, opts.unit);
       if (isNaN(delay) || delay <= 0) {
-        console.warn("SET_ALARM delay 非法:", opts.delay);
+        console.warn("SET_ALARM delay 非法:", opts.delay, opts.unit);
         return false;
       }
+      const delaySec = Math.ceil(delay);
       const title = (opts.title || "AI 闹钟提醒").toString();
       // ringtone: 数字索引 | 字符串标题 | undefined
       let ringtone = "default";
@@ -294,19 +337,19 @@
         ringtone = opts.ringtone;
       }
 
-      const targetDate = new Date(Date.now() + delay * 1000);
+      const targetDate = new Date(Date.now() + delaySec * 1000);
       const hour = targetDate.getHours();
       const minute = targetDate.getMinutes();
       const triggerTimeMillis = targetDate.getTime();
 
-      const ok = this._scheduleAlarm(delay, hour, minute, triggerTimeMillis, title, ringtone, false);
+      const ok = this._scheduleAlarm(delaySec, hour, minute, triggerTimeMillis, title, ringtone, false);
 
       // AI 路径也给 toast 提示（不关面板，方便用户看到 AI 设了闹钟）
       if (ok) {
         const timeStr = hour + ":" + String(minute).padStart(2, '0');
-        showToast(`AI 已设定闹钟：${timeStr} 响铃（${delay}秒后，标题"${title}"）`);
+        showToast(`AI 已设定闹钟：${timeStr} 响铃（${delaySec}秒后，标题"${title}"）`);
       } else {
-        showToast(`AI 闹钟设定失败，已降级为模拟模式（${delay}秒后提醒）`);
+        showToast(`AI 闹钟设定失败，已降级为模拟模式（${delaySec}秒后提醒）`);
       }
       return ok;
     },
