@@ -1801,48 +1801,288 @@ ${historyText || "刚刚相见，倍感温润。"}`;
       if (!flow) return;
       flow.innerHTML = "";
 
-      const msgs = await db.table('couples_whispers')
+      // 先做"3天自动归档"巡检：把超过 3 天未结束的话题自动归档并总结进记忆库
+      await this.autoArchiveExpiredTopics();
+
+      // 只渲染未归档的悄悄话消息（archived !== 1）
+      const allMsgs = await db.table('couples_whispers')
         .where('charId').equals(Number(this.activeCharId))
         .sortBy('timestamp');
+      const msgs = allMsgs.filter(m => m.archived !== 1);
 
       if (msgs.length === 0) {
-        flow.innerHTML = `<p style="text-align:center; font-size:11px; color:#94a3b8; padding:32px 0;">这是一个只属于你们两人的私密夜聊空间。点击右上角可以发起一个‘高黏度话题’来互动。</p>`;
-        return;
+        flow.innerHTML = `<p style="text-align:center; font-size:11px; color:#94a3b8; padding:32px 0;">这是一个只属于你们两人的私密夜聊空间。点击右上角可以发起一个‘高黏度话题’来互动。对方也可能主动发起一个话题来找你聊。</p>`;
+      } else {
+        msgs.forEach(m => {
+          const div = document.createElement("div");
+          div.className = `couples-whisper-card ${m.senderType === 'user' ? 'user' : 'char'}`;
+          div.innerText = m.content;
+
+          div.ondblclick = (e) => {
+            e.preventDefault();
+            this.triggerWhisperEditDialog(m.id, m.content);
+          };
+
+          flow.appendChild(div);
+        });
       }
 
-      msgs.forEach(m => {
-        const div = document.createElement("div");
-        div.className = `couples-whisper-card ${m.senderType === 'user' ? 'user' : 'char'}`;
-        div.innerText = m.content;
-        
-        div.ondblclick = (e) => {
-          e.preventDefault();
-          this.triggerWhisperEditDialog(m.id, m.content);
-        };
-
-        flow.appendChild(div);
-      });
-
-      const topicStateKey = `couples_whisper_topic_state_${this.activeMeId}_${this.activeCharId}`;
-      const topicTitle = localStorage.getItem(topicStateKey);
-      const initiatorKey = `couples_whisper_topic_initiator_${this.activeMeId}_${this.activeCharId}`;
-      const topicInitiator = localStorage.getItem(initiatorKey) || 'char';
+      // 同步当前活动话题状态条（优先从 topics 表读取活动话题，向后兼容 localStorage）
       const bar = document.getElementById("couples-whisper-topic-status-bar");
-      
-      if (topicTitle) {
+      let activeTopic = await this.getActiveTopic();
+      if (activeTopic) {
         this.whisperTopicActive = true;
-        this.activeTopicDesc = topicTitle;
-        this.whisperTopicInitiator = topicInitiator;
+        this.activeTopicDesc = activeTopic.topicTitle;
+        this.whisperTopicInitiator = activeTopic.initiator || 'char';
+        this.activeTopicId = activeTopic.id;
+        this.activeTopicStartTime = activeTopic.startTime;
         if (bar) {
           bar.style.display = "flex";
-          document.getElementById("couples-whisper-topic-title").innerText = `正在探讨：${topicTitle} (${topicInitiator === 'user' ? '由我发起' : '由对方发起'})`;
+          const elapsed = Date.now() - (activeTopic.startTime || Date.now());
+          const remainMs = Math.max(0, 3 * 24 * 3600 * 1000 - elapsed);
+          const remainDays = Math.ceil(remainMs / (24 * 3600 * 1000));
+          const remainLabel = remainMs > 0 ? `· 剩余约 ${remainDays} 天自动归档` : '· 即将自动归档';
+          document.getElementById("couples-whisper-topic-title").innerText = `正在探讨：${activeTopic.topicTitle} (${activeTopic.initiator === 'user' ? '由我发起' : '由对方发起'} ${remainLabel})`;
+          // 结束话题按钮改为"归档并结束"
+          const endBtn = document.getElementById("btn-couples-whisper-topic-end");
+          if (endBtn) endBtn.innerText = "归档并结束";
         }
       } else {
         this.whisperTopicActive = false;
+        this.activeTopicId = null;
         if (bar) bar.style.display = "none";
       }
 
+      // 渲染底部"历史归档"入口按钮（仅当存在已归档话题时显示）
+      await this.renderWhisperArchiveEntry();
+
       flow.scrollTop = flow.scrollHeight;
+    },
+
+    // 获取当前未归档的活动话题（从 topics 表读，向后兼容旧 localStorage 主题）
+    async getActiveTopic() {
+      try {
+        const topics = await db.table('couples_whisper_topics')
+          .where('charId').equals(Number(this.activeCharId))
+          .and(t => t.archived !== 1)
+          .sortBy('startTime');
+        if (topics.length > 0) {
+          const t = topics[topics.length - 1];
+          return t;
+        }
+      } catch(e) { console.warn("读取 whisper topics 失败", e); }
+      // 向后兼容：旧 localStorage 主题
+      const topicStateKey = `couples_whisper_topic_state_${this.activeMeId}_${this.activeCharId}`;
+      const topicTitle = localStorage.getItem(topicStateKey);
+      if (topicTitle) {
+        const initiatorKey = `couples_whisper_topic_initiator_${this.activeMeId}_${this.activeCharId}`;
+        const topicInitiator = localStorage.getItem(initiatorKey) || 'char';
+        // 迁移到 topics 表
+        const newId = await db.table('couples_whisper_topics').add({
+          charId: Number(this.activeCharId),
+          meId: Number(this.activeMeId),
+          topicTitle: topicTitle,
+          initiator: topicInitiator,
+          startTime: Date.now(),
+          endTime: 0,
+          archived: 0,
+          summary: ''
+        });
+        localStorage.removeItem(topicStateKey);
+        localStorage.removeItem(initiatorKey);
+        return await db.table('couples_whisper_topics').get(newId);
+      }
+      return null;
+    },
+
+    // 3天自动归档巡检：超过 3 天的活动话题自动归档 + 总结
+    async autoArchiveExpiredTopics() {
+      try {
+        const THREE_DAYS = 3 * 24 * 3600 * 1000;
+        const now = Date.now();
+        const activeTopics = await db.table('couples_whisper_topics')
+          .where('charId').equals(Number(this.activeCharId))
+          .and(t => t.archived !== 1)
+          .toArray();
+        for (const t of activeTopics) {
+          if (t.startTime && (now - t.startTime) >= THREE_DAYS) {
+            await this.archiveTopic(t.id, true);
+          }
+        }
+      } catch(e) { console.warn("自动归档巡检失败", e); }
+    },
+
+    // 归档指定话题：总结消息 -> 写入记忆库 summaries -> 标记话题与消息为已归档
+    async archiveTopic(topicId, isAuto = false) {
+      try {
+        const topic = await db.table('couples_whisper_topics').get(topicId);
+        if (!topic) return;
+        // 拉取该话题下所有消息
+        const allMsgs = await db.table('couples_whispers')
+          .where('charId').equals(Number(this.activeCharId))
+          .sortBy('timestamp');
+        const topicMsgs = allMsgs.filter(m => Number(m.topicId) === Number(topicId));
+        if (topicMsgs.length === 0) {
+          // 空话题直接归档
+          await db.table('couples_whisper_topics').update(topicId, { archived: 1, endTime: Date.now(), summary: '(空话题)' });
+          return;
+        }
+
+        // 调用 LLM 总结这段悄悄话
+        const summary = await this.summarizeWhisperTopic(topic, topicMsgs);
+
+        // 写入记忆库 db.summaries（情侣空间会话复用主会话 sessionId，若无则用 0）
+        let sessId = Number(this.activeSessionId) || 0;
+        if (!sessId) {
+          // 尝试查找该角色的主会话
+          const sessList = await db.sessions.where('userId').equals(Number(this.activeMeId)).toArray();
+          const targetSess = sessList.find(s => s.charId === Number(this.activeCharId));
+          sessId = targetSess ? targetSess.id : 0;
+        }
+        if (sessId && summary) {
+          await db.summaries.add({
+            sessionId: sessId,
+            startRound: 0,
+            endRound: 0,
+            content: `【情侣空间·悄悄话归档】话题《${topic.topicTitle}》（${topic.initiator === 'user' ? '我发起' : '对方发起'}）：${summary}`,
+            category: 'relationship',
+            keywords: JSON.stringify(['悄悄话', '情侣空间', topic.topicTitle]),
+            timestamp: Date.now(),
+            vector: null
+          });
+        }
+
+        // 标记话题为已归档
+        await db.table('couples_whisper_topics').update(topicId, {
+          archived: 1,
+          endTime: Date.now(),
+          summary: summary || '(总结失败)'
+        });
+        // 标记该话题下所有消息为已归档
+        for (const m of topicMsgs) {
+          await db.table('couples_whispers').update(m.id, { archived: 1 });
+        }
+
+        if (!isAuto) showToast("悄悄话话题已归档，总结已写入记忆库");
+        else showToast(`话题《${topic.topicTitle}》已达 3 天，已自动归档并总结`);
+      } catch(e) {
+        console.error("归档话题失败", e);
+        showToast("归档失败: " + e.message);
+      }
+    },
+
+    // 调用 LLM 总结一段悄悄话话题
+    async summarizeWhisperTopic(topic, topicMsgs) {
+      try {
+        const presetId = localStorage.getItem("global_api_preset_id");
+        const api = await db.api_presets.get(Number(presetId));
+        if (!api) return "";
+
+        const char = await db.archives.get(Number(this.activeCharId));
+        const user = await db.archives.get(Number(this.activeMeId));
+        const charName = char?.name || "对方";
+        const userName = user?.name || "我";
+
+        let historyText = "";
+        topicMsgs.forEach(m => {
+          const who = m.senderType === 'user' ? userName : charName;
+          historyText += `${who}: ${m.content}\n`;
+        });
+
+        const prompt = `你是情感记忆归档引擎。请把以下情侣在"悄悄话私密空间"中围绕话题《${topic.topicTitle}》的一段对话，压缩成一段 80-150 字的精华记忆摘要。
+要求：
+1. 客观记录双方的核心情绪表达、达成的情感共识、未解的心结。
+2. 保留双方人设与关系特征（[${charName}] 与 [${userName}]）。
+3. 直接输出纯文本摘要，不要任何 Markdown、标题、引号包裹。
+
+对话内容：
+${historyText}`;
+
+        const response = await fetch(`${api.url}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+          body: JSON.stringify({
+            model: api.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.4
+          })
+        });
+        if (!response.ok) return "";
+        const res = await response.json();
+        return (res.choices?.[0]?.message?.content || "").trim();
+      } catch(e) {
+        console.warn("总结悄悄话失败", e);
+        return "";
+      }
+    },
+
+    // 渲染底部"历史归档"入口按钮
+    async renderWhisperArchiveEntry() {
+      let entryBar = document.getElementById("couples-whisper-archive-entry");
+      // 统计已归档话题数
+      const archivedTopics = await db.table('couples_whisper_topics')
+        .where('charId').equals(Number(this.activeCharId))
+        .and(t => t.archived === 1)
+        .toArray();
+      if (archivedTopics.length === 0) {
+        if (entryBar) entryBar.remove();
+        return;
+      }
+      const flow = document.getElementById("couples-whisper-messages-flow");
+      if (!flow) return;
+      if (!entryBar) {
+        entryBar = document.createElement("div");
+        entryBar.id = "couples-whisper-archive-entry";
+        entryBar.style.cssText = "text-align:center; padding:10px; margin-top:12px; border-top:1px dashed #cbd5e1;";
+        flow.appendChild(entryBar);
+      } else {
+        entryBar.innerHTML = "";
+      }
+      const btn = document.createElement("button");
+      btn.className = "btn btn-outline";
+      btn.style.cssText = "font-size:11px; padding:6px 14px; border-radius:8px; color:#64748b; border-color:#cbd5e1;";
+      btn.innerText = `📦 历史归档 (${archivedTopics.length})`;
+      btn.onclick = () => this.openWhisperArchiveList();
+      entryBar.appendChild(btn);
+    },
+
+    // 打开历史归档列表浮层
+    async openWhisperArchiveList() {
+      const topics = await db.table('couples_whisper_topics')
+        .where('charId').equals(Number(this.activeCharId))
+        .and(t => t.archived === 1)
+        .reverse()
+        .sortBy('endTime');
+
+      let listHtml = `<div style="display:flex; flex-direction:column; gap:8px; max-height:60vh; overflow-y:auto;">`;
+      if (topics.length === 0) {
+        listHtml += `<p style="text-align:center; color:#94a3b8; font-size:12px; padding:20px 0;">暂无已归档的悄悄话话题</p>`;
+      } else {
+        topics.forEach(t => {
+          const timeStr = t.endTime ? new Date(t.endTime).toLocaleString() : '未知';
+          listHtml += `
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:10px 12px; text-align:left;">
+              <div style="font-size:12px; font-weight:700; color:#334155; margin-bottom:4px;">${this.escapeHtmlC(t.topicTitle || '未命名话题')}</div>
+              <div style="font-size:10px; color:#64748b; margin-bottom:6px;">${t.initiator === 'user' ? '我发起' : '对方发起'} · 归档于 ${timeStr}</div>
+              <div style="font-size:11px; color:#475569; line-height:1.5; background:#fff; padding:8px; border-radius:6px; border-left:3px solid #a78bfa;">${this.escapeHtmlC(t.summary || '(无总结)')}</div>
+            </div>
+          `;
+        });
+      }
+      listHtml += `</div>`;
+
+      this.showFrostedDialog("悄悄话历史归档", listHtml);
+      const overlay = document.querySelector(".couples-dialog-overlay");
+      if (overlay) {
+        overlay.querySelector("#btn-couples-dialog-cancel").style.display = "none";
+        overlay.querySelector("#btn-couples-dialog-confirm").style.display = "none";
+      }
+    },
+
+    // 简易 HTML 转义（情侣空间内部用）
+    escapeHtmlC(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     },
 
     triggerWhisperEditDialog(msgId, content) {
@@ -1887,12 +2127,18 @@ ${historyText || "刚刚相见，倍感温润。"}`;
       const text = input ? input.value.trim() : "";
       if (!text) return;
 
+      // 绑定当前活动话题 id（若有），便于归档时按话题切分
+      const activeTopic = await this.getActiveTopic();
+      const topicId = activeTopic ? activeTopic.id : null;
+
       await db.table('couples_whispers').add({
         charId: Number(this.activeCharId),
         meId: Number(this.activeMeId),
         senderType: "user",
         content: text,
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        topicId: topicId,
+        archived: 0
       });
 
       input.value = "";
@@ -1924,55 +2170,79 @@ ${historyText || "刚刚相见，倍感温润。"}`;
         const charName = char?.name || "对方";
         const userName = user?.name || "我";
 
-        const msgs = await db.table('couples_whispers')
+        // 关键修复"不读我的话"：只拉取当前活动话题下的消息（未归档），
+        // 而不是把所有悄悄话混在一起取末 8 条（之前会把别的话题内容当上下文）
+        const activeTopic = await this.getActiveTopic();
+        const currentTopicId = activeTopic ? activeTopic.id : null;
+        const allMsgs = await db.table('couples_whispers')
           .where('charId').equals(Number(this.activeCharId))
           .sortBy('timestamp');
+        // 优先取当前话题下消息；若无活动话题，则取所有未归档消息
+        let contextMsgs;
+        if (currentTopicId) {
+          contextMsgs = allMsgs.filter(m => Number(m.topicId) === Number(currentTopicId) && m.archived !== 1);
+        } else {
+          contextMsgs = allMsgs.filter(m => m.archived !== 1);
+        }
+        // 至少带上最近 12 条以保证连贯，但严格限定在当前话题内
+        contextMsgs = contextMsgs.slice(-12);
 
         let historyText = "";
-        msgs.slice(-8).forEach(m => {
-          historyText += `${m.senderType === 'user' ? 'User' : 'Char'}: ${m.content}\n`;
+        contextMsgs.forEach(m => {
+          const who = m.senderType === 'user' ? userName : charName;
+          historyText += `${who}: ${m.content}\n`;
         });
+        if (!historyText) historyText = "(对话刚开始，还没有历史)";
 
         let topicPrompt = "";
-        if (this.whisperTopicActive) {
-          if (this.whisperTopicInitiator === 'char') {
-            topicPrompt = `\n【当前处于共同探讨高粘度话题阶段：“${this.activeTopicDesc}”】：
-- 这个话题是由你（对方 Char）主动发起的，相当于你对用户表达了这一想法（或期望用户有所回应）。
-- 你本轮的所有心声输出，必须紧密围绕这个特定话题展开，你可以用撒娇、傲娇、受挫或极度倾诉欲的语气拉扯，引导用户来温和地哄你、安慰你或向你表达心意。
-- 如果用户还没有哄好你，或者你对用户的回答不满意，请继续进行情绪拉扯。
-- 在回复末尾，请加上针对当前话题用户表现的满意度判定（0-100）：
-[SATISFACTION] 满意度值 （必须单独占一行）`;
-          } else {
-            topicPrompt = `\n【当前处于共同探讨高粘度话题阶段：“${this.activeTopicDesc}”】：
-- 这个话题是由用户（User）主动发起的，相当于用户对你表达了这一心声（或向你倾诉了他们的脆弱，需要你来哄哄、体贴并宠溺他们）。
-- 你本轮的所有心声输出，必须紧密围绕这个特定话题展开，你必须主动、耐心地包容用户的情绪，展现出对用户无微不至的偏爱、心疼与温柔哄溺。
-- 如果用户的情绪还没有被你抚平，请用极其温暖、体贴的话语继续安慰。
-- 在回复末尾，请加上针对当前话题你自己对这段深入交流的满意度判定（0-100）：
-[SATISFACTION] 满意度值 （必须单独占一行）`;
-          }
+        if (activeTopic) {
+          const initByChar = activeTopic.initiator === 'char';
+          topicPrompt = `\n【当前处于共同探讨高粘度话题阶段："${activeTopic.topicTitle}"】：
+- 这个话题是由${initByChar ? '你（对方 ' + charName + '）' : '用户（' + userName + '）'}主动发起的。${initByChar ? '相当于你对用户表达了这一想法（或期望用户有所回应），你可以用撒娇、傲娇、受挫或极度倾诉欲的语气拉扯，引导用户来温和地哄你、安慰你或向你表达心意。' : '相当于用户向你倾诉了他们的脆弱，需要你来哄哄、体贴并宠溺他们。你必须主动、耐心地包容用户的情绪，展现出无微不至的偏爱、心疼与温柔哄溺。'}
+- 你本轮的所有心声输出，必须紧密围绕这个特定话题展开，严格承接用户上一句说的话回应，不要自顾自跑题。
+- 如果对方还没有哄好你 / 用户的情绪还没有被你抚平，请继续情绪拉扯，不要敷衍收尾。
+- 在回复末尾，请加上针对当前话题的满意度判定（0-100），必须单独占一行：
+[SATISFACTION] 满意度值`;
         }
+
+        // 主动发起/结束话题的指令说明（双方都可触发，与线上特殊格式同源）
+        const commandInstruction = `
+【悄悄话话题指令（你可主动使用，与线上特殊消息格式同源）】：
+1. 当你想要主动开启一个新的高粘度悄悄话话题时（而不是被动等用户发起），请在你的回复【最末尾】单独追加一行：
+[WHISPER_TOPIC_START]{"title":"你想聊的话题标题","initiator":"char"}
+   - title：话题标题，须贴合你此刻的心境与人设（如"今天一直在想我们第一次吵架"）
+   - initiator：固定填 "char"（表示由你发起）
+   - 注意：只有当前没有活动话题时才能发起；若已有活动话题，请先正常对话。
+2. 当你觉得这个话题已经聊到圆满 / 情绪已经释放完毕 / 你想主动收尾时，请在你的回复【最末尾】单独追加一行：
+[WHISPER_TOPIC_END]{}
+   - 触发后该话题会被归档并自动总结进长期记忆库，然后开始下一段。
+3. 这些指令行不会展示给用户看，只用于系统识别。指令行之外的你正常心声台词照常输出。`;
 
         const prompt = `【悄悄话灵魂交流任务】：
 你现在需要严格、深度地扮演 [${charName}]。
 在你们的关系中，【你首先是你自己（必须坚定坚守你的本性与核心人设，切勿媚俗或一味迎合，保持你特有的说话语调与内心骄傲）】，其次你才是对方的爱人。
 
-- 你的【角色背景设定】：\n${char?.persona || "一个普通人"}\n
+- 你的【角色背景设定】：
+${char?.persona || "一个普通人"}
+
 - 这里是只属于你和 [${userName}] 两人最私密的深夜悄悄话室（你可以在这里放下所有白天的伪装与防备）。
 
-请基于你们的交流历史与特定场景，写下你此时此刻真实、深刻、带有强烈个人性格印记的心声回复。
+请基于【当前话题内的完整对白历史】与你的心境，写下你此时此刻真实、深刻、带有强烈个人性格印记的心声回复。
 
 要求：
 1. 性格优先：每一句回复都必须百分之百符合你自身的原本人设（如傲娇、冷淡、温柔或内敛等），绝不能为了恋爱而产生 AI 机器人式的机械谄媚，你的自尊与骄傲必须依然存在。
-2. 连续发言：你可以说 1 到 2 句简短、有拉扯感、情绪递进的话。如果你有多句话要说，必须使用 [SPLIT] 分割。如：我想你了[SPLIT]其实，今天一直都在想你。
-3. 绝对不准带有任何 Emoji 字符和任何形式的括号动作描述。
-${topicPrompt}`;
+2. 承接上下文：必须紧扣对白历史里用户最近说的话回应，不要无视、不要跳过、不要自说自话。用户说的每一句你都要有情绪反馈。
+3. 连续发言：你可以说 1 到 2 句简短、有拉扯感、情绪递进的话。如果你有多句话要说，必须使用 [SPLIT] 分割。如：我想你了[SPLIT]其实，今天一直都在想你。
+4. 绝对不准带有任何 Emoji 字符和任何形式的括号动作描述。
+${topicPrompt}
+${commandInstruction}`;
 
         const response = await fetch(`${api.url}/chat/completions`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
           body: JSON.stringify({
             model: api.model,
-            messages: [{ role: "user", content: prompt + `\n\n对白历史：\n${historyText}` }],
+            messages: [{ role: "user", content: prompt + `\n\n当前话题对白历史：\n${historyText}` }],
             temperature: 0.85
           })
         });
@@ -1981,16 +2251,43 @@ ${topicPrompt}`;
         const res = await response.json();
         let reply = res.choices[0].message.content.trim();
 
+        // 1. 解析 [WHISPER_TOPIC_END]{} —— AI 主动结束并归档当前话题
+        let topicEndRequested = false;
+        const endMatch = reply.match(/\[WHISPER_TOPIC_END\]\s*\{\s*\}/i);
+        if (endMatch) {
+          topicEndRequested = true;
+          reply = reply.replace(/\[WHISPER_TOPIC_END\]\s*\{\s*\}/gi, "").trim();
+        }
+
+        // 2. 解析 [WHISPER_TOPIC_START]{"title":"...","initiator":"char"} —— AI 主动发起新话题
+        //    用括号平衡法提取 JSON
+        let newTopicStarted = null;
+        const startIdx = reply.indexOf('[WHISPER_TOPIC_START]');
+        if (startIdx !== -1) {
+          const afterStart = reply.substring(startIdx + '[WHISPER_TOPIC_START]'.length);
+          const balancedJson = this.extractBalancedJsonLocal(afterStart);
+          if (balancedJson) {
+            try {
+              newTopicStarted = JSON.parse(balancedJson);
+            } catch(e) { console.warn("解析 WHISPER_TOPIC_START JSON 失败", e); }
+          }
+          // 从回复中移除指令行
+          reply = (reply.substring(0, startIdx) + reply.substring(startIdx + '[WHISPER_TOPIC_START]'.length + (balancedJson ? balancedJson.length : 0))).trim();
+        }
+
+        // 3. 解析满意度
         const satMatch = reply.match(/\[SATISFACTION\]\s*(\d+)/i);
         if (satMatch) {
           const level = parseInt(satMatch[1]);
           this.whisperSatisfactionLevel = level;
           reply = reply.replace(/\[SATISFACTION\].*$/gi, "").trim();
 
-          if (level >= 90) {
-            setTimeout(() => {
-              showToast("对方的心防已被您彻底融化，话题探讨圆满成功！");
-              this.endWhisperTopic();
+          if (level >= 90 && activeTopic) {
+            // 满意度达标自动归档当前话题
+            setTimeout(async () => {
+              showToast("对方的心防已被您彻底融化，话题探讨圆满成功！正在归档...");
+              if (activeTopic) await this.archiveTopic(activeTopic.id, false);
+              await this.renderWhisperChat();
             }, 1000);
           }
         }
@@ -1998,9 +2295,21 @@ ${topicPrompt}`;
         // 移除等待提示载入框
         if (loader) loader.remove();
 
+        // 处理 AI 主动结束当前话题：先归档当前话题，再（若有）开启新话题
+        if (topicEndRequested && activeTopic) {
+          await this.archiveTopic(activeTopic.id, false);
+        }
+        if (newTopicStarted && newTopicStarted.title) {
+          await this.startWhisperTopic(newTopicStarted.title, newTopicStarted.initiator || 'char');
+        }
+
         // 将 reply 依据 [SPLIT] 分割并清洗存入 parts 中，供 renderNextPart 连发上屏 [3]
         parts = reply.split(/\[SPLIT\]|【SPLIT】/i);
         parts = parts.map(p => p.trim()).filter(Boolean);
+
+        // 绑定当前话题 id（若刚开了新话题则用新话题 id；若刚归档了旧话题且没开新话题则为 null）
+        const latestActiveTopic = await this.getActiveTopic();
+        const msgTopicId = latestActiveTopic ? latestActiveTopic.id : null;
 
         let currentPartIndex = 0;
         const renderNextPart = async () => {
@@ -2010,15 +2319,17 @@ ${topicPrompt}`;
               meId: Number(this.activeMeId),
               senderType: "char",
               content: parts[currentPartIndex],
-              timestamp: Date.now()
+              timestamp: Date.now(),
+              topicId: msgTopicId,
+              archived: 0
             });
             this.renderWhisperChat();
-            
+
             currentPartIndex++;
             if (currentPartIndex < parts.length) {
               const prevText = parts[currentPartIndex - 1];
               const delay = Math.max(1200, Math.min(2500, prevText.length * 80));
-              setTimeout(renderNextPart, delay); 
+              setTimeout(renderNextPart, delay);
             } else {
               if (btnReply) btnReply.disabled = false;
             }
@@ -2036,6 +2347,27 @@ ${topicPrompt}`;
         loader.innerText = "对方现在有些害羞脆弱，暂时不想多说。";
         if (btnReply) btnReply.disabled = false;
       }
+    },
+
+    // 括号平衡法提取首个 {...} JSON（仅供 whisper 模块本地用，避免与全局同名冲突）
+    extractBalancedJsonLocal(text) {
+      if (!text) return null;
+      const start = text.indexOf('{');
+      if (start === -1) return null;
+      let depth = 0, inStr = false, esc = false;
+      for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (inStr) {
+          if (esc) { esc = false; }
+          else if (ch === '\\') { esc = true; }
+          else if (ch === '"') { inStr = false; }
+        } else {
+          if (ch === '"') { inStr = true; }
+          else if (ch === '{') { depth++; }
+          else if (ch === '}') { depth--; if (depth === 0) return text.substring(start, i + 1); }
+        }
+      }
+      return null;
     },
 
     triggerWhisperTopicForm() {
@@ -2102,7 +2434,7 @@ ${topicPrompt}`;
       this.startWhisperTopic(text, this.whisperTopicInitiator);
     },
 
-    startWhisperTopic(topicTitle, initiator = 'char') {
+    async startWhisperTopic(topicTitle, initiator = 'char') {
       const overlay = document.querySelector(".couples-dialog-overlay");
       if (overlay) overlay.remove();
 
@@ -2111,31 +2443,50 @@ ${topicPrompt}`;
       this.whisperSatisfactionLevel = 0;
       this.whisperTopicInitiator = initiator;
 
-      const topicStateKey = `couples_whisper_topic_state_${this.activeMeId}_${this.activeCharId}`;
-      localStorage.setItem(topicStateKey, topicTitle);
-
-      const initiatorKey = `couples_whisper_topic_initiator_${this.activeMeId}_${this.activeCharId}`;
-      localStorage.setItem(initiatorKey, initiator);
+      // 写入 topics 表（持久化，支持 3 天自动归档与历史回溯）
+      const newId = await db.table('couples_whisper_topics').add({
+        charId: Number(this.activeCharId),
+        meId: Number(this.activeMeId),
+        topicTitle: topicTitle,
+        initiator: initiator,
+        startTime: Date.now(),
+        endTime: 0,
+        archived: 0,
+        summary: ''
+      });
+      this.activeTopicId = newId;
+      this.activeTopicStartTime = Date.now();
 
       const bar = document.getElementById("couples-whisper-topic-status-bar");
       if (bar) {
         bar.style.display = "flex";
-        document.getElementById("couples-whisper-topic-title").innerText = `正在探讨：${topicTitle} (${initiator === 'user' ? '由我发起' : '由对方发起'})`;
+        document.getElementById("couples-whisper-topic-title").innerText = `正在探讨：${topicTitle} (${initiator === 'user' ? '由我发起' : '由对方发起'} · 剩余约 3 天自动归档)`;
+        const endBtn = document.getElementById("btn-couples-whisper-topic-end");
+        if (endBtn) endBtn.innerText = "归档并结束";
       }
 
       this.renderWhisperChat();
     },
 
-    endWhisperTopic() {
-      const topicStateKey = `couples_whisper_topic_state_${this.activeMeId}_${this.activeCharId}`;
-      localStorage.removeItem(topicStateKey);
+    async endWhisperTopic() {
+      // 手动归档并结束当前活动话题：调用 archiveTopic 完成总结+入库
+      const activeTopic = await this.getActiveTopic();
+      if (activeTopic) {
+        await this.archiveTopic(activeTopic.id, false);
+      } else {
+        // 向后兼容：清理残留 localStorage
+        const topicStateKey = `couples_whisper_topic_state_${this.activeMeId}_${this.activeCharId}`;
+        localStorage.removeItem(topicStateKey);
+        showToast("话题讨论已安全存档关闭");
+      }
       this.whisperTopicActive = false;
       this.whisperSatisfactionLevel = 0;
+      this.activeTopicId = null;
 
       const bar = document.getElementById("couples-whisper-topic-status-bar");
       if (bar) bar.style.display = "none";
 
-      showToast("话题讨论已安全存档关闭");
+      this.renderWhisperChat();
     },
 
     // ==========================================================================

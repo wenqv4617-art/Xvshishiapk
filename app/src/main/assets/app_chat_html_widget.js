@@ -50,10 +50,21 @@
 
           const cardEl = document.createElement("div");
           cardEl.className = "html-card";
+          // 指令超 150 字时折叠为一行，点击可展开
+          const promptText = String(card.prompt || '');
+          const isLongPrompt = promptText.length > 150;
+          const promptCollapsed = isLongPrompt ? promptText.slice(0, 150) + '...' : promptText;
+
           cardEl.innerHTML = `
             <div class="html-card-header">
               <span class="html-card-title">WIDGET_PROTOCOL_ID: #${card.id}</span>
               <div style="display: flex; gap: 10px;">
+                <!-- 大卡片预览按钮 (展开全屏预览) -->
+                <button class="btn-icon" onclick="chatHtmlWidgetSystem.openPreview(${card.id})" style="color: #34d399;" title="展开大卡片预览">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 3h6v6"/><path d="M9 21H3v-6"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/>
+                  </svg>
+                </button>
                 <!-- 一键清洗按钮 (支持无损双态切换) -->
                 <button class="btn-icon" id="btn-clean-${card.id}" onclick="chatHtmlWidgetSystem.cleanCard(${card.id})" style="color: ${cleanBtnColor};" title="${cleanBtnTitle}">
                   <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -72,9 +83,12 @@
                 </button>
               </div>
             </div>
-            <div class="html-card-prompt">指令: ${escapeHtml(card.prompt)}</div>
+            <div class="html-card-prompt${isLongPrompt ? ' html-card-prompt-collapsible' : ''}" id="html-card-prompt-${card.id}" ${isLongPrompt ? `data-collapsed="1" onclick="chatHtmlWidgetSystem.togglePrompt(${card.id})"` : ''}>
+              <span class="html-card-prompt-prefix">指令: </span><span class="html-card-prompt-text">${escapeHtml(promptCollapsed)}</span>${isLongPrompt ? '<span class="html-card-prompt-toggle"> ▼ 展开</span>' : ''}
+            </div>
             <div class="html-card-iframe-container">
               <iframe id="html-iframe-${card.id}" sandbox="allow-scripts"></iframe>
+              <button class="html-card-preview-btn" onclick="chatHtmlWidgetSystem.openPreview(${card.id})" title="展开大卡片预览">⤢ 大卡片预览</button>
             </div>
             <!-- 时间脚标下移至卡片右下角 -->
             <div class="html-card-footer">
@@ -106,6 +120,97 @@
         this.cleanedCardIds.delete(id); // 物理删除运行时状态
         await this.loadCards();
       }
+    },
+
+    // 折叠/展开超长指令文本（>150 字）
+    togglePrompt: function(id) {
+      const el = document.getElementById(`html-card-prompt-${id}`);
+      if (!el) return;
+      const textEl = el.querySelector('.html-card-prompt-text');
+      const toggleEl = el.querySelector('.html-card-prompt-toggle');
+      if (!textEl) return;
+      const collapsed = el.getAttribute('data-collapsed') === '1';
+      db.html_cards.get(id).then(card => {
+        if (!card) return;
+        if (collapsed) {
+          // 当前折叠态 -> 展开
+          textEl.textContent = card.prompt || '';
+          if (toggleEl) toggleEl.textContent = ' ▲ 收起';
+          el.setAttribute('data-collapsed', '0');
+        } else {
+          // 当前展开态 -> 折叠
+          const p = String(card.prompt || '');
+          textEl.textContent = p.slice(0, 150) + '...';
+          if (toggleEl) toggleEl.textContent = ' ▼ 展开';
+          el.setAttribute('data-collapsed', '1');
+        }
+      });
+    },
+
+    // 大卡片全屏预览：把 HTML 渲染到一个尺寸很大的全屏浮层 iframe 内
+    openPreview: async function(id) {
+      const card = await db.html_cards.get(id);
+      if (!card) { alert("卡片数据不存在"); return; }
+
+      // 复用清洗态：若该卡片处于清洗视图，预览也用清洗后的代码
+      let htmlToRender = card.html;
+      if (this.cleanedCardIds.has(id)) {
+        htmlToRender = this.extractCleanHtml(card.html);
+      } else {
+        // 顺带做基础 markdown 代码块剥离，保证预览能渲染
+        htmlToRender = this.extractCleanHtml(card.html);
+      }
+
+      // 移除已存在的预览浮层
+      const existed = document.getElementById('html-preview-fullscreen-overlay');
+      if (existed) existed.remove();
+
+      const overlay = document.createElement('div');
+      overlay.id = 'html-preview-fullscreen-overlay';
+      overlay.style.cssText = [
+        'position:fixed', 'top:0', 'left:0', 'width:100vw', 'height:100vh',
+        'background:rgba(0,0,0,0.85)', 'z-index:9999',
+        'display:flex', 'flex-direction:column',
+        'animation:htmlPreviewFadeIn 0.2s ease'
+      ].join(';');
+
+      overlay.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; padding:12px 18px; background:#0f172a; border-bottom:1px solid #334155; flex-shrink:0;">
+          <div style="color:#f1f5f9; font-size:13px; font-weight:700;">
+            <span style="color:#34d399;">⤢</span> 大卡片预览 · WIDGET #${card.id}
+            <span style="color:#64748b; font-weight:400; font-size:11px; margin-left:8px;">${escapeHtml(String(card.prompt || '').slice(0, 60))}${(card.prompt||'').length > 60 ? '...' : ''}</span>
+          </div>
+          <div style="display:flex; gap:8px; align-items:center;">
+            <button id="html-preview-refresh-btn" style="background:#334155; color:#cbd5e1; border:none; border-radius:6px; padding:6px 12px; font-size:11px; cursor:pointer; font-weight:600;">⟳ 刷新</button>
+            <button id="html-preview-close-btn" style="background:#ef4444; color:#fff; border:none; border-radius:6px; padding:6px 14px; font-size:12px; cursor:pointer; font-weight:700;">✕ 关闭</button>
+          </div>
+        </div>
+        <div style="flex:1; display:flex; justify-content:center; align-items:center; padding:18px; overflow:auto; background:#1e293b;">
+          <iframe id="html-preview-fullscreen-iframe" sandbox="allow-scripts allow-popups allow-forms" style="width:100%; max-width:480px; height:100%; max-height:880px; background:#fff; border:1px solid #475569; border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,0.5);"></iframe>
+        </div>
+      `;
+
+      document.body.appendChild(overlay);
+
+      const iframe = document.getElementById('html-preview-fullscreen-iframe');
+      // 使用 srcdoc 注入，配合 allow-scripts 沙盒
+      this.loadHtmlInSandbox(iframe, htmlToRender);
+
+      // 关闭按钮
+      document.getElementById('html-preview-close-btn').onclick = () => overlay.remove();
+      // 刷新按钮（重新加载一次，方便 JS 动画重启）
+      document.getElementById('html-preview-refresh-btn').onclick = () => {
+        this.loadHtmlInSandbox(iframe, htmlToRender);
+      };
+      // 点击遮罩空白处也可关闭
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) overlay.remove();
+      });
+      // ESC 关闭
+      const escHandler = (e) => {
+        if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); }
+      };
+      document.addEventListener('keydown', escHandler);
     },
 
     // 精准剥离Conversational冗余文字的提取算法
@@ -334,23 +439,48 @@
 
         // 1. 获取全局上下文 (包含人设、世界书、记忆、历史总结)
         const systemPrompt = await buildGlobalSystemPrompt(activeSessionId);
-        
-        // 2. 注入 HTML 卡片专用编译约束提示词
-        const htmlInstruction = PROMPT_TEMPLATES.HTML_WIDGET_INSTRUCTION;
+
+        // 2. 注入 HTML 卡片专用编译约束提示词（含情景强调）
+        const htmlInstruction = await this.buildHtmlWidgetInstruction(activeSessionId);
 
         // 3. 拉取最新的 10 条线上上下文对话
         const history = await db.messages.where('sessionId').equals(activeSessionId).reverse().limit(10).toArray();
         history.reverse();
 
         const messagesToSend = [{ role: "system", content: systemPrompt + "\n\n" + htmlInstruction }];
+
+        // 上下文标签清洗：将历史消息中的控制指令标签（思维链/[STATUS]/[TRANSLATE]/[AGREE_PAY]/
+        // [TRANSFER]/[RED_PACKET]/[GIFT]/[PAY_FOR_ME]/[LOCATION]/[PLAY_MUSIC]/[SET_ALARM] 等）以及
+        // 各类富卡片 JSON（礼物/代付/位置/朋友圈转发/通话记录等）转换为干净可读的自然语言摘要，
+        // 否则大模型会被指令格式污染，要么回文字、要么生成与人设无关的 HTML
+        const sessObj = await db.sessions.get(activeSessionId);
+        const _myName = sessObj?.customUserName || (await db.archives.get(sessObj?.userId))?.name || '我';
+        const _charName = sessObj?.customCharName || (await db.archives.get(sessObj?.charId))?.name || '对方';
+
         history.forEach(h => {
-          messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: h.content });
+          const cleaned = this.cleanHistoryContentForContext(h, _myName, _charName);
+          if (cleaned) {
+            messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: cleaned });
+          }
         });
 
         // 4. 追加具有高优约束性的指令提示词，确保其摒弃上下文消息格式的惯性 (高优先指令升级)
+        //    并强调"必须基于当下情景+你的人设"生成 HTML，避免人设脱错或干脆回纯文字
         messagesToSend.push({
           role: "user",
-          content: `【最新执行指令（高优！）】：现在请你针对用户最新提出的需求，全新生成一个独立的 HTML/CSS/JS 页面代码。请彻底遗忘并抛弃之前的对话消息格式（不要模仿、提及、或生成任何红包、转账、语音等对话台词或指令），你的唯一任务就是输出一个完整的、可运行的 HTML 代码组件！\n\n【用户的卡片构建需求如下】：\n${promptText}`
+          content: `【最新执行指令（最高优先级！）】：
+现在请你针对用户最新提出的需求，全新生成一个独立的 HTML/CSS/JS 页面代码。请彻底遗忘并抛弃之前的对话消息格式（不要模仿、提及、或生成任何红包、转账、语音、代付、位置等对话台词或控制指令），你的唯一输出任务就是【一段完整、可直接运行的 HTML 代码组件】。
+
+【情景与人设绑定（务必死守）】：
+- 你必须始终以 [${_charName}] 的身份与口吻来生成这份 HTML 互动内容，绝不能脱离当前人设变成中性模板。
+- 必须紧扣上方系统提示中给出的人设、关系、世界书、核心记忆、最近聊天氛围来填充内容文案、配色、彩蛋。
+- 若用户的构建需求较泛（如"做个小游戏""我想看看你的聊天记录"），你必须主动结合"你与 [${_myName}] 现在的关系状态/最近聊到的事/你的性格特征"去定主题与细节，让它看起来就是 [${_charName}] 此刻亲手做的，而不是任意一个 AI 模板。
+- 文案语气、按钮文字、惩罚/奖励台词、占位符填充等所有可见文字，都必须 100% 符合你的人设语气（病娇/撒娇/冷淡/傲娇/鬼畜等均严格贴合设定）。
+
+【用户的卡片构建需求如下】：
+${promptText}
+
+【再次强调】：本次回复【只能】是 HTML 源码本身（从 <html> 或最外层 <div> 开始），【严禁】出现任何解释性文字、"好的我来生成"之类对话、"以下是代码"等前缀后缀。`
         });
 
         const response = await fetch(`${api.url}/chat/completions`, {
@@ -389,6 +519,221 @@
         alert(`生成卡片失败: ${err.message}`);
         await this.loadCards();
       }
+    },
+
+    // 构建含"情景强调"的 HTML 互动舱编译指令（在原 HTML_WIDGET_INSTRUCTION 基础上叠加当前角色/关系/氛围）
+    buildHtmlWidgetInstruction: async function(sessionId) {
+      const base = (typeof PROMPT_TEMPLATES !== 'undefined' && PROMPT_TEMPLATES.HTML_WIDGET_INSTRUCTION)
+        ? PROMPT_TEMPLATES.HTML_WIDGET_INSTRUCTION
+        : '';
+
+      let sceneHint = "";
+      try {
+        const sess = await db.sessions.get(sessionId);
+        if (sess) {
+          const char = await db.archives.get(sess.charId);
+          const user = await db.archives.get(sess.userId);
+          const charName = sess.customCharName || char?.name || "对方";
+          const userName = sess.customUserName || user?.name || "我";
+
+          // 拉取最近 6 条对话提炼"当下氛围/最近在聊什么"
+          const recent = await db.messages.where('sessionId').equals(sessionId).reverse().limit(6).toArray();
+          recent.reverse();
+          const recentLines = recent.map(m => {
+            const who = m.senderType === 'user' ? userName : charName;
+            // 同样做轻量剥离，避免氛围摘要里混入指令标签
+            let c = (m.content || "").replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
+            c = this.stripControlTags(c);
+            return c ? `${who}: ${c}` : null;
+          }).filter(Boolean).join("\n");
+
+          // 关系简述
+          let relDesc = "";
+          if (typeof queryRelationship === 'function') {
+            try { relDesc = await queryRelationship(sess.userId, sess.charId, userName, charName); } catch(e) {}
+          }
+
+          sceneHint = `\n\n【当下情景要素（生成 HTML 时必须紧扣这些）】
+- 你的身份：[${charName}]
+- 用户身份：[${userName}]
+- 你们的关系：${relDesc || "普通即时通讯好友"}
+- 最近聊天氛围/话题：
+${recentLines || "(暂无明显话题)"}
+- 重要：当用户的构建需求较泛时（例如"做个小游戏""看看你的聊天记录"），必须主动从以上情景要素中抽取主题、文案、配色、彩蛋，使生成的 HTML 互动组件看起来就是 [${charName}] 此刻亲手为 [${userName}] 做的，而不是任意中性模板。`;
+        }
+      } catch (e) {
+        console.warn("构建 HTML 互动舱情景提示失败，降级为纯基础指令", e);
+      }
+
+      return base + sceneHint;
+    },
+
+    // 历史消息上下文清洗：剥离所有控制指令标签 + 把富卡片 JSON 转为可读摘要
+    // 复刻 app_chat.js 中 appendMessageToDOM/renderContext 的 displayContent 逻辑
+    cleanHistoryContentForContext: function(h, myName, charName) {
+      if (!h) return "";
+      // 1. 已撤回
+      if (h.isRecalled === 1) return "[已撤回该消息]";
+
+      let displayContent = h.content;
+      if (typeof displayContent !== 'string') return "";
+
+      // 2. 物理剥离旧思维链（覆盖所有标签变体 + 未闭合兜底）
+      displayContent = displayContent.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
+
+      // 3. 按 contentType 把富卡片 JSON 转为可读摘要（与 app_chat.js 一致）
+      if (h.contentType === 'image') {
+        try { const d = JSON.parse(displayContent); displayContent = `[图片描述: ${d.text}]`; } catch(e) {}
+      } else if (h.contentType === 'voice') {
+        try { const d = JSON.parse(displayContent); displayContent = `[语音转文字: ${d.text}]`; } catch(e) {}
+      } else if (h.contentType === 'call') {
+        try {
+          const c = JSON.parse(displayContent);
+          displayContent = c.rejected
+            ? `[你拒绝了对方的${c.type === 'video' ? '视频' : '语音'}通话请求]`
+            : `[${c.type === 'video' ? '视频' : '语音'}通话记录 · ${c.summary || ''}]`;
+        } catch(e) { displayContent = "[通话记录]"; }
+      } else if (h.contentType === 'social_notice') {
+        try {
+          const sn = JSON.parse(displayContent);
+          if (sn.type === 'moment') displayContent = `[你发了一条朋友圈：${sn.summary || ''}]`;
+          else if (sn.type === 'forum_post') displayContent = `[你以 ${sn.roleLabel || ''} @${sn.username || ''} 身份在论坛发了帖子《${sn.title || ''}》]`;
+          else if (sn.type === 'forum_alt_create') displayContent = `[你建立了一个论坛小号 @${sn.username || ''}（${sn.nickname || ''}）]`;
+          else displayContent = "[社交动作记录]";
+        } catch(e) { displayContent = "[社交动作记录]"; }
+      } else if (h.contentType === 'moment_share') {
+        try {
+          const ms = JSON.parse(displayContent);
+          const author = ms.authorName || '某人';
+          const suffix = ms.commentText ? `（附言：${ms.commentText}）` : '';
+          if (h.senderType === 'user') {
+            displayContent = `[${myName} 向 ${charName} 转发了 ${author} 的朋友圈动态：${ms.summary || ''}${suffix}]`;
+          } else {
+            const f = ms.forwarderName || charName;
+            displayContent = `[${f} 向 ${myName} 转发了 ${author} 的朋友圈动态：${ms.summary || ''}${suffix}]`;
+          }
+        } catch(e) { displayContent = "[转发了一条朋友圈]"; }
+      } else if (h.contentType === 'forum_post_share') {
+        try {
+          const fps = JSON.parse(displayContent);
+          const author = fps.authorName || '某成员';
+          const suffix = fps.commentText ? `（附言：${fps.commentText}）` : '';
+          if (h.senderType === 'user') {
+            displayContent = `[${myName} 向 ${charName} 转发了 ${author} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${suffix}]`;
+          } else {
+            const f = fps.forwarderName || charName;
+            displayContent = `[${f} 向 ${myName} 转发了 ${author} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${suffix}]`;
+          }
+        } catch(e) { displayContent = "[转发了一条论坛帖子]"; }
+      } else if (h.contentType === 'pay_for_me') {
+        try {
+          const pf = JSON.parse(displayContent);
+          const itemsStr = (pf.items || []).map(it => `${it.name || it.title || '商品'} x${it.quantity || 1} ¥${(it.price || 0).toFixed(2)}`).join('，');
+          const totalStr = (pf.total || 0).toFixed(2);
+          const msg = pf.message ? `，留言："${pf.message}"` : '';
+          if (pf.status === 'paid') {
+            displayContent = h.senderType === 'user'
+              ? `[${charName} 已为你代付了订单：${itemsStr}，合计 ¥${totalStr}${msg}]`
+              : `[你已经为 ${charName} 代付了订单：${itemsStr}，合计 ¥${totalStr}${msg}]`;
+          } else {
+            displayContent = h.senderType === 'user'
+              ? `[你向 ${charName} 发送了一个代付请求订单：${itemsStr}，合计 ¥${totalStr}${msg}，等待对方代付]`
+              : `[${charName} 向你发送了一个代付请求订单：${itemsStr}，合计 ¥${totalStr}${msg}]`;
+          }
+        } catch(e) { displayContent = "[收到一个代付请求]"; }
+      } else if (h.contentType === 'gift') {
+        try {
+          const gf = JSON.parse(displayContent);
+          const itemsStr = (gf.items || []).map(it => `${it.name || it.title || '礼物'} x${it.quantity || 1} ¥${(it.price || 0).toFixed(2)}`).join('，');
+          const totalStr = (gf.total || 0).toFixed(2);
+          const msg = gf.message ? `，附言："${gf.message}"` : '';
+          displayContent = h.senderType === 'user'
+            ? `[你向 ${charName} 送了礼物：${itemsStr}，合计 ¥${totalStr}${msg}]`
+            : `[${charName} 送了你礼物：${itemsStr}，合计 ¥${totalStr}${msg}]`;
+        } catch(e) { displayContent = "[收到一份礼物]"; }
+      } else if (h.contentType === 'withdraw_share') {
+        try {
+          const ws = JSON.parse(displayContent);
+          const target = (ws.targetAmount || 700) + '元';
+          const cur = (ws.currentAmount || 0).toFixed(2) + '元';
+          displayContent = h.senderType === 'user'
+            ? `[你向 ${charName} 转发了一个"砍一刀提现"活动链接，目标${target}，已有${cur}]`
+            : `[${charName} 向你转发了一个"砍一刀提现"活动链接]`;
+        } catch(e) { displayContent = "[转发了一个砍一刀提现链接]"; }
+      } else if (h.contentType === 'location') {
+        try {
+          const loc = JSON.parse(displayContent);
+          displayContent = h.senderType === 'user'
+            ? `[你向 ${charName} 发送了一个位置：${loc.name || ''}（${loc.address || ''}，经纬度 ${loc.latitude || '?'},${loc.longitude || '?'}）]`
+            : `[${charName} 向你发送了一个位置：${loc.name || ''}（${loc.address || ''}，经纬度 ${loc.latitude || '?'},${loc.longitude || '?'}）]`;
+        } catch(e) { displayContent = "[收到一个位置分享]"; }
+      } else if (h.contentType === 'transfer') {
+        try {
+          const t = JSON.parse(displayContent);
+          const amt = (t.amount || 0).toFixed(2);
+          displayContent = h.senderType === 'user'
+            ? `[你向 ${charName} 转账 ¥${amt}]`
+            : `[${charName} 向你转账 ¥${amt}]`;
+        } catch(e) { displayContent = "[收到一笔转账]"; }
+      } else if (h.contentType === 'red_envelope') {
+        try {
+          const r = JSON.parse(displayContent);
+          const amt = (r.amount || 0).toFixed(2);
+          displayContent = h.senderType === 'user'
+            ? `[你向 ${charName} 发了一个红包 ¥${amt}]`
+            : `[${charName} 向你发了一个红包 ¥${amt}]`;
+        } catch(e) { displayContent = "[收到一个红包]"; }
+      }
+
+      // 4. 剥离所有残留控制指令标签（[STATUS]{...}/[TRANSLATE]{...}/[AGREE_PAY]{}/[TRANSFER]{...}/
+      //    [RED_PACKET]{...}/[GIFT]{...}/[PAY_FOR_ME]{...}/[LOCATION]{...}/[PLAY_MUSIC]{...}/[SET_ALARM]{...} 等）
+      displayContent = this.stripControlTags(displayContent);
+
+      return displayContent.trim();
+    },
+
+    // 剥离对话回复里所有控制指令标签，仅保留干净可见对话文本
+    stripControlTags: function(text) {
+      if (typeof text !== 'string') return text;
+      let out = text;
+      // 各类 [TAG]{...} 形式：用括号平衡匹配，确保嵌套 JSON 也能整段切掉
+      const tags = ['STATUS', 'TRANSLATE', 'AGREE_PAY', 'TRANSFER', 'RED_PACKET', 'GIFT',
+                    'PAY_FOR_ME', 'LOCATION', 'PLAY_MUSIC', 'SET_ALARM'];
+      for (const tag of tags) {
+        let idx;
+        // 反复剥离，直到没有该标签
+        while ((idx = out.indexOf('[' + tag + ']')) !== -1) {
+          const after = out.substring(idx + tag.length + 2);
+          // 跳过空白
+          let p = 0;
+          while (p < after.length && /\s/.test(after[p])) p++;
+          let endPos = p;
+          if (after[p] === '{') {
+            // 括号平衡提取 {...}
+            let depth = 0;
+            let inStr = false, esc = false;
+            for (; endPos < after.length; endPos++) {
+              const ch = after[endPos];
+              if (inStr) {
+                if (esc) { esc = false; }
+                else if (ch === '\\') { esc = true; }
+                else if (ch === '"') { inStr = false; }
+              } else {
+                if (ch === '"') { inStr = true; }
+                else if (ch === '{') { depth++; }
+                else if (ch === '}') { depth--; if (depth === 0) { endPos++; break; } }
+              }
+            }
+          } else {
+            // 无 JSON 体，仅切掉 [TAG] 标签本身
+            endPos = 0;
+          }
+          out = out.substring(0, idx) + out.substring(idx + tag.length + 2 + endPos);
+        }
+      }
+      // 顺带清理多余空行
+      out = out.replace(/\n{3,}/g, '\n\n').trim();
+      return out;
     }
   };
 

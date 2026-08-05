@@ -41,12 +41,51 @@ function showToast(message) {
   toast.textContent = message;
   toast.style.opacity = '1';
   toast.style.transform = 'translateX(-50%) translateY(0)';
-  
+
   clearTimeout(toast.timeoutId);
   toast.timeoutId = setTimeout(() => {
     toast.style.opacity = '0';
     toast.style.transform = 'translateX(-50%) translateY(20px)';
   }, 2300);
+}
+
+// ============================================================
+//  全局 API Key 一键复制函数（单机本地，无泄露风险）
+// ============================================================
+function copyApiKey(inputId) {
+  try {
+    const el = document.getElementById(inputId);
+    if (!el) { showToast('未找到输入框'); return; }
+    const val = (el.value || '').trim();
+    if (!val) { showToast('输入框为空'); return; }
+    // 优先用 Clipboard API
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(val).then(() => {
+        showToast('已复制到剪贴板');
+      }).catch(() => {
+        fallbackCopy(el, val);
+      });
+    } else {
+      fallbackCopy(el, val);
+    }
+  } catch (e) {
+    showToast('复制失败');
+  }
+}
+
+// 降级复制方案（HTTP 或老浏览器）
+function fallbackCopy(el, val) {
+  try {
+    el.removeAttribute('type');
+    el.type = 'text';
+    el.select();
+    const ok = document.execCommand('copy');
+    el.type = 'password';
+    if (ok) showToast('已复制到剪贴板');
+    else showToast('复制失败，请手动复制');
+  } catch (e) {
+    showToast('复制失败，请手动复制');
+  }
 }
 
 // ============================================================

@@ -19,6 +19,7 @@
    - 2.2 深度对话剖析空间 (`app_deeptalk.js`)
    - 2.3 HTML 互动舱生成与安全沙盘 (`app_chat_html_widget.js` & `chat_html.css`)
    - 2.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
+   - 2.5 char 社交动作集成系统 (`app_chat_social_actions.js`)
 3. **Dexie 数据库设计规范 (Version 10 & 扩充版)**
 4. **长周期记忆 RAG 检索与深谈闪念提取数据流向**
    - 4.1 长周期记忆 RAG 检索召回
@@ -220,6 +221,51 @@
 #### 概述
 “HTML 互动舱”是会话专属的独立代码容器组件，允许用户向 API 请求根据上下文、世界书以及核心心智，编译输出完全独立、高度交互的单文件 HTML/CSS/JS 代码卡片，实现会话组件的无障碍生成。
 
+#### 双视图响应式尺寸约束
+互动舱采用「列表小卡片 + 全屏大卡片预览」双视图模式，在 `HTML_WIDGET_INSTRUCTION` 提示词中明确要求 AI 生成的代码同时适配两种尺寸：
+*   **列表小卡片**：高度 250px，宽度跟随容器，需紧凑布局。
+*   **大卡片预览**：480×880px，需充分利用空间。
+*   **实现要求**：使用 Flexbox/Grid 布局，字号、间距用 `clamp()`、`vh/vw/%` 等相对单位，避免固定像素。
+
+#### 大卡片预览（`openPreview`）
+*   点击卡片上的「⤢ 预览」按钮触发，创建 `position:fixed` 全屏浮层（100vw×100vh 深色半透明遮罩）。
+*   顶部深色标题栏含卡片 ID、指令摘要、刷新/关闭按钮；中部居中 iframe（max-width:480px; max-height:880px），通过 `sandbox="allow-scripts allow-popups allow-forms"` 隔离执行。
+*   预览复用 `extractCleanHtml` 提取的清洗态代码（若卡片处于清洗视图，预览也用清洗后代码，与列表所见一致）。
+*   支持四种关闭方式：关闭按钮、刷新按钮、点击遮罩、ESC 键。
+
+#### 指令折叠/展开（`togglePrompt`）
+*   渲染卡片时，若 `card.prompt.length > 150`，指令文本默认折叠为一行（CSS `-webkit-line-clamp:1` + `text-overflow:ellipsis`），显示「▼ 展开」按钮。
+*   点击切换 `data-collapsed` 属性：展开显示完整指令 +「▲ 收起」，折叠显示前 150 字 +「...」+「▼ 展开」，避免长指令撑高卡片破坏布局。
+
+---
+
+### 2.3b 情侣空间·悄悄话话题会话与归档机制 (`app_chat_couples.js`)
+
+#### 概述
+情侣空间的「悄悄话」模块升级为「话题会话」机制：双方（user 与 char）均可主动发起/结束话题，话题内消息独立成段，3 天后自动归档并总结进长期记忆库，对话中途也可手动归档。彻底解决原先"不读用户话""跨话题串味""无归档沉淀"的问题。
+
+#### 指令格式（与朋友圈/论坛线上指令风格一致）
+```
+[WHISPER_TOPIC_START: 话题标题]    # 双方任一方发起一个新话题
+[WHISPER_TOPIC_END]                # 双方任一方结束当前话题
+```
+
+#### 话题生命周期状态机
+话题从创建到归档经历四个状态：**活动（active）→ 结束（ended）→ 归档（archived）→ 入库（summarized）**。
+*   **活动→结束**：AI 输出 `[WHISPER_TOPIC_END]` 或用户点击结束按钮。
+*   **活动→归档 / 结束→归档**：3 天到期自动触发（`autoArchiveExpiredTopics` 巡检），或用户手动归档。
+*   **归档→入库**：`archiveTopic` 调用 LLM 总结话题内容，写入 `db.summaries`（category:'relationship'），并标记话题和消息 `archived:1`。
+
+#### 对话连贯性保障
+`triggerWhisperReply` 仅保留**当前活动话题内**的消息历史（按 `topicId` 过滤），并在 prompt 中强调"承接当前话题上下文回复"，避免跨话题消息混杂导致 AI 答非所问。
+
+#### 核心方法
+*   `parseWhisperCommands(text)`：用括号平衡法从 AI 回复中提取 `[WHISPER_TOPIC_START]` / `[WHISPER_TOPIC_END]` 指令。
+*   `startWhisperTopic(title, initiator)` / `endWhisperTopic()`：创建/结束话题，写入 `couples_whisper_topics` 表。
+*   `autoArchiveExpiredTopics()`：进入情侣空间时巡检，归档所有超 3 天的活动话题。
+*   `archiveTopic(topicId, isAuto)`：拉取话题消息 → 调 LLM 总结 → 写入 `db.summaries` → 标记归档。
+*   `summarizeWhisperTopic(topic, msgs)`：调用大模型生成话题总结文本。
+
 ---
 
 ### 2.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
@@ -229,9 +275,35 @@
 
 ---
 
+### 2.5 char 社交动作集成系统 (`app_chat_social_actions.js`)
+
+#### 概述
+让 char 在聊天过程中具备跨应用的社交主动性：可以自发发布朋友圈、前往论坛发帖、自主建立论坛小号，并以系统消息形式把社交动作反馈到聊天里。同时打通论坛账户与聊天面具的"现实身份同步"通道，让被授权的 char 在论坛中知道 user 的真实身份。
+
+#### 核心能力
+*   **自动发朋友圈**：对话详情开启"允许自动发朋友圈"开关后，prompt 注入特权段落，char 在合适时机输出 `[AUTO_MOMENT: 内容]` 指令即可自发朋友圈（支持 `[MOMENT_IMAGE: 描述]` 附带图片）。无论开关是否开启，char 之前发过的朋友圈（含点赞、评论互动）都按时间并入聊天上下文。
+*   **论坛漫游**：对话详情开启"允许论坛漫游"后，char 可输出 `[FORUM_POST: 标题|正文]` 用主号发帖、`[FORUM_POST_ALT: 序号|标题|正文]` 用指定身份发帖。开启"允许建立论坛小号"子开关后，char 可输出 `[FORUM_ALT_CREATE: 昵称|签名]` 自主建立小号，发一些大号不合适发的内容。
+*   **3 小号上限**：每个 char 最多 3 个论坛分身（含主号），prompt 中实时告知剩余配额。NPC 管理中枢里每个 char 显示全部分身，主号标"主号"徽章，其余标"小号N"徽章。
+*   **系统消息反馈**：char 发朋友圈 / 论坛发帖 / 建立小号后，以 `senderType='system'` 写入简短系统消息到 `db.messages`，聊天界面即时上屏。
+*   **论坛账户同步聊天身份**：论坛账户编辑资料新增"同步聊天身份"开关 → 选择绑定面具（`db.archives type='user'`）→ "同步给 char"子开关 → char 多选列表（每行带头像/姓名/备注 + 独立"携带聊天记忆"小开关）。被选中的 char 在论坛私信/发帖/评论时会知道此账户的现实身份就是 user；携带记忆时注入核心心智摘要（关系、对用户印象），不携带时仅以档案馆人设为准。
+
+#### 指令格式
+```
+[AUTO_MOMENT: 朋友圈文本内容]              # char 自动发一条朋友圈
+[FORUM_POST: 帖子标题|帖子正文]            # char 用主号在论坛发帖
+[FORUM_POST_ALT: 身份序号|标题|正文]       # char 用指定身份（1=主号, 2+=小号）发帖
+[FORUM_ALT_CREATE: 昵称|个性签名]          # char 建立一个新的论坛小号
+```
+
+#### 数据字段
+*   `sessions` 表新增动态字段（Dexie 无需 schema 升级）：`allowCharAutoMoment` / `allowCharForumRoam` / `allowCharForumAltAccount`（均为 0/1 整数）。
+*   `forum_accounts` 表新增动态字段：`syncChatConfig`（JSON 字符串），结构 `{ enabled, boundPersonaId, syncToChar, syncChars: [{charId, carryMemory}] }`。
+
+---
+
 ## 3. Dexie 数据库设计规范 (Version 10 & 扩充版)
 
-系统数据库包含 22 张物理表（在 Version 10 标准上扩充了阅读与伴读书城四张关联表，保持高抗灾结构对齐）。执行任何二次开发和结构拓展时必须在此基础上进行升级：
+系统数据库包含 22 张物理表（在 Version 10 标准上扩充了阅读与伴读书城四张关联表，保持高抗灾结构对齐）。执行任何二次开发和结构拓展时必须在此基础上进行升级。当前最新结构已迭代至 **Version 27**，主要新增了情侣空间·悄悄话话题会话与归档机制相关表，详见下方「Version 27 增补表」。
 
 ```javascript
 db.version(10).stores({
@@ -308,6 +380,30 @@ db.version(10).stores({
   reader_presets: 'id++, name, prompt'
 });
 ```
+
+### Version 27 增补表：情侣空间·悄悄话话题会话与归档机制
+
+```javascript
+db.version(27).stores({
+  // couples_whispers 增补 topicId / archived 索引（不丢旧数据，仅扩展索引）
+  couples_whispers: 'id++, charId, timestamp, topicId, archived',
+
+  // 新增：每个话题会话的元信息
+  couples_whisper_topics: 'id++, charId, meId, startTime, endTime, archived, topicTitle'
+});
+```
+
+**`couples_whisper_topics` 字段说明：**
+| 字段 | 说明 |
+| :--- | :--- |
+| `charId` / `meId` | 关联的角色与用户 |
+| `startTime` / `endTime` | 话题起止时间（endTime 归档时写入） |
+| `archived` | 0=活动/结束，1=已归档 |
+| `topicTitle` | 话题标题 |
+| `initiator` | `'user'` 或 `'char'`（发起方） |
+| `summary` | 归档时 LLM 生成的话题总结 |
+
+**`couples_whispers` 增补字段：** `topicId`（关联话题 ID）、`archived`（是否已归档）。归档时该话题下所有消息 `archived` 置 1，但仍保留在表中可供历史查看。
 
 ---
 
@@ -571,12 +667,15 @@ const ASSETS = [
 
 ### 6.7 聊天消息与时序级联引擎：`app_chat.js`
 *   微信式对话列表加载、仿真多媒体消息（语音/场景画面图片）与微信红包/转账卡片生成和领取逻辑。配合 `app_prompts.js` 的时间流逝，处理大模型防掉格式指令解析和时序分句级联打字上屏。集成两阶段长按缩紧回弹动效与 AbortController 实时 API 请求中断控制。
+*   **通话系统集成**：在 `appendMessageToDOM` 中新增 `contentType='call'` 渲染分支（通话记录系统卡片），在历史上下文构建中对通话记录进行可读摘要转换，并在 char 回复流中检测 `[AUTO_CALL:voice|video]` 指令触发主动通话。通话中的对白消息（带 `callId` 字段）不在主聊天列表上屏，仅在通话记录卡片内查看。
 
 ### 6.8 HTML 互动舱与安全沙盒：`app_chat_html_widget.js`
 *   **交互卡片组件中枢**。允许用户基于当前的对话上下文、世界书以及核心心智，编译输出完全独立、高度交互运行的单文件 HTML/CSS/JS 卡片。支持一键重绘清洗和源码维修舱二级物理阻隔空间。
+*   **双视图响应式（v3.2 新增）**：列表小卡片（高度 250px）+ 全屏大卡片预览（480×880 iframe）。`openPreview(id)` 创建全屏浮层渲染清洗态代码，支持刷新/关闭/ESC/点遮罩关闭；`togglePrompt(id)` 实现超 150 字指令折叠为一行、点击展开。`HTML_WIDGET_INSTRUCTION` 提示词明确双视图尺寸约束，要求 AI 生成代码用 Flexbox/Grid + 相对单位同时适配两种尺寸。
 
 ### 6.9 HTML 互动舱护眼样式：`chat_html.css`
 *   **HTML 互动舱与代码维修舱专属样式**。采用护眼深石墨灰+优雅靛蓝科技感方案。将卡片的时间脚标移至卡片右下角，提供清爽规整的排版空间。
+*   **预览与折叠样式（v3.2 新增）**：`.html-card-prompt-collapsed` 单行截断（`-webkit-line-clamp:1`）、`.html-card-prompt-toggle` 展开按钮、`@keyframes htmlPreviewFadeIn` 预览浮层淡入动画。
 
 ### 6.10 主线剧情引导引擎：`app_chat_plot_engine.js`
 *   **主线剧本控制中心**。提供剧情引导弹窗，将用户输入的走向约束写入 `db.sessions`。
@@ -631,3 +730,50 @@ const ASSETS = [
 ### 6.25 书城多端自适应布局样式：`reader.css` (最新扩充)
 *   **书城排版美学规范**。锁定标准的 3:4 书籍封面黄金比例，隔离相对定位下的点击穿透异常，并对阅读主题提供护眼浅绿、浅蓝、古董米黄、调色盘自定 Hex 进制文本色等多态配色支持。
 ```
+
+### 6.26 思维链解析与展示系统：`app_chat_cot.js` (最新扩充)
+*   **CoT (Chain of Thought) 解析引擎**。从大模型回复中提取 `<think>`、`[THINKING]`、`【思考】`、`<thought>`、`<thinking>` 等多种思维链标签格式，将思考过程与最终对白安全分离。
+*   **孤儿标签归一化**：增强 `parseThoughtWithRegex` 函数，支持对仅有结束标签（如 `</think>`）或仅有开始标签的残缺思维链进行自动补全归一化，大幅提升思维链识别的健壮性，解决频繁爆出的"思维链未识别"问题。
+*   提取的思维链内容在气泡顶部以可折叠的灰色区块展示，清洗后的纯对白文本正常渲染。
+
+### 6.27 MiniMax TTS 语音合成引擎：`app_tts.js` (最新扩充)
+*   **多版本 TTS 接口支持**：支持 MiniMax 国内版 (`api.minimax.chat`) 与国际版 (`api.minimaxi.com`) 双线路切换，通过 `resolveApiBaseUrl()` 函数动态解析接口地址。
+*   **自定义 URL 覆盖**：用户可在 TTS 设置面板中填写自定义接口 URL，留空时自动按所选版本填充默认地址。
+*   **3 天本地缓存**：独立 Dexie 库 `TtsVoiceCacheDB.tts_cache` 缓存已合成的语音 Blob，按 model + voiceId + text 组合哈希作为缓存键，3 天自动过期清理。
+*   **会话级 TTS 开关**：在对话详情中开启 TTS 并填写音色 ID 后，点击 AI 发送的语音消息即可展开文字卡片并播放该音色语音。
+
+### 6.28 语音/视频通话系统：`app_chat_call.js` (最新扩充)
+*   **仿微信全屏通话面板**：动态注入 DOM 构建 `#call-overlay` 全屏通话界面，支持语音通话与视频通话两种模式。包含头像、名称、通话计时器、消息列表与输入栏。
+*   **视频通话大小屏布局**：仿微信视频通话，char 头像作为全屏背景（模糊渐变），user 小窗（90×130）固定右上角，实现大小屏视窗效果。
+*   **通话中对白交互**：通话过程中可打字上屏，char 返回口语化回复（强约束无括号动作描写、无思维链标签）。若会话开启 TTS 且填写了音色 ID，回复气泡下方挂载播放按钮，可反复播放生成的语音。
+*   **通话记录系统卡片**：通话结束后生成 `contentType='call'` 的系统通知样式消息，仅显示"语音/视频通话已结束 - 展开"，点击展开弹出卡片查看通话中的全部对话记录，对方语音可在 3 天缓存内反复播放。被拒来电显示"你拒绝了对方的通话请求"。
+*   **通话记录渲染修复**：系统消息渲染分支（`senderType === 'system'`）已增加 `contentType !== 'call'` 守卫，确保通话记录卡片走专用渲染分支而非被当作纯文本显示 JSON 乱码。
+*   **标签清洗双向通道**：`sanitizeForCallContext()` 函数在通话前清洗线上文本的括号动作、多媒体标签、思维链标签；回到线上对话时，通话残留的无关标签也能被正常清洗。
+*   **char 主动发起通话**：对话详情新增"允许对方主动发起通话"开关及"同时允许视频通话"子开关。开启后通过 `buildAutoCallPromptSegment()` 注入 prompt 特权，char 在回复末尾输出 `[AUTO_CALL:voice|video]` 指令即可自动触发通话界面。prompt 中已明确区分 `[AUTO_CALL]` 与 MCP `[CALL_TOOL]` 指令，防止 char 误调 MCP 工具发起通话。
+*   **来电卡片（仿微信）**：char 主动发起通话时弹出全屏来电卡片（`z-index: 100002`，任何页面可见），点击接通进入通话，点击挂断生成"你拒绝了对方的语音/视频通话请求"系统消息并计入上下文。
+*   **通话气泡双击工具栏（全功能实装）**：通话过程中的气泡支持双击打开全局 `#bubble-context-menu` 工具栏，工具栏临时提升至 `z-index: 100003` 并挂到 `document.body` 顶层。所有功能（格式修复、翻译、编辑、收藏、删除、撤回）在通话上下文中完整可用，操作后自动通过 `refreshCallBubbles()` 刷新通话面板而非线上对话。回溯重回和多选消息按钮在通话中自动隐藏。
+*   **编辑/格式修复弹层层级修复**：`elevateContextMenu()` 同步提升 `custom-edit-overlay` 和 `custom-format-repair-overlay` 的 z-index 到 `100004`（高于通话面板 100000 和工具栏 100003），并挂到 `document.body` 顶层，避免在通话中打开编辑/格式修复卡片时被通话面板遮挡。通话结束后 `restoreContextMenu()` 恢复原 z-index。
+*   **通话内容计入上下文**：通话中的对白消息以 `contentType='text'` + `callId` 字段存入 `messages` 表，通话记录卡片在历史上下文构建中转为可读摘要，确保通话内容被大模型感知但不污染 JSON。
+
+### 6.29 听歌应用搜索多通道容错：`app_music.js` (最新扩充)
+*   **三通道搜索竞速**：`searchNcmMusic()` 从单点 Vercel 代理改为三通道容错架构：
+    - 通道一：网易云官方搜索 API（`music.163.com/api/search/get`），走 `ncmNativeFetch` 含 allorigins 代理兜底
+    - 通道二：Vercel 代理 API（原通道，作为备选）
+    - 通道三：Meting 开源 API（`api.i-meto.com`，最终兜底）
+*   **超时熔断**：每个通道均设置 5 秒硬超时，防止单通道挂起导致搜索永久卡死。
+*   **搜索结果导入歌单**：搜索结果除播放外，新增"+"按钮可导入到指定歌单（`importSearchResult()`），解决了原搜索只播放不入歌单的问题。
+*   **错误反馈优化**：所有通道均失败时显示"所有搜索通道均未响应"，部分失败时提示"在线搜索通道暂不可用"，不再静默吞掉错误。
+*   **歌单范围播放**：新增 `currentPlaylistId` 属性和 `playSongFromPlaylist(playlistId, songId)` 方法。在歌单详情页点击播放时设置 `currentPlaylistId`，`playSongFromList()` 检测到该属性后只取歌单内歌曲作为 playlist，顺序/循环/随机模式均限定在此歌单内，不会跳到整个大曲库。
+*   **一起听指令系统消息**：AI 输出的操控指令（`[PLAY_SONG:n]` 切歌、`[SEEK:n]` 拖进度条、`[NEXT]`/`[PREV]`/`[PAUSE]`/`[RESUME]`）执行后生成系统消息反馈（如"拖动进度条到 0:30""切歌到《xxx》"），以居中灰字样式渲染在聊天室小屏幕。`[PLAY_SONG:n]` 的 n 现在是当前歌单内索引而非全库索引。`renderIslandChatMessages()` 支持 `sender='system'` 类型的消息渲染。
+
+### 6.30 情侣空间·悄悄话话题会话与归档系统：`app_chat_couples.js` (v3.2 最新扩充)
+*   **话题会话机制**：悄悄话升级为「话题会话」，双方（user 与 char）均可主动发起/结束话题。AI 在回复中输出 `[WHISPER_TOPIC_START: 话题标题]` / `[WHISPER_TOPIC_END]` 指令（与朋友圈、论坛线上指令风格一致），由 `parseWhisperCommands(text)` 用括号平衡法提取后触发 `startWhisperTopic` / `endWhisperTopic`，用户也可通过 UI 按钮发起。
+*   **3 天自动归档 + 手动归档**：`autoArchiveExpiredTopics()` 进入情侣空间时巡检，对所有 `archived !== 1` 且 `startTime` 距今超 3 天的话题调用 `archiveTopic(id, true)` 自动归档；用户可点击「归档」按钮调用 `archiveTopic(id, false)` 手动归档。
+*   **归档总结入记忆库**：`archiveTopic` 拉取话题消息 → 调用 `summarizeWhisperTopic` 让 LLM 生成总结 → 写入 `db.summaries`（`category:'relationship'`，`content` 形如 `【情侣空间·悄悄话归档】话题《标题》（我发起/对方发起）：总结`）→ 标记话题和消息 `archived:1`。归档内容进入长期记忆库后可被 RAG 召回，让 char 真正"记住"悄悄话。
+*   **对话连贯性修复**：`triggerWhisperReply` 仅保留当前活动话题内的消息历史（按 `topicId` 过滤），并在 prompt 中强调"承接当前话题上下文回复"，解决原先跨话题消息混杂导致 AI"不读用户话"、答非所问的问题。
+*   **数据表**：依赖 `db.js` Version 27 的 `couples_whisper_topics`（话题元信息）与 `couples_whispers`（增补 `topicId`/`archived` 索引）两张表。
+
+### 6.31 全局空头像安全渲染修复 (v3.2 最新扩充)
+*   **问题**：头像为空时显示破损图片，名字区域出现残破「>」字样。根因是 `resolveAvatar` 返回的 SVG 数据 URL 内部属性用双引号，插入 `<img src="data:image/svg+xml;utf8,<svg viewBox="...">">` 时双引号提前闭合 `src` 属性，剩余 SVG 标记（含 `>`）泄漏到 HTML。
+*   **修复范围**：统一 `app_archive.js`、`app_reader.js`、`app_deeptalk.js`、`app_world_book.js` 中所有 `resolveAvatar` 函数，SVG 内部属性改用单引号（`viewBox='0 0 100 100'`），`#` 做 URL 编码（`%23`），并新增"人"字默认灰色图标兜底。
+*   **`app_chat.js` 增强**：新增 `avatarFallback(el)` 函数处理 `<img onerror>` 回退；会话列表头像 `src` 与名字均加 `escapeHtml`，防止残破字符泄漏到名字区域。

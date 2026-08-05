@@ -1,11 +1,14 @@
 let archiveCurrentTab = 'character';
 let temporaryAvatarFile = null; // 存储原生 File / Blob [2]
 let isArchiveInitialized = false;
+let pendingArchiveLockface = []; // 待保存的档案馆锁脸 dataURL 数组（生图锁脸正脸照片）
 
 // 二进制 Blob 转换为极速内存临时 URL 的渲染器（彻底解决 Base64 卡顿） [2]
 function resolveAvatar(avatar) {
   if (!avatar) {
-    return 'data:image/svg+xml;utf8,<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50" fill="%23ccc"/></svg>';
+    // 关键修复：SVG 内部属性必须用单引号，否则双引号会提前闭合 <img src="..."> 的 src 属性，
+    // 导致头像显示为破损图片，且剩余 SVG 标记（含 > 字符）泄漏到页面，造成名字带残破 > 字样
+    return "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/><text x='50' y='62' font-size='50' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif'>人</text></svg>";
   }
   if (avatar instanceof Blob) {
     return URL.createObjectURL(avatar); // 毫秒级内存地址转换
@@ -59,6 +62,8 @@ function initArchiveApp() {
       const nativeLanguage = document.getElementById("archive-language").value.trim();
       const group = document.getElementById("archive-group").value.trim();
       const persona = document.getElementById("archive-persona").value.trim();
+      const appearance = (document.getElementById("archive-appearance") ? document.getElementById("archive-appearance").value.trim() : "");
+      const lockfaceImages = pendingArchiveLockface.slice();
       const urlAvatar = document.getElementById("archive-avatar-url").value.trim();
     const parentId = archiveCurrentTab === 'npc' ? Number(document.getElementById("archive-parent-id").value) : null;
 
@@ -82,7 +87,9 @@ function initArchiveApp() {
         nativeLanguage,
         group,
         persona,
-        parentId
+        parentId,
+        appearance,
+        lockfaceImages
       };
 
     if (id) {
@@ -95,7 +102,78 @@ function initArchiveApp() {
     loadArchivesData();
   };
 
+  // 绑定锁脸正脸照片上传/清空事件
+  bindArchiveLockfaceEvents();
+
   initPasteAndDropEvents();
+}
+
+// 渲染档案馆锁脸正脸照片预览
+function renderArchiveLockfacePreview() {
+  const c = document.getElementById("archive-lockface-preview");
+  if (!c) return;
+  c.innerHTML = '';
+  pendingArchiveLockface.forEach((dataUrl, idx) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'position:relative;width:48px;height:48px;border-radius:8px;overflow:hidden;border:1.5px solid var(--border);';
+    wrap.innerHTML =
+      '<img src="' + dataUrl + '" style="width:100%;height:100%;object-fit:cover;">' +
+      '<button data-idx="' + idx + '" style="position:absolute;top:1px;right:1px;width:16px;height:16px;border-radius:50%;background:rgba(0,0,0,0.6);color:#fff;border:none;font-size:10px;cursor:pointer;line-height:14px;">×</button>';
+    c.appendChild(wrap);
+  });
+  c.querySelectorAll('button[data-idx]').forEach(btn => {
+    btn.onclick = () => {
+      const idx = Number(btn.getAttribute('data-idx'));
+      pendingArchiveLockface.splice(idx, 1);
+      renderArchiveLockfacePreview();
+    };
+  });
+}
+
+// 绑定档案馆锁脸上传/清空事件
+function bindArchiveLockfaceEvents() {
+  const uploadBtn = document.getElementById('btn-archive-upload-lockface');
+  const fileInput = document.getElementById('file-archive-lockface');
+  const clearBtn = document.getElementById('btn-archive-clear-lockface');
+
+  if (uploadBtn) uploadBtn.onclick = () => { if (fileInput) fileInput.click(); };
+  if (clearBtn) clearBtn.onclick = () => {
+    pendingArchiveLockface = [];
+    renderArchiveLockfacePreview();
+  };
+  if (fileInput) fileInput.onchange = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    // 限制最多3张
+    const remain = 3 - pendingArchiveLockface.length;
+    if (remain <= 0) { showToast('最多上传3张正脸照片'); e.target.value = ''; return; }
+    const toProcess = files.slice(0, remain);
+    if (files.length > remain) showToast('仅取前 ' + remain + ' 张，最多3张');
+    // 在轨压缩：调用生图系统的压缩函数
+    const compressFn = (window.imageGenSystem && window.imageGenSystem.compressImage)
+      ? window.imageGenSystem.compressImage : null;
+    for (const f of toProcess) {
+      try {
+        let dataUrl;
+        if (compressFn) {
+          dataUrl = await compressFn(f, 768);
+        } else {
+          // 兜底：直接 FileReader
+          dataUrl = await new Promise((resolve, reject) => {
+            const r = new FileReader();
+            r.onload = () => resolve(r.result);
+            r.onerror = reject;
+            r.readAsDataURL(f);
+          });
+        }
+        pendingArchiveLockface.push(dataUrl);
+      } catch (err) {
+        console.warn('档案馆锁脸图片压缩失败:', err);
+      }
+    }
+    renderArchiveLockfacePreview();
+    e.target.value = '';
+  };
 }
 
 function getTabZhName(t) {
@@ -169,10 +247,10 @@ async function loadArchivesData() {
       const card = document.createElement("div");
       card.className = "archive-card";
       card.innerHTML = `
-        <img class="card-avatar" src="${resolveAvatar(item.avatar)}" />
+        <img class="card-avatar" src="${resolveAvatar(item.avatar)}" onerror="(typeof avatarFallback==='function'?avatarFallback:(window.avatarFallback||function(){}))(this)" />
         <div class="card-info">
-          <div class="card-name">${item.name}</div>
-          <div class="card-desc">${item.remark || '暂无备注'}</div>
+          <div class="card-name">${escapeHtml(item.name)}</div>
+          <div class="card-desc">${escapeHtml(item.remark || '暂无备注')}</div>
         </div>
         <div class="card-actions">
           <button class="btn-icon" onclick="editArchiveItem(${item.id})">
@@ -205,9 +283,12 @@ async function openArchiveForm(editId = null) {
   document.getElementById("archive-language").value = "";
   document.getElementById("archive-group").value = "";
   document.getElementById("archive-persona").value = "";
+  if (document.getElementById("archive-appearance")) document.getElementById("archive-appearance").value = "";
   document.getElementById("archive-avatar-url").value = "";
   document.getElementById("archive-parent-id").value = "";
   temporaryAvatarFile = null;
+  pendingArchiveLockface = [];
+  renderArchiveLockfacePreview();
   
   document.getElementById("placeholder-avatar").style.display = "block";
   document.getElementById("avatar-preview-img").style.display = "none";
@@ -246,7 +327,7 @@ async function openArchiveForm(editId = null) {
         
         card.style.cssText = `display:flex; align-items:center; gap:10px; padding:8px; border-radius:8px; background:${isPreSelected ? '#f0fdf4' : '#ffffff'}; border:1.5px solid ${isPreSelected ? '#07c160' : 'var(--border)'}; cursor:pointer; transition:all 0.15s;`;
         card.innerHTML = `
-          <img src="${resolveAvatar(item.avatar)}" style="width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0;">
+          <img src="${resolveAvatar(item.avatar)}" onerror="(typeof avatarFallback==='function'?avatarFallback:(window.avatarFallback||function(){}))(this)" style="width:32px; height:32px; border-radius:50%; object-fit:cover; flex-shrink:0;">
           <div style="flex:1; overflow:hidden; text-align:left;">
             <div style="font-size:12px; font-weight:700; color:var(--text-primary); display:flex; align-items:center; gap:4px;">
               <span>${escapeHtml(item.name)}</span>
@@ -284,6 +365,10 @@ async function openArchiveForm(editId = null) {
       document.getElementById("archive-language").value = item.nativeLanguage || "";
       document.getElementById("archive-group").value = item.group || "";
       document.getElementById("archive-persona").value = item.persona || "";
+      if (document.getElementById("archive-appearance")) document.getElementById("archive-appearance").value = item.appearance || "";
+      // 回填锁脸正脸照片
+      pendingArchiveLockface = (item.lockfaceImages && Array.isArray(item.lockfaceImages)) ? item.lockfaceImages.slice() : [];
+      renderArchiveLockfacePreview();
       
       if (item.parentId) {
         document.getElementById("archive-parent-id").value = item.parentId;
@@ -313,7 +398,31 @@ window.deleteArchiveItem = async function(id) {
     if (archiveCurrentTab === 'relation') {
       await db.relations.delete(id);
     } else {
+      // 删除前先取出记录，判断是否为 user 类型（需要清理引用）
+      const arc = await db.archives.get(id);
+      const deletedType = arc ? arc.type : archiveCurrentTab;
       await db.archives.delete(id);
+
+      // user 面具被删除时，必须清理所有悬空引用，否则聊天页会死锁在"无法切换面具"状态
+      if (deletedType === 'user') {
+        // 1. 清理全局激活状态：如果删的正是当前激活的 user，清空 active_me_id
+        const activeMeId = localStorage.getItem("active_me_id");
+        if (activeMeId && Number(activeMeId) === Number(id)) {
+          localStorage.removeItem("active_me_id");
+          if (typeof activeUserPersonaId !== 'undefined') activeUserPersonaId = null;
+        }
+        // 2. 清理引用了该 user 的会话：userId 置 null，保留 customUserName 等快照让历史聊天仍可查看
+        try {
+          const affectedSessions = await db.sessions.where('userId').equals(Number(id)).toArray();
+          for (const s of affectedSessions) {
+            await db.sessions.update(s.id, { userId: null });
+          }
+        } catch(e) { console.warn("清理会话 userId 引用失败:", e); }
+        // 3. 如果聊天页已初始化，刷新面具选择器以脱困死锁
+        if (typeof loadMyPersonas === 'function') {
+          try { await loadMyPersonas(); } catch(e) {}
+        }
+      }
     }
     loadArchivesData();
   });
@@ -756,7 +865,7 @@ async function renderRelCandidateDrawer() {
     const item = document.createElement("div");
     item.style.cssText = `display:flex; flex-direction:column; align-items:center; padding:8px 4px; border-radius:10px; background:${isAdded ? '#f1f5f9' : '#fff'}; border:1px solid ${isAdded ? '#cbd5e1' : 'var(--border)'}; opacity:${isAdded ? '0.5' : '1'}; cursor:${isAdded ? 'not-allowed' : 'pointer'}; text-align:center; transition:all 0.15s;`;
     item.innerHTML = `
-      <img src="${resolveAvatar(arc.avatar)}" style="width:36px; height:32px; border-radius:50%; object-fit:cover; margin-bottom:4px;">
+      <img src="${resolveAvatar(arc.avatar)}" onerror="(typeof avatarFallback==='function'?avatarFallback:(window.avatarFallback||function(){}))(this)" style="width:36px; height:32px; border-radius:50%; object-fit:cover; margin-bottom:4px;">
       <span style="font-size:10px; font-weight:700; color:var(--text-primary); max-width:80px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(arc.name)}</span>
     `;
 
@@ -857,7 +966,7 @@ async function renderRelStage() {
 
     el.innerHTML = `
       <div style="position:relative; width:44px; height:44px;">
-        <img src="${resolveAvatar(arc.avatar)}" style="width:44px; height:44px; border-radius:50%; object-fit:cover; border:2.5px solid ${isSelected ? '#ec4899' : '#ffffff'}; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
+        <img src="${resolveAvatar(arc.avatar)}" onerror="(typeof avatarFallback==='function'?avatarFallback:(window.avatarFallback||function(){}))(this)" style="width:44px; height:44px; border-radius:50%; object-fit:cover; border:2.5px solid ${isSelected ? '#ec4899' : '#ffffff'}; box-shadow:0 4px 12px rgba(0,0,0,0.15);">
         <div onclick="event.stopPropagation(); removeNodeFromGraph(${node.id})" title="从关系网中移除" style="position:absolute; top:-4px; right:-4px; width:16px; height:16px; background:#ef4444; color:#fff; border-radius:50%; font-size:10px; font-weight:bold; display:flex; align-items:center; justify-content:center; cursor:pointer;">×</div>
       </div>
       <span style="font-size:10px; font-weight:800; color:#1e293b; background:rgba(255,255,255,0.9); padding:1px 6px; border-radius:8px; margin-top:2px; white-space:nowrap; box-shadow:0 1px 3px rgba(0,0,0,0.1);">${escapeHtml(arc.name)}</span>

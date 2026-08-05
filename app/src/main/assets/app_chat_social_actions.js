@@ -295,12 +295,22 @@ ${altSection}
      */
     _executeAutoMoment: async function (sess, rawContent) {
       try {
-        // 解析图片标记 [MOMENT_IMAGE: 描述]
+        // 解析图片标记：兼容 [MOMENT_IMAGE: 描述] / [图片描述: 描述] / [图片: 描述]
         const images = [];
-        let textContent = rawContent.replace(/\[MOMENT_IMAGE:\s*([^\]]*)\]/gi, (m, desc) => {
-          images.push({ url: "", desc: desc.trim() || "图片" });
-          return "";
-        }).trim();
+        let textContent = rawContent
+          .replace(/\[MOMENT_IMAGE:\s*([^\]]*)\]/gi, (m, desc) => {
+            images.push({ url: "", desc: desc.trim() || "图片" });
+            return "";
+          })
+          .replace(/[\[【]\s*图片描述\s*[:：]\s*([^\]】]*?)[\]】]/gi, (m, desc) => {
+            images.push({ url: "", desc: desc.trim() || "图片" });
+            return "";
+          })
+          .replace(/[\[【]\s*图片\s*[:：]\s*([^\]】]*?)[\]】]/gi, (m, desc) => {
+            images.push({ url: "", desc: desc.trim() || "图片" });
+            return "";
+          })
+          .trim();
 
         const charId = sess.charId;
         const userIdNum = Number(sess.userId);
@@ -323,6 +333,38 @@ ${altSection}
           visibleCharIds: sameGroupCharIds,
           timestamp: Date.now()
         });
+
+        // 朋友圈生图触发：若该会话已开启朋友圈生图，对每张图片异步生成实际图像
+        // 生成完成后回填 images 中的 url 字段，并更新 moments 表
+        if (images.length && window.imageGenSystem && typeof window.imageGenSystem.triggerImageGeneration === 'function') {
+          const sessionId = sess.id || (typeof activeSessionId !== 'undefined' ? activeSessionId : null);
+          if (sessionId) {
+            // 用朋友圈正文作为上下文（推断主题，不能 OOC）
+            const aiText = textContent + ' ' + images.map(i => i.desc).join(' ');
+            images.forEach((img, idx) => {
+              window.imageGenSystem.triggerImageGeneration({
+                sessionId: sessionId,
+                scene: 'moments',
+                aiText: aiText + (idx > 0 ? ' ' + img.desc : ''),
+                onComplete: async (result) => {
+                  if (!result) return;
+                  try {
+                    const thumb = (typeof result === 'object' && result.thumb) ? result.thumb : (typeof result === 'string' ? result : '');
+                    const hd = (typeof result === 'object' && result.hd) ? result.hd : (typeof result === 'string' ? result : '');
+                    const moment = await db.moments.get(momentId);
+                    if (!moment || !Array.isArray(moment.images)) return;
+                    if (idx < moment.images.length) {
+                      moment.images[idx] = { url: thumb, hdUrl: hd, desc: moment.images[idx].desc, generated: true };
+                      await db.moments.update(momentId, { images: moment.images });
+                    }
+                  } catch (e) {
+                    console.warn('朋友圈生图回填失败:', e);
+                  }
+                }
+              });
+            });
+          }
+        }
 
         // 触发级联反应（异步，不阻塞）
         if (window.momentSystem && typeof window.momentSystem.triggerAIsFeedbacksOnPost === "function") {

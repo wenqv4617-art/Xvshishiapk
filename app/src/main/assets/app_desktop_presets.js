@@ -47,6 +47,9 @@ window.DESKTOP_PRESETS = {
 .app-icon[data-app="reader"] .icon-wrapper svg { color: #fbbf24 !important; }     /* 柔暖琥珀 */
 .app-icon[data-app="archive"] .icon-wrapper svg { color: #60a5fa !important; }    /* 浅天蓝 */
 .app-icon[data-app="world_book"] .icon-wrapper svg { color: #2dd4bf !important; }/* 浅青绿 */
+.app-icon[data-app="music"] .icon-wrapper svg { color: #f472b6 !important; }      /* 樱花粉 */
+.app-icon[data-app="shopping"] .icon-wrapper svg { color: #ff6b35 !important; }  /* 淘宝橙 */
+.app-icon[data-app="encounter"] .icon-wrapper svg { color: #a78bfa !important; } /* 邂逅紫 */
 .app-icon[data-app="settings"] .icon-wrapper svg { color: #64748b !important; }  /* 烟灰钛 */
 
 .app-icon span {
@@ -396,19 +399,27 @@ window.DESKTOP_PRESETS = {
     },
 
     // 桌面两页网格排版映射
+    // 规则：chat / world_book / archive 只放 dock 栏，不占主页面格子
+    // 注意 widget 物理覆盖范围（cols=4）：
+    //   widget_clear_summer_top: 4x3 在槽位0，覆盖 0-11
+    //   widget_clear_summer_polaroid: 2x2 在槽位12，覆盖 12,13,16,17
+    //   因此第一页可用 app 槽位为：14,15,18,19
+    //   widget_clear_summer_dialogue: 4x3 在槽位20，覆盖 20-31
+    //   widget_clear_summer_music: 4x1 在槽位36，覆盖 36-39
+    //   因此第二页可用 app 槽位为：32-35（第5排被播放器组件占用）
     desktopLayout: [
-      // === 第一页 (0~19) ===
+      // === 第一页 (0~19) === 槽位 14,15,18,19 可用
       null, null, null, null,
       null, null, null, null,
       null, null, null, null,
-      null, null, "chat", "settings",
+      null, null, "encounter", "deeptalk",
       null, null, "reader", "forum",
 
-      // === 第二页 (20~39) ===
+      // === 第二页 (20~39) === 槽位 32-35 可用（36-39 被播放器组件占用）
       null, null, null, null,
       null, null, null, null,
       null, null, null, null,
-      "couples", "deeptalk", "music", "world_book",
+      "couples", "music", "shopping", "quicktravel",
       null, null, null, null
     ],
 

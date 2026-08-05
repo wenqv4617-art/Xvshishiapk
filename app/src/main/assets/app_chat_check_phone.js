@@ -47,22 +47,43 @@
   };
 
   // --- 2. 极角抗噪标签解析算法 (Resilient RegEx Tag Generalizer) [4] ---
+  // 双模式解析：先尝试 [标签:内容] 闭括号内格式，再尝试 [标签] 内容 开括号后格式
   function parseTextTag(text, tagChinese, tagEnglish) {
     if (!text) return "";
-    const escapeReg = (str) => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
-    const pat = new RegExp(
-      `(?:[\\s\\n]|^)(?:[\\[【\\(]?(?:${escapeReg(tagChinese)}|${escapeReg(tagEnglish)})[\\]】\\)]?[:：]?\\s*)([\\s\\S]*?)(?=(?:[\\[【\\(]?(?:[^\\]】\\)]+)[\\]】\\)]?[:：]?\\s*)|$)`, 
+    const escapeReg = (str) => str.replace(/[-\/\\^$+?.()|[\]{}]/g, '\\$&');
+    const tagAlt = `(?:${escapeReg(tagChinese)}|${escapeReg(tagEnglish)})`;
+    const knownTags = "标题|正文|备注|联系人\\d*|对话\\d*-\\d*|加购物车|账单|图片\\d*|贴\\d*标题|贴\\d*正文|贴\\d*评论|贴\\d*回帖|TITLE|CONTENT|REMARK|CONTACT\\d*|CHAT\\d*-\\d*|CART|BILL|PHOTO\\d*|POST\\d*_TITLE|POST\\d*_CONTENT|POST\\d*_COMMENT|回帖\\d*|评论\\d*";
+
+    // 模式A：[标签:内容] 或 [标签：内容] —— 冒号在括号内，内容也在括号内
+    // 匹配 [标签:xxx] 或 [标签：xxx]，内容到下一个闭括号为止
+    const patA = new RegExp(
+      `[\\[【\\(]${tagAlt}[:：]\\s*([\\s\\S]*?)[\\]】\\)]`,
       "i"
     );
-    const match = text.match(pat);
-    return match ? match[1].trim() : "";
+    const matchA = text.match(patA);
+    if (matchA) return cleanTagOutput(matchA[1]);
+
+    // 模式B：[标签] 内容 或 [标签]：内容 —— 冒号在括号外，内容在闭括号后
+    // 前导不强制要求空白（去掉 [\\s\\n]|^ 限制，允许连写标签）
+    // lookahead 要求下一个标签必须有开括号 [ 或 【 或 （（必填，避免半截误判）
+    const patB = new RegExp(
+      `(?:^|[\\s\\n\\]】）)])(?:[\\[【\\(]?${tagAlt}[\\]】\\)]?[:：]?\\s*)([\\s\\S]*?)(?=[\\[【\\(](?:${knownTags})[:：\\]】\\)]|$)`,
+      "i"
+    );
+    const matchB = text.match(patB);
+    if (matchB) return cleanTagOutput(matchB[1]);
+
+    return "";
   }
 
   // 格式自愈清洗器，防大模型将文字标签本身残留打印在内容中 [4]
   function cleanTagOutput(text) {
     if (!text) return "";
     return text
-      .replace(/^[\[【\(]?(标题|正文|备注|联系人\d*|对话\d*-\d*|加购物车|账单|图片\d*|贴\d*标题|贴\d*正文|贴\d*评论|贴\d*回帖|TITLE|CONTENT|REMARK|CONTACT\d*|CHAT\d*-\d*|CART|BILL|PHOTO\d*|POST\d*_TITLE|POST\d*_CONTENT|POST\d*_COMMENT|回帖\d*|评论\d*)[\\]】\)]?[:：]?/i, "")
+      // 剥离开头的标签名（带可选括号和冒号）
+      .replace(/^[\[【\(]?(标题|正文|备注|联系人\d*|对话\d*-\d*|加购物车|账单|图片\d*|贴\d*标题|贴\d*正文|贴\d*评论|贴\d*回帖|TITLE|CONTENT|REMARK|CONTACT\d*|CHAT\d*-\d*|CART|BILL|PHOTO\d*|POST\d*_TITLE|POST\d*_CONTENT|POST\d*_COMMENT|回帖\d*|评论\d*)[\]】\)]?[:：]?\s*/i, "")
+      // 剥离尾随的闭括号（从 [标签:内容] 格式残留的 ]
+      .replace(/[\]】\)]+$/, "")
       .trim();
   }
 
@@ -133,7 +154,17 @@ ${coreMemoryText || "暂无特别记录。"}
 
 【查手机隔离墙绝对命令（违者重罚）】：
 1. 当前场景是：[${userName}] 正在翻阅你（[${charName}]）的手机！你当前的任务绝不是在微信聊天界面里和对方在线打字对话互动！你是在为你自己手机里存储的本地离线数据库（如本地日记、备忘草稿、匿名发帖、购物车、常听歌单等）生成历史细节！
-2. 严厉禁止在输出中带有任何线上聊天格式！绝对不能出现 “[MSG_ID: 101]”、引用 “[QUOTE: 101]”、消息撤回、语音消息 [VOICE] 或转账红包等微信聊天独有标识！`;
+2. 严厉禁止在输出中带有任何线上聊天格式！绝对不能出现 “[MSG_ID: 101]”、引用 “[QUOTE: 101]”、消息撤回、语音消息 [VOICE] 或转账红包等微信聊天独有标识！
+3. 【文字标签格式铁律】使用文字标签协议时，每个标签必须独占一行，格式为 [标签名] 内容，标签名后面的内容紧跟在同一行，不要把内容换行到下一行。例如：[标题] 落下的冷雨\n[正文] 今天的夜出奇的冷...。绝对不要在标签行前面加多余的文字或符号。
+4. 【文字标签格式禁止项（违者重罚）】：
+   - 禁止写成 [标签名:内容]（冒号在括号内）
+   - 禁止写成 [标签名：内容]（全角冒号在括号内）
+   - 禁止写成 标签名:内容（无括号）
+   - 禁止写成 [标签名]：内容（闭括号后跟全角冒号）
+   - 正确格式只有一种：[标签名] 内容（闭括号后跟半角空格，再跟内容）
+   - 多个标签可以连写，但每个标签必须独占一行，例如：
+     [标题] 落下的冷雨
+     [正文] 今天的夜出奇的冷`;
   }
 
   // --- 3. 核心 API 交互请求器 ---
@@ -408,7 +439,7 @@ ${coreMemoryText || "暂无特别记录。"}
 
       if (state.generatorFormat === "json") {
         try {
-          const cleaned = res.replace(/^\`\`\`json/i, '').replace(/\`\`$/i, '').trim();
+          const cleaned = res.replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/i, '').trim();
           const parsed = JSON.parse(cleaned);
           state.userRemark = parsed.userRemark || state.userRemark;
           state.contacts = parsed.contacts || [];
@@ -425,13 +456,13 @@ ${coreMemoryText || "暂无特别记录。"}
 
       lines.forEach(l => {
         if (l.includes("联系人") || l.includes("contact")) {
-          const raw = l.replace(/^[\\[【]?(联系人\d*|contact\d*)[\\]】]?[:：]?/i, "").split("|");
+          const raw = l.replace(/^[\[【]?(联系人\d*|contact\d*)[\]】]?[:：]?/i, "").split("|");
           if (raw.length >= 2) {
             curContact = { name: raw[0].trim(), preview: raw[1].trim(), time: "10:30", chatHistory: [] };
             contactsArr.push(curContact);
           }
         } else if (l.includes("对话") || l.includes("chat")) {
-          const raw = l.replace(/^[\\[【]?(对话\d*-\d*|chat\d*-\d*)[\\]】]?[:：]?/i, "").split("|");
+          const raw = l.replace(/^[\[【]?(对话\d*-\d*|chat\d*-\d*)[\]】]?[:：]?/i, "").split("|");
           if (raw.length >= 2 && curContact) {
             const sender = raw[0].trim().toLowerCase().includes("self") ? "self" : "other";
             curContact.chatHistory.push({ sender, text: raw[1].trim() });
@@ -466,7 +497,7 @@ ${coreMemoryText || "暂无特别记录。"}
       let title = "", content = "";
       if (state.generatorFormat === "json") {
         try {
-          const cleaned = res.replace(/^\`\`\`json/i, '').replace(/\`\`$/i, '').trim();
+          const cleaned = res.replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/i, '').trim();
           const parsed = JSON.parse(cleaned);
           title = parsed.title;
           content = parsed.content;
@@ -485,6 +516,8 @@ ${coreMemoryText || "暂无特别记录。"}
           title,
           content
         });
+      } else {
+        console.warn('[查手机] 日记标签解析失败，原始返回:', res?.substring(0, 200));
       }
     }
 
@@ -509,7 +542,7 @@ ${coreMemoryText || "暂无特别记录。"}
       let title = "", content = "";
       if (state.generatorFormat === "json") {
         try {
-          const cleaned = res.replace(/^\`\`\`json/i, '').replace(/\`\`$/i, '').trim();
+          const cleaned = res.replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/i, '').trim();
           const parsed = JSON.parse(cleaned);
           title = parsed.title;
           content = parsed.content;
@@ -527,6 +560,8 @@ ${coreMemoryText || "暂无特别记录。"}
           date: new Date().toLocaleDateString('zh-CN'),
           content
         });
+      } else {
+        console.warn('[查手机] 备忘录标签解析失败，原始返回:', res?.substring(0, 200));
       }
 
       while (state.notes.length < 4) {
@@ -566,7 +601,7 @@ ${coreMemoryText || "暂无特别记录。"}
       let photosArr = [];
       if (state.generatorFormat === "json") {
         try {
-          const cleaned = res.replace(/^\`\`\`json/i, '').replace(/\`\`$/i, '').trim();
+          const cleaned = res.replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/i, '').trim();
           photosArr = JSON.parse(cleaned);
         } catch(e) {}
       }
@@ -574,7 +609,7 @@ ${coreMemoryText || "暂无特别记录。"}
       if (!Array.isArray(photosArr) || photosArr.length === 0) {
         const lines = res.split("\n").map(l => l.trim()).filter(l => l.length > 3);
         lines.forEach((line, idx) => {
-          const clean = line.replace(/^[\\[【]?(图片\d+|photo\d+|图\d+)[\\]】]?[:：]?/i, "").trim();
+          const clean = line.replace(/^[\[【]?(图片\d+|photo\d+|图\d+)[\]】]?[:：]?/i, "").trim();
           if (clean.length > 2) {
             photosArr.push({ text: clean });
           }
@@ -646,7 +681,7 @@ JSON格式：
       let postsArr = [];
       if (state.generatorFormat === "json") {
         try {
-          const cleaned = res.replace(/^\`\`\`json/i, '').replace(/\`\`$/i, '').trim();
+          const cleaned = res.replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/i, '').trim();
           postsArr = JSON.parse(cleaned);
         } catch(e) {}
       }
@@ -662,6 +697,7 @@ JSON格式：
 
         if (t1 && b1) postsArr.push({ title: t1, content: b1, comment: c1 });
         if (t2 && b2) postsArr.push({ title: t2, content: b2, comment: c2 });
+        if (!t1 && !t2) console.warn('[查手机] 论坛标签解析失败，原始返回:', res?.substring(0, 200));
       }
 
       postsArr.forEach(p => {
@@ -706,7 +742,7 @@ JSON格式：
       let isSuccess = false;
       if (state.generatorFormat === "json") {
         try {
-          const cleaned = res.replace(/^\`\`\`json/i, '').replace(/\`\`$/i, '').trim();
+          const cleaned = res.replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/i, '').trim();
           const parsed = JSON.parse(cleaned);
           state.cart = parsed.cart || [];
           state.bills = parsed.bills || [];
@@ -722,10 +758,10 @@ JSON格式：
         lines.forEach(l => {
           if (l.includes("购物车") || l.includes("cart")) {
             // 彻底去除多余的“机制”拼写异常，保障高敏感字段切割对齐 [5]
-            const parts = l.replace(/^[\\[【]?(购物车\d*|cart\d*)[\\]】]?[:：]?/gi, "").split("|");
+            const parts = l.replace(/^[\[【]?(购物车\d*|cart\d*)[\]】]?[:：]?/gi, "").split("|");
             if (parts.length >= 2) cartItems.push({ name: parts[0].trim(), price: parseFloat(parts[1]) || 50, count: 1 });
           } else if (l.includes("账单") || l.includes("bill")) {
-            const parts = l.replace(/^[\\[【]?(账单\d*|bill\d*)[\\]】]?[:：]?/gi, "").split("|");
+            const parts = l.replace(/^[\[【]?(账单\d*|bill\d*)[\]】]?[:：]?/gi, "").split("|");
             if (parts.length >= 2) billItems.push({ desc: parts[0].trim(), price: parseFloat(parts[1]) || -20, date: "07/16" });
           }
         });

@@ -195,6 +195,10 @@ function initSettingsApp() {
       else if (appId === "reader") appName = "阅读";
       else if (appId === "forum") appName = "论坛";
       else if (appId === "couples") appName = "情侣空间";
+      else if (appId === "music") appName = "听歌";
+      else if (appId === "shopping") appName = "购物";
+      else if (appId === "encounter") appName = "邂逅";
+      else if (appId === "quicktravel") appName = "快穿局";
 
       alert(`应用「${appName}」图标已重置为系统默认。`);
       if (window.loadDesktopLayout) window.loadDesktopLayout();
@@ -325,6 +329,7 @@ function openSettingsLv2(subTab) {
     css: '全局 CSS 注入',
     widget: '组件工坊',
     deeptalk: '深谈预设设置',
+    imagegen: '生图设置',
     data: '数据分区管理',
     'force-update': '系统强更新',
     changelog: '更新日志'
@@ -334,6 +339,7 @@ function openSettingsLv2(subTab) {
   if (subTab === 'data') computeStorageUsage();
   if (subTab === 'account') loadAccountSettingsInfo();
   if (subTab === 'changelog' && window.changelogSystem) window.changelogSystem.initChangelogPanel();
+  if (subTab === 'imagegen' && window.imageGenSystem) window.imageGenSystem.initSettingsPanel();
 }
 
 async function loadAccountSettingsInfo() {
@@ -690,8 +696,8 @@ function loadBeautifyForm() {
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
   if (enterSendInput) enterSendInput.checked = enterSend;
 
-  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
+  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples, encounter)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -703,7 +709,7 @@ function loadBeautifyForm() {
     if (urlInput) {
       const savedIcon = customIcons[appId] || "";
       urlInput.value = savedIcon.startsWith("data:") ? "[本地上传图标]" : savedIcon;
-      
+
       if (previewBox) {
         if (savedIcon) {
           previewBox.innerHTML = `<img src="${savedIcon}" style="width:100%; height:100%; object-fit:cover;">`;
@@ -741,8 +747,8 @@ async function saveBeautifyConfig() {
     localStorage.setItem("settings-enter-send", enterSendInput.checked ? "true" : "false");
   }
 
-  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
+  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples, encounter)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -783,7 +789,7 @@ function resetBeautifyConfig() {
     localStorage.removeItem("settings-enter-send");
     document.getElementById("beautify-bg-url").value = "";
     
-    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
+    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel"];
     apps.forEach(appId => {
       const input = document.getElementById(`beautify-icon-url-${appId}`);
       if (input) input.value = "";

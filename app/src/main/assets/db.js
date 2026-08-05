@@ -203,3 +203,104 @@ db.version(24).stores({
   music_songs: 'id++, playlistId, title, artist, cover, url, lyrics, isVip',
   music_logs: 'id++, sessionId, charId, songId, timestamp'
 });
+
+// ============================================
+// 🎯 新增 Version 25：支持购物应用（购物车/订单/地址/神券/收藏室）
+// ============================================
+db.version(25).stores({
+  shopping_cart: 'id++, userId, itemType, storeId, storeName, category, addedAt',
+  shopping_orders: 'id++, userId, orderNo, status, type, paymentMethod, payerId, createdAt',
+  shopping_addresses: 'id++, userId, isDefault',
+  shopping_coupons: 'id++, userId, type, expireAt, usedCount',
+  // 收藏室：跟随面具，按对话分类，按类型(文字/语音/图片)分类
+  favorites: 'id++, userId, sessionId, msgType, sourceTable, sourceMsgId, createdAt'
+});
+
+// ============================================
+// 🎯 Version 26：购物订单扩展物流追踪字段 + 神券抵扣 + 提现转盘记录
+// ============================================
+db.version(26).stores({
+  shopping_orders: 'id++, userId, orderNo, status, type, paymentMethod, payerId, createdAt',
+  shopping_coupons: 'id++, userId, type, expireAt, usedCount, source',
+  // 提现转盘游戏记录（单次游戏进度，2日后重置）
+  shopping_withdraw_games: 'id++, userId, status, startedAt, lastSpinAt'
+});
+
+// ============================================
+// 🎯 Version 27：情侣空间·悄悄话话题会话与归档机制
+// - couples_whispers 增补 topicId / archived 索引（不丢旧数据，仅扩展索引）
+// - 新增 couples_whisper_topics：每个话题会话的元信息（标题/发起方/起止时间/是否归档/总结）
+// ============================================
+db.version(27).stores({
+  couples_whispers: 'id++, charId, timestamp, topicId, archived',
+  couples_whisper_topics: 'id++, charId, meId, startTime, endTime, archived, topicTitle'
+});
+
+// ============================================
+// 🎯 Version 28：生图功能（API预设/画师串/会话级生图设置/锁脸图片）
+// - imagegen_presets: 生图 API 预设（URL/Key/Model）
+// - imagegen_artists: 画师串预设（含内置写实韩系清爽画师串）
+// - imagegen_session_settings: 会话级生图配置（开关/锁脸/专属画师串/正负提示词）
+// ============================================
+db.version(28).stores({
+  imagegen_presets: 'id++, name, url, key, model, isGlobal, createdAt',
+  imagegen_artists: 'id++, name, prompt, isBuiltin, createdAt',
+  imagegen_session_settings: 'id++, sessionId, chatEnabled, momentsEnabled, artistId, positivePrompt, negativePrompt, lockfaceImages, createdAt, updatedAt'
+});
+
+// ============================================
+// 🎯 Version 29：档案馆外貌字段（生图参考）
+// - archives.appearance: 自由文本外貌描写，用作生图强约束参考（char/user/npc均可用）
+// 注：仅扩展索引，无需数据迁移（Dexie 对未声明字段透明存储）
+// ============================================
+db.version(29).stores({
+  archives: 'id++, type, name, avatar, remark, group, persona, parentId'
+});
+
+// ============================================
+// 🎯 Version 30：邂逅应用（Soul风格星球轨道社交）
+// - encounter_strangers: 陌生char档案（背景/性格/身份/标签，可转正）
+// - encounter_posts: 广场帖子流（按分类索引）
+// - encounter_comments: 帖子留言（陌生char互相留言）
+// - encounter_tags: 首页标签仓库（匹配陌生char标签）
+// - encounter_categories: 广场分类（可增删，含内置推荐/交友/同城/国际/古代）
+// - encounter_promoted_log: 转正日志（记录哪些char已加入档案馆）
+// ============================================
+db.version(30).stores({
+  encounter_strangers: 'id++, name, gender, era, location, identity, background, personality, tags, status, category, avatarSeed, createdAt',
+  encounter_posts: 'id++, authorId, title, category, createdAt, likes, commentsCount',
+  encounter_comments: 'id++, postId, authorId, createdAt',
+  encounter_tags: 'id++, name, color, createdAt',
+  encounter_categories: 'id++, name, sortOrder, isBuiltin',
+  encounter_promoted_log: 'id++, strangerId, archiveId, promotedAt'
+});
+
+// ============================================
+// 🎯 Version 31：邂逅应用 - 标签与分类补充附加说明字段
+// - encounter_tags 增加 description（附加说明，不显示在UI上，仅注入 prompt）
+// - encounter_categories 增加 description（附加说明，仅注入 prompt）
+// ============================================
+db.version(31).stores({
+  encounter_tags: 'id++, name, color, description, createdAt',
+  encounter_categories: 'id++, name, sortOrder, isBuiltin, description'
+});
+
+// ============================================
+// 🎯 Version 32：快穿局 - 长文文游应用数据表
+// - qt_identity:   玩家身份（姓名/年龄/外貌/背景/头像，步进式设定）
+// - qt_worldviews: 世界观（剧情梗概/世界背景/主要人物/关系网，可AI生成/导入导出）
+// - qt_games:      进行中的剧本（世界观+玩家身份+状态，最多5个）
+// - qt_messages:   剧本消息流（每轮 user 输入 + AI 回复 + 推荐行动）
+// - qt_summaries:  总结池（剧情走向/人物关系变化/关键事实，带关键词召回）
+// - qt_variables:  变量控制表（每轮提取的记忆变量，可手动修改）
+// - qt_beautify:   美化套件（主题色/背景/CSS/正则规则，可导入导出）
+// ============================================
+db.version(32).stores({
+  qt_identity:   'id++, name, age, appearance, background, avatar, createdAt',
+  qt_worldviews: 'id++, title, synopsis, worldBackground, characters, relationships, source, createdAt',
+  qt_games:      'id++, worldviewId, identityId, beautifyId, status, currentRound, title, createdAt',
+  qt_messages:   'id++, gameId, role, content, actions, round, createdAt',
+  qt_summaries:  'id++, gameId, round, plotShift, relationshipChanges, keyFacts, keywords, createdAt',
+  qt_variables:  'id++, gameId, key, value, lastRound, editable',
+  qt_beautify:   'id++, name, themeColor, background, css, regexRules, createdAt'
+});

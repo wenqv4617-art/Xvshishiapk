@@ -111,12 +111,16 @@ body {
   -webkit-backdrop-filter: blur(20px);
   border-radius: 28px;
   height: 78px;
+  /* 统一与 #dock-grid 同源定位：使用 flex+center 让内部网格水平居中 */
   display: flex;
   flex-direction: row !important;
-  justify-content: space-evenly;
+  justify-content: center;
   align-items: center;
+  /* 给 4 个图标预留固定内容宽度，杜绝容器随屏幕拉伸而偏移 */
   box-shadow: var(--shadow-md);
   border: 1px solid rgba(255, 255, 255, 0.4);
+  padding: 0 20px;
+  box-sizing: border-box;
 }
 
 @media (max-width: 480px) {

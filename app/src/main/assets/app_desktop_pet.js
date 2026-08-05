@@ -729,7 +729,7 @@
             // 剥离 MSG_ID 标签
             displayContent = displayContent.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
             // 剥离旧思维链 <think>...</think>
-            displayContent = displayContent.replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "").trim();
+            displayContent = displayContent.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
           }
 
           // contentType 处理：把图片/语音/通话/社交动作等转为可读摘要，避免裸 JSON 污染上下文
@@ -785,7 +785,7 @@
 
         // 剥离 MSG_ID 标签 + think 标签 + AI 可能模仿输出的系统提示标签
         reply = reply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "");
-        reply = reply.replace(/(?:<think>|\[THINKING\])[\s\S]*?(?:<\/think>|\[\/THINKING\])/gi, "");
+        reply = reply.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "");
         reply = reply.replace(/[\[【]系统提示[：:][^\]】]*[\]】]/gi, "");
 
         // === 解析并剥除 PLAY_MUSIC 放歌指令 ===

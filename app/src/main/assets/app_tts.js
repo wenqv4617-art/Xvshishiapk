@@ -122,7 +122,12 @@
           </div>
           <div class="form-group">
             <label>API Key (必填)</label>
-            <input type="password" id="tts-api-key" placeholder="MiniMax API Key">
+            <div style="display:flex; gap:6px; align-items:center;">
+              <input type="password" id="tts-api-key" placeholder="MiniMax API Key" style="flex:1;">
+              <button type="button" class="btn-copy-key" onclick="copyApiKey('tts-api-key')" title="复制 Key" style="width:36px; height:36px; border:1.5px solid var(--border); background:var(--surface); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:0;">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary);"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+            </div>
           </div>
           <div class="form-group">
             <label>模型选择</label>
@@ -342,7 +347,37 @@
     },
 
     /**
+     * 判断给定文本是否对应一条已被收藏的语音消息。
+     * 收藏的语音不受3天过期清理，可反复收听，仅手动移除收藏后才会被清理。
+     */
+    _isFavoritedVoiceText: async function (text) {
+      if (!text || typeof db === "undefined" || !db) return false;
+      try {
+        const onlineHit = await db.messages
+          .filter(m => m.isFavorite === 1 && m.contentType === 'voice')
+          .toArray();
+        for (let m of onlineHit) {
+          try {
+            const d = JSON.parse(m.content);
+            if (d && d.text === text) return true;
+          } catch (e) {}
+        }
+        const offlineHit = await db.offline_messages
+          .filter(m => m.isFavorite === 1 && m.contentType === 'voice')
+          .toArray();
+        for (let m of offlineHit) {
+          try {
+            const d = JSON.parse(m.content);
+            if (d && d.text === text) return true;
+          } catch (e) {}
+        }
+      } catch (e) {}
+      return false;
+    },
+
+    /**
      * 缓存感知合成：命中本地缓存（3 天内）直接返回，否则合成并写入缓存。
+     * 被收藏的语音即使过期也会保留缓存并直接返回，可反复收听。
      * @returns {Promise<Blob|null>} 失败时返回 null（已 showToast）
      */
     getOrSynthesize: async function (text, voiceId, sessionId) {
@@ -359,10 +394,16 @@
         try {
           const hit = await db.tts_cache.get(cacheKey);
           if (hit) {
-            if (Date.now() - hit.createdAt < CACHE_TTL) {
+            const isExpired = Date.now() - hit.createdAt >= CACHE_TTL;
+            if (!isExpired) {
+              return hit.blob;
+            }
+            // 过期：若该语音被收藏则保留缓存并直接返回（可反复收听），否则删除并重新合成
+            const isFav = await ttsSystem._isFavoritedVoiceText(text);
+            if (isFav) {
               return hit.blob;
             } else {
-              await db.tts_cache.delete(cacheKey); // 过期，清理
+              await db.tts_cache.delete(cacheKey);
             }
           }
         } catch (e) { /* 缓存读失败则继续合成 */ }
@@ -427,18 +468,54 @@
     },
 
     /**
-     * 清理所有超过 3 天的缓存语音。在应用启动与每次合成后调用。
+     * 清理超过 3 天的过期缓存语音。被收藏的语音不受此清理影响，可反复收听，
+     * 只有在收藏室手动移除收藏后才会重新纳入清理范围。在应用启动与每次合成后调用。
      */
     cleanupExpiredCache: async function () {
-      const db = getTtsDb();
-      if (!db) return;
+      const cacheDb = getTtsDb();
+      if (!cacheDb) return;
       try {
         const threshold = Date.now() - CACHE_TTL;
-        const expired = await db.tts_cache.where("createdAt").below(threshold).toArray();
-        const keys = expired.map(r => r.key);
-        if (keys.length > 0) {
-          await db.tts_cache.bulkDelete(keys);
-          console.log("[TTS] 已清理过期语音缓存", keys.length, "条");
+        const expired = await cacheDb.tts_cache.where("createdAt").below(threshold).toArray();
+        if (expired.length === 0) return;
+
+        // 收集所有被收藏的语音消息文本，这些语音不受3天清理影响，可反复收听
+        const favTexts = new Set();
+        if (typeof db !== "undefined" && db) {
+          try {
+            // 线上对话中的收藏语音
+            const onlineFavVoices = await db.messages
+              .filter(m => m.isFavorite === 1 && m.contentType === 'voice')
+              .toArray();
+            onlineFavVoices.forEach(m => {
+              try {
+                const d = JSON.parse(m.content);
+                if (d && d.text) favTexts.add(d.text);
+              } catch (e) {}
+            });
+            // 线下小剧场中的收藏语音
+            const offlineFavVoices = await db.offline_messages
+              .filter(m => m.isFavorite === 1 && m.contentType === 'voice')
+              .toArray();
+            offlineFavVoices.forEach(m => {
+              try {
+                const d = JSON.parse(m.content);
+                if (d && d.text) favTexts.add(d.text);
+              } catch (e) {}
+            });
+          } catch (e) {
+            console.warn("[TTS] 读取收藏语音列表失败，本次将清理全部过期缓存", e);
+          }
+        }
+
+        // 仅删除非收藏的过期语音缓存，收藏的语音保留以供反复收听
+        const keysToDelete = expired
+          .filter(r => !favTexts.has(r.text))
+          .map(r => r.key);
+
+        if (keysToDelete.length > 0) {
+          await cacheDb.tts_cache.bulkDelete(keysToDelete);
+          console.log("[TTS] 已清理过期语音缓存", keysToDelete.length, "条，保留收藏语音", expired.length - keysToDelete.length, "条");
         }
       } catch (e) {
         console.warn("[TTS] 清理缓存失败", e);

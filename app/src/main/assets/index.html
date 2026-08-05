@@ -414,6 +414,11 @@
                 <span>深谈预设设置</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
+              <!-- 新增：生图设置入口 -->
+              <div class="menu-item" onclick="openSettingsLv2('imagegen')">
+                <span>生图设置</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
               <div class="menu-item" onclick="openSettingsLv2('data')">
                 <span>数据管理</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
@@ -502,7 +507,12 @@
             </div>
             <div class="form-group">
               <label>API Key</label>
-              <input type="password" id="api-key" placeholder="API Key">
+              <div style="display:flex; gap:6px; align-items:center;">
+                <input type="password" id="api-key" placeholder="API Key" style="flex:1;">
+                <button type="button" class="btn-copy-key" onclick="copyApiKey('api-key')" title="复制 Key" style="width:36px; height:36px; border:1.5px solid var(--border); background:var(--surface); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:0;">
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary);"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+              </div>
             </div>
             <div class="form-group">
               <label>模型选择</label>
@@ -682,6 +692,41 @@
                     </div>
                   </div>
                 </div>
+                <!-- 购物 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-shopping" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">购物</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-shopping" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="shopping" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="shopping" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 邂逅 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-encounter" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">邂逅</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-encounter" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="encounter" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="encounter" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-quicktravel" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">快穿局</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-quicktravel" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="quicktravel" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="quicktravel" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <!-- 全局单通道图标上传文件input -->
               <input type="file" id="file-beautify-icon-global" accept="image/*" style="display:none;">
@@ -780,6 +825,78 @@
             </div>
             <div class="form-actions">
               <button id="btn-save-deeptalk-preset" class="btn btn-primary" style="width:100%;">保存当前深谈预设</button>
+            </div>
+          </div>
+
+          <!-- 二级：生图设置（API预设 + 画师串） -->
+          <div id="settings-lv2-imagegen" class="settings-lv2-panel" style="display:none;">
+            <!-- ① API 设置区 -->
+            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px;">
+              <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--primary);"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                ① 生图 API 设置
+              </h4>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">选择已有预设进行编辑</label>
+                <div style="display:flex; gap:6px; margin-bottom:8px;">
+                  <select id="settings-imagegen-presets-select" style="flex:1; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;"><option value="">-- 新建预设 --</option></select>
+                  <button id="btn-delete-imagegen-preset" class="btn btn-danger-outline" style="padding:6px 10px; font-size:11px;">删除</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">预设名称</label>
+                <input type="text" id="settings-imagegen-preset-name" placeholder="例如：默认生图API" style="font-size:12px;">
+              </div>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">API URL</label>
+                <input type="text" id="settings-imagegen-preset-url" placeholder="例如：https://api.example.com/v1" style="font-size:12px;">
+              </div>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">API Key</label>
+                <div style="display:flex; gap:6px; align-items:center;">
+                  <input type="password" id="settings-imagegen-preset-key" placeholder="sk-..." style="flex:1; font-size:12px;">
+                  <button type="button" class="btn-copy-key" onclick="copyApiKey('settings-imagegen-preset-key')" title="复制 Key" style="width:32px; height:32px; border:1.5px solid var(--border); background:var(--surface); border-radius:8px; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0; padding:0;">
+                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary);"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                  </button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">生图模型</label>
+                <div style="display:flex; gap:6px;">
+                  <select id="settings-imagegen-preset-model" style="flex:1; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;"><option value="">-- 先填URL/Key后拉取 --</option></select>
+                  <button id="btn-fetch-imagegen-models" class="btn btn-outline" type="button" style="padding:6px 10px; font-size:11px; flex-shrink:0;">拉取模型</button>
+                </div>
+              </div>
+              <div style="display:flex; gap:6px; margin-top:8px;">
+                <button id="btn-test-imagegen-connection" class="btn btn-outline" type="button" style="flex:1; padding:8px; font-size:11px; border-color:#10b981; color:#10b981; border-radius:8px; font-weight:700;">测试连接</button>
+                <button id="btn-save-imagegen-preset" class="btn btn-primary" type="button" style="flex:1; padding:8px; font-size:11px; border-radius:8px; font-weight:700;">保存/更新预设</button>
+              </div>
+              <button id="btn-apply-imagegen-global" class="btn btn-outline" type="button" style="width:100%; padding:8px; font-size:11px; border-color:#3b82f6; color:#3b82f6; border-radius:8px; font-weight:700; margin-top:6px;">全局应用此预设</button>
+              <div id="imagegen-test-result" style="font-size:11px; color:var(--text-secondary); margin-top:6px; min-height:14px;"></div>
+            </div>
+
+            <!-- ② 画师串模块 -->
+            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px;">
+              <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#ec4899;"><circle cx="13.5" cy="6.5" r=".5"/><circle cx="17.5" cy="10.5" r=".5"/><circle cx="8.5" cy="7.5" r=".5"/><circle cx="6.5" cy="12.5" r=".5"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.926 0 1.648-.746 1.648-1.688 0-.437-.18-.835-.437-1.125-.29-.289-.438-.652-.438-1.125a1.64 1.64 0 0 1 1.668-1.668h1.996c3.051 0 5.555-2.503 5.555-5.554C21.965 6.012 17.461 2 12 2z"/></svg>
+                ② 画师串模块
+              </h4>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">选择已有画师串进行编辑</label>
+                <div style="display:flex; gap:6px; margin-bottom:8px;">
+                  <select id="settings-imagegen-artists-select" style="flex:1; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;"><option value="">-- 新建画师串 --</option></select>
+                  <button id="btn-delete-imagegen-artist" class="btn btn-danger-outline" style="padding:6px 10px; font-size:11px;" disabled>删除</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">画师串名称</label>
+                <input type="text" id="settings-imagegen-artist-name" placeholder="例如：写实韩系清爽风" style="font-size:12px;">
+              </div>
+              <div class="form-group">
+                <label style="font-size:11px; color:var(--text-secondary); font-weight:700;">画师串提示词（正向）</label>
+                <textarea id="settings-imagegen-artist-prompt" rows="8" placeholder="在此处输入画师串..." style="font-size:11px; line-height:1.5;"></textarea>
+              </div>
+              <button id="btn-save-imagegen-artist" class="btn btn-primary" type="button" style="width:100%; padding:8px; font-size:11px; border-radius:8px; font-weight:700;">保存画师串</button>
             </div>
           </div>
 
@@ -1037,6 +1154,19 @@
                   <div class="form-group"><label>母语 / 语言偏好 (留空默认为中文)</label><input type="text" id="archive-language" placeholder="例如：日语、英语、粤语、法语"></div>
                   <div class="form-group"><label>分组</label><input type="text" id="archive-group" placeholder="如：主角团、反派"></div>
                   <div class="form-group"><label>人设</label><textarea id="archive-persona" rows="3" placeholder="System Prompt 人设底料"></textarea></div>
+                  <div class="form-group">
+                    <label>外貌描写 <span style="font-size:10px; color:var(--text-secondary); font-weight:normal;">(选填，用作生图参考，优先度高)</span></label>
+                    <textarea id="archive-appearance" rows="3" placeholder="自由文本外貌描写，用于AI生图时锁住角色外貌。例如：男性，25岁，短发黑色，单眼皮，高鼻梁，皮肤白皙，身高180cm，瘦削身材。"></textarea>
+                  </div>
+                  <div class="form-group">
+                    <label>生图锁脸正脸照片 <span style="font-size:10px; color:var(--text-secondary); font-weight:normal;">(选填，1-3张正脸照，用于AI生图时锁住面部身份)</span></label>
+                    <div id="archive-lockface-preview" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px; min-height:48px;"></div>
+                    <div style="display:flex; gap:6px;">
+                      <button type="button" id="btn-archive-upload-lockface" class="btn btn-outline" style="flex:1; padding:7px; font-size:11px; border-radius:8px;">上传正脸照片</button>
+                      <button type="button" id="btn-archive-clear-lockface" class="btn btn-danger-outline" style="padding:7px 10px; font-size:11px; border-radius:8px;">清空</button>
+                    </div>
+                    <input type="file" id="file-archive-lockface" accept="image/*" multiple style="display:none;">
+                  </div>
                 </div>
                 <div class="form-actions">
                   <button type="button" class="btn btn-outline" id="btn-cancel-form">取消</button>
@@ -1439,6 +1569,15 @@
                       </svg>
                     </div>
                     <span>红包</span>
+                  </div>
+                  <div class="expand-item" id="btn-chat-location">
+                    <div class="expand-icon-wrapper">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                      </svg>
+                    </div>
+                    <span>位置</span>
                   </div>
                   <div class="expand-item" id="btn-chat-focus">
                     <div class="expand-icon-wrapper">
@@ -2123,6 +2262,24 @@
               </label>
             </div>
 
+            <!-- 翻译随动生成：开启后请求回复时一同返回中文翻译，渲染在消息气泡下方 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <path d="M4 5h7"/>
+                  <path d="M7 4c0 4.418-2.239 8-5 8"/>
+                  <path d="M5 8c0 2.5 3 4.5 6 4.5"/>
+                  <path d="M4 13l6 6 6-6"/>
+                  <path d="M14 20l4-9 4 9"/>
+                  <path d="M15 17h6"/>
+                </svg> 翻译随动生成
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-translate-auto">
+                <span class="slider"></span>
+              </label>
+            </div>
+
             <!-- 新增：允许AI发送语音与图片开关 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
@@ -2314,6 +2471,18 @@
               <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
             </div>
 
+            <!-- 新增：生图设置入口（在聊天个性化美化入口下方） -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-bottom: 1px solid var(--border); cursor:pointer;" onclick="imageGenSystem.openSessionPanel()">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:700;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:#ec4899;">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                  <circle cx="8.5" cy="8.5" r="1.5"/>
+                  <polyline points="21 15 16 10 5 21"/>
+                </svg> 生图设置
+              </label>
+              <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+
             <!-- 新增：自定义模拟时间设定卡片 -->
             <div class="form-group" id="details-custom-time-container" style="display:none; padding: 10px; background: #f8fafc; border-radius: 8px; border: 1.5px solid var(--border); margin-top: -6px; margin-bottom: 12px;">
               <label style="margin-bottom: 8px; font-weight: 700; font-size:11px;">设置虚拟场景模拟时间</label>
@@ -2363,6 +2532,73 @@
             </div>
           </div>
         </div>
+
+                <!-- 注入：会话级生图设置面板 (收纳在 win-chat 内部) -->
+                <div id="imagegen-session-panel" class="chat-details-overlay">
+                  <header class="win-header">
+                    <button class="btn-icon" onclick="document.getElementById('imagegen-session-panel').classList.remove('active')">
+                      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <h3>生图设置</h3>
+                    <div style="width:40px;"></div>
+                  </header>
+                  <div class="win-body" style="padding: 16px;">
+
+                    <!-- 0. 顶部控制开关 -->
+                    <div class="mcp-card" style="background:#fdf2f8; border:1.5px solid #fbcfe8; border-radius:12px; padding:12px; margin-bottom:12px;">
+                      <h4 style="margin:0 0 10px 0; font-size:13px; color:#9d174d; font-weight:700;">顶层开关</h4>
+                      <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding:6px 0; border-bottom:1px dashed #fbcfe8;">
+                        <label style="margin-bottom:0; font-weight:700; font-size:12px;">① 开启聊天生图</label>
+                        <label class="switch">
+                          <input type="checkbox" id="imagegen-session-chat-toggle">
+                          <span class="slider"></span>
+                        </label>
+                      </div>
+                      <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding:6px 0;">
+                        <label style="margin-bottom:0; font-weight:700; font-size:12px;">② 开启朋友圈生图</label>
+                        <label class="switch">
+                          <input type="checkbox" id="imagegen-session-moments-toggle">
+                          <span class="slider"></span>
+                        </label>
+                      </div>
+                    </div>
+
+                    <!-- 1. 锁脸 -->
+                    <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px;">
+                      <h4 style="margin:0 0 6px 0; font-size:13px; color:var(--text-primary); font-weight:700;">① 锁脸（1-3张正脸照片）</h4>
+                      <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px;">上传后生成的人像必须与此正脸为同一人，照片会在轨压缩</div>
+                      <div id="imagegen-lockface-preview" style="display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; min-height:60px;"></div>
+                      <div style="display:flex; gap:6px;">
+                        <button id="btn-imagegen-upload-lockface" class="btn btn-outline" type="button" style="flex:1; padding:8px; font-size:11px; border-radius:8px;">上传正脸照片</button>
+                        <button id="btn-imagegen-clear-lockface" class="btn btn-danger-outline" type="button" style="padding:8px 10px; font-size:11px; border-radius:8px;">清空</button>
+                      </div>
+                      <input type="file" id="file-imagegen-lockface" accept="image/*" multiple style="display:none;">
+                    </div>
+
+                    <!-- 2. 专属画师串 -->
+                    <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px;">
+                      <h4 style="margin:0 0 6px 0; font-size:13px; color:var(--text-primary); font-weight:700;">② 专属画师串</h4>
+                      <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px;">选择在设置-生图设置中建立的画师串预设</div>
+                      <select id="imagegen-session-artist-select" style="width:100%; padding:6px; font-size:12px; border:1.5px solid var(--border); border-radius:8px;"></select>
+                    </div>
+
+                    <!-- 3. 提示词 -->
+                    <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; margin-bottom:12px;">
+                      <h4 style="margin:0 0 6px 0; font-size:13px; color:var(--text-primary); font-weight:700;">③ 提示词</h4>
+                      <div class="form-group">
+                        <label style="font-size:11px; color:var(--text-secondary); font-weight:700; margin-bottom:4px;">正向提示词</label>
+                        <textarea id="imagegen-session-positive-prompt" rows="4" placeholder="追加在画师串之后的正向提示词..." style="font-size:11px; line-height:1.5;"></textarea>
+                      </div>
+                      <div class="form-group">
+                        <label style="font-size:11px; color:var(--text-secondary); font-weight:700; margin-bottom:4px;">负面提示词</label>
+                        <textarea id="imagegen-session-negative-prompt" rows="4" placeholder="不想在生成图中出现的内容..." style="font-size:11px; line-height:1.5;"></textarea>
+                      </div>
+                    </div>
+
+                    <!-- 4. 保存设置 -->
+                    <button id="btn-save-imagegen-session" class="btn btn-primary" type="button" style="width:100%; padding:12px; font-size:13px; border-radius:10px; font-weight:700; background:#ec4899; border:none; cursor:pointer;">保存生图设置</button>
+                  </div>
+                </div>
 
                 <!-- 注入：会话总结面板 (完全收纳在 win-chat 内部，防止全局绝对定位与指针层级污染) -->
                 <div id="chat-summary-panel" class="chat-details-overlay">
@@ -3939,6 +4175,9 @@
                 <button type="button" class="btn btn-outline repair-pill-btn" data-type="sticker" onclick="selectRepairFormat('sticker', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">表情包</button>
                 <button type="button" class="btn btn-outline repair-pill-btn" data-type="transfer" onclick="selectRepairFormat('transfer', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">转账</button>
                 <button type="button" class="btn btn-outline repair-pill-btn" data-type="red_envelope" onclick="selectRepairFormat('red_envelope', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">红包</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="gift" onclick="selectRepairFormat('gift', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">送礼物</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="pay_for_me" onclick="selectRepairFormat('pay_for_me', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">代付</button>
+                <button type="button" class="btn btn-outline repair-pill-btn" data-type="location" onclick="selectRepairFormat('location', this)" style="padding: 6px; font-size: 11.5px; font-weight: 700; border-radius: 8px;">位置</button>
               </div>
             </div>
 
@@ -3998,6 +4237,49 @@
                 <input type="number" id="repair-input-red-amount" step="0.01" value="50.00" style="width:100%; height:36px; border:1.5px solid var(--border); border-radius:8px; font-size:14px; font-weight:700; padding:0 8px; box-sizing:border-box; margin-bottom:6px;">
                 <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">红包祝福语 (原文已自动带入)</label>
                 <input type="text" id="repair-input-red-remark" placeholder="恭喜发财" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; padding:0 8px; box-sizing:border-box;">
+              </div>
+
+              <!-- 送礼物 / 代付（共用字段：商品名+单价+数量+附言） -->
+              <div id="repair-field-gift" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">礼物名称</label>
+                <input type="text" id="repair-input-gift-name" placeholder="例如：蛋挞投影夜灯" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; padding:0 8px; box-sizing:border-box; margin-bottom:6px;">
+                <div style="display:flex; gap:6px; margin-bottom:6px;">
+                  <div style="flex:1;">
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">单价(元)</label>
+                    <input type="number" id="repair-input-gift-price" step="0.01" value="88.00" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:13px; font-weight:700; padding:0 8px; box-sizing:border-box;">
+                  </div>
+                  <div style="flex:1;">
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">数量</label>
+                    <input type="number" id="repair-input-gift-qty" step="1" min="1" value="1" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:13px; font-weight:700; padding:0 8px; box-sizing:border-box;">
+                  </div>
+                </div>
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">附言 (原文已自动带入)</label>
+                <textarea id="repair-input-gift-message" rows="2" placeholder="送给你的一份心意" style="width:100%; border:1.5px solid var(--border); border-radius:8px; padding:8px; font-size:12px; resize:none; box-sizing:border-box;"></textarea>
+              </div>
+
+              <div id="repair-field-pay_for_me" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">代付商品名称</label>
+                <input type="text" id="repair-input-payfor-name" placeholder="例如：限定周边手办" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; padding:0 8px; box-sizing:border-box; margin-bottom:6px;">
+                <div style="display:flex; gap:6px; margin-bottom:6px;">
+                  <div style="flex:1;">
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">单价(元)</label>
+                    <input type="number" id="repair-input-payfor-price" step="0.01" value="100.00" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:13px; font-weight:700; padding:0 8px; box-sizing:border-box;">
+                  </div>
+                  <div style="flex:1;">
+                    <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">数量</label>
+                    <input type="number" id="repair-input-payfor-qty" step="1" min="1" value="1" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:13px; font-weight:700; padding:0 8px; box-sizing:border-box;">
+                  </div>
+                </div>
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">带一句话 (原文已自动带入)</label>
+                <textarea id="repair-input-payfor-message" rows="2" placeholder="帮我付一下嘛~" style="width:100%; border:1.5px solid var(--border); border-radius:8px; padding:8px; font-size:12px; resize:none; box-sizing:border-box;"></textarea>
+              </div>
+
+              <!-- 位置 -->
+              <div id="repair-field-location" class="repair-sub-field" style="display:none;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">位置名称</label>
+                <input type="text" id="repair-input-loc-name" placeholder="例如：星巴克(国贸店)" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; padding:0 8px; box-sizing:border-box; margin-bottom:6px;">
+                <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">经纬度 (可选，留空随机生成)</label>
+                <input type="text" id="repair-input-loc-coord" placeholder="如 39.9087,116.3975" style="width:100%; height:34px; border:1.5px solid var(--border); border-radius:8px; font-size:12px; font-family:monospace; padding:0 8px; box-sizing:border-box;">
               </div>
             </div>
 
@@ -4310,8 +4592,8 @@
                 <div class="bookstore-section-title">
                   <span>个性标签分类</span>
                   <button class="refresh-trigger-btn" onclick="readerSystem.triggerAddTagDialog()">
-                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                    新增标签
+                    <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                    标签管理
                   </button>
                 </div>
                 <div class="category-tags-grid" id="store-tags-grid"></div>
@@ -5057,6 +5339,114 @@
 
         </div> <!-- 听歌应用(win-music)结束 -->
 
+        <!-- ========================================== -->
+        <!--           购物应用 (win-shopping)           -->
+        <!-- ========================================== -->
+        <div id="win-shopping" class="app-window" style="background-color:#fafafa; overflow:hidden;">
+          <header class="win-header" style="background:#f5a07a; border-bottom:none; padding:10px 14px;">
+            <button class="btn-icon" onclick="closeApp('shopping')" style="color:#fff;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h3 id="shopping-main-title" style="color:#fff; font-size:15px; font-weight:700;">购物</h3>
+            <div style="width:40px;"></div>
+          </header>
+          <div class="win-body" style="padding:0; overflow-y:auto; position:relative;">
+            <!-- 首页面板 -->
+            <section id="shopping-tab-home" class="shopping-tab-panel active" style="display:block;"></section>
+            <!-- 购物车面板 -->
+            <section id="shopping-tab-cart" class="shopping-tab-panel" style="display:none;"></section>
+            <!-- 我的面板 -->
+            <section id="shopping-tab-mine" class="shopping-tab-panel" style="display:none;"></section>
+            <!-- 商品详情层（覆盖在所有面板之上） -->
+            <div id="shopping-detail-overlay" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:#fafafa; z-index:10; overflow-y:auto;"></div>
+            <!-- 结账页层 -->
+            <div id="shopping-checkout-overlay" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:#fafafa; z-index:20; overflow-y:auto;"></div>
+            <!-- 店铺详情层（外卖用） -->
+            <div id="shopping-store-overlay" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:#fafafa; z-index:10; overflow-y:auto;"></div>
+            <!-- 收货地址管理层 -->
+            <div id="shopping-addr-overlay" style="display:none; position:absolute; top:0; left:0; right:0; bottom:0; background:#fafafa; z-index:25; overflow-y:auto;"></div>
+          </div>
+          <!-- 底部 Dock 栏 -->
+          <footer style="display:flex; background:#fff; border-top:1px solid #eee; padding:6px 0 calc(6px + env(safe-area-inset-bottom, 0px));">
+            <button class="shopping-dock-tab active" data-tab="home" onclick="shoppingSystem.switchTab('home')" style="flex:1; border:none; background:none; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer; padding:4px 0;">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#f5a07a;"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+              <span style="font-size:10px; font-weight:700; color:#f5a07a;">首页</span>
+            </button>
+            <button class="shopping-dock-tab" data-tab="cart" onclick="shoppingSystem.switchTab('cart')" style="flex:1; border:none; background:none; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer; padding:4px 0; position:relative;">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#999;"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>
+              <span style="font-size:10px; font-weight:600; color:#999;">购物车</span>
+              <span id="shopping-cart-badge" style="display:none; position:absolute; top:0; right:25%; background:#e87d5e; color:#fff; font-size:9px; font-weight:700; min-width:16px; height:16px; border-radius:8px; text-align:center; line-height:16px; padding:0 4px;">0</span>
+            </button>
+            <button class="shopping-dock-tab" data-tab="mine" onclick="shoppingSystem.switchTab('mine')" style="flex:1; border:none; background:none; display:flex; flex-direction:column; align-items:center; gap:2px; cursor:pointer; padding:4px 0;">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#999;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span style="font-size:10px; font-weight:600; color:#999;">我的</span>
+            </button>
+          </footer>
+        </div> <!-- 购物应用(win-shopping)结束 -->
+
+        <!-- ========================================== -->
+        <!--           邂逅应用 (win-encounter)          -->
+        <!-- ========================================== -->
+        <div id="win-encounter" class="app-window" style="overflow:hidden;">
+          <header class="win-header" style="padding:10px 14px;">
+            <button class="btn-icon encounter-close-btn" style="color:#fff;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h3 id="encounter-title" style="color:#fff; font-size:15px; font-weight:700;">邂逅</h3>
+            <button class="btn-icon" id="btn-encounter-refresh" style="color:#fff;" title="刷新旅人">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+            </button>
+          </header>
+          <div class="win-body" id="encounter-body" style="padding:0; position:relative;">
+            <!-- 首页 (默认) -->
+            <section id="encounter-tab-home" class="encounter-tab-panel active" style="padding:0;">
+              <div id="encounter-galaxy"></div>
+              <div id="encounter-tags-repo"></div>
+            </section>
+            <!-- 广场 -->
+            <section id="encounter-tab-square" class="encounter-tab-panel" style="padding:0;">
+              <div id="encounter-categories"></div>
+              <div id="encounter-posts-stream"></div>
+            </section>
+            <!-- 发布瞬间 -->
+            <section id="encounter-tab-publish" class="encounter-tab-panel" style="padding:0;">
+              <div id="encounter-publish-form"></div>
+            </section>
+          </div>
+          <!-- 胶囊式 Dock -->
+          <footer class="encounter-capsule-dock">
+            <button class="encounter-dock-btn" data-tab="square">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+              <span>广场</span>
+            </button>
+            <button class="encounter-dock-btn active" data-tab="home">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+              <span>首页</span>
+            </button>
+            <button class="encounter-dock-btn" data-tab="publish">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+              <span>发布</span>
+            </button>
+          </footer>
+          <!-- 陌生 char 人设卡片层 -->
+          <div id="encounter-card-overlay"></div>
+          <!-- 帖子详情层 -->
+          <div id="encounter-post-overlay"></div>
+        </div> <!-- 邂逅应用(win-encounter)结束 -->
+
+        <!--           快穿局应用 (win-quicktravel)          -->
+        <div id="win-quicktravel" class="app-window" style="overflow:hidden; background:#e4e9f0;">
+          <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.7), rgba(255,255,255,0.3)); border-bottom:1px solid rgba(148,163,184,0.28);">
+            <button class="btn-icon qt-close-btn" style="color:#475569;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h3 id="qt-title" style="color:#1e293b; font-size:15px; font-weight:700; letter-spacing:1px;">快穿局</h3>
+            <span style="width:20px;"></span>
+          </header>
+          <div class="win-body" id="qt-body" style="padding:0; position:relative; color:#334155;"></div>
+          <div id="qt-overlay"></div>
+        </div> <!-- 快穿局应用(win-quicktravel)结束 -->
+
             </div> <!-- app-window-container 结束 -->
 
       <!-- 桌面翻页指示器 -->
@@ -5077,6 +5467,8 @@
   <script src="app_archive.js"></script>
   <script src="app_world_book.js"></script>
   <script src="app_tts.js"></script>
+  <script src="app_shopping_icons.js"></script>
+  <script src="app_shopping.js"></script>
   <script src="app_chat.js"></script>
   <!-- 引入新写的总结与核心记忆关联召回脚本 -->
   <script src="app_summary_memory.js"></script>
@@ -5109,6 +5501,10 @@
   <script src="app_chat_beautify.js"></script>
   <script src="app_desktop_presets.js"></script>
   <script src="app_music.js"></script>
+  <script src="app_withdraw.js"></script>
+  <script src="app_image_gen.js"></script>
+  <script src="app_encounter.js"></script>
+  <script src="app_quicktravel.js"></script>
   <script src="app_router.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)

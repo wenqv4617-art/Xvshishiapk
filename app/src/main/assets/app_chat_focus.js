@@ -60,14 +60,18 @@
         <div style="padding: 12px 16px; border-top: 1px solid var(--border); display: flex; gap: 8px; background: #f8fafc;">
           <button id="btn-ambient-upload-file" class="btn-pwa-modal confirm" style="margin: 0; font-size: 11.5px; height: 34px;">上传文件</button>
           <button id="btn-ambient-add-url" class="btn-pwa-modal confirm" style="margin: 0; font-size: 11.5px; height: 34px; background: #3b82f6;">添加网络URL</button>
+          <button id="btn-ambient-from-library" class="btn-pwa-modal confirm" style="margin: 0; font-size: 11.5px; height: 34px; background: #ec4141;">从乐库导入</button>
         </div>
       </div>
     `;
-    
+
     document.getElementById("close-ambient-panel").onclick = () => modal.remove();
     document.getElementById("btn-ambient-upload-file").onclick = () => {
       const fileInput = document.getElementById("file-focus-ambient");
       if (fileInput) fileInput.click();
+    };
+    document.getElementById("btn-ambient-from-library").onclick = () => {
+      openMusicLibraryPicker(modal, sess);
     };
     document.getElementById("btn-ambient-add-url").onclick = () => {
       showCustomPrompt("请输入网络音频URL", "https://example.com/music.mp3", async (url) => {
@@ -90,6 +94,90 @@
     };
     
     renderAmbientPanelList(modal, sess);
+  }
+
+  // 从音乐乐库选择音源导入到专注环境音
+  async function openMusicLibraryPicker(parentModal, sess) {
+    if (!window.musicSystem || typeof window.musicSystem.getAllSongsFromIndexedDB !== 'function') {
+      showToast("乐库未就绪，请先在听歌应用中导入歌曲");
+      return;
+    }
+
+    let songs = [];
+    try {
+      songs = await window.musicSystem.getAllSongsFromIndexedDB();
+    } catch(e) {
+      showToast("读取乐库失败: " + e.message);
+      return;
+    }
+
+    if (!songs || songs.length === 0) {
+      showToast("乐库为空，请先在听歌应用中导入歌单或歌曲");
+      return;
+    }
+
+    // 已导入的乐库音源（去重用）
+    const existing = (sess.focusAmbientSounds || []).filter(s => s.fromLibrary);
+    const existingIds = new Set(existing.map(s => s.songId));
+
+    let picker = document.getElementById("focus-music-library-picker");
+    if (!picker) {
+      picker = document.createElement("div");
+      picker.id = "focus-music-library-picker";
+      picker.style.cssText = "position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 12000; box-sizing: border-box; padding: 16px;";
+      document.body.appendChild(picker);
+    }
+
+    picker.innerHTML = `
+      <div style="background: #ffffff; width: 340px; max-height: 80vh; border-radius: 16px; display: flex; flex-direction: column; box-shadow: 0 12px 32px rgba(0,0,0,0.15); box-sizing: border-box; overflow: hidden; animation: scaleIn 0.2s ease-out;">
+        <div style="padding: 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; background: #f8fafc;">
+          <span style="font-size: 15px; font-weight: 700; color: #1e293b;">从乐库选择音源</span>
+          <span id="close-library-picker" style="font-size: 18px; font-weight: 700; color: #64748b; cursor: pointer; padding: 4px;">&times;</span>
+        </div>
+        <div style="flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 6px; box-sizing: border-box;" id="library-picker-list">
+        </div>
+        <div style="padding: 10px 16px; border-top: 1px solid var(--border); font-size: 10px; color: #94a3b8; background: #f8fafc; text-align: center;">
+          共 ${songs.length} 首，已导入 ${existing.length} 首
+        </div>
+      </div>
+    `;
+
+    document.getElementById("close-library-picker").onclick = () => picker.remove();
+
+    const listEl = picker.querySelector("#library-picker-list");
+    songs.forEach(song => {
+      const alreadyImported = existingIds.has(song.id);
+      const row = document.createElement("div");
+      row.style.cssText = `padding: 10px; background: ${alreadyImported ? '#f0fdf4' : '#f8fafc'}; border: 1px solid ${alreadyImported ? '#bbf7d0' : '#e2e8f0'}; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px;`;
+      row.innerHTML = `
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px;">
+          <div style="font-size: 12px; color: #1e293b; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${song.title}">${song.title}</div>
+          <div style="font-size: 10px; color: #94a3b8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${song.artist || '未知歌手'}</div>
+        </div>
+        <button style="padding: 5px 10px; font-size: 11px; font-weight: 700; border: none; border-radius: 6px; background: ${alreadyImported ? '#94a3b8' : '#ec4141'}; color: #fff; cursor: ${alreadyImported ? 'not-allowed' : 'pointer'}; white-space: nowrap;">
+          ${alreadyImported ? '已导入' : '导入'}
+        </button>
+      `;
+      if (!alreadyImported) {
+        row.querySelector("button").onclick = async () => {
+          let list = sess.focusAmbientSounds || [];
+          list.push({
+            name: song.title,
+            url: song.url,
+            fromLibrary: true,
+            songId: song.id,
+            artist: song.artist || ""
+          });
+          await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
+          showToast(`已从乐库导入: ${song.title}`);
+          picker.remove();
+          if (parentModal) parentModal.remove();
+          await openAmbientMusicPanel();
+          await loadSetupScreen();
+        };
+      }
+      listEl.appendChild(row);
+    });
   }
 
   function renderAmbientPanelList(modalEl, sess) {
@@ -166,7 +254,7 @@
               <button class="delete-btn" style="padding: 4px 6px; font-size: 11px; border: none; border-radius: 4px; background: #ef4444; color: #fff; cursor: pointer;">删除</button>
             </div>
           </div>
-          ${item.url ? `<div style="font-size: 10px; color: #94a3b8; word-break: break-all;">链接: ${item.url}</div>` : `<div style="font-size: 10px; color: #10b981;">本地二进制Blob文件</div>`}
+          ${item.fromLibrary ? `<div style="font-size: 10px; color: #ec4141;">🎵 乐库音源${item.artist ? ' · ' + item.artist : ''}</div>` : (item.url ? `<div style="font-size: 10px; color: #94a3b8; word-break: break-all;">链接: ${item.url}</div>` : `<div style="font-size: 10px; color: #10b981;">本地二进制Blob文件</div>`)}
         `;
         
         row.querySelector(".select-btn").onclick = async () => {
@@ -182,7 +270,14 @@
           showCustomPrompt("编辑音源名称", item.name, async (newName) => {
             if (!newName) return;
             let list = sess.focusAmbientSounds || [];
-            if (item.url) {
+            if (item.fromLibrary) {
+              // 乐库音源：只改名字，url 不可改
+              list[index].name = newName;
+              await db.sessions.update(activeSessionId, { focusAmbientSounds: list });
+              showToast("名称修改成功");
+              openAmbientMusicPanel();
+              await loadSetupScreen();
+            } else if (item.url) {
               showCustomPrompt("编辑网络音源URL", item.url, async (newUrl) => {
                 if (!newUrl) return;
                 list[index].name = newName;
@@ -281,7 +376,7 @@
       sounds.forEach(s => {
         const opt = document.createElement("option");
         opt.value = s.name;
-        opt.innerText = `[自定义] ${s.name}`;
+        opt.innerText = `${s.fromLibrary ? '[乐库]' : '[自定义]'} ${s.name}`;
         if (config.ambientSoundName === s.name) {
           opt.selected = true;
         }

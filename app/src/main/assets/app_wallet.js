@@ -727,6 +727,11 @@
     claimRedEnvelope
   };
 
+  // 把 addLedgerEntry / getBalance 暴露为全局函数，方便 app_shopping.js / app_chat.js 调用
+  window.addLedgerEntry = addLedgerEntry;
+  window.getWalletBalance = getBalance;
+  window.setWalletBalance = setBalance;
+
   // 绑定对话底部扩展面板新增按钮
   document.addEventListener("DOMContentLoaded", () => {
     const btnTransfer = document.getElementById("btn-chat-transfer");

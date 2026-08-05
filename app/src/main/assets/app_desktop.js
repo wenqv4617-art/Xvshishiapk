@@ -30,14 +30,24 @@ let isAppClickEventsInitialized = false;
       touch-action: none !important; /* 彻底拦截原生横屏滑动翻页的触控权冲突 */
     }
     #dock-grid {
-      display: grid !important;
-      grid-template-columns: repeat(4, 1fr) !important;
-      gap: 12px !important;
+      /* 与 .dock-container 同源定位：使用 flex+center 居中 4 个图标，
+         杜绝 grid 1fr 拉伸造成的容器偏移；固定每格宽度保证视觉锁定正中 */
+      display: flex !important;
+      flex-direction: row !important;
+      justify-content: center !important;
       align-items: center !important;
-      width: 100% !important;
+      gap: 18px !important;
+      width: auto !important;
+      max-width: 100% !important;
       margin: 0 auto !important;
       padding: 0 !important;
       box-sizing: border-box !important;
+    }
+    #dock-grid > .dock-slot {
+      /* 固定每个 dock 槽位宽度，确保 4 个图标在 dock 中均匀居中 */
+      width: 64px !important;
+      flex: 0 0 64px !important;
+      aspect-ratio: 1 / 1 !important;
     }
     
     /* 桌面和 Dock 的专属网格槽 */
@@ -162,7 +172,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     } else {
       navigator.serviceWorker.register('./sw.js')
-        .then(() => console.log("PWA SW Online!"))
+        .then((reg) => {
+          window._swRegistration = reg;
+          console.log("PWA SW Online!");
+        })
         .catch((e) => console.error("SW failed", e));
     }
   }
@@ -276,7 +289,10 @@ const DESKTOP_APPS_CONFIG = {
   reader: { name: "阅读", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 4z"></path></svg>' },
   forum: { name: "论坛", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>' },
   couples: { name: "情侣空间", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>' },
-  music: { name: "听歌", svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>' }
+  music: { name: "听歌", svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>' },
+  shopping: { name: "购物", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>' },
+  encounter: { name: "邂逅", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-30 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(30 12 12)"/><circle cx="20" cy="9" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="15" r="1.2" fill="currentColor" stroke="none"/></svg>' },
+  quicktravel: { name: "快穿局", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M5 5l3 3"/><path d="M19 5l-3 3"/><path d="M5 19l3-3"/><path d="M19 19l-3-3"/></svg>' }
 };
 
 function loadDesktopLayout() {
@@ -292,14 +308,24 @@ function loadDesktopLayout() {
       oldLayout.forEach((id, idx) => {
         if (idx < 20) desktopLayout[idx] = id;
       });
+      // 老数据迁移后同样写回 v3，避免后续 isAppAlreadyPlaced / placeAppOnSlot 读到 null
+      while (desktopLayout.length < 40) desktopLayout.push(null);
+      localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
     } else {
-            desktopLayout[0] = 'settings';
-            desktopLayout[1] = 'archive';
-            desktopLayout[2] = 'world_book';
-            desktopLayout[3] = 'deeptalk'; // 默认第四个格子为深谈应用
-            desktopLayout[4] = 'reader';   // 默认第五个格子为阅读应用 [1]
-            desktopLayout[5] = 'forum';    // 默认第六个格子为论坛应用
-            desktopLayout[6] = 'couples';  // 默认第七个格子为情侣空间
+            desktopLayout = Array(40).fill(null); // 扩展为两页
+            // 规则：chat / world_book / archive 只放 Dock 栏，不占主页面格子
+            desktopLayout[0] = 'encounter';
+            desktopLayout[1] = 'deeptalk';
+            desktopLayout[2] = 'reader';
+            desktopLayout[3] = 'forum';
+            desktopLayout[4] = 'couples';
+            // 第二页：听歌 + 购物 + 快穿局
+            desktopLayout[20] = 'music';
+            desktopLayout[21] = 'shopping';
+            desktopLayout[22] = 'quicktravel';
+            // 关键修复：默认布局必须立即写回 localStorage，否则 isAppAlreadyPlaced / placeAppOnSlot
+            //   会读到 null，导致"添加图标列表显示全部"+"添加后覆盖成空数组使全部图标消失"
+            localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
           }
         }
 
@@ -311,8 +337,73 @@ function loadDesktopLayout() {
       oldDock.forEach((id, idx) => {
         if (idx < 4) dockLayout[idx] = id;
       });
+      localStorage.setItem("dock-layout-v3", JSON.stringify(dockLayout));
     } else {
+      // 默认 Dock：聊天 / 档案库 / 世界书 / 设置（chat/archive/world_book 只放 Dock）
       dockLayout[0] = 'chat';
+      dockLayout[1] = 'archive';
+      dockLayout[2] = 'world_book';
+      dockLayout[3] = 'settings';
+      // 同步写回，与 desktopLayout 保持一致，杜绝读取到 null 的隐患
+      localStorage.setItem("dock-layout-v3", JSON.stringify(dockLayout));
+    }
+  }
+
+  // 1.5 强制迁移：只要布局中没有"邂逅"图标就强制补入（不依赖一次性标记）
+  //      之前的迁移标记可能导致用户永远拿不到邂逅，现改为幂等检查
+  {
+    const hasEncounter = (Array.isArray(desktopLayout) && desktopLayout.includes("encounter"))
+                      || (Array.isArray(dockLayout) && dockLayout.includes("encounter"));
+    if (!hasEncounter) {
+      // 确保 desktopLayout 至少有 40 格（两页）
+      while (desktopLayout.length < 40) desktopLayout.push(null);
+      // 找到第一个空位放置邂逅（避免覆盖已有 app 和 widget 占用区）
+      // 优先尝试槽位 0；若 0 已被占用，则找第一个空槽
+      let targetIdx = -1;
+      // 检查槽位 0 是否被 widget 占用
+      const placedWidgetsDesktop = (() => {
+        try { return JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {}; }
+        catch(e) { return {}; }
+      })();
+      if (!desktopLayout[0] && !placedWidgetsDesktop["0"]) {
+        targetIdx = 0;
+      } else {
+        // 找第一个既无 app 又无 widget 的空槽
+        for (let i = 0; i < desktopLayout.length; i++) {
+          if (!desktopLayout[i] && !placedWidgetsDesktop[String(i)]) {
+            targetIdx = i;
+            break;
+          }
+        }
+      }
+      if (targetIdx >= 0) {
+        desktopLayout[targetIdx] = "encounter";
+        localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+      }
+    }
+  }
+
+  // 1.6 强制迁移：快穿局图标幂等补入（与邂逅同策略，老用户升级后自动出现在桌面空位）
+  {
+    const hasQt = (Array.isArray(desktopLayout) && desktopLayout.includes("quicktravel"))
+               || (Array.isArray(dockLayout) && dockLayout.includes("quicktravel"));
+    if (!hasQt) {
+      while (desktopLayout.length < 40) desktopLayout.push(null);
+      const placedWidgetsDesktop2 = (() => {
+        try { return JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {}; }
+        catch(e) { return {}; }
+      })();
+      let targetIdx2 = -1;
+      for (let i = 0; i < desktopLayout.length; i++) {
+        if (!desktopLayout[i] && !placedWidgetsDesktop2[String(i)]) {
+          targetIdx2 = i;
+          break;
+        }
+      }
+      if (targetIdx2 >= 0) {
+        desktopLayout[targetIdx2] = "quicktravel";
+        localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+      }
     }
   }
 
@@ -632,6 +723,9 @@ function openApp(app) {
     if (app === 'forum' && typeof initForumApp === 'function') initForumApp();
     if (app === 'couples' && typeof initCouplesApp === 'function') initCouplesApp();
     if (app === 'music' && typeof initMusicApp === 'function') initMusicApp();
+    if (app === 'shopping' && typeof initShoppingApp === 'function') initShoppingApp();
+    if (app === 'encounter' && typeof initEncounterApp === 'function') initEncounterApp();
+    if (app === 'quicktravel' && typeof initQuickTravelApp === 'function') initQuickTravelApp();
   }
 }
 
@@ -1064,11 +1158,11 @@ function openAddSelector(type, slotIndex) {
   } catch(e) {}
 
   const widgetIds = Object.keys(widgets);
-  const appsList = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music"];
+  const appsList = ["encounter", "settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "quicktravel"];
 
   let html = `<div style="padding:16px;">
     <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;text-align:center;">选择要添加的内容</h4>
-    
+
     <!-- 1. 系统应用摆放 -->
     <div style="display:flex; flex-direction:column; gap:6px; margin-bottom:16px; max-height:120px; overflow-y:auto;">`;
 
@@ -1085,6 +1179,9 @@ function openAddSelector(type, slotIndex) {
       else if (appId === "forum") name = "论坛";
       else if (appId === "couples") name = "情侣空间";
       else if (appId === "music") name = "听歌";
+      else if (appId === "shopping") name = "购物";
+      else if (appId === "encounter") name = "邂逅";
+      else if (appId === "quicktravel") name = "快穿局";
 
       html += `
         <button onclick="placeAppOnSlot('${type}', ${slotIndex}, '${appId}')" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid #e2e8f0; background:#f8fafc; font-size:12px; font-weight:600; text-align:left; cursor:pointer; display:flex; align-items:center; gap:6px;">

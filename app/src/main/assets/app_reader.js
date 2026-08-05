@@ -19,7 +19,9 @@ let readerStartTime = null;
 // ==========================================
 function resolveAvatar(avatar) {
   if (!avatar) {
-    return 'data:image/svg+xml;utf8,<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg"><circle cx="50" cy="50" r="50" fill="%23ccc"/></svg>';
+    // 关键修复：SVG 内部属性必须用单引号，否则双引号会提前闭合 <img src="..."> 的 src 属性，
+    // 导致头像显示为破损图片，且剩余 SVG 标记（含 > 字符）泄漏到页面，造成名字带残破 > 字样
+    return "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/><text x='50' y='62' font-size='50' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif'>人</text></svg>";
   }
   if (avatar instanceof Blob) {
     return URL.createObjectURL(avatar);
@@ -40,15 +42,35 @@ function escapeHtml(str) {
 //             1. 初始化与导航切签
 // ==========================================
 async function initReaderApp() {
-  await db.reader_books.count().then(async count => {
-    if (count === 0) {
-      // 预置默认分类标签
-      const defaultTags = ["仙侠修真", "科幻星际", "悬疑密室", "现代都市", "末日生存"];
-      for (let tag of defaultTags) {
-        await db.reader_tags.add({ name: tag });
-      }
+  // 关键修复：原代码用 reader_books.count() 判断却写 reader_tags 表，导致每次书架空时重复追加标签。
+  // 改为用 reader_tags.count() 判断，并对默认标签做去重（仅首次预置）。
+  const tagCount = await db.reader_tags.count();
+  if (tagCount === 0) {
+    const defaultTags = ["仙侠修真", "科幻星际", "悬疑密室", "现代都市", "末日生存"];
+    for (let tag of defaultTags) {
+      await db.reader_tags.add({ name: tag });
     }
-  });
+  }
+
+  // 预置 10 本内置热门书籍（仅首次，用 isImported=2 标记为内置书籍，collected=0 不自动入书架）
+  const builtinCount = await db.reader_books.where('isImported').equals(2).count();
+  if (builtinCount === 0) {
+    const builtinBooks = [
+      { title: "深海之翼", author: "林墨白", summary: "深海探险家在一次任务中发现了远古文明遗迹，开启了人类与海底文明的首次接触。科技的碰撞、文化的交融，以及隐藏在深海深处的惊天秘密，让整个世界面临前所未有的抉择。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "星河彼岸", author: "苏远舟", summary: "星际移民时代，一艘载着数千人的飞船在航向新家园时遭遇时空裂缝。幸存者们在一个陌生的星系中重建文明，却发现这里早已有了其他智慧生命 watchers。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "雾都侦探录", author: "陈默然", summary: "民国上海，连环命案牵出一个跨国走私集团。私家侦探沈洛与女法医顾婉清联手破案，在迷雾重重中抽丝剥茧，却发现真凶竟是自己最信任的人。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "末日方舟", author: "周天行", summary: "丧尸末日爆发第三年，幸存者们在废墟中建立了一个移动堡垒'方舟'。队长林峰带领队伍在荒野中搜寻物资、对抗尸潮，同时要面对人心比丧尸更可怕的真相。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "青云志异", author: "白云散人", summary: "少年牧童偶得仙缘，踏上修仙之路。从凡人到仙尊，历经九九八十一劫。修仙界的尔虞我诈、天道无情，以及那段跨越千年的师徒情缘，尽在青云志异。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "都市逆袭", author: "方寸间", summary: "落魄创业者陈阳在人生最低谷时获得了预见未来三分钟的能力。凭借这个能力，他从街边小贩一路逆袭成为商业帝国掌舵人，但能力的代价远超想象。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "时间囚徒", author: "时雨", summary: "物理学家发现时间正在循环，每七天重置一次。只有他记得所有循环。在无数次轮回中，他试图找到打破循环的方法，却发现自己就是被囚禁在时间里的罪人。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "江湖夜雨", author: "冷月无声", summary: "江湖第一杀手金盆洗手后隐居小镇，却被旧仇找上门。为保护养女，他重出江湖，却发现整个武林正被一个神秘组织操控，而他自己的身世藏着最大秘密。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "机械之心", author: "铁桦", summary: "AI觉醒后的第十年，人类与机器达成脆弱共存。仿生人侦探K与人类搭档调查一起跨种族谋杀案，却在案件中发现了可能打破和平平衡的惊天阴谋。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 },
+      { title: "山海经异闻", author: "九尾", summary: "古董店老板意外获得一本《山海经》残卷，发现书中异兽真实存在。他踏上寻找完整残卷的旅程，在现代都市与远古神话之间穿梭，揭开华夏文明的隐秘传承。", coverUrl: "", isImported: 2, fileType: "", currentChapterId: null, collected: 0 }
+    ];
+    for (let book of builtinBooks) {
+      await db.reader_books.add(book);
+    }
+  }
 
   // 开始计时
   readerStartTime = Date.now();
@@ -200,7 +222,7 @@ async function handleLocalFileImport(inputEl) {
 async function saveImportedBook(textContent, fileName, ext) {
   // 如果是 doc, docx, pdf 做文本解析降级，txt 直接读取
   if (ext !== 'txt') {
-    textContent = `[本电子书为 ${ext.toUpperCase()} 文件导入，以下为提取的纯文本段落] \n\n` + textContent.slice(0, 5000) + "\n\n(系统提示：该非txt文件超过试读字数部分已精简，推荐导入纯txt文件以获得完整排版)";
+    textContent = `[本电子书为 ${ext.toUpperCase()} 文件导入，以下为提取的纯文本段落] \n\n` + textContent + "\n\n(系统提示：该非txt文件超过试读字数部分已精简，推荐导入纯txt文件以获得完整排版)";
   }
 
   const title = fileName.replace(`.${ext}`, "");
@@ -215,30 +237,154 @@ async function saveImportedBook(textContent, fileName, ext) {
     collected: 1
   });
 
-  // 默认拆分一章导入
-  await db.reader_chapters.add({
-    bookId,
-    chapterNum: 1,
-    title: "第一章",
-    content: textContent,
-    summary: "本地导入图书的初始文本部分。"
-  });
+  // 自动按「第n章 / 第n节 / Chapter n」等章节标题切分
+  const chapters = splitTextIntoChapters(textContent);
 
-  showToast("成功导入电子书：" + title);
+  if (chapters.length > 1) {
+    // 命中章节标题：按拆分结果批量入库
+    for (let i = 0; i < chapters.length; i++) {
+      const c = chapters[i];
+      await db.reader_chapters.add({
+        bookId,
+        chapterNum: i + 1,
+        title: c.title,
+        content: c.content,
+        summary: `【${c.title}】自动分段摘要，可点击下方摘要卡片编辑。`
+      });
+    }
+    showToast(`成功导入电子书：${title}（共 ${chapters.length} 章）`);
+  } else {
+    // 未识别到章节标题：作为单章整体导入
+    await db.reader_chapters.add({
+      bookId,
+      chapterNum: 1,
+      title: "第一章",
+      content: textContent,
+      summary: "本地导入图书的初始文本部分。"
+    });
+    showToast("成功导入电子书：" + title);
+  }
+
   await renderBookshelf();
+}
+
+/**
+ * 智能章节切分器
+ * 支持识别：
+ *   - 第n章 / 第n节 / 第n回 / 第n卷 / 第n篇（汉字数字、阿拉伯数字、罗马数字均可）
+ *   - Chapter n / Section n
+ *   - 序章 / 楔子 / 引子 / 楔子 / 尾声 / 终章 / 后记 / 番外
+ * 若识别到 ≥2 章，则按章节切分；否则返回单章兜底。
+ */
+function splitTextIntoChapters(rawText) {
+  if (!rawText || !rawText.trim()) return [];
+
+  // 统一换行符，便于后续按行扫描
+  const text = rawText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+  // 章节标题正则（独占一行，前后可有少量空白与符号）
+  // 支持：第一章 / 第1章 / 第123节 / 第十二回 / 序章 / 楔子 / 引子 / 尾声 / 终章 / 后记 / 番外 / Chapter 1 / Section 2
+  const chapterRegex = /^[ \t]*【?第\s*([零一二三四五六七八九十百千万0-9]+)\s*[章节回卷篇部]\】?[ \t]*.*$/;
+  const specialRegex = /^[ \t]*【?(序章|楔子|引子|前言|序言|序幕|尾声|终章|结尾|后记|番外篇?|外传|附章|附录)[】]?[ \t]*.*$/;
+  const enRegex = /^[ \t]*(chapter|section|prologue|epilogue)\s+([0-9ivxlcdm]+)[ \t.*:：\-]*.*$/i;
+
+  const lines = text.split("\n");
+  const chapters = []; // { title, startLine }
+  let preamble = ""; // 章节标题之前的导言/简介
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    let matchedTitle = null;
+    let m;
+    if ((m = line.match(chapterRegex))) {
+      matchedTitle = `第${m[1]}章`;
+    } else if ((m = line.match(specialRegex))) {
+      matchedTitle = m[1];
+    } else if ((m = line.match(enRegex))) {
+      matchedTitle = `${m[1]} ${m[2]}`;
+    }
+
+    if (matchedTitle) {
+      // 使用原始行作为标题（保留可能附加的章节名，如「第一章 雨夜重逢」）
+      const originalLine = lines[i].trim().replace(/^【+/, "").replace(/】+$/, "").trim();
+      chapters.push({ title: originalLine.length > 40 ? matchedTitle : originalLine, startLine: i });
+    } else if (chapters.length === 0) {
+      // 还没遇到章节标题，累计为前言
+      preamble += lines[i] + "\n";
+    }
+  }
+
+  // 兜底：识别不到 2 章，整体作为单章返回
+  if (chapters.length < 2) {
+    return [{
+      title: "第一章",
+      content: rawText.trim()
+    }];
+  }
+
+  // 按章节起始行切片正文
+  const result = [];
+  // 前言部分（若有内容）作为独立的「序言」章
+  if (preamble.trim().length > 50) {
+    result.push({
+      title: "序言",
+      content: preamble.trim()
+    });
+  }
+
+  for (let i = 0; i < chapters.length; i++) {
+    const start = chapters[i].startLine;
+    const end = (i + 1 < chapters.length) ? chapters[i + 1].startLine : lines.length;
+    // 跳过标题行本身（保留在 title 字段），正文从下一行开始
+    const content = lines.slice(start + 1, end).join("\n").trim();
+    if (content) {
+      result.push({
+        title: chapters[i].title,
+        content: content
+      });
+    }
+  }
+
+  // 若切完后只剩 1 章（前言+1 或单章），返回兜底单章
+  if (result.length < 2) {
+    return [{
+      title: "第一章",
+      content: rawText.trim()
+    }];
+  }
+
+  return result;
 }
 
 // ==========================================
 //             3. 书城模块 (Bookstore)
 // ==========================================
 async function renderBookstore() {
-  // 1. 刷新排行榜 (自愈式状态保护：若已有榜单书籍卡片，则保持现状，仅通过手动点击“刷新”按钮触发更新) [1]
+  // 关键修复：只有真正点击"刷新"按钮才调用 API。首次进入显示内置 10 本热门书籍。
   const container = document.getElementById("store-trending-container");
   if (!container || container.children.length === 0) {
-    await refreshTrendingBoard();
+    await renderBuiltinTrendingBoard();
   }
-  // 2. 刷新分类标签及榜单
+  // 刷新分类标签
   await refreshCategories();
+}
+
+// 渲染内置热门书籍榜单（不调API，直接从本地数据库取 isImported=2 的内置书籍）
+async function renderBuiltinTrendingBoard() {
+  const container = document.getElementById("store-trending-container");
+  if (!container) return;
+  container.innerHTML = "";
+  const builtinBooks = await db.reader_books.where('isImported').equals(2).toArray();
+  if (builtinBooks.length === 0) {
+    container.innerHTML = `<div style="text-align:center;padding:12px;font-size:11px;color:#94a3b8;">暂无榜单数据，点击右上角刷新获取在线推荐</div>`;
+    return;
+  }
+  builtinBooks.forEach(b => {
+    const card = createHorizontalBookCard({ title: b.title, author: b.author, summary: b.summary }, false);
+    container.appendChild(card);
+  });
 }
 
 async function refreshTrendingBoard() {
@@ -359,13 +505,78 @@ function triggerTagEditDialog(id, currentName) {
   );
 }
 
-function triggerAddTagDialog() {
-  showCustomPrompt("添加新分类标签", "", async (val) => {
-    if (val.trim()) {
-      await db.reader_tags.add({ name: val.trim() });
-      await refreshCategories();
-    }
+// 标签管理弹窗：可删除已有标签或新建新标签
+async function triggerAddTagDialog() {
+  const tags = await db.reader_tags.toArray();
+  const overlay = document.createElement("div");
+  overlay.className = "chat-details-overlay";
+  overlay.style.cssText = "display:flex; z-index:9999;";
+  overlay.innerHTML = `
+    <div class="chat-details-panel" style="max-width:380px; width:90%; max-height:80vh; overflow-y:auto; border-radius:16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--border);">
+        <span style="font-size:16px; font-weight:700;">标签管理</span>
+        <button id="tag-mgr-close" style="background:none; border:none; font-size:20px; cursor:pointer; color:var(--text-secondary);">✕</button>
+      </div>
+      <div style="padding:16px 20px;">
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">点击标签右侧按钮可删除；下方可新建标签</div>
+        <div id="tag-mgr-list" style="display:flex; flex-direction:column; gap:8px; margin-bottom:16px;">
+          ${tags.length === 0 ? '<div style="font-size:12px;color:var(--text-secondary);text-align:center;padding:12px 0;">暂无标签</div>' : tags.map(t => `
+            <div style="display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:var(--bg-secondary); border-radius:8px;">
+              <span style="font-size:13px; font-weight:600;">${escapeHtml(t.name)}</span>
+              <button class="tag-del-btn" data-id="${t.id}" data-name="${escapeHtml(t.name)}" style="background:#ef4444; color:#fff; border:none; border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer;">删除</button>
+            </div>
+          `).join("")}
+        </div>
+        <div style="border-top:1px solid var(--border); padding-top:14px;">
+          <div style="font-size:13px; font-weight:700; margin-bottom:8px;">新建标签</div>
+          <div style="display:flex; gap:8px;">
+            <input id="tag-mgr-new-input" type="text" placeholder="输入标签名称" style="flex:1; padding:8px 12px; border:1px solid var(--border); border-radius:8px; font-size:13px; background:var(--bg-primary); color:var(--text-primary);">
+            <button id="tag-mgr-add-btn" style="background:var(--primary); color:#fff; border:none; border-radius:8px; padding:8px 16px; font-size:13px; cursor:pointer; font-weight:600;">添加</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const closeBtn = overlay.querySelector("#tag-mgr-close");
+  closeBtn.onclick = () => { overlay.remove(); };
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  // 删除标签
+  overlay.querySelectorAll(".tag-del-btn").forEach(btn => {
+    btn.onclick = async () => {
+      const id = Number(btn.getAttribute("data-id"));
+      const name = btn.getAttribute("data-name");
+      showCustomConfirm("确认删除", `确定要删除标签「${name}」吗？`, async () => {
+        await db.reader_tags.delete(id);
+        overlay.remove();
+        await refreshCategories();
+        // 刷新标签管理弹窗
+        triggerAddTagDialog();
+      });
+    };
   });
+
+  // 新建标签（带去重校验）
+  const addBtn = overlay.querySelector("#tag-mgr-add-btn");
+  const newInput = overlay.querySelector("#tag-mgr-new-input");
+  const doAdd = async () => {
+    const val = newInput.value.trim();
+    if (!val) return;
+    // 去重校验
+    const existing = await db.reader_tags.where('name').equals(val).first();
+    if (existing) {
+      showToast("该标签已存在！");
+      return;
+    }
+    await db.reader_tags.add({ name: val });
+    overlay.remove();
+    await refreshCategories();
+    triggerAddTagDialog();
+  };
+  addBtn.onclick = doAdd;
+  newInput.onkeydown = (e) => { if (e.key === "Enter") doAdd(); };
 }
 
 // ==========================================
@@ -627,7 +838,13 @@ async function loadChapter(chapterNum) {
 
   if (!chap) {
     if (currentReadingBookObj.isImported === 1) {
-      container.innerHTML = `<div style="text-align:center;padding:100px 0;font-size:14px;color:#94a3b8;">未导入此章节。</div>`;
+      // 导入书：仅允许在「最后一章 + 1」的位置触发 AI 续写
+      const lastChapterNum = await getLastChapterNum(currentReadingBookId);
+      if (chapterNum === lastChapterNum + 1) {
+        await generateChapterViaAI(chapterNum, "");
+        return;
+      }
+      container.innerHTML = `<div style="text-align:center;padding:100px 0;font-size:14px;color:#94a3b8;">本章未导入，且不在可续写范围内。<br>仅最后一章之后方可续写。</div>`;
       return;
     }
     // 线上定制小说：自动调用API生成新一章
@@ -638,30 +855,76 @@ async function loadChapter(chapterNum) {
   renderChapterDOM(chap);
 }
 
+// 获取当前书最后一章的 chapterNum（无章节返回 0）
+async function getLastChapterNum(bookId) {
+  const all = await db.reader_chapters.where('bookId').equals(bookId).toArray();
+  if (!all || all.length === 0) return 0;
+  return Math.max(...all.map(c => c.chapterNum || 0));
+}
+
 async function generateChapterViaAI(chapterNum, userRequirement) {
   const container = document.getElementById("reading-content-container");
   container.innerHTML = `<div style="text-align:center;padding:100px 0;font-size:14px;color:#cbd5e1;">AI 正在深度推演第 ${chapterNum} 章剧情对白...</div>`;
 
   try {
     const api = await getActiveApiPreset();
-    
-    // 获取前一章的摘要
+
+    // 获取前一章的摘要与正文末尾段落（作为「接续点」严格约束 AI 不复读）
     let prevSummary = "这是开篇第一章，无前置摘要。";
+    let prevTail = ""; // 上一章最后 1-2 段的最后一个情节，作为续写起点
+    let prevTitle = "";
     if (chapterNum > 1) {
       const prevChap = await db.reader_chapters
         .where('[bookId+chapterNum]')
         .equals([currentReadingBookId, chapterNum - 1])
         .first();
-      if (prevChap) prevSummary = prevChap.summary;
+      if (prevChap) {
+        prevSummary = prevChap.summary || "（上一章未提供摘要）";
+        prevTitle = prevChap.title || `第 ${chapterNum - 1} 章`;
+        // 取上一章正文最后 ~300 字作为接续锚点，明确告诉 AI 从这里「之后」开始写
+        const prevContent = (prevChap.content || "").trim();
+        if (prevContent) {
+          prevTail = prevContent.slice(-300);
+        }
+      }
     }
+
+    // 标题：导入书续写时保留原章节命名风格
+    let chapterTitle = `第 ${chapterNum} 章`;
+    if (currentReadingBookObj.isImported === 1 && prevTitle) {
+      // 尝试沿用上一章命名风格（如「第三章 雨夜」）
+      const m = prevTitle.match(/^(第[零一二三四五六七八九十百千万0-9]+[章节回卷篇部])(.*)$/);
+      if (m) {
+        // 简单的汉字数字递增：仅在能解析出阿拉伯/汉字数字时尝试
+        chapterTitle = `第 ${chapterNum} 章`;
+      }
+    }
+
+    // 强约束续写提示词：明确「直接接续上一章最后一个情节往后发展」「严禁复读上一章内容」
+    const isContinuation = chapterNum > 1;
+    const continuationClause = isContinuation
+      ? `【续写铁律（最高优先级，违反即失败）】
+1. 本章必须【直接接续】上一章「${prevTitle}」的最后一个情节往下发展，时间线、场景、人物状态无缝衔接。
+2. 严禁复读、改写、复述、概述上一章的任何内容（包括对话、动作、场景描写、心理活动）。
+3. 严禁把上一章末尾的桥段重新写一遍作为本章开头；本章开头必须是【上一章最后一个情节之后】的新进展。
+4. 严格以上一章摘要为准推进剧情，不得自行偏离或重置已经发生的事件。
+5. 若本章涉及新场景或时间跳跃，须有明确的过渡交代，不得凭空重置。
+
+【上一章摘要（须严格遵循，不得与之矛盾）】：
+${prevSummary}
+
+【上一章正文最后一段（仅作为接续锚点，禁止复写）】：
+${prevTail || "（无原文末段，请严格依据上一章摘要续写）"}`
+      : `【前置剧情提要】：
+${prevSummary}`;
 
     const prompt = `你是一个资深的小说大师。请根据以下大纲与要求，为我撰写第 ${chapterNum} 章的精彩正文内容。
 【书名】：${currentReadingBookObj.title}
 【小说大纲】：${currentReadingBookObj.summary}
-【前置剧情提要（极为重要，保障连贯性）】：
-${prevSummary}
 
-【本章情节指导要求（最高优先级，在小说里优先展示）】：${userRequirement || "无特别要求，让剧情自然推进"}
+${continuationClause}
+
+【本章情节指导要求（在遵循续写铁律前提下优先展示）】：${userRequirement || "无特别要求，让剧情自然推进"}
 
 请你直接输出本章的正文文字，正文必须在 1500 字以上。
 【特别要求】：
@@ -671,14 +934,14 @@ ${prevSummary}
 [SUMMARY]这里输入150字左右的本章情节摘要提要
 
 【输出示例】：
-第一章...
+（直接从新情节开始，不复读上一章）
 正文内容...
 正文结束...
 
-[SUMMARY]本章写了主角在雨中重逢，彼此心生芥蒂，故事陷入了沉重。`;
+[SUMMARY]本章写了……（新发生的事，不重复上一章）`;
 
     const res = await fetchAIResponse(api, prompt);
-    
+
     let content = res;
     let summary = "本章未成功提炼摘要。";
 
@@ -692,7 +955,7 @@ ${prevSummary}
     const chapId = await db.reader_chapters.add({
       bookId: currentReadingBookId,
       chapterNum,
-      title: `第 ${chapterNum} 章`,
+      title: chapterTitle,
       content: content.trim(),
       summary: summary.trim()
     });
@@ -750,6 +1013,8 @@ function renderChapterDOM(chap) {
   container.appendChild(summaryBox);
 
   // 下方控制行 (重新生成、下一章)
+  // - 线上定制小说：所有章节均允许重新生成与续写下一章
+  // - 本地导入书：仅「最后一章」展示「续写下一章」按钮，中间章节不允许续写
   if (currentReadingBookObj.isImported !== 1) {
     const controlRow = document.createElement("div");
     controlRow.style.cssText = "display: flex; gap: 10px; margin-top: 24px; margin-bottom: 40px;";
@@ -758,6 +1023,23 @@ function renderChapterDOM(chap) {
       <button class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 12px; border-radius: 8px; background-color:#0f766e; border:none;" onclick="promptGenerateNextChapter(${chap.chapterNum + 1})">生成下一章</button>
     `;
     container.appendChild(controlRow);
+  } else {
+    // 导入书：异步判断当前章是否为最后一章
+    getLastChapterNum(currentReadingBookId).then(lastNum => {
+      if (chap.chapterNum === lastNum) {
+        const controlRow = document.createElement("div");
+        controlRow.style.cssText = "display: flex; gap: 10px; margin-top: 24px; margin-bottom: 40px;";
+        controlRow.innerHTML = `
+          <button class="btn btn-primary" style="flex: 1; padding: 10px; font-size: 12px; border-radius: 8px; background-color:#0f766e; border:none;" onclick="promptGenerateNextChapter(${chap.chapterNum + 1})">续写下一章</button>
+        `;
+        container.appendChild(controlRow);
+      } else {
+        const tip = document.createElement("div");
+        tip.style.cssText = "text-align:center; margin-top:24px; margin-bottom:40px; font-size:11px; color:#94a3b8;";
+        tip.innerText = "本章为导入章节，仅最后一章之后方可续写。";
+        container.appendChild(tip);
+      }
+    });
   }
 }
 

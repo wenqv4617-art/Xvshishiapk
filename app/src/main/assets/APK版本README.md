@@ -1050,6 +1050,24 @@ db.version(12).stores({
 });
 ```
 
+### Version 27 增补表：情侣空间·悄悄话话题会话与归档机制（v3.2 新增）
+
+当前最新结构已迭代至 **Version 27**，主要新增了情侣空间·悄悄话话题会话与归档机制相关表：
+
+```javascript
+db.version(27).stores({
+  // couples_whispers 增补 topicId / archived 索引（不丢旧数据，仅扩展索引）
+  couples_whispers: 'id++, charId, timestamp, topicId, archived',
+
+  // 新增：每个话题会话的元信息
+  couples_whisper_topics: 'id++, charId, meId, startTime, endTime, archived, topicTitle'
+});
+```
+
+**`couples_whisper_topics` 字段说明：** `charId`/`meId`（关联角色与用户）、`startTime`/`endTime`（话题起止时间）、`archived`（0=活动/结束，1=已归档）、`topicTitle`（话题标题）、`initiator`（'user' 或 'char' 发起方）、`summary`（归档时 LLM 生成的话题总结）。
+
+**`couples_whispers` 增补字段：** `topicId`（关联话题 ID）、`archived`（是否已归档）。归档时该话题下所有消息 `archived` 置 1，但仍保留在表中可供历史查看。
+
 ---
 
 ## 4. 悬浮多状态桌宠与真机系统级交互机制
@@ -1147,6 +1165,20 @@ if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
 *   **全功能组件生成**：支持根据会话语境，让 AI 编写出高度交互、带样式与完整 JS 交互的单文件 HTML 卡片（如迷你游戏、心率雷达图）。
 *   **零写入清洗视图**：支持一键在“原始文本视图”和“清洗后运行视图（Iframe 沙盒）”之间进行零写入双态切换。
 *   **代码维修舱**：在主会话下方注入 `#html-repair-overlay` 隔离空间。维修舱可载入 100% 原始代码并在输入时进行防抖实时沙盒渲染。
+*   **双视图响应式尺寸约束（v3.2 新增）**：互动舱采用「列表小卡片 + 全屏大卡片预览」双视图模式。`HTML_WIDGET_INSTRUCTION` 提示词明确要求 AI 生成的代码同时适配两种尺寸——列表小卡片（高度 250px，紧凑布局）与大卡片预览（480×880px，充分利用空间），要求使用 Flexbox/Grid + `clamp()`/`vh/vw/%` 相对单位，避免固定像素。
+*   **大卡片预览浮层（`openPreview`，v3.2 新增）**：点击卡片「⤢ 预览」按钮，创建 `position:fixed` 全屏浮层（100vw×100vh 深色半透明遮罩），顶部深色标题栏含卡片 ID、指令摘要、刷新/关闭按钮，中部居中 iframe（max-width:480px; max-height:880px）通过 `sandbox="allow-scripts allow-popups allow-forms"` 隔离执行。预览复用 `extractCleanHtml` 清洗态代码，支持刷新按钮、关闭按钮、点击遮罩、ESC 键四种关闭方式。
+*   **指令折叠/展开（`togglePrompt`，v3.2 新增）**：渲染卡片时若 `card.prompt.length > 150`，指令文本默认折叠为一行（CSS `-webkit-line-clamp:1` + `text-overflow:ellipsis`），显示「▼ 展开」按钮；点击切换 `data-collapsed` 属性展开/收起，避免长指令撑高卡片破坏布局。
+
+### 7.3b 情侣空间·悄悄话话题会话与归档机制 (`app_chat_couples.js`)（v3.2 新增）
+*   **话题会话机制**：悄悄话升级为「话题会话」，双方（user 与 char）均可主动发起/结束话题。AI 在回复中输出 `[WHISPER_TOPIC_START: 话题标题]` / `[WHISPER_TOPIC_END]` 指令（与朋友圈、论坛线上指令风格一致），由 `parseWhisperCommands(text)` 用括号平衡法提取后触发 `startWhisperTopic` / `endWhisperTopic`，用户也可通过 UI 按钮发起。
+*   **3 天自动归档 + 手动归档**：`autoArchiveExpiredTopics()` 进入情侣空间时巡检，对所有 `archived !== 1` 且 `startTime` 距今超 3 天的话题调用 `archiveTopic(id, true)` 自动归档；用户可点击「归档」按钮调用 `archiveTopic(id, false)` 手动归档。
+*   **归档总结入记忆库**：`archiveTopic` 拉取话题消息 → 调用 `summarizeWhisperTopic` 让 LLM 生成总结 → 写入 `db.summaries`（`category:'relationship'`，`content` 形如 `【情侣空间·悄悄话归档】话题《标题》（我发起/对方发起）：总结`）→ 标记话题和消息 `archived:1`。归档内容进入长期记忆库后可被 RAG 召回，让 char 真正"记住"悄悄话。
+*   **对话连贯性修复**：`triggerWhisperReply` 仅保留当前活动话题内的消息历史（按 `topicId` 过滤），并在 prompt 中强调"承接当前话题上下文回复"，解决原先跨话题消息混杂导致 AI"不读用户话"、答非所问的问题。
+*   **数据表**：依赖 `db.js` Version 27 的 `couples_whisper_topics`（话题元信息：标题/发起方/起止时间/是否归档/总结）与 `couples_whispers`（增补 `topicId`/`archived` 索引）两张表。
+
+### 7.3c 全局空头像安全渲染修复（v3.2 新增）
+*   **问题**：头像为空时显示破损图片，名字区域出现残破「>」字样。根因是 `resolveAvatar` 返回的 SVG 数据 URL 内部属性用双引号，插入 `<img src="data:image/svg+xml;utf8,<svg viewBox="...">">` 时双引号提前闭合 `src` 属性，剩余 SVG 标记（含 `>`）泄漏到 HTML。
+*   **修复范围**：统一 `app_archive.js`、`app_reader.js`、`app_deeptalk.js`、`app_world_book.js` 中所有 `resolveAvatar` 函数，SVG 内部属性改用单引号（`viewBox='0 0 100 100'`），`#` 做 URL 编码（`%23`），并新增"人"字默认灰色图标兜底。`app_chat.js` 新增 `avatarFallback(el)` 处理 `<img onerror>` 回退，会话列表头像 `src` 与名字均加 `escapeHtml`。
 
 ### 7.4 主线剧情引导引擎 (`app_chat_plot_engine.js`)
 *   **最高优先级大纲控制**：剧情引导舱允许用户输入任意故事走向大纲。该大纲会作为高优控制指令，在 System Prompt 的深度 `-480` 原子化拼入模型头部，驱使大模型往特定矛盾冲突或态度演进方向推进。

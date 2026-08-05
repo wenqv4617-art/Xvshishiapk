@@ -99,6 +99,61 @@
   background: transparent;
 }
 
+/* 沙盒右下角悬浮"大卡片预览"按钮 */
+.html-card-preview-btn {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  background: rgba(15, 23, 42, 0.78);
+  color: #34d399;
+  border: 1px solid #34d399;
+  border-radius: 6px;
+  padding: 3px 9px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  opacity: 0.65;
+  transition: opacity 0.2s ease, transform 0.15s ease;
+  backdrop-filter: blur(4px);
+  z-index: 5;
+}
+.html-card-preview-btn:hover {
+  opacity: 1;
+  transform: scale(1.05);
+}
+
+/* 超长指令折叠态样式 */
+.html-card-prompt-collapsible {
+  cursor: pointer;
+  transition: background 0.15s ease;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.html-card-prompt-collapsible[data-collapsed="0"] {
+  -webkit-line-clamp: unset;
+  white-space: normal;
+  word-break: break-all;
+}
+.html-card-prompt-collapsible:hover {
+  background: #1a2540;
+}
+.html-card-prompt-toggle {
+  color: #34d399;
+  font-weight: 700;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+
+/* 大卡片全屏预览淡入动画 */
+@keyframes htmlPreviewFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* 按钮 hover 微调 */
 .html-panel .btn-icon {
   transition: color 0.2s ease;

@@ -8,7 +8,8 @@
   top: 0; left: 0; width: 100%; height: 100%;
   background: var(--bg-main);
   transform: translateX(100%);
-  transition: transform 0.3s cubic-bezier(0.1, 0.9, 0.2, 1);
+  visibility: hidden;
+  transition: transform 0.3s cubic-bezier(0.1, 0.9, 0.2, 1), visibility 0s linear 0.3s;
   z-index: 400; /* 表情包管理页层级 */
   display: flex;
   flex-direction: column;
@@ -16,7 +17,9 @@
 }
 .sticker-manager-overlay.active {
   transform: translateX(0);
+  visibility: visible;
   pointer-events: auto;
+  transition: transform 0.3s cubic-bezier(0.1, 0.9, 0.2, 1), visibility 0s linear 0s;
 }
 
 .sticker-manager-panel {

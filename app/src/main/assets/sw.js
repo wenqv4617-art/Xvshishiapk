@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v24'; // 离线 PWA 升级至 v24 引入听歌应用与网易云陪听中枢
+const CACHE_NAME = 'story-phone-v26'; // v26：弹幕三态开关 + 世界书分组手风琴 + 帖子评论 + 去掉max_tokens上限
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -7,6 +7,8 @@ const ASSETS = [
   './style.css',
   './app.css',
   './chat.css',
+  './sticker.css',
+  './app_quicktravel.js',
   './db.js',
   './app_prompts.js',
   './app_desktop.js',
@@ -85,6 +87,19 @@ self.addEventListener('fetch', (e) => {
   e.respondWith(
     caches.match(e.request).then((cachedResponse) => {
       return cachedResponse || fetch(e.request);
+    })
+  );
+});
+
+// 通知点击：聚焦已打开的页面，否则打开 index.html
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./index.html');
     })
   );
 });
