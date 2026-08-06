@@ -303,6 +303,75 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
+    /**
+     * 原生二进制 HTTP 请求（专为 TTS 音频等二进制响应设计，100% 绕过浏览器 CORS）。
+     * 与 sendNativeHttpRequest 的区别：响应 body 以 Base64 字符串返回，避免文本化乱码。
+     *
+     * 返回 JSON: { status, bodyBase64, contentType, headers, error }
+     *  - 成功: status=2xx, bodyBase64=音频base64, contentType=audio/mpeg
+     *  - 失败: status=错误码或0, error=错误信息, bodyBase64 可能为空
+     *
+     * 前端用法: const r = JSON.parse(AndroidMCP.sendNativeHttpRequestBinary(url, method, headersJson, bodyStr));
+     *           const blob = await (await fetch(`data:${r.contentType};base64,${r.bodyBase64}`)).blob();
+     */
+    @JavascriptInterface
+    fun sendNativeHttpRequestBinary(urlStr: String, method: String, headersJson: String, bodyStr: String): String {
+        Log.d(TAG, "sendNativeHttpRequestBinary() called, url=$urlStr, method=$method")
+        return try {
+            val url = java.net.URL(urlStr)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = if (method.isEmpty()) "POST" else method.uppercase()
+            conn.connectTimeout = 20000
+            conn.readTimeout = 30000
+            conn.instanceFollowRedirects = true
+
+            if (headersJson.isNotEmpty()) {
+                val jsonObj = JSONObject(headersJson)
+                val keys = jsonObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    conn.setRequestProperty(key, jsonObj.getString(key))
+                }
+            }
+
+            if (bodyStr.isNotEmpty() && (conn.requestMethod == "POST" || conn.requestMethod == "PUT" || conn.requestMethod == "PATCH")) {
+                conn.doOutput = true
+                conn.outputStream.use { os ->
+                    os.write(bodyStr.toByteArray(Charsets.UTF_8))
+                }
+            }
+
+            val status = conn.responseCode
+            val contentType = conn.contentType ?: "application/octet-stream"
+            val inputStream = if (status in 200..299) conn.inputStream else conn.errorStream
+            val bodyBytes = inputStream?.use { it.readBytes() } ?: ByteArray(0)
+            val bodyBase64 = if (bodyBytes.isNotEmpty()) android.util.Base64.encodeToString(bodyBytes, android.util.Base64.NO_WRAP) else ""
+
+            val resHeaders = JSONObject()
+            conn.headerFields?.forEach { (k, v) ->
+                if (k != null && v.isNotEmpty()) {
+                    resHeaders.put(k, v[0])
+                }
+            }
+
+            val resultJson = JSONObject()
+            resultJson.put("status", status)
+            resultJson.put("bodyBase64", bodyBase64)
+            resultJson.put("contentType", contentType)
+            resultJson.put("headers", resHeaders)
+            resultJson.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "sendNativeHttpRequestBinary failed: ${e.message}", e)
+            val errorJson = JSONObject()
+            errorJson.put("status", 0)
+            errorJson.put("bodyBase64", "")
+            errorJson.put("contentType", "")
+            errorJson.put("headers", JSONObject())
+            errorJson.put("error", e.message ?: "Native HTTP Binary Error")
+            errorJson.toString()
+        }
+    }
+
     // 2. 静默读取真机 /Music/Storypoem 目录下的本地歌单列表
     @JavascriptInterface
     fun scanLocalMusicFolder(): String {

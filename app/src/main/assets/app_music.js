@@ -692,8 +692,13 @@
 
       if (type === 'local') {
         const fileInput = document.getElementById("ncm-form-file-input");
-        if (!fileInput.files || !fileInput.files[0]) {
+        if (!fileInput.files || fileInput.files.length === 0) {
           if (typeof showToast === 'function') showToast("请先选择本地音频文件");
+          return;
+        }
+        // 多选批量导入：以文件名作为歌名自动导入
+        if (fileInput.files.length > 1) {
+          await this.batchImportLocalFiles(fileInput.files, targetPlId);
           return;
         }
         const file = fileInput.files[0];
@@ -750,6 +755,79 @@
       if (typeof showToast === 'function') showToast("歌曲全自动识别并录入成功！");
       this.closeImportFormModal();
       this.renderMine();
+    },
+
+    // 文件选择后预览：单选自动填歌名，多选显示数量提示
+    previewLocalFileCount() {
+      const fileInput = document.getElementById("ncm-form-file-input");
+      const hint = document.getElementById("ncm-form-file-hint");
+      if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
+
+      const titleInput = document.getElementById("ncm-form-title");
+      if (fileInput.files.length > 1) {
+        if (hint) hint.textContent = `已选择 ${fileInput.files.length} 个文件，将以文件名作为歌名批量导入（下方歌名/歌手等字段将被忽略）。`;
+        if (titleInput) { titleInput.value = ""; titleInput.placeholder = `批量导入 ${fileInput.files.length} 首（使用各文件名）`; }
+      } else {
+        if (hint) hint.textContent = "选择多个文件时，将以文件名作为歌名批量导入。";
+        if (titleInput && !titleInput.value) {
+          titleInput.value = fileInput.files[0].name.replace(/\.[^/.]+$/, "");
+        }
+      }
+    },
+
+    // 批量导入多个本地音频文件（以文件名作为歌名）
+    async batchImportLocalFiles(files, targetPlId) {
+      const fileList = Array.from(files);
+      if (typeof showToast === 'function') showToast(`正在批量导入 ${fileList.length} 首歌曲…`);
+
+      let successCount = 0;
+      let failCount = 0;
+      const baseTime = Date.now();
+
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        try {
+          const songId = "song_" + baseTime + "_" + i;
+          const title = file.name.replace(/\.[^/.]+$/, "").trim() || "未命名歌曲";
+          const songObj = {
+            id: songId,
+            title: title,
+            artist: "未知歌手",
+            cover: "",
+            lyrics: "[00:00.00]暂无歌词",
+            url: URL.createObjectURL(file),
+            isVip: false,
+            isFavorite: false
+          };
+          await this.saveSongToIndexedDB({ id: songId, blob: file, ...songObj });
+
+          if (targetPlId && this.playlists.length > 0) {
+            const targetPl = this.playlists.find(p => p.id === targetPlId);
+            if (targetPl) {
+              targetPl.songIds = targetPl.songIds || [];
+              if (!targetPl.songIds.includes(songId)) {
+                targetPl.songIds.push(songId);
+              }
+            }
+          }
+          successCount++;
+        } catch (err) {
+          failCount++;
+        }
+      }
+
+      if (targetPlId) this.savePlaylistsToStorage();
+      this.tempCropCoverBase64 = "";
+
+      const fileInput = document.getElementById("ncm-form-file-input");
+      if (fileInput) fileInput.value = "";
+
+      this.closeImportFormModal();
+      this.renderMine();
+
+      if (typeof showToast === 'function') {
+        showToast(`批量导入完成：成功 ${successCount} 首` + (failCount > 0 ? `，失败 ${failCount} 首` : ""));
+      }
     },
 
     // 双通道并发高成功率网易云歌词与元数据识别器
