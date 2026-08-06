@@ -836,9 +836,12 @@
           }
         }
 
-        // 推送通知
+        // 推送通知（使用统一预览清洗，避免显示 <think>/状态栏/HTML 标签）
         if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
-          window.AndroidMCP.showSystemNotification(charName, reply);
+          const notiText = (typeof getMessagePreviewText === 'function')
+            ? getMessagePreviewText({ contentType: 'text', content: reply })
+            : reply;
+          window.AndroidMCP.showSystemNotification(charName, notiText);
         }
 
         // 联动来信冒泡提示

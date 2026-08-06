@@ -1,11 +1,14 @@
 let isWorldBookInitialized = false;
 
-// 二进制安全解析器
-function resolveAvatar(avatar) {
+// 二进制安全解析器（支持姓名首字 + 哈希配色的默认头像）
+function resolveAvatar(avatar, name) {
   if (!avatar) {
-    // 关键修复：SVG 内部属性必须用单引号，否则双引号会提前闭合 <img src="..."> 的 src 属性，
-    // 导致头像显示为破损图片，且剩余 SVG 标记（含 > 字符）泄漏到页面，造成名字带残破 > 字样
-    return "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/><text x='50' y='62' font-size='50' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif'>人</text></svg>";
+    const ch = String(name || '').charAt(0) || '人';
+    const colors = ['#3b82f6', '#0f766e', '#8b5cf6', '#e11d48', '#b45309', '#0891b2', '#be185d', '#4f46e5'];
+    const color = colors[name ? name.charCodeAt(0) % colors.length : 0];
+    return "data:image/svg+xml;utf8," + encodeURIComponent(
+      `<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='${color}'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='#fff' font-family='sans-serif' font-weight='700'>${ch}</text></svg>`
+    );
   }
   if (avatar instanceof Blob) {
     return URL.createObjectURL(avatar);

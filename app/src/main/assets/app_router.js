@@ -143,6 +143,19 @@
         history.push({ type: "settings-lv2", id: subTab });
         return;
       }
+      if (subTab === "floating-widget") {
+        this._ensureFloatingWidgetPanel();
+        if (typeof window._origOpenSettingsLv2 === "function") {
+          window._origOpenSettingsLv2(subTab);
+        }
+        const titleEl3 = document.getElementById("settings-title");
+        if (titleEl3) titleEl3.innerText = "悬浮窗";
+        if (typeof window.floatingWidgetSystem !== "undefined" && typeof window.floatingWidgetSystem.initSettingsPanel === "function") {
+          window.floatingWidgetSystem.initSettingsPanel();
+        }
+        history.push({ type: "settings-lv2", id: subTab });
+        return;
+      }
       if (typeof window._origOpenSettingsLv2 === "function") {
         window._origOpenSettingsLv2(subTab);
       }
@@ -181,6 +194,30 @@
       const ttsPanel = document.getElementById("settings-lv2-tts");
       const apiPanel = document.getElementById("settings-lv2-api");
       const anchor = ttsPanel || apiPanel;
+      if (anchor && anchor.parentNode) {
+        const wrap = document.createElement("div");
+        wrap.innerHTML = html.trim();
+        const node = wrap.firstElementChild;
+        if (node) anchor.parentNode.insertBefore(node, anchor.nextSibling);
+      }
+    },
+
+    /**
+     * 懒注入「悬浮窗设置」二级面板（仅首次进入时创建）。
+     * 模板由 floatingWidgetSystem 提供，避免在 index.html 中硬编码。
+     * 插入位置：数据管理面板之后（菜单顺序：数据管理 → 悬浮窗）
+     */
+    _ensureFloatingWidgetPanel: function () {
+      if (document.getElementById("settings-lv2-floating-widget")) return;
+      const html = (typeof window.floatingWidgetSystem !== "undefined" && typeof window.floatingWidgetSystem.getSettingsPanelHTML === "function")
+        ? window.floatingWidgetSystem.getSettingsPanelHTML()
+        : '<div id="settings-lv2-floating-widget" class="settings-lv2-panel" style="display:none;"><div class="form-group">悬浮窗模块加载中…</div></div>';
+      // 优先插入到数据管理面板之后；否则回退到向量化记忆 / TTS / API 之后
+      const dataPanel = document.getElementById("settings-lv2-data");
+      const vectorPanel = document.getElementById("settings-lv2-vector-memory");
+      const ttsPanel = document.getElementById("settings-lv2-tts");
+      const apiPanel = document.getElementById("settings-lv2-api");
+      const anchor = dataPanel || vectorPanel || ttsPanel || apiPanel;
       if (anchor && anchor.parentNode) {
         const wrap = document.createElement("div");
         wrap.innerHTML = html.trim();

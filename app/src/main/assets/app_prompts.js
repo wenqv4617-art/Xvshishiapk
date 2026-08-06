@@ -980,6 +980,17 @@ ${relationshipDesc}`;
     }
   }
 
+  // === 线下美化正则提示词注入 (depth: -30) - 当用户开启了线下美化正则时，注入对应的提示词 ===
+  if (window.cotSystem && typeof window.cotSystem.buildOfflineBeautifyPromptHints === 'function') {
+    const beautifyHints = await window.cotSystem.buildOfflineBeautifyPromptHints(sessionId);
+    if (beautifyHints) {
+      segments.push({
+        depth: -30,
+        content: beautifyHints
+      });
+    }
+  }
+
   // 2.5 世界书条目载入 (支持负深度！如 -900 会自动排在人设和规则的前最上方)
   uniqueEntries.forEach(entry => {
     const entryDepth = Number(entry.depth) ?? 10;
@@ -1171,7 +1182,31 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
   const sess = await db.sessions.get(sessionId);
   const group = await db.groups.get(sess.groupId);
   const members = await db.group_members.where('groupId').equals(group.id).toArray();
-  
+
+  // 读取剧场配置（情景设定 / 字数 / 视角 / 携带记忆 / 出席人物）
+  let scenario = "";
+  let minWord = 50;
+  let maxWord = 300;
+  let charPOV = "第三人称";
+  let userPOV = "第二人称";
+  let carryMemory = false;
+  let attendeeIds = []; // 出席人物 char id 列表（空则视为全部群成员出席）
+  if (isTheater) {
+    const theater = await db.theaters.get(Number(theaterId));
+    if (theater) {
+      scenario = theater.scenario || "";
+      minWord = theater.minWordCount || 50;
+      maxWord = theater.maxWordCount || 300;
+      charPOV = theater.charPOV || "第三人称";
+      userPOV = theater.userPOV || "第二人称";
+      carryMemory = !!theater.carryMemory;
+      if (Array.isArray(theater.attendeeIds)) attendeeIds = theater.attendeeIds;
+    }
+  } else {
+    scenario = "群成员线下见面，在同一个物理空间中进行真实面对面接触。";
+    carryMemory = true;
+  }
+
   let context = `【最高优先级叙事与人称控制规范（绝对必须严格遵守，违者判定OOC）】：
 你当前的职责是同时模拟当前群聊线下场景内除了 User（我/你本人）以外的所有 AI 角色（群成员）的动作白描与发言。
 
@@ -1204,21 +1239,59 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
 - 禁止写"你感到……""你以为……""你知道……""你想起……""你意识到……"
 - 直接以叙事文本输出。描述谁做了什么、说了什么、发生了什么。像写小说一样
 
+2. 叙事人称视角约束（高优先级）：
+- 角色（AI 端群成员）的动作白描视角：必须严格使用 **${charPOV}**。
+- 用户（User）的旁白代称视角：必须严格使用 **${userPOV}**（第二人称=“你”，第三人称=用户姓名，第一人称=“我”）。
+
+3. 本轮回复字数区间：最小 ${minWord} 字，最大 ${maxWord} 字（绝对强制限制，禁止违反）。
+
 【当前线下场景活跃的群成员列表与性格底料如下】：
 `;
 
+  // 出席人物过滤：若剧场配置了 attendeeIds，则只注入这些 AI 角色；否则注入全部群成员
+  // 注意：user（面具）以 'user_<id>' 字符串形式存储，Number() 后为 NaN，不参与 char 过滤；
+  //       user 本人始终作为对话主体出席，无需也无法被"过滤掉"。
+  const charAttendeeIds = attendeeIds.map(id => Number(id)).filter(id => !isNaN(id));
+  const attendeeSet = charAttendeeIds.length > 0 ? new Set(charAttendeeIds) : null;
+
+  // 注入 User（当前面具）的完整人设——user 是场景中的核心人物，必须作为完整角色对待
+  // 优先用会话级自定义，回落到 archive 原始人设
+  let userName = "";
+  let userPersona = sess.customUserPersona || "";
+  let userAvatar = sess.customUserAvatar || null;
+  const userArchive = sess.userId ? await db.archives.get(Number(sess.userId)) : null;
+  if (userArchive) {
+    userName = userArchive.name || "我";
+    userPersona = userPersona || userArchive.persona || "";
+    userAvatar = userAvatar || userArchive.avatar || null;
+  }
+  if (!userName) userName = "我";
+  // 检查 user 是否在出席名单中（若名单非空且未选 user，则不注入 user 详情，但仍作为对话主体）
+  const userInAttendee = !attendeeSet || attendeeIds.some(id => String(id).startsWith('user_'));
+  if (userInAttendee) {
+    context += `\n- 成员 [${userName}]（User 本人，对话主体）:\n人设背景：${userPersona || "（未设置，请按通用现代人对待）"}\n群内身份：群主/参与者\n`;
+  }
+
   for (let m of members) {
     if (m.memberType === 'char') {
+      // 出席人物过滤：跳过未选中的角色（群助手机器人通常标记为 npc，这里一并排除 char 类型的群助手）
+      if (attendeeSet && !attendeeSet.has(Number(m.memberId))) continue;
       const char = await db.archives.get(m.memberId);
       if (char) {
         context += `\n- 成员 [${char.name}]:\n人设背景：${char.persona}\n群内身份：${m.title || "无"}\n`;
       }
     }
   }
+  if (attendeeSet) {
+    context += `\n（注意：本轮线下场景仅上述被选中的成员出席，未列出的群成员不出现在本场景中。${userInAttendee ? 'User 本人始终出席。' : 'User 未被选入本轮出席名单。'}）\n`;
+  }
 
   const segments = [{
     depth: -1000,
     content: PROMPT_TEMPLATES.DISCLAIMER
+  }, {
+    depth: -950,
+    content: `## 当前线下场景情景背景：\n${scenario}`
   }, {
     depth: -800,
     content: context
@@ -1258,6 +1331,17 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
           segments.push({ depth: entry.depth ?? 10, content: `## 世界书背景设定：${entry.title}\n${entry.content}` });
         }
       }
+    }
+  }
+
+  // === 线下美化正则提示词注入 (depth: -30) - 群聊场景同样支持 ===
+  if (window.cotSystem && typeof window.cotSystem.buildOfflineBeautifyPromptHints === 'function') {
+    const beautifyHints = await window.cotSystem.buildOfflineBeautifyPromptHints(sessionId);
+    if (beautifyHints) {
+      segments.push({
+        depth: -30,
+        content: beautifyHints
+      });
     }
   }
 

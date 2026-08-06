@@ -304,3 +304,27 @@ db.version(32).stores({
   qt_variables:  'id++, gameId, key, value, lastRound, editable',
   qt_beautify:   'id++, name, themeColor, background, css, regexRules, createdAt'
 });
+
+// ============================================
+// 🎯 Version 33：第四面墙·故人来信 & 阅读用户创作
+// - qt_fanwall_letters:  任务完结后故人来信（信件/打字消息流/归档状态）
+//   * branch: 'letter' (否分支·信件) | 'dialog' (是分支·打字消息流)
+//   * deepened: 0=未深入, 1=已深入(角色已拉入档案馆与聊天列表)
+// - reader_user_paragraph_comments: 用户自写书的段落评论存储（路人段评）
+//   reader_books/reader_chapters 复用，用 isImported=3 标记用户自写书
+// ============================================
+db.version(33).stores({
+  qt_fanwall_letters: 'id++, gameId, charName, branch, deepened, createdAt',
+  reader_user_paragraph_comments: 'id++, bookId, chapterId, paraIdx, charName, content, createdAt'
+});
+
+// ============================================
+// 🎯 Version 34：快穿局·文风特调
+// - qt_styles: 文风套件（名称/提示词，可导入导出，高优先级注入 AI 提示词）
+//   * builtin: 内置文风标记（不可删除）
+//   * promptHint: 注入到 prompt 的文风约束（最高优先级，凌驾于其他写作要求）
+//   * version: 内置文风版本号（用于自动升级）
+// ============================================
+db.version(34).stores({
+  qt_styles: 'id++, name, builtin, version, createdAt'
+});

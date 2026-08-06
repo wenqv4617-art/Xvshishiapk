@@ -710,6 +710,11 @@ function initAppClickEvents() {
 function openApp(app) {
   const win = document.getElementById(`win-${app}`);
   if (win) {
+    // 跳转前先关闭其他所有 active 的应用窗口（等同于先回主页面再跳转目标页）
+    // 修复层级问题：从聊天点档案馆/深谈跳不过去、小助手全屏被遮挡等
+    document.querySelectorAll(".app-window.active").forEach(function (w) {
+      if (w !== win) w.classList.remove("active");
+    });
     win.classList.add("active");
     updateThemeColor("#f4f6fa");
     

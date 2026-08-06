@@ -7,6 +7,8 @@ let offlineAbortController = null;
 // 用于渲染当前对话中双方头像的全局临时变量
 let activeSessionCharAvatar = null;
 let activeSessionUserAvatar = null;
+let activeSessionCharName = '';
+let activeSessionUserName = '';
 
 // 记录当前右键/双击被操作的消息节点 ID
 let selectedMsgId = null;
@@ -314,7 +316,9 @@ async function fetchStreamOrJson(baseUrl, api, messagesToSend, signal, onStreamC
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+      const err = new Error(`HTTP ${response.status} 错误: ${errText}`);
+      if (typeof window.fwTrackError === "function") window.fwTrackError(err);
+      throw err;
     }
 
     if (response.body) {
@@ -323,6 +327,7 @@ async function fetchStreamOrJson(baseUrl, api, messagesToSend, signal, onStreamC
       let buffer = "";
       let reasoningText = "";
       let contentText = "";
+      let streamUsage = null; // 部分网关会在最后一个 chunk 携带 usage
 
       try {
         while (true) {
@@ -351,6 +356,9 @@ async function fetchStreamOrJson(baseUrl, api, messagesToSend, signal, onStreamC
                 if (deltaReasoning) reasoningText += deltaReasoning;
                 if (deltaContent) contentText += deltaContent;
 
+                // 捕获流式 usage（若网关返回）
+                if (parsed.usage) streamUsage = parsed.usage;
+
                 // 计算当前合成的完整文本
                 let fullText = contentText;
                 if (reasoningText) {
@@ -365,6 +373,12 @@ async function fetchStreamOrJson(baseUrl, api, messagesToSend, signal, onStreamC
       } catch(e) {
         if (e.name === 'AbortError') throw e;
         console.warn("流式读取终止:", e);
+        if (typeof window.fwTrackError === "function") window.fwTrackError(e);
+      }
+
+      // 流式结束后上报 token 用量（若网关提供）
+      if (streamUsage && typeof window.fwTrackUsage === "function") {
+        window.fwTrackUsage(streamUsage, api.model);
       }
 
       let finalFullText = contentText;
@@ -394,12 +408,20 @@ async function fetchStreamOrJson(baseUrl, api, messagesToSend, signal, onStreamC
 
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+    const err = new Error(`HTTP ${response.status} 错误: ${errText}`);
+    if (typeof window.fwTrackError === "function") window.fwTrackError(err);
+    throw err;
   }
 
   const result = await response.json();
+  // 上报 token 用量给悬浮窗（非流式响应通常携带 usage）
+  if (result && result.usage && typeof window.fwTrackUsage === "function") {
+    window.fwTrackUsage(result.usage, api.model);
+  }
   if (!result.choices || result.choices.length === 0) {
-    throw new Error("模型服务返回数据异常，Choice 节点为空。");
+    const err = new Error("模型服务返回数据异常，Choice 节点为空。");
+    if (typeof window.fwTrackError === "function") window.fwTrackError(err);
+    throw err;
   }
 
   const choice = result.choices[0];
@@ -1437,11 +1459,15 @@ let isOfflineChatAppEventsBound = false;
   }
 })();
 
-function resolveAvatar(avatar) {
+function resolveAvatar(avatar, name) {
   if (!avatar) {
-    // 关键修复：SVG 内部属性必须用单引号，否则双引号会提前闭合 <img src="..."> 的 src 属性，
-    // 导致头像显示为破损图片，且剩余 SVG 标记（含 > 字符）泄漏到页面，造成名字带残破 > 字样
-    return "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/><text x='50' y='62' font-size='50' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif'>人</text></svg>";
+    // 默认头像取角色名首字 + 哈希配色，而非统一的"人"字
+    const ch = String(name || '').charAt(0) || '人';
+    const colors = ['#3b82f6', '#0f766e', '#8b5cf6', '#e11d48', '#b45309', '#0891b2', '#be185d', '#4f46e5'];
+    const color = colors[name ? name.charCodeAt(0) % colors.length : 0];
+    return "data:image/svg+xml;utf8," + encodeURIComponent(
+      `<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='${color}'/><text x='50' y='68' font-size='52' text-anchor='middle' fill='#fff' font-family='sans-serif' font-weight='700'>${ch}</text></svg>`
+    );
   }
   if (avatar instanceof Blob) {
     return URL.createObjectURL(avatar);
@@ -1449,12 +1475,12 @@ function resolveAvatar(avatar) {
   return avatar;
 }
 
-// 头像加载失败兜底：网络 URL 头像失效时回退到默认 SVG，杜绝破图
-// 用法：<img src="..." onerror="avatarFallback(this)">
-function avatarFallback(img) {
+// 头像加载失败兜底：网络 URL 头像失效时回退到默认 SVG（取 name 首字），杜绝破图
+// 用法：<img src="..." onerror="avatarFallback(this, '角色名')">
+function avatarFallback(img, name) {
   if (!img || img.dataset.fallbackApplied) return;
   img.dataset.fallbackApplied = '1';
-  img.src = "data:image/svg+xml;utf8,<svg viewBox='0 0 100 100' xmlns='http://www.w3.org/2000/svg'><circle cx='50' cy='50' r='50' fill='%23cbd5e1'/><text x='50' y='62' font-size='50' text-anchor='middle' fill='%2394a3b8' font-family='sans-serif'>人</text></svg>";
+  img.src = resolveAvatar(null, name);
   img.onerror = null;
 }
 window.avatarFallback = avatarFallback;
@@ -1466,6 +1492,87 @@ function escapeHtml(str) {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#39;');
+}
+
+// 统一消息预览文本提取器：把任意 contentType 的消息转为干净的纯文本预览
+// 用于会话列表、浏览器/APK 通知卡片等"列表场景"，避免显示渲染前的 <think>/状态栏/HTML 标签
+function getMessagePreviewText(msg) {
+  if (!msg) return '暂无对话消息';
+  const ct = msg.contentType;
+  const content = msg.content;
+
+  // 非文本类型：直接返回语义化标签
+  if (ct === 'voice') return '[语音]';
+  if (ct === 'image') return '[图片]';
+  if (ct === 'transfer') return '[微信转账]';
+  if (ct === 'red_envelope') return '[微信红包]';
+  if (ct === 'location') return '[位置]';
+  if (ct === 'pay_for_me') return '[代付]';
+  if (ct === 'gift') return '[礼物]';
+  if (ct === 'call') {
+    try { const d = JSON.parse(content); return (d.type === 'video' ? '[视频通话]' : '[语音通话]') + (d.rejected ? '(已拒绝)' : ''); }
+    catch (e) { return '[语音通话]'; }
+  }
+  if (ct === 'moment_share') return '[朋友圈]';
+  if (ct === 'social_notice') {
+    try {
+      const sn = JSON.parse(content);
+      return sn.type === 'moment' ? '[对方发了一条朋友圈]' :
+             sn.type === 'forum_post' ? '[对方在论坛发了帖子]' :
+             sn.type === 'forum_alt_create' ? '[对方建立了论坛小号]' : '[社交动态]';
+    } catch (e) { return '[社交动态]'; }
+  }
+  if (ct === 'group_poll') return '[群投票]';
+  if (ct === 'mcp_tool') return '[工具调用]';
+  if (ct === 'withdraw_share') {
+    try {
+      const d = JSON.parse(content);
+      // 提取 linkText 并清洗标签，避免预览显示 <think>/状态栏/HTML 标签
+      let lt = d.linkText || '[提现助力]';
+      lt = lt.replace(/<think>[\s\S]*?<\/think>/gi, '')
+             .replace(/\[STATUS_BAR\][\s\S]*?\[\/STATUS_BAR\]/gi, '')
+             .replace(/<[^>]+>/g, '')
+             .replace(/\s+/g, ' ').trim();
+      return lt || '[提现助力]';
+    } catch (e) { return '[提现助力]'; }
+  }
+
+  // 文本类型：清洗各种渲染前标记
+  if (typeof content !== 'string') return '暂无对话消息';
+  let text = content;
+
+  // 1. 剥离思维链块（<think>...</think> 及变体），预览中不显示思考过程
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  text = text.replace(/\[THINKING\][\s\S]*?\[\/THINKING\]/gi, '');
+  text = text.replace(/【思考】[\s\S]*?【\/思考】/g, '');
+  text = text.replace(/<thought>[\s\S]*?<\/thought>/gi, '');
+  text = text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, '');
+  // 残留的单边标签
+  text = text.replace(/<\/?think>/gi, '');
+  text = text.replace(/\[\/?THINKING\]/gi, '');
+  text = text.replace(/【\/?思考】/g, '');
+
+  // 2. 剥离状态栏标记 [STATUS_BAR]...[/STATUS_BAR] 及变体
+  text = text.replace(/\[STATUS_BAR\][\s\S]*?\[\/STATUS_BAR\]/gi, '');
+  text = text.replace(/\[STATUS_PANEL\][\s\S]*?\[\/STATUS_PANEL\]/gi, '');
+
+  // 3. 剥离 HTML 标签（卡片、富文本等渲染后的标签不留预览里）
+  text = text.replace(/<[^>]+>/g, '');
+
+  // 4. 剥离引用前缀 [QUOTE: xxx] / 【引用: xxx】
+  text = text.replace(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i, '');
+
+  // 5. 剥离 Markdown 图片/链接语法残留
+  text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+  text = text.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1');
+
+  // 6. HTML 实体解码（&amp; &lt; 等）
+  text = text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+
+  // 7. 压缩多余空白
+  text = text.replace(/\s+/g, ' ').trim();
+
+  return text || '暂无对话消息';
 }
 
 // 位置卡片富化渲染：地图底纹 + 经纬线网格 + 建筑物 SVG 图标 + 定位针 + 坐标条
@@ -1856,7 +1963,7 @@ async function updateMeActiveCard(userId) {
 
   const user = await db.archives.get(Number(userId));
   if (user) {
-    if (avatarEl) avatarEl.src = resolveAvatar(user.avatar);
+    if (avatarEl) avatarEl.src = resolveAvatar(user.avatar, user.name);
     if (groupEl) groupEl.innerText = user.group || "默认分组";
     if (nameEl) nameEl.innerText = user.name;
     if (remarkEl) remarkEl.innerText = user.remark || "暂无备注";
@@ -1951,7 +2058,7 @@ async function updateMeHeader(userId) {
     const nameEl = document.getElementById("moment-user-name");
     const avatarEl = document.getElementById("moment-user-avatar");
     if (nameEl) nameEl.innerText = user.name;
-    if (avatarEl) avatarEl.src = resolveAvatar(user.avatar);
+    if (avatarEl) avatarEl.src = resolveAvatar(user.avatar, user.name);
   }
 }
 
@@ -1991,33 +2098,7 @@ async function renderSessionList() {
           
           let latestText = "暂无对话消息";
           if (latestMsg) {
-            if (latestMsg.contentType === 'transfer') {
-              latestText = "[微信转账]";
-            } else if (latestMsg.contentType === 'red_envelope') {
-              latestText = "[微信红包]";
-            } else if (latestMsg.contentType === 'voice') {
-              latestText = "[语音消息]";
-            } else if (latestMsg.contentType === 'moment_share') {
-              latestText = "[转发了一条朋友圈]";
-            } else if (latestMsg.contentType === 'social_notice') {
-              try {
-                const sn = JSON.parse(latestMsg.content);
-                latestText = sn.type === 'moment' ? "[对方发了一条朋友圈]" :
-                             sn.type === 'forum_post' ? "[对方在论坛发了帖子]" :
-                             sn.type === 'forum_alt_create' ? "[对方建立了论坛小号]" : "[社交动态]";
-              } catch(e) { latestText = "[社交动态]"; }
-            } else if (latestMsg.contentType === 'group_poll') {
-              latestText = "[群投票]";
-            } else if (latestMsg.contentType === 'mcp_tool') {
-              latestText = "[外部工具调用记录]";
-            } else if (latestMsg.contentType === 'image' && typeof latestMsg.content === 'string' && latestMsg.content.startsWith("{")) {
-              latestText = "[图片与描述]";
-            } else {
-              latestText = latestMsg.content;
-              if (typeof latestText === 'string') {
-                latestText = latestText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '');
-              }
-            }
+            latestText = getMessagePreviewText(latestMsg);
           }
           
           const timeDisplay = formatWeChatTime(new Date(latestMsg ? latestMsg.timestamp : (s.lastMessageTime || Date.now())), new Date());
@@ -2025,13 +2106,13 @@ async function renderSessionList() {
           div.className = "session-item";
           div.onclick = () => openWeChatDialog(s.id);
           div.innerHTML = `
-            <img class="session-avatar" src="${resolveAvatar(s.customCharAvatar || char?.avatar)}" onerror="avatarFallback(this)">
+            <img class="session-avatar" src="${resolveAvatar(s.customCharAvatar || char?.avatar, s.customCharName || char?.name || '未知')}" onerror="avatarFallback(this, '${escapeHtml(s.customCharName || char?.name || '未知')}')">
             <div class="session-detail">
               <div class="session-row">
                 <span class="session-name">${escapeHtml(s.customCharName || char?.name || '未知角色')}</span>
                 <span class="session-time">${timeDisplay}</span>
               </div>
-              <div class="session-msg">${latestText}</div>
+              <div class="session-msg">${escapeHtml(latestText)}</div>
             </div>
           `;
           container.appendChild(div);
@@ -2126,6 +2207,8 @@ async function openWeChatDialog(sessionId) {
 
   activeSessionCharAvatar = sess.customCharAvatar || char?.avatar || null;
   activeSessionUserAvatar = sess.customUserAvatar || user?.avatar || null;
+  activeSessionCharName = sess.customCharName || char?.name || '未知';
+  activeSessionUserName = sess.customUserName || user?.name || '我';
   
   document.getElementById("dialog-header-title").innerText = sess.customCharName || char?.name || "未知角色";
   document.getElementById("chat-dialog-panel").classList.add("active");
@@ -2241,8 +2324,8 @@ async function renderDialogMessages(isInitial = true) {
   const msgs = rawMsgs.reverse(); // 恢复正向时间流顺序
 
   const fragment = document.createDocumentFragment();
-  const charAvatarUrl = resolveAvatar(activeSessionCharAvatar);
-  const userAvatarUrl = resolveAvatar(activeSessionUserAvatar);
+  const charAvatarUrl = resolveAvatar(activeSessionCharAvatar, activeSessionCharName);
+  const userAvatarUrl = resolveAvatar(activeSessionUserAvatar, activeSessionUserName);
 
   let mountedGroupIds = [];
   if (window.stickerSystem && window.stickerSystem.getMountedGroupIds) {
@@ -2580,7 +2663,13 @@ async function renderDialogMessages(isInitial = true) {
     } else if (m.contentType === 'withdraw_share') {
       try {
         const data = JSON.parse(m.content);
-        const linkText = data.linkText || '【提现助力】帮我点一下';
+        let linkText = data.linkText || '【提现助力】帮我点一下';
+        // 清洗 linkText 中的标签（<think>/状态栏/HTML），避免卡片显示转义后的标签文本
+        linkText = linkText.replace(/<think>[\s\S]*?<\/think>/gi, '')
+                           .replace(/\[STATUS_BAR\][\s\S]*?\[\/STATUS_BAR\]/gi, '')
+                           .replace(/<[^>]+>/g, '')
+                           .replace(/\s+/g, ' ').trim();
+        if (!linkText) linkText = '【提现助力】帮我点一下';
         contentHtml = `<div class="withdraw-share-link" style="color:#576b95; text-decoration:underline; word-break:break-all; font-size:14px; line-height:1.6; white-space:pre-wrap;">${escapeHtml(linkText)}</div>`;
       } catch(e) {
         contentHtml = `<div style="font-size:13px; color:#999;">[分享链接]</div>`;
@@ -2776,7 +2865,7 @@ async function renderDialogMessages(isInitial = true) {
     // 判断群聊发送人信息与头衔
     let finalSenderName = "";
     // 强制转型 Number 防止 Dexie 主键查询类型冲突失效
-    let finalAvatarUrl = m.senderType === 'user' ? (user ? resolveAvatar(user.avatar) : userAvatarUrl) : charAvatarUrl;
+    let finalAvatarUrl = m.senderType === 'user' ? (user ? resolveAvatar(user.avatar, user.name) : userAvatarUrl) : charAvatarUrl;
     let roleTitleHtml = "";
 
     if (sess.isGroup === 1) {
@@ -2785,7 +2874,7 @@ async function renderDialogMessages(isInitial = true) {
         const groupObj = await db.groups.get(sess.groupId);
         const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
         finalSenderName = botObj ? botObj.name : "群助手";
-        finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
+        finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar, botObj.name) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
       } else {
         const memberInfo = await db.group_members.where('[groupId+memberId+memberType]').equals([sess.groupId, Number(m.senderId), m.senderType]).first();
         if (m.senderType === 'user') {
@@ -2793,7 +2882,7 @@ async function renderDialogMessages(isInitial = true) {
         } else {
           const charSender = await db.archives.get(Number(m.senderId));
           finalSenderName = charSender ? (charSender.remark || charSender.name) : "群成员";
-          finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar) : finalAvatarUrl;
+          finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar, charSender.name) : finalAvatarUrl;
         }
         if (memberInfo && memberInfo.title) {
           const badgeColor = memberInfo.role === 'owner' ? '#ef4444' : (memberInfo.role === 'admin' ? '#3b82f6' : '#10b981');
@@ -2957,8 +3046,8 @@ async function appendMessageToDOM(msg) {
   const user = await db.archives.get(sess.userId); // 补全 user 异步读取，彻底根治 user is not defined 异常 [1]
   
   // 补全头像与表情局部变量加载，彻底根治 charAvatarUrl 与 emojiHtml 未初始化异常
-  const charAvatarUrl = resolveAvatar(activeSessionCharAvatar);
-  const userAvatarUrl = resolveAvatar(activeSessionUserAvatar);
+  const charAvatarUrl = resolveAvatar(activeSessionCharAvatar, activeSessionCharName);
+  const userAvatarUrl = resolveAvatar(activeSessionUserAvatar, activeSessionUserName);
   const emojiHtml = msg.reactionEmoji ? `<div class="bubble-attached-emoji" onclick="window.removeReaction(${msg.id}, event)">${msg.reactionEmoji}</div>` : "";
 
   const sidForQuery = msg?.sessionId || activeSessionId;
@@ -3446,7 +3535,7 @@ async function appendMessageToDOM(msg) {
 
 // 支撑追加消息时的群聊视图渲染
       let finalSenderName = "";
-      let finalAvatarUrl = msg.senderType === 'user' ? (user ? resolveAvatar(user.avatar) : userAvatarUrl) : charAvatarUrl;
+      let finalAvatarUrl = msg.senderType === 'user' ? (user ? resolveAvatar(user.avatar, user.name) : userAvatarUrl) : charAvatarUrl;
       let roleTitleHtml = "";
 
       if (sess && sess.isGroup === 1) {
@@ -3454,7 +3543,7 @@ async function appendMessageToDOM(msg) {
           const groupObj = await db.groups.get(sess.groupId);
           const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
           finalSenderName = botObj ? botObj.name : "群助手";
-          finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
+          finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar, botObj.name) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
         } else {
           const memberInfo = await db.group_members.where('[groupId+memberId+memberType]').equals([sess.groupId, Number(msg.senderId), msg.senderType]).first();
           if (msg.senderType === 'user') {
@@ -3462,7 +3551,7 @@ async function appendMessageToDOM(msg) {
           } else {
             const charSender = await db.archives.get(Number(msg.senderId));
             finalSenderName = charSender ? (charSender.remark || charSender.name) : "群成员";
-            finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar) : finalAvatarUrl;
+            finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar, charSender.name) : finalAvatarUrl;
           }
           if (memberInfo && memberInfo.title) {
             const badgeColor = memberInfo.role === 'owner' ? '#ef4444' : (memberInfo.role === 'admin' ? '#3b82f6' : '#10b981');
@@ -4591,7 +4680,7 @@ function bindChatAppEvents() {
             streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(currentFullText)}</div>`;
           }
 
-          streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
+          streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar, activeSessionCharName)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
           container.scrollTop = container.scrollHeight;
         };
 
@@ -5984,11 +6073,8 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text', o
     const sess = await db.sessions.get(sid);
     const char = sess ? await db.archives.get(sess.charId) : null;
     const senderName = sess?.customCharName || char?.name || "对方";
-    let cleanText = content;
-    if (contentType === 'voice') cleanText = "[语音消息]";
-    else if (contentType === 'image') cleanText = "[图片与描述]";
-    else if (contentType === 'transfer') cleanText = "[微信转账]";
-    else if (contentType === 'red_envelope') cleanText = "[微信红包]";
+    // 统一使用 getMessagePreviewText 清洗预览文本，避免通知卡片显示 <think>/状态栏/HTML 标签
+    let cleanText = getMessagePreviewText({ contentType, content });
     // APK 环境优先使用 AndroidMCP 原生通知
     if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
       window.AndroidMCP.showSystemNotification(senderName, cleanText);
@@ -6095,6 +6181,103 @@ function triggerTheaterMode() {
 }
 
 let editingTheaterId = null;
+let theaterAttendeeIds = []; // 当前剧场表单选中的出席人物 char id 列表
+let theaterAttendeeMembers = []; // 缓存当前群聊可选成员 [{memberId, name, avatar}]
+
+// 渲染剧场表单出席人物区域（仅群聊会话显示）
+async function refreshTheaterAttendeeUI() {
+  const group = document.getElementById("theater-attendee-group");
+  if (!group) return;
+  const sess = await db.sessions.get(activeSessionId);
+  if (!sess || sess.isGroup !== 1) { group.style.display = "none"; return; }
+  const grp = await db.groups.get(sess.groupId);
+  if (!grp) { group.style.display = "none"; return; }
+  group.style.display = "block";
+
+  // 加载群成员（char 类型，排除群助手机器人——机器人存在 group.bots，不在 group_members 中）
+  const members = await db.group_members.where('groupId').equals(grp.id).toArray();
+  theaterAttendeeMembers = [];
+
+  // 优先加入当前面具 user（出席人物列表应包含 user 本人）
+  if (activeUserPersonaId) {
+    const me = await db.archives.get(Number(activeUserPersonaId));
+    if (me) {
+      theaterAttendeeMembers.push({ memberId: ('user_' + me.id), name: (me.name || '我') + '（我）', avatar: me.avatar, isUser: true });
+    }
+  }
+
+  for (const m of members) {
+    if (m.memberType === 'char') {
+      const c = await db.archives.get(m.memberId);
+      if (c) theaterAttendeeMembers.push({ memberId: m.memberId, name: c.name, avatar: c.avatar });
+    }
+  }
+  renderTheaterAttendeeChips();
+  renderTheaterAttendeeList();
+
+  // 绑定展开/收起切换按钮（只绑一次）
+  const toggleBtn = document.getElementById("theater-attendee-toggle");
+  if (toggleBtn && !toggleBtn.__bound) {
+    toggleBtn.__bound = true;
+    toggleBtn.onclick = () => {
+      const list = document.getElementById("theater-attendee-list");
+      if (!list) return;
+      const isShown = list.style.display !== "none";
+      list.style.display = isShown ? "none" : "block";
+      toggleBtn.textContent = isShown ? "+ 添加出席人物" : "收起成员列表";
+    };
+  }
+}
+
+function renderTheaterAttendeeChips() {
+  const chips = document.getElementById("theater-attendee-chips");
+  if (!chips) return;
+  if (theaterAttendeeIds.length === 0) {
+    chips.innerHTML = '<span style="font-size:11px; color:var(--text-secondary);">未选择（默认全员出席）</span>';
+    return;
+  }
+  chips.innerHTML = "";
+  theaterAttendeeIds.forEach(id => {
+    // 用字符串比较，兼容 user 的 'user_<id>' 字符串 memberId 与 char 的数字 memberId
+    const m = theaterAttendeeMembers.find(x => String(x.memberId) === String(id));
+    if (!m) return;
+    const chip = document.createElement("div");
+    chip.style.cssText = "display:flex; align-items:center; gap:4px; background:var(--bg-main); border:1px solid var(--border); border-radius:14px; padding:3px 8px 3px 4px; font-size:11px;";
+    if (m.avatar) chip.innerHTML = '<img src="' + m.avatar + '" style="width:18px; height:18px; border-radius:50%; object-fit:cover;">';
+    else chip.innerHTML = '<div style="width:18px; height:18px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:9px;">' + escapeHtml((m.name || '?').charAt(0)) + '</div>';
+    chip.innerHTML += '<span>' + escapeHtml(m.name || '未命名') + '</span>';
+    const x = document.createElement("span");
+    x.textContent = "×";
+    x.style.cssText = "cursor:pointer; color:var(--text-secondary); font-weight:700; margin-left:2px;";
+    x.onclick = () => { theaterAttendeeIds = theaterAttendeeIds.filter(x => String(x) !== String(id)); renderTheaterAttendeeChips(); renderTheaterAttendeeList(); };
+    chip.appendChild(x);
+    chips.appendChild(chip);
+  });
+}
+
+function renderTheaterAttendeeList() {
+  const list = document.getElementById("theater-attendee-list");
+  if (!list) return;
+  list.innerHTML = "";
+  // 用字符串比较，兼容 user 的 'user_<id>' 字符串 memberId
+  const idStrs = theaterAttendeeIds.map(id => String(id));
+  const available = theaterAttendeeMembers.filter(m => !idStrs.includes(String(m.memberId)));
+  if (available.length === 0) {
+    list.innerHTML = '<div style="font-size:11px; color:var(--text-secondary); text-align:center; padding:8px;">已全部选中或无可选成员</div>';
+    return;
+  }
+  available.forEach(m => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; cursor:pointer; transition:background 0.15s;";
+    row.onmouseenter = () => row.style.background = "var(--bg-card)";
+    row.onmouseleave = () => row.style.background = "transparent";
+    if (m.avatar) row.innerHTML = '<img src="' + m.avatar + '" style="width:28px; height:28px; border-radius:50%; object-fit:cover;">';
+    else row.innerHTML = '<div style="width:28px; height:28px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px;">' + escapeHtml((m.name || '?').charAt(0)) + '</div>';
+    row.innerHTML += '<span style="font-size:12px;">' + escapeHtml(m.name || '未命名') + '</span>';
+    row.onclick = () => { theaterAttendeeIds.push(m.memberId); renderTheaterAttendeeChips(); renderTheaterAttendeeList(); };
+    list.appendChild(row);
+  });
+}
 
 async function renderTheaterList() {
   const container = document.getElementById("theater-list-container");
@@ -6131,6 +6314,7 @@ async function renderTheaterList() {
 
 function openNewTheaterForm() {
   editingTheaterId = null;
+  theaterAttendeeIds = [];
   document.getElementById("theater-name").value = "";
   document.getElementById("theater-scenario").value = "";
   document.getElementById("theater-min-word").value = 50;
@@ -6138,7 +6322,10 @@ function openNewTheaterForm() {
   document.getElementById("theater-carry-memory").checked = true;
   document.getElementById("theater-char-pov").value = "第三人称";
   document.getElementById("theater-user-pov").value = "第二人称";
+  const list = document.getElementById("theater-attendee-list");
+  if (list) list.style.display = "none";
   document.getElementById("new-theater-overlay").classList.add("active");
+  refreshTheaterAttendeeUI();
 }
 
 async function openEditTheaterForm(theaterId) {
@@ -6153,12 +6340,18 @@ async function openEditTheaterForm(theaterId) {
   document.getElementById("theater-carry-memory").checked = !!th.carryMemory;
   document.getElementById("theater-char-pov").value = th.charPOV || "第三人称";
   document.getElementById("theater-user-pov").value = th.userPOV || "第二人称";
+  // 保留原始类型：user 的 id 为 'user_<id>' 字符串，Number() 会变 NaN 丢失，故用 String 保留
+  theaterAttendeeIds = Array.isArray(th.attendeeIds) ? th.attendeeIds.map(id => id) : [];
+  const list = document.getElementById("theater-attendee-list");
+  if (list) list.style.display = "none";
   document.getElementById("new-theater-overlay").classList.add("active");
+  refreshTheaterAttendeeUI();
 }
 
 function closeNewTheaterForm() {
   document.getElementById("new-theater-overlay").classList.remove("active");
   editingTheaterId = null;
+  theaterAttendeeIds = [];
 }
 
 async function saveNewTheater() {
@@ -6169,6 +6362,7 @@ async function saveNewTheater() {
   const carryMemory = document.getElementById("theater-carry-memory").checked;
   const charPOV = document.getElementById("theater-char-pov").value;
   const userPOV = document.getElementById("theater-user-pov").value;
+  const attendeeIds = theaterAttendeeIds.slice();
 
   if (!name || !scenario) {
     showToast("请完整填写剧场名称与情景设定！");
@@ -6183,7 +6377,8 @@ async function saveNewTheater() {
       maxWordCount: maxWord,
       carryMemory: carryMemory ? 1 : 0,
       charPOV,
-      userPOV
+      userPOV,
+      attendeeIds
     });
     showToast("剧场配置更新成功！");
     closeNewTheaterForm();
@@ -6198,6 +6393,7 @@ async function saveNewTheater() {
       carryMemory: carryMemory ? 1 : 0,
       charPOV,
       userPOV,
+      attendeeIds,
       createdAt: Date.now()
     });
 
@@ -6289,6 +6485,11 @@ async function renderOfflineMessages() {
   if (!container) return;
   container.innerHTML = "";
 
+  // 确保线下美化正则已从 Session 加载（独立于思维链，不覆盖思维链正则内存状态）
+  if (window.cotSystem && typeof window.cotSystem.loadOfflineBeautifyRules === 'function') {
+    await window.cotSystem.loadOfflineBeautifyRules(activeSessionId);
+  }
+
   let msgs = [];
   if (isOfflineTheater) {
     msgs = await db.offline_messages
@@ -6347,6 +6548,12 @@ async function renderOfflineMessages() {
       continue;
     }
 
+    // 应用线下美化正则 (返回 HTML 字符串；若无线下美化规则则返回 null，走默认 escapeHtml)
+    const beautifiedHtml = (window.cotSystem && typeof window.cotSystem.applyOfflineBeautifyRules === 'function')
+      ? window.cotSystem.applyOfflineBeautifyRules(displayContent)
+      : null;
+    const bodyContentHtml = beautifiedHtml !== null ? beautifiedHtml : escapeHtml(displayContent);
+
     card.innerHTML = `
       <div class="offline-select-checkbox" style="display: ${isOfflineMultiSelectMode ? 'flex' : 'none'};">
         <input type="checkbox" class="offline-msg-checkbox" data-msg-id="${m.id}" onchange="updateOfflineSelectedCount()">
@@ -6357,7 +6564,7 @@ async function renderOfflineMessages() {
       </div>
       ${cotHtml}
       <div class="offline-card-body">
-        ${escapeHtml(displayContent)}
+        ${bodyContentHtml}
         ${(m.translatedContent && m.showTranslation === 1) ? `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed var(--border); font-size:12px; color:#0369a1; line-height:1.5;"><span style="font-weight:700; margin-right:4px;">[中文翻译]</span>${escapeHtml(m.translatedContent)}</div>` : ''}
       </div>
     `;
@@ -6570,6 +6777,11 @@ async function triggerOfflineReply() {
   const originalTitle = header.innerText;
   const btnOfflineReply = document.getElementById("btn-offline-reply");
 
+  // 防御性加载线下美化正则 (确保流式渲染时规则已就绪，独立于思维链)
+  if (window.cotSystem && typeof window.cotSystem.loadOfflineBeautifyRules === 'function') {
+    await window.cotSystem.loadOfflineBeautifyRules(activeSessionId);
+  }
+
   // 如果当前正在请求，点击按钮立即中断
   if (offlineAbortController) {
     offlineAbortController.abort();
@@ -6740,13 +6952,19 @@ async function triggerOfflineReply() {
             `;
           }
 
+          // 流式渲染也应用线下美化正则 (若无线下美化规则则走默认 escapeHtml)
+          const streamBeautifiedHtml = (window.cotSystem && typeof window.cotSystem.applyOfflineBeautifyRules === 'function')
+            ? window.cotSystem.applyOfflineBeautifyRules(parsedCot.cleanText)
+            : null;
+          const streamBodyHtml = streamBeautifiedHtml !== null ? streamBeautifiedHtml : escapeHtml(parsedCot.cleanText);
+
           streamingCard.innerHTML = `
             <div class="offline-card-header">
               <span>${escapeHtml(charName)}</span>
               <span>${timeStr}</span>
             </div>
             ${cotHtml}
-            <div class="offline-card-body">${escapeHtml(parsedCot.cleanText)}</div>
+            <div class="offline-card-body">${streamBodyHtml}</div>
           `;
 
           container.scrollTop = container.scrollHeight;
@@ -7546,7 +7764,7 @@ window.setupExpandPanel = function(mode) {
     if (dots) dots.style.display = "flex";
 
   } else if (mode === 'group') {
-    // 2. 群聊成员专属：第1页装载 8 项，第2页装载 5 项，合计 13 项群组按键
+    // 2. 群聊成员专属：第1页装载 8 项，第2页装载 7 项（群投票移至第2页），合计 15 项群组按键
     if (page1) {
       page1.appendChild(btnSticker);
       page1.appendChild(btnPhoto);
@@ -7556,9 +7774,9 @@ window.setupExpandPanel = function(mode) {
       page1.appendChild(btnLocation);
       page1.appendChild(btnOffline);
       page1.appendChild(btnPlot);
-      page1.appendChild(btnPoll);
     }
     if (page2) {
+      page2.appendChild(btnPoll);
       page2.appendChild(btnHelper);
       page2.appendChild(btnAnnounce);
       page2.appendChild(btnMemory);
