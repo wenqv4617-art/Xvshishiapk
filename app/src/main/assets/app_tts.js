@@ -171,12 +171,13 @@
               <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">官方 TTS 模型：moss-tts（默认）/ moss-speech / moss-ttsd。音色 ID 为 UUID 格式，可通过「拉取音色」按钮获取。</div>
             </div>
             <div class="form-group">
-              <label>音色列表 (UUID 音色 ID)</label>
+              <label>音色 ID (UUID，可拉取或手填)</label>
               <div class="model-row">
-                <select id="tts-mossland-voice-select"><option value="">点击右侧拉取音色</option></select>
+                <input type="text" id="tts-mossland-voice-input" list="tts-mossland-voice-list" placeholder="点击右侧拉取，或直接填写 UUID">
                 <button id="btn-tts-mossland-fetch-voices" class="btn">拉取音色</button>
               </div>
-              <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">拉取后可选择音色；选择后其 UUID 会作为默认音色用于「测试合成」。对话详情中的音色 ID 仍可单独覆盖。</div>
+              <datalist id="tts-mossland-voice-list"></datalist>
+              <div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">拉取后可下拉选择，也可直接手动填写 UUID（含自行复刻的音色）。该值用于「测试合成」；对话详情中的音色 ID 可单独覆盖。</div>
             </div>
             <div class="form-group" style="background: var(--primary-light); padding: 10px; border-radius: 10px; border: 1px solid var(--border); font-size:11px; color:var(--text-secondary);">
               <div style="font-weight:700; color:var(--text-primary); margin-bottom:4px;">Mossland 接入说明</div>
@@ -307,8 +308,9 @@
     fetchMosslandVoices: async function () {
       const cfg = ttsSystem._readForm();
       if (!cfg.mosslandUrl || !cfg.mosslandApiKey) { showToast("请先填写 Mossland URL 与 API Key"); return; }
-      const sel = document.getElementById("tts-mossland-voice-select");
-      if (sel) sel.innerHTML = '<option value="">拉取中…</option>';
+      const input = document.getElementById("tts-mossland-voice-input");
+      const list = document.getElementById("tts-mossland-voice-list");
+      if (input) input.placeholder = "拉取中…";
       showToast("正在拉取 Mossland 音色列表…");
       const baseUrl = cfg.mosslandUrl.replace(/\/+$/, "").replace(/\/audio\/speech$/, "/audio/voices");
       const headers = { "Authorization": "Bearer " + cfg.mosslandApiKey };
@@ -316,22 +318,23 @@
       const fillVoices = (json) => {
         const voices = (json && json.data) || [];
         if (voices.length === 0) {
-          if (sel) sel.innerHTML = '<option value="">无可用音色</option>';
+          if (input) input.placeholder = "无可用音色，请直接填写 UUID 或前往 studio.mosi.cn 创建";
           showToast("账号下暂无音色，请前往 studio.mosi.cn 创建");
           return false;
         }
-        if (sel) {
-          sel.innerHTML = voices.map(v => {
+        if (list) {
+          list.innerHTML = voices.map(v => {
             const name = String(v.name || v.id).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-            return `<option value="${v.id}">${name} (${String(v.id).slice(0, 8)})</option>`;
+            return `<option value="${v.id}">${name}</option>`;
           }).join("");
-          showToast("已拉取 " + voices.length + " 个音色，可选择后测试合成");
         }
+        if (input) input.placeholder = "已拉取 " + voices.length + " 个音色，可下拉选择或直接填写 UUID";
+        showToast("已拉取 " + voices.length + " 个音色，可选择或手动填写");
         return true;
       };
 
       const failMsg = (msg) => {
-        if (sel) sel.innerHTML = '<option value="">拉取失败</option>';
+        if (input) input.placeholder = "拉取失败，可手动填写 UUID";
         showToast(msg);
       };
 
@@ -377,10 +380,10 @@
       const cfg = ttsSystem._readForm();
       if (cfg.provider === "mossland") {
         if (!cfg.mosslandUrl || !cfg.mosslandApiKey) { showToast("请先填写 Mossland URL 与 API Key"); return; }
-        // 优先使用下拉选中的 UUID 音色，否则提示先拉取
-        const voiceSel = document.getElementById("tts-mossland-voice-select");
-        const voiceId = (voiceSel && voiceSel.value) || "";
-        if (!voiceId) { showToast("请先点击「拉取音色」并选择一个音色"); return; }
+        // 从输入框读取 UUID 音色（可拉取选择或手填）
+        const voiceInput = document.getElementById("tts-mossland-voice-input");
+        const voiceId = (voiceInput && voiceInput.value.trim()) || "";
+        if (!voiceId) { showToast("请填写或拉取选择一个音色 UUID"); return; }
         showToast("正在合成测试语音…");
         try {
           const blob = await ttsSystem.synthesize("你好，这是 TTS 语音测试。", voiceId, {
@@ -593,7 +596,7 @@
       opts = opts || {};
       const cfg = getConfig();
       const provider = opts.provider || cfg.provider || "minimax";
-      const apiKey = opts.apiKey || cfg.apiKey;
+      const apiKey = opts.apiKey || (provider === "mossland" ? cfg.mosslandApiKey : cfg.apiKey);
       const region = opts.region || cfg.region;
       const customUrl = opts.customUrl !== undefined ? opts.customUrl : cfg.customUrl;
       const callOpts = {
