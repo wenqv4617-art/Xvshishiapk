@@ -23,6 +23,10 @@ async function initAuthCheck() {
   // 1. 优先读取本地登录标记：0毫秒秒开显示主界面，绝不弹出登录遮罩！
   if (isLocallyLoggedIn) {
     hideLoginScreen();
+    // 主界面已显示，触发每日自动备份提醒卡片（若已开启）
+    if (typeof window.maybeShowDailyBackupPrompt === "function") {
+      window.maybeShowDailyBackupPrompt();
+    }
   }
 
   try {
@@ -39,6 +43,11 @@ async function initAuthCheck() {
     // 确定处于登录状态，刷新本地标记与后台会话
     localStorage.setItem("auth_logged_in", "true");
     hideLoginScreen();
+
+    // 首次登录态确认后也触发一次每日备份提醒（覆盖从登录页登入的场景）
+    if (!isLocallyLoggedIn && typeof window.maybeShowDailyBackupPrompt === "function") {
+      window.maybeShowDailyBackupPrompt();
+    }
 
     // 后台静默校验设备队列
     verifyDeviceSession(session.user.id);
@@ -187,6 +196,10 @@ async function handleUserLogin(email, password) {
 
     showToast("登录成功！已成功解锁并建立安全神经连接");
     hideLoginScreen();
+    // 登录成功后触发每日备份提醒
+    if (typeof window.maybeShowDailyBackupPrompt === "function") {
+      window.maybeShowDailyBackupPrompt();
+    }
     await verifyDeviceSession(data.user.id);
 
   } catch (e) {

@@ -10,6 +10,7 @@ let stickerItems = {};             // key: groupId, value: items[]
 let selectedStickerGroupId = null; // 管理面板当前选中的分组
 let currentEditItem = null;        // 正在编辑的表情包条目
 let stickerInitDone = false;       // 是否已完成初始化
+let pendingStickerFiles = [];      // onchange 时缓存的待上传图片（规避部分 WebView 点击按钮时 input.files 丢失）
 
 // ============================================================
 //  自研 WeChat-Style Toast 提示服务 (防止调用ReferenceError)
@@ -303,14 +304,22 @@ function showStickerAddModal() {
     showToast('请先选择一个分组');
     return;
   }
-  
+
   const overlay = document.getElementById('sticker-add-overlay');
   if (!overlay) return;
+  // 重置上次残留的文件缓存与预览，避免误用旧选择
+  pendingStickerFiles = [];
+  const fileInput = document.getElementById('sticker-file-input');
+  if (fileInput) fileInput.value = '';
+  const preview = document.getElementById('sticker-upload-preview');
+  if (preview) preview.innerHTML = '';
   overlay.classList.add('active');
   switchStickerAddMethod('upload');
 }
 
 function switchStickerAddMethod(method) {
+  // 切换到非 upload 方式时清空文件缓存，避免下次回到 upload 误用旧文件
+  if (method !== 'upload') pendingStickerFiles = [];
   const uploadArea = document.getElementById('sticker-upload-area');
   const batchArea = document.getElementById('sticker-batch-area');
   const uploadTab = document.getElementById('sticker-method-upload');
@@ -333,6 +342,9 @@ function previewStickerFiles() {
   if (!fileInput || !fileInput.files || !preview) return;
 
   const files = Array.from(fileInput.files).filter(f => f.type.startsWith('image/'));
+  // 缓存选中文件：部分 Android WebView 在用户点击"上传"按钮时 input.files 已被清空，
+  // 此处于 onchange（文件刚选完、必定可用时）留底，提交时优先读取该缓存。
+  pendingStickerFiles = files;
   if (files.length === 0) { preview.innerHTML = ''; return; }
 
   if (files.length === 1) {
@@ -361,14 +373,14 @@ function previewStickerFiles() {
 
 function handleStickerUpload() {
   const fileInput = document.getElementById('sticker-file-input');
-  if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-    showToast('请先选择一张图片');
-    return;
-  }
+  // 优先使用 onchange 缓存的文件，规避部分 WebView 点击按钮瞬间 input.files 被清空导致"没有选择文件"
+  let files = (pendingStickerFiles && pendingStickerFiles.length > 0)
+    ? pendingStickerFiles
+    : (fileInput && fileInput.files ? Array.from(fileInput.files) : []);
+  files = files.filter(f => f.type.startsWith('image/'));
 
-  const files = Array.from(fileInput.files).filter(f => f.type.startsWith('image/'));
   if (files.length === 0) {
-    showToast('请选择图片文件');
+    showToast('请先选择一张图片');
     return;
   }
 
@@ -396,7 +408,8 @@ function handleStickerUpload() {
 
     await addStickerItem(selectedStickerGroupId, imageUrl, caption.trim());
 
-    fileInput.value = '';
+    pendingStickerFiles = [];
+    if (fileInput) fileInput.value = '';
     if (preview) preview.innerHTML = '';
     document.getElementById('sticker-add-overlay')?.classList.remove('active');
     showToast('表情导入成功');
@@ -430,6 +443,7 @@ async function handleStickerBatchUploadFiles(files) {
 
   const fileInput = document.getElementById('sticker-file-input');
   if (fileInput) fileInput.value = '';
+  pendingStickerFiles = [];
   if (preview) preview.innerHTML = '';
   document.getElementById('sticker-add-overlay')?.classList.remove('active');
 

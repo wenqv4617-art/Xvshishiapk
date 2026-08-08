@@ -742,19 +742,30 @@
 你刚刚收到了成员 [@${senderName}] 的艾特消息：“${cmdBody}”。
 请你扮演该机器人，直接写一句极具特色、符合设定的回复语本身，限40字内。回复最前面必须带上 @${senderName} 标记。`;
 
-          const response = await fetch(`${api.url}/chat/completions`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-            body: JSON.stringify({
-              model: api.model,
-              messages: [{ role: "user", content: botSystem }],
-              temperature: 0.7
-            })
-          });
+          let llmReply;
+          if (typeof window.fwCallLLM === "function") {
+            try {
+              llmReply = await window.fwCallLLM(api, [{ role: "user", content: botSystem }], { temperature: 0.7 });
+            } catch(e) { /* fall through to original fetch */ }
+          }
+          if (llmReply === undefined) {
+            const response = await fetch(`${api.url}/chat/completions`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+              body: JSON.stringify({
+                model: api.model,
+                messages: [{ role: "user", content: botSystem }],
+                temperature: 0.7
+              })
+            });
 
-          if (response.ok) {
-            const result = await response.json();
-            triggeredReply = result.choices[0].message.content.trim();
+            if (response.ok) {
+              const result = await response.json();
+              llmReply = result.choices[0].message.content.trim();
+            }
+          }
+          if (llmReply !== undefined) {
+            triggeredReply = llmReply;
           }
         } catch(e) {
           triggeredReply = `@${senderName} 嘀... 养鸡农场信号有些虚弱，等会再试吧。`;
@@ -853,13 +864,24 @@
         if (m.memberType === 'user') {
           const u = await db.archives.get(m.memberId);
           name = u ? u.name : "我";
-          avatarUrl = resolveAvatar(u?.avatar);
+          avatarUrl = resolveAvatar(u?.avatar, u?.name);
           groupName = "玩家面具";
         } else {
           const c = await db.archives.get(m.memberId);
           name = c ? c.name : "对方";
-          avatarUrl = resolveAvatar(c?.avatar);
+          avatarUrl = resolveAvatar(c?.avatar, c?.name);
           groupName = c ? (c.group || "默认分组") : "群友";
+          // 文件管理来源的角色加括号标记
+          if (m.sourceArchiveId) {
+            try {
+              const srcArchive = await db.chat_archives.get(m.sourceArchiveId);
+              if (srcArchive) {
+                const parts = srcArchive.customLabel.split('-');
+                const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
+                name = `${name}(${tag})`;
+              }
+            } catch(e) {}
+          }
         }
 
         const item = document.createElement("div");
@@ -1159,6 +1181,10 @@
         document.getElementById("group-sync-to-single").checked = memberUser.syncToSingle !== 0;
       }
 
+      // 渲染群聊小程序分享开关（无损：未开启即不注入任何 prompt）
+      const groupMpShareToggle = document.getElementById("group-details-allow-miniprogram-share");
+      if (groupMpShareToggle) groupMpShareToggle.checked = !!sess.allowMiniprogramShare;
+
       // 渲染群聊专属世界书手风琴选择器
       const containerEl = document.getElementById("group-details-wb-mounted-accordion");
       if (containerEl && typeof renderWbMountedAccordion === 'function') {
@@ -1270,6 +1296,10 @@
       const syncFromSingle = document.getElementById("group-sync-from-single").checked ? 1 : 0;
       const syncToSingle = document.getElementById("group-sync-to-single").checked ? 1 : 0;
 
+      // 读取群聊小程序分享开关（无损：默认关闭，不影响现有功能）
+      const groupMpShareToggleEl = document.getElementById("group-details-allow-miniprogram-share");
+      const allowMiniprogramShare = groupMpShareToggleEl ? (groupMpShareToggleEl.checked ? 1 : 0) : 0;
+
       const memberUser = await db.group_members.where('[groupId+memberId+memberType]').equals([group.id, Number(activeUserPersonaId), 'user']).first();
       if (memberUser) {
         await db.group_members.update(memberUser.id, { syncFromSingle, syncToSingle });
@@ -1283,7 +1313,8 @@
 
       await db.sessions.update(activeSessionId, {
         customCharName: name,
-        customCharAvatar: avatar
+        customCharAvatar: avatar,
+        allowMiniprogramShare: allowMiniprogramShare
       });
 
       showToast("群配置保存成功！");
@@ -1334,28 +1365,35 @@
       console.log("[Group Chat Debug] 4. 当前群内的关系表 members 原始数组:\n", JSON.parse(JSON.stringify(members)));
 
       let targetCharId = 0;
+      let matchedMember = null;
       
-      // 第一级：精确全等匹配
+      // 第一级：精确全等匹配（同时比对档案馆本名与快照分支 displayName）
       for (const m of members) {
         if (m.memberType === 'char') {
           const char = await db.archives.get(m.memberId);
-          console.log(`[Group Chat Debug] 5. 精确匹配校验 -> 档案馆ID: ${m.memberId}，角色本名: "${char ? char.name : '未知'}"`);
-          if (char && char.name.trim() === senderName) {
+          const baseName = char ? char.name.trim() : '';
+          const dispName = (m.displayName || '').trim();
+          console.log(`[Group Chat Debug] 5. 精确匹配校验 -> 档案馆ID: ${m.memberId}，角色本名: "${baseName}"，分支名: "${dispName}"`);
+          if (baseName === senderName || dispName === senderName) {
             targetCharId = m.memberId;
+            matchedMember = m;
             console.log(`[Group Chat Debug] 5-1. 精确匹配成功！对准档案馆 ID: ${targetCharId}`);
             break;
           }
         }
       }
 
-      // 第二级（自愈）：模糊包含匹配，防范模型写错名字
+      // 第二级（自愈）：模糊包含匹配，防范模型写错名字（同样比对 displayName）
       if (!targetCharId) {
         for (const m of members) {
           if (m.memberType === 'char') {
             const char = await db.archives.get(m.memberId);
-            console.log(`[Group Chat Debug] 6. 模糊匹配校验 -> 档案馆ID: ${m.memberId}，角色本名: "${char ? char.name : '未知'}"`);
-            if (char && (char.name.includes(senderName) || senderName.includes(char.name))) {
+            const baseName = char ? char.name : '';
+            const dispName = m.displayName || '';
+            console.log(`[Group Chat Debug] 6. 模糊匹配校验 -> 档案馆ID: ${m.memberId}，角色本名: "${baseName}"`);
+            if (char && (baseName.includes(senderName) || senderName.includes(baseName) || (dispName && (dispName.includes(senderName) || senderName.includes(dispName))))) {
               targetCharId = m.memberId;
+              matchedMember = m;
               console.log(`[Group Chat Debug] 6-1. 模糊匹配自愈成功！对准档案馆 ID: ${targetCharId}`);
               break;
             }
@@ -1368,6 +1406,7 @@
         const fallbackChar = members.find(m => m.memberType === 'char');
         if (fallbackChar) {
           targetCharId = fallbackChar.memberId;
+          matchedMember = fallbackChar;
           console.log(`[Group Chat Debug] 7. 终极自愈兜底触发！匹配至首位群成员，档案馆 ID: ${targetCharId}`);
         }
       }
@@ -1398,6 +1437,8 @@
         sessionId: activeSessionId,
         senderType: 'char',
         senderId: targetCharId,
+        senderSnapshotId: (matchedMember && matchedMember.sourceArchiveId) || 0,
+        senderDisplayName: (matchedMember && matchedMember.displayName) || '',
         content: processedText,
         contentType: 'text',
         timestamp: Date.now()
@@ -1426,7 +1467,8 @@
           }
         } else {
           const c = await db.archives.get(m.memberId);
-          if (c && c.name.trim().toLowerCase() === cleanedName) {
+          const dName = (m.displayName || '').trim().toLowerCase();
+          if ((c && c.name.trim().toLowerCase() === cleanedName) || dName === cleanedName) {
             return m;
           }
         }
@@ -1826,31 +1868,35 @@
 
         if (chars.length === 0) {
           listContainer.innerHTML = `<p style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">档案馆的所有角色都已在此群聊中啦。</p>`;
-          return;
+        } else {
+          chars.forEach(c => {
+            const card = document.createElement("div");
+            card.className = "candidate-persona-card";
+            card.style.cssText = "background:#ffffff; border:1.5px solid var(--border); border-radius:10px; padding:8px; display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;";
+            card.innerHTML = `
+              <input type="checkbox" class="cb-group-invite-member" value="${c.id}" style="width:16px; height:16px; cursor:pointer;">
+              <img src="${resolveAvatar(c.avatar, c.name)}" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">
+              <div style="flex:1; text-align:left;">
+                <div style="font-size:12px; font-weight:700; color:var(--text-primary);">${c.name}</div>
+                <div style="font-size:10px; color:var(--text-secondary);">${c.remark || "暂无备注"}</div>
+              </div>
+            `;
+            card.onclick = (e) => {
+              if (e.target.tagName !== 'INPUT') {
+                const cb = card.querySelector("input");
+                cb.checked = !cb.checked;
+              }
+            };
+            listContainer.appendChild(card);
+          });
         }
 
-        chars.forEach(c => {
-          const card = document.createElement("div");
-          card.className = "candidate-persona-card";
-          card.style.cssText = "background:#ffffff; border:1.5px solid var(--border); border-radius:10px; padding:8px; display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;";
-          card.innerHTML = `
-            <input type="checkbox" class="cb-group-invite-member" value="${c.id}" style="width:16px; height:16px; cursor:pointer;">
-            <img src="${resolveAvatar(c.avatar)}" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">
-            <div style="flex:1; text-align:left;">
-              <div style="font-size:12px; font-weight:700; color:var(--text-primary);">${c.name}</div>
-              <div style="font-size:10px; color:var(--text-secondary);">${c.remark || "暂无备注"}</div>
-            </div>
-          `;
-          card.onclick = (e) => {
-            if (e.target.tagName !== 'INPUT') {
-              const cb = card.querySelector("input");
-              cb.checked = !cb.checked;
-            }
-          };
-          listContainer.appendChild(card);
-        });
-
         document.getElementById("group-invite-overlay").classList.add("active");
+
+        // 在候选列表下方追加"文件管理"分类（三级手风琴：文件管理 > 面具 > 对话文件）
+        if (window.chatArchiveSystem && window.chatArchiveSystem.renderFileMgrInviteSection) {
+          await window.chatArchiveSystem.renderFileMgrInviteSection(listContainer, currentIds);
+        }
       } catch (err) {
         console.error(err);
       }
@@ -1858,7 +1904,9 @@
 
     submitGroupInvitation: async function() {
       const checkedBoxes = document.querySelectorAll(".cb-group-invite-member:checked");
-      if (checkedBoxes.length === 0) {
+      const fmCheckedBoxes = document.querySelectorAll(".cb-fm-invite-archive:checked");
+
+      if (checkedBoxes.length === 0 && fmCheckedBoxes.length === 0) {
         showToast("请至少选择一位要邀请入群的群成员！");
         return;
       }
@@ -1871,6 +1919,7 @@
       const myName = myUser ? myUser.name : "User";
 
       try {
+        // 处理档案馆常规邀请
         for (const cb of checkedBoxes) {
           const charId = Number(cb.value);
           const char = await db.archives.get(charId);
@@ -1896,6 +1945,11 @@
             timestamp: Date.now()
           };
           await db.messages.add(sysMsg);
+        }
+
+        // 处理文件管理存档引入
+        if (fmCheckedBoxes.length > 0 && window.chatArchiveSystem && window.chatArchiveSystem.submitFileMgrGroupInvitation) {
+          await window.chatArchiveSystem.submitFileMgrGroupInvitation(group.id);
         }
 
         showToast("群成员邀请加入成功！");

@@ -216,27 +216,37 @@ JSON 格式格式如下：
 }
 `;
 
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "user", content: systemPrompt }],
-        temperature: 0.8
-      })
-    });
-
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+    let statusContent;
+    const statusMessages = [{ role: "user", content: systemPrompt }];
+    if (typeof window.fwCallLLM === "function") {
+      try {
+        statusContent = await window.fwCallLLM(api, statusMessages, { temperature: 0.8 });
+      } catch(e) { /* fall through to original fetch */ }
     }
+    if (statusContent === undefined) {
+      const response = await fetch(`${api.url}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+        body: JSON.stringify({
+          model: api.model,
+          messages: statusMessages,
+          temperature: 0.8
+        })
+      });
 
-    const result = await response.json();
-    if (!result.choices || result.choices.length === 0) {
-      throw new Error("模型服务返回 Choice 节点为空。");
+      if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`HTTP ${response.status} 错误: ${errText}`);
+      }
+
+      const result = await response.json();
+      if (!result.choices || result.choices.length === 0) {
+        throw new Error("模型服务返回 Choice 节点为空。");
+      }
+
+      statusContent = result.choices[0].message.content;
     }
-
-    let rawJson = result.choices[0].message.content.trim();
+    let rawJson = statusContent.trim();
     
     // 强力清洗 markdown 包裹字符
     if (rawJson.startsWith("```")) {

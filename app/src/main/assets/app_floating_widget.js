@@ -289,7 +289,7 @@
       const container = document.getElementById("phone-container") || document.body;
       const widget = document.createElement("div");
       widget.id = "floating-widget";
-      widget.style.cssText = "position:absolute; z-index:10050; right:12px; bottom:90px; border-radius:50%; cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none; box-shadow:0 4px 12px rgba(0,0,0,0.25); overflow:hidden; background-size:cover; background-position:center; background-repeat:no-repeat; transition:opacity 0.4s ease, left 0.25s cubic-bezier(0.2,0.9,0.3,1.1), right 0.25s cubic-bezier(0.2,0.9,0.3,1.1), width 0.2s, height 0.2s;";
+      widget.style.cssText = "position:fixed; z-index:99999; right:12px; bottom:90px; border-radius:50%; cursor:pointer; touch-action:none; user-select:none; -webkit-user-select:none; box-shadow:0 4px 12px rgba(0,0,0,0.25); overflow:hidden; background-size:cover; background-position:center; background-repeat:no-repeat; transition:opacity 0.4s ease, left 0.25s cubic-bezier(0.2,0.9,0.3,1.1), right 0.25s cubic-bezier(0.2,0.9,0.3,1.1), width 0.2s, height 0.2s;";
       container.appendChild(widget);
       this.widgetEl = widget;
 
@@ -420,9 +420,9 @@
       if (!card) {
         card = document.createElement("div");
         card.id = "floating-widget-card";
-        card.style.cssText = "position:absolute; z-index:10051; width:260px; max-height:360px; background:#fff; border-radius:14px; box-shadow:0 8px 30px rgba(15,23,42,0.25); overflow:hidden; display:flex; flex-direction:column; opacity:0; transform:scale(0.9); transform-origin:bottom right; transition:opacity 0.2s ease, transform 0.2s cubic-bezier(0.2,0.9,0.3,1.2); pointer-events:none;";
-        const container = this.widgetEl.parentNode || document.body;
-        container.appendChild(card);
+        card.style.cssText = "position:fixed; z-index:100000; width:260px; max-height:360px; background:#fff; border-radius:14px; box-shadow:0 8px 30px rgba(15,23,42,0.25); overflow:hidden; display:flex; flex-direction:column; opacity:0; transform:scale(0.9); transform-origin:bottom right; transition:opacity 0.2s ease, transform 0.2s cubic-bezier(0.2,0.9,0.3,1.2); pointer-events:none;";
+        // 卡片挂到 body（fixed 定位，不依赖父容器）
+        document.body.appendChild(card);
         this.cardEl = card;
         // 点击卡片外部关闭
         setTimeout(() => {
@@ -452,16 +452,27 @@
 
     positionCard: function () {
       const w = this.widgetEl, card = this.cardEl;
-      if (!w || !card || !w.offsetParent) return;
-      const parent = w.offsetParent;
-      const wRect = { left: w.offsetLeft, top: w.offsetTop, w: w.offsetWidth, h: w.offsetHeight };
-      // 卡片显示在悬浮窗上方，优先靠悬浮窗所在边
-      let left = wRect.left;
+      if (!w || !card) return;
+      // 用 getBoundingClientRect（fixed 定位下 offsetLeft/offsetParent 不可靠）
+      const wRect = w.getBoundingClientRect();
+      if (!wRect || wRect.width === 0) return;
       const cardW = 260;
-      const maxLeft = parent.clientWidth - cardW - 8;
-      left = Math.max(8, Math.min(left, maxLeft));
-      let top = wRect.top - 360 - 8;
-      if (top < 8) top = wRect.top + wRect.h + 8; // 上方放不下则放下方
+      const cardH = card.offsetHeight || 360;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      // 水平：靠悬浮窗所在边，但不溢出屏幕
+      let left = wRect.left;
+      if (wRect.left + wRect.width / 2 > vw / 2) {
+        // 悬浮窗在右侧 → 卡片右对齐到悬浮窗右边
+        left = wRect.right - cardW;
+      } else {
+        left = wRect.left;
+      }
+      left = Math.max(8, Math.min(left, vw - cardW - 8));
+      // 垂直：优先显示在悬浮窗上方
+      let top = wRect.top - cardH - 8;
+      if (top < 8) top = wRect.bottom + 8; // 上方放不下则放下方
+      if (top + cardH > vh - 8) top = Math.max(8, vh - cardH - 8); // 下方也放不下则居中靠上
       card.style.left = left + "px";
       card.style.top = top + "px";
       card.style.right = "auto";
@@ -538,11 +549,45 @@
       const cfg = this.getConfig();
       const list = this.cardEl ? this.cardEl.querySelector("#fw-card-entries-list") : null;
       if (!list) return;
+      list.innerHTML = "";
+      // 置顶：小助手入口（固定，不可更改/删除）
+      const astBtn = document.createElement("button");
+      astBtn.style.cssText = "width:100%; text-align:left; padding:10px 12px; background:linear-gradient(135deg,#eef2ff,#f5f3ff); border:1px solid #c7d2fe; border-radius:8px; font-size:13px; font-weight:600; color:#4f46e5; cursor:pointer; margin-bottom:8px; transition:background 0.15s; display:flex; align-items:center; gap:8px;";
+      astBtn.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v1a3 3 0 0 0-3 3v1a3 3 0 0 0 0 6v1a3 3 0 0 0 3 3v1a3 3 0 0 0 6 0v-1a3 3 0 0 0 3-3v-1a3 3 0 0 0 0-6v-1a3 3 0 0 0-3-3V5a3 3 0 0 0-3-3z"/><circle cx="12" cy="12" r="3"/></svg><span>小助手</span>';
+      astBtn.onmouseenter = () => astBtn.style.background = "linear-gradient(135deg,#e0e7ff,#ede9fe)";
+      astBtn.onmouseleave = () => astBtn.style.background = "linear-gradient(135deg,#eef2ff,#f5f3ff)";
+      astBtn.onclick = () => {
+        // assistant-panel 是 win-chat 的子元素，必须先确保 win-chat 处于 active，
+        // 否则 openPanel 后 focus() 会让 #desktop 自动滚动导致主页面上抬卡住。
+        const chatWin = document.getElementById("win-chat");
+        const chatActive = chatWin && chatWin.classList.contains("active");
+        const doOpenPanel = () => {
+          if (typeof window.AppAssistant !== "undefined" && typeof window.AppAssistant.openPanel === "function") {
+            window.AppAssistant.openPanel();
+          } else {
+            const btn = document.getElementById("assistant-entry-btn");
+            if (btn) btn.click();
+          }
+        };
+        if (chatActive) {
+          doOpenPanel();
+        } else if (typeof window.openApp === "function") {
+          window.openApp("chat");
+          setTimeout(doOpenPanel, 250);
+        } else {
+          doOpenPanel();
+        }
+        this.closeCard();
+      };
+      list.appendChild(astBtn);
+      // 用户配置的快捷入口
       if (cfg.entries.length === 0) {
-        list.innerHTML = '<div style="font-size:11px; color:#94a3b8; text-align:center; padding:16px 0;">未配置快捷入口<br>请在设置-悬浮窗中添加</div>';
+        const tip = document.createElement("div");
+        tip.style.cssText = "font-size:11px; color:#94a3b8; text-align:center; padding:12px 0;";
+        tip.textContent = "未配置快捷入口，请在设置-悬浮窗中添加";
+        list.appendChild(tip);
         return;
       }
-      list.innerHTML = "";
       cfg.entries.forEach(entry => {
         const btn = document.createElement("button");
         btn.style.cssText = "width:100%; text-align:left; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; font-size:13px; color:#1f2937; cursor:pointer; margin-bottom:6px; transition:background 0.15s;";
@@ -672,6 +717,76 @@
         window.floatingWidgetSystem.recordApiError(err);
       }
     } catch (e) {}
+  };
+
+  // 全局集中式 LLM 调用追踪器：任何模块调用大模型 API 时均可使用此函数，
+  // 自动将 token 用量与报错纳入悬浮窗监控，无需各模块重复编写 fwTrack 逻辑。
+  // 参数：
+  //   api      - API 预设对象（含 url/key/model/temperature 等）
+  //   body     - 请求体对象（含 model/messages/temperature 等）
+  //   opts     - 可选配置 { stream?: boolean, signal?: AbortSignal, parseJson?: boolean }
+  // 返回：fetch 的 Response 对象（调用方自行处理流式或 JSON 解析）
+  window.fwTrackedFetch = async function (api, body, opts) {
+    const model = (body && body.model) || (api && api.model) || "unknown";
+    const url = (api && api.url) || "";
+    const fullUrl = url.endsWith("/") ? url.replace(/\/+$/, "") : url;
+    const endpoint = body && body.messages ? "/chat/completions"
+      : body && body.input ? "/v1/embeddings"
+      : body && body.prompt ? "/images/generations"
+      : "/chat/completions";
+
+    let response;
+    try {
+      response = await fetch(fullUrl + endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${api.key}`
+        },
+        body: JSON.stringify(body),
+        signal: opts && opts.signal
+      });
+    } catch (netErr) {
+      try { if (typeof window.fwTrackError === "function") window.fwTrackError(netErr); } catch (_) {}
+      throw netErr;
+    }
+
+    if (!response.ok) {
+      const err = new Error(`HTTP ${response.status} ${response.statusText}`);
+      try { if (typeof window.fwTrackError === "function") window.fwTrackError(err); } catch (_) {}
+      return response;
+    }
+
+    // 非流式响应：克隆后解析 usage 并上报
+    if (!opts || !opts.stream) {
+      try {
+        const cloned = response.clone();
+        const data = await cloned.json();
+        if (data && data.usage && typeof window.fwTrackUsage === "function") {
+          window.fwTrackUsage(data.usage, model);
+        }
+      } catch (_) {}
+    }
+
+    return response;
+  };
+
+  // 便捷版：直接返回解析后的 JSON（适用于非流式 chat completions）
+  // 自动提取 choices[0].message.content 并上报 usage
+  window.fwCallLLM = async function (api, messages, opts) {
+    const body = {
+      model: api.model,
+      messages: messages,
+      temperature: (opts && typeof opts.temperature === "number") ? opts.temperature : (api.temperature || 0.7)
+    };
+    if (opts && opts.maxTokens) body.max_tokens = opts.maxTokens;
+
+    const response = await window.fwTrackedFetch(api, body, { stream: false });
+    if (!response.ok) {
+      throw new Error(`大模型交互响应失败: HTTP ${response.status}`);
+    }
+    const data = await response.json();
+    return data.choices[0].message.content.trim();
   };
 
   // DOM 就绪后初始化

@@ -26,6 +26,7 @@
   <link rel="stylesheet" href="couples.css">
   <link rel="stylesheet" href="music.css">
   <link rel="stylesheet" href="assistant.css">
+  <link rel="stylesheet" href="app_miniprogram.css">
   <script src="https://unpkg.com/dexie@4.0.1/dist/dexie.js"></script>
   <style>
     /* 底部展开栏跑马灯左右横滑及圆点指示器专属样式 */
@@ -454,8 +455,7 @@
                 <span>更新日志</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
-              <!-- 新增：关于本机入口（置于设置列表最底部） -->
-              <div class="menu-item" onclick="openSettingsLv2('about')" style="border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 14px;">
+              <div class="menu-item" onclick="openSettingsLv2('about')">
                 <span>关于本机</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
@@ -467,77 +467,24 @@
           </div>
 
           <!-- 二级：关于本机 -->
-          <div id="settings-lv2-about" class="settings-lv2-panel" style="display:none; padding-bottom: 20px;">
-            <!-- 顶部：设备标识 -->
-            <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:14px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:center;">
-              <div style="width:56px; height:56px; border-radius:16px; background:linear-gradient(135deg,#07c160,#10b981); display:flex; align-items:center; justify-content:center; margin:0 auto 10px;">
-                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+          <div id="settings-lv2-about" class="settings-lv2-panel" style="display:none;">
+            <div style="padding:4px 0;">
+              <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:14px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700;">关于本机 · 小手机</h4>
+                <p style="margin:0 0 8px; font-size:12px; color:var(--text-secondary); line-height:1.6;">这是一款完全在本地运行的虚拟手机 / AI 陪伴应用，由开发者独立打造，所有对话、设定与记忆都存储在你自己的设备本地，不上传任何服务器。</p>
+                <p style="margin:0; font-size:12px; color:var(--text-secondary); line-height:1.6;">它不联网、不依赖云端，只在你的浏览器里安静运行，陪你聊天、记录与想象。</p>
               </div>
-              <div style="font-size:15px; font-weight:800; color:var(--text-primary);">小手机 · 本地 AI 陪伴</div>
-              <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">Xvshishi · 纯本地运行 · 数据不出本机</div>
-            </div>
-
-            <!-- 作者与开源 -->
-            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">作者与开源</div>
-            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
-              <div style="font-size:13px; font-weight:700; color:var(--text-primary); margin-bottom:6px;">关于作者</div>
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">
-                本应用由独立开发者与开源社区共同维护，是一款面向个人情感陪伴与角色演绎的本地化实验性作品。我们始终相信：陪伴应当私密、可控，并且只属于你自己。
+              <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:14px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700;">开源与协议</h4>
+                <p style="margin:0 0 8px; font-size:12px; color:var(--text-secondary); line-height:1.6;">开源地址：<a href="https://github.com/Island-glitch/Poemnarapk" target="_blank" rel="noopener" style="color:var(--primary);">github.com/Island-glitch/Poemnarapk</a></p>
+                <p style="margin:0; font-size:12px; color:var(--text-secondary); line-height:1.6;">开源协议：<b>MIT</b>（可自由使用、修改与分发，需保留版权声明）。</p>
               </div>
-              <div style="font-size:13px; font-weight:700; color:var(--text-primary); margin:12px 0 6px;">开源地址</div>
-              <a href="https://github.com/Island-glitch/Poemnarapk" target="_blank" rel="noopener" style="font-size:12px; color:var(--primary); word-break:break-all; text-decoration:none;">github.com/Island-glitch/Poemnarapk ↗</a>
-              <div style="font-size:13px; font-weight:700; color:var(--text-primary); margin:12px 0 6px;">开源协议</div>
-              <div style="display:inline-block; font-size:11px; font-weight:700; color:#07c160; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; padding:3px 10px;">MIT License · 可自由使用、修改与分发</div>
-            </div>
-
-            <!-- 小手机介绍 -->
-            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">小手机是什么</div>
-            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">
-                「小手机」是一台运行在你设备里的虚拟手机：你可以在其中与 AI 角色对话、建立群组，并查看「查手机」里的相册、备忘录、音乐、论坛等拟真内容。所有内容均由本地模型即时演绎生成，旨在为你提供一个安全、私密的空间来释放想象与情绪，而非替代任何真实的人际联结。
+              <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:14px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700;">数据存储与合规须知</h4>
+                <p style="margin:0 0 8px; font-size:12px; color:var(--text-secondary); line-height:1.6;">一切数据均存储于你的本地设备（浏览器 IndexedDB），本应用不提供任何 API 功能，所有内容由本地数据驱动。</p>
+                <p style="margin:0 0 8px; font-size:12px; color:var(--text-secondary); line-height:1.6;">本应用仅为个人娱乐与创作工具，使用过程中产生的一切责任由使用者本人承担；请务必在合法合规的前提下使用，勿用于任何违法违规场景。</p>
+                <p style="margin:0; font-size:12px; color:var(--text-secondary); line-height:1.6;">依据《人工智能拟人化互动服务管理暂行办法》（俗称 715 新规），本应用已落实 AI 身份标识、未成年人保护、用户数据权利与清晰退出路径等要求，保障你的知情权与选择权。</p>
               </div>
-            </div>
-
-            <!-- 数据存储 -->
-            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">数据存储说明</div>
-            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
-              <div style="display:flex; gap:8px; align-items:flex-start; font-size:12px; color:var(--text-secondary); line-height:1.6;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#07c160" stroke-width="2.5" style="flex-shrink:0; margin-top:2px;"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                <span>本应用<strong style="color:var(--text-primary);">一切数据均存储在你本地的设备</strong>（IndexedDB / 浏览器本地数据库）中，包括聊天记录、角色档案、相册、备忘录、查手机状态等。</span>
-              </div>
-              <div style="display:flex; gap:8px; align-items:flex-start; font-size:12px; color:var(--text-secondary); line-height:1.6; margin-top:8px;">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#07c160" stroke-width="2.5" style="flex-shrink:0; margin-top:2px;"><polyline points="20 6 9 17 4 12"></polyline></svg>
-                <span>我们<strong style="color:var(--text-primary);">不收集、不上传、不备份</strong>你的任何对话与隐私内容到远程服务器；卸载应用或清除浏览器数据，即可彻底抹除全部痕迹。</span>
-              </div>
-            </div>
-
-            <!-- 告诉小助手 -->
-            <button class="btn btn-outline" onclick="tellAssistantAboutDevice()" style="width:100%; padding:11px; font-weight:700; font-size:13px; background-color:transparent; display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:14px;">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-              把本机信息告诉小助手
-            </button>
-
-            <!-- 使用须知与合规承诺（专业合规说明，不直称“免责声明”） -->
-            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">使用须知与合规承诺</div>
-            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">
-                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">一、本应用不提供任何对外 API 功能。</strong>所有互动均在本地完成，不存在可供第三方调用的接口，也不会与任何外部系统进行数据交换。</p>
-                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">二、责任归属。</strong>本应用仅为个人娱乐与情感陪伴的工具，<strong>一切使用行为及其后果均由用户本人自行承担</strong>。开发者不对用户利用本应用产生的任何内容、纠纷或损失承担责任。</p>
-                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">三、合法合规使用。</strong>你承诺在使用本应用过程中严格遵守所在国家与地区的法律法规，不生成、不传播任何违法违规、侵权或违背公序良俗的内容。</p>
-                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">四、配合《人工智能拟人化互动服务管理暂行办法》。</strong>自 2026 年 7 月 15 日起施行、以国务院令第 21 号公布的《人工智能拟人化互动服务管理暂行办法》对拟人化 AI 互动服务提出明确要求，本应用据此作出以下承诺：</p>
-                <ul style="margin:4px 0 8px; padding-left:18px; font-size:12px; line-height:1.7; color:var(--text-secondary);">
-                  <li><strong style="color:var(--text-primary);">内容红线：</strong>坚决不生成违法不良信息，不模拟、不美化任何违反法律法规的情节；</li>
-                  <li><strong style="color:var(--text-primary);">未成年人保护：</strong>严禁以任何形式诱导、侵害未成年人，亦不生成面向未成年人的不适宜内容；</li>
-                  <li><strong style="color:var(--text-primary);">用户数据权利：</strong>你的数据完全由你掌控，可随时查看、导出或彻底删除；</li>
-                  <li><strong style="color:var(--text-primary);">AI 标识与适度提醒：</strong>本应用为 AI 拟人化互动，并非真实人类；长时间沉浸时将主动提示你休息；</li>
-                  <li><strong style="color:var(--text-primary);">退出机制：</strong>你随时可关闭对话、清除数据、结束一切互动，无需任何理由。</li>
-                </ul>
-                <p style="margin:0;">如你不同意上述须知，请立即停止使用本应用。</p>
-              </div>
-            </div>
-
-            <div style="text-align:center; font-size:10px; color:var(--text-secondary); margin-top:6px; line-height:1.6;">
-              本页面内容随版本更新 · 仅供个人学习与研究使用<br/>© Xvshishi · 基于 Poemnarapk（MIT）构建
             </div>
           </div>
 
@@ -658,6 +605,13 @@
               <input type="range" id="beautify-dock-opacity" min="0" max="100" value="70">
             </div>
 
+            <!-- 新增：桌面整体大小放缩（解决部分手机型号图标缩小/Dock上移问题） -->
+            <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label>桌面整体放缩 (50 - 150%: <span id="beautify-desktop-scale-val">100</span>%)</label>
+              <input type="range" id="beautify-desktop-scale" min="50" max="150" value="100" step="5">
+              <div style="font-size:11px; color:var(--text-secondary); margin-top:4px; line-height:1.4;">拖动滑块可整体放大或缩小桌面图标与 Dock 栏，解决部分手机型号图标过小或 Dock 栏上移的问题。</div>
+            </div>
+
             <!-- 新增：回车上屏开关 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
               <label style="margin-bottom:0; font-weight:700;">回车上屏 (按 Enter 发送线上消息)</label>
@@ -668,8 +622,11 @@
             </div>
 
             <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
-              <label style="margin-bottom:10px; display:block;">自定义应用图标</label>
-              <div id="beautify-icons-list" style="display: flex; flex-direction: column; gap: 12px;">
+              <div id="beautify-icons-header" style="display:flex; align-items:center; justify-content:space-between; cursor:pointer; margin-bottom:10px;">
+                <label style="margin-bottom:0; display:block; font-weight:700; cursor:pointer;">自定义应用图标</label>
+                <button type="button" id="beautify-icons-toggle" class="btn btn-outline" style="padding:4px 12px; font-size:11px; border-radius:8px;">展开</button>
+              </div>
+              <div id="beautify-icons-list" style="display: none; flex-direction: column; gap: 12px;">
                 <!-- 设置 -->
                 <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
                   <div class="icon-preview-box" id="beautify-preview-settings" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
@@ -817,9 +774,32 @@
               <!-- 全局单通道图标上传文件input -->
               <input type="file" id="file-beautify-icon-global" accept="image/*" style="display:none;">
             </div>
+            <!-- 全局字体板块 -->
+            <div class="form-group" style="border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label style="margin-bottom:10px; display:block; font-weight:700;">全局字体</label>
+              <div id="font-preview-box" style="padding:14px; border-radius:10px; background:var(--surface); border:1px solid var(--border); margin-bottom:10px; text-align:center; font-size:16px; color:var(--text-primary);">永和九年，岁在癸丑 The quick brown fox</div>
+              <div style="display:flex; gap:8px; margin-bottom:10px;">
+                <select id="font-family-select" style="flex:1; height:38px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; padding:0 8px; background:#fff;">
+                  <option value="">-- 系统默认字体 --</option>
+                </select>
+                <button class="btn btn-danger-outline" id="btn-font-delete" style="padding:0 12px; font-size:11px; border-radius:8px;">删除字体</button>
+                <button class="btn btn-danger-outline" id="btn-font-reset" style="padding:0 14px; font-size:11px; border-radius:8px;">恢复系统字体</button>
+              </div>
+              <div style="display:flex; gap:8px;">
+                <button class="btn btn-outline" id="btn-font-upload" style="flex:1; padding:8px; font-size:11px; border-radius:8px;">导入 .ttf 文件</button>
+                <input type="text" id="font-url-input" placeholder="或输入字体 URL" style="flex:1; padding:6px 10px; font-size:11px; border-radius:8px; border:1.5px solid var(--border);">
+                <button class="btn btn-outline" id="btn-font-url" style="padding:0 12px; font-size:11px; border-radius:8px;">加载</button>
+              </div>
+              <input type="text" id="font-name-input" placeholder="给这个字体起个名字（如：手写体）" style="width:100%; margin-top:8px; padding:6px 10px; font-size:11px; border-radius:8px; border:1.5px solid var(--border);">
+              <input type="file" id="file-font-upload" accept=".ttf,font/ttf,application/octet-stream" style="display:none;">
+            </div>
+
             <div class="form-actions" style="margin-top:24px;">
               <button id="btn-save-beautify" class="btn btn-primary" style="width:100%;">保存并应用美化</button>
               <button id="btn-reset-beautify" class="btn btn-danger-outline" style="width:100%; margin-top:10px;">恢复默认壁纸与全部图标</button>
+            </div>
+            <div class="form-actions" style="margin-top:10px;">
+              <button id="btn-reset-initial-ui" class="btn btn-danger-outline" style="width:100%;">恢复初始 UI（清空所有桌面样式、组件与图标排布）</button>
             </div>
           </div>
 
@@ -988,6 +968,20 @@
 
           <!-- 二级：数据管理 -->
           <div id="settings-lv2-data" class="settings-lv2-panel" style="display:none;">
+            <!-- 自动备份总开关（数据管理最顶部） -->
+            <div class="data-status-card" style="background:linear-gradient(135deg,#eef2ff,#f0fdf4); border:1px solid #c7d2fe; border-radius:12px; padding:12px 14px; margin-bottom:16px; display:flex; align-items:center; justify-content:space-between;">
+              <div style="display:flex; align-items:center; gap:8px;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4f46e5" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+                <div>
+                  <div style="font-size:13px; font-weight:700; color:var(--text-primary);">自动备份提醒</div>
+                  <div style="font-size:11px; color:var(--text-secondary);">每天首次打开主界面时弹出备份提示卡片</div>
+                </div>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="auto-backup-enabled-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
             <div class="data-status-card" style="background:#fff; border:1px solid var(--border); border-radius:12px; padding:12px; margin-bottom:16px;">
               <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-primary); font-weight:700;"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>存储多维统计与健康诊断</h4>
               <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-secondary);">
@@ -1058,6 +1052,73 @@
                 <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
                 彻底清除所有数据 (全格式化)
               </button>
+            </div>
+
+            <!-- Supabase 自动备份板块（可炸开收起） -->
+            <div id="backup-supabase-section" style="background:#fff; border:1px solid var(--border); border-radius:12px; margin-top:16px; overflow:hidden;">
+              <button id="backup-supabase-toggle" class="btn btn-outline" style="width:100%; display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border:none; border-radius:0; background:#fff; font-weight:700; font-size:13px; color:var(--text-primary);">
+                <span style="display:flex; align-items:center; gap:6px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#3ecf8e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                  Supabase 自动备份
+                </span>
+                <span id="backup-supabase-arrow" style="transition:transform 0.2s;">▼</span>
+              </button>
+              <div id="backup-supabase-body" style="display:none; padding:14px; border-top:1px solid var(--border);">
+                <div style="font-size:11px; color:var(--text-secondary); line-height:1.6; margin-bottom:10px; background:#f0fdf4; padding:8px 10px; border-radius:8px; border:1px solid #bbf7d0;">
+                  <b>使用教程：</b>① 登录 Supabase 控制台，新建一个项目<br>② 进入 SQL Editor，粘贴下方一键复制的建表 SQL 并执行<br>③ 在「项目设置 → API」复制 Project URL 与 anon/service key 填入下方<br>④ 点击备份即可将数据存入云端，恢复时拉取最新备份覆盖本地
+                </div>
+                <button id="btn-supabase-copy-sql" class="btn btn-outline" style="width:100%; padding:8px; font-size:11px; border-color:#3ecf8e; color:#3ecf8e; border-radius:8px; font-weight:700; margin-bottom:10px;">
+                  <svg viewBox="0 0 24 24" width="14" height="14" style="vertical-align:middle; margin-right:4px;"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+                  一键复制建表 SQL 命令行
+                </button>
+                <div class="form-group" style="margin-bottom:8px;">
+                  <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">Project URL</label>
+                  <input type="text" id="supabase-backup-url" placeholder="https://xxxx.supabase.co" style="width:100%; height:38px; border:1.5px solid var(--border); border-radius:8px; padding:0 10px; font-size:12px; box-sizing:border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">API Key (anon/service_role)</label>
+                  <input type="password" id="supabase-backup-key" placeholder="eyJhbGci..." style="width:100%; height:38px; border:1.5px solid var(--border); border-radius:8px; padding:0 10px; font-size:12px; box-sizing:border-box;">
+                </div>
+                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                  <button id="btn-supabase-backup-all" class="btn" style="flex:1; padding:8px; font-size:11px; border-radius:8px; background:#3ecf8e; color:#fff; border:none; font-weight:700;">备份全部数据</button>
+                  <button id="btn-supabase-backup-text" class="btn btn-outline" style="flex:1; padding:8px; font-size:11px; border-radius:8px; border-color:#3ecf8e; color:#3ecf8e; font-weight:700;">备份纯文字</button>
+                </div>
+                <button id="btn-supabase-restore" class="btn btn-outline" style="width:100%; padding:8px; font-size:11px; border-radius:8px; font-weight:700;">一键恢复数据</button>
+              </div>
+            </div>
+
+            <!-- GitHub 自动备份板块（可炸开收起） -->
+            <div id="backup-github-section" style="background:#fff; border:1px solid var(--border); border-radius:12px; margin-top:12px; overflow:hidden;">
+              <button id="backup-github-toggle" class="btn btn-outline" style="width:100%; display:flex; align-items:center; justify-content:space-between; padding:12px 14px; border:none; border-radius:0; background:#fff; font-weight:700; font-size:13px; color:var(--text-primary);">
+                <span style="display:flex; align-items:center; gap:6px;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.9 1.2 1.9 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6 0-3.2 0 0 1-.3 3.4 1.2a11.5 11.5 0 0 1 6 0C17.3 4.7 18.3 5 18.3 5c.7 1.6.2 2.8 0 3.2.9.8 1.3 1.9 1.3 3.1 0 4.6-2.8 5.6-5.5 5.9.5.4.9 1 .9 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"/></svg>
+                  GitHub 自动备份
+                </span>
+                <span id="backup-github-arrow" style="transition:transform 0.2s;">▼</span>
+              </button>
+              <div id="backup-github-body" style="display:none; padding:14px; border-top:1px solid var(--border);">
+                <div style="font-size:11px; color:var(--text-secondary); line-height:1.6; margin-bottom:10px; background:#f6f8fa; padding:8px 10px; border-radius:8px; border:1px solid #d0d7de;">
+                  <b>使用教程：</b>① 在 GitHub 新建一个空仓库（公开或私有均可）<br>② 前往「Settings → Developer settings → Personal access tokens」生成 Token，勾选 repo 权限<br>③ 将 Token、用户名、仓库名填入下方，点击测试连接<br>④ 备份数据会以 JSON 文件推送到仓库，恢复时从仓库拉取覆盖本地
+                </div>
+                <div class="form-group" style="margin-bottom:8px;">
+                  <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">GitHub Token</label>
+                  <input type="password" id="github-backup-token" placeholder="ghp_xxxxxxxx" style="width:100%; height:38px; border:1.5px solid var(--border); border-radius:8px; padding:0 10px; font-size:12px; box-sizing:border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom:8px;">
+                  <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">用户名</label>
+                  <input type="text" id="github-backup-user" placeholder="your-username" style="width:100%; height:38px; border:1.5px solid var(--border); border-radius:8px; padding:0 10px; font-size:12px; box-sizing:border-box;">
+                </div>
+                <div class="form-group" style="margin-bottom:10px;">
+                  <label style="font-size:11px; font-weight:700; color:var(--text-secondary);">仓库名</label>
+                  <input type="text" id="github-backup-repo" placeholder="my-backup-repo" style="width:100%; height:38px; border:1.5px solid var(--border); border-radius:8px; padding:0 10px; font-size:12px; box-sizing:border-box;">
+                </div>
+                <button id="btn-github-test" class="btn btn-outline" style="width:100%; padding:8px; font-size:11px; border-radius:8px; border-color:#6366f1; color:#6366f1; font-weight:700; margin-bottom:8px;">测试连接</button>
+                <div style="display:flex; gap:8px; margin-bottom:8px;">
+                  <button id="btn-github-backup-all" class="btn" style="flex:1; padding:8px; font-size:11px; border-radius:8px; background:#24292e; color:#fff; border:none; font-weight:700;">备份全部数据</button>
+                  <button id="btn-github-backup-text" class="btn btn-outline" style="flex:1; padding:8px; font-size:11px; border-radius:8px; border-color:#24292e; color:#24292e; font-weight:700;">备份纯文字</button>
+                </div>
+                <button id="btn-github-restore" class="btn btn-outline" style="width:100%; padding:8px; font-size:11px; border-radius:8px; font-weight:700;">一键恢复数据</button>
+              </div>
             </div>
           </div>
 
@@ -1377,6 +1438,10 @@
             <button class="btn-icon" id="btn-new-chat">
               <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
             </button>
+            <!-- 小程序入口（在聊天列表页页头，也可下拉进入） -->
+            <button class="btn-icon" id="btn-miniprogram-entry" title="小程序" style="color:#07c160;">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+            </button>
           </div>
         </header>
 
@@ -1520,6 +1585,10 @@
               </div>
               <div class="menu-item" onclick="openMeSub('wallet')">
                 <span>钱包</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <div class="menu-item" onclick="openMeSub('files')">
+                <span>文件管理</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
             </div>
@@ -1845,6 +1914,20 @@
                   <input type="checkbox" id="group-sync-to-single"> 允许群聊记忆沉淀同步回滚至角色单聊中
                 </label>
               </div>
+            </div>
+
+            <!-- 新增：群聊允许小程序分享开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px;">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--text-secondary);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#07c160;">
+                  <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                允许群成员分享小程序
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="group-details-allow-miniprogram-share">
+                <span class="slider"></span>
+              </label>
             </div>
             <!-- 新增：群专属个性化聊天美化入口 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px; cursor:pointer;" onclick="chatBeautifySystem.openPanel()">
@@ -2186,9 +2269,9 @@
                   <div id="group-members-list-box" style="display:flex; flex-direction:column; gap:10px;"></div>
                 </div>
                 <!-- 底部邀请成员操作按钮 -->
-                <div style="padding-top:16px; border-top: 1.5px solid var(--border); background:#fff; flex-shrink:0;">
-                  <button class="btn btn-primary" onclick="if(window.groupChatSystem){window.groupChatSystem.openGroupInviteSelector();}" style="width:100%; font-weight:700; display:flex; align-items:center; justify-content:center; gap:6px;">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <div style="padding-top:12px; border-top: 1.5px solid var(--border); flex-shrink:0;">
+                  <button onclick="if(window.groupChatSystem){window.groupChatSystem.openGroupInviteSelector();}" style="width:100%; font-weight:700; display:flex; align-items:center; justify-content:center; gap:6px; background:transparent; border:none; color:var(--primary); padding:10px 0; cursor:pointer; font-size:14px;">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
                     邀请新的群成员
                   </button>
                 </div>
@@ -2197,19 +2280,18 @@
 
             <!-- 邀请成员专属多选浮层 -->
             <div id="group-invite-overlay" class="modal-overlay" style="z-index: 1200;">
-              <div class="modal" style="max-height: 85%; display: flex; flex-direction: column;">
-                <header class="modal-header" style="flex-shrink: 0;">
+              <div class="modal" style="max-height: 85%;">
+                <header class="modal-header">
                   <h4>邀请新成员入群</h4>
                   <button class="btn-icon" onclick="document.getElementById('group-invite-overlay').classList.remove('active')">
                     <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
                   </button>
                 </header>
-                <div class="win-body" style="padding: 16px; overflow-y: auto; flex: 1 1 auto;">
-                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; padding: 4px 2px;"></div>
-                </div>
-                <!-- 底部操作区：透明线框按钮，独立于列表滚动，绝不遮挡成员 -->
-                <div style="flex-shrink: 0; padding: 12px 16px 16px; border-top: 1px solid var(--border); background: var(--bg-main);">
-                  <button class="btn btn-outline" onclick="if(window.groupChatSystem){window.groupChatSystem.submitGroupInvitation();}" style="width:100%; font-weight:700; background-color: transparent !important;">确认邀请加入</button>
+                <div class="win-body" style="padding: 16px; display: flex; flex-direction: column; overflow: hidden;">
+                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; padding: 4px 2px; margin-bottom: 14px;"></div>
+                  <div style="position: sticky; bottom: 0; padding-top: 12px; border-top: 1px solid var(--border); background: var(--bg);">
+                    <button class="btn btn-outline" onclick="if(window.groupChatSystem){window.groupChatSystem.submitGroupInvitation();}" style="width:100%; font-weight:700; background:transparent !important; border:1.5px solid var(--primary); color:var(--primary); border-radius:8px; padding:10px 0; cursor:pointer;">确认邀请加入</button>
+                  </div>
                 </div>
               </div>
             </div> <!-- 邀请成员专属多选浮层 -->
@@ -2304,6 +2386,11 @@
             <div class="form-group">
               <label>自定义对方 (Char) 姓名</label>
               <input type="text" id="details-char-name">
+            </div>
+
+            <div class="form-group">
+              <label>备注 (不发给 AI，用于区分同一角色的不同对话)</label>
+              <input type="text" id="details-char-remark" placeholder="留空则无备注">
             </div>
             
             <div class="form-group">
@@ -2552,6 +2639,20 @@
               </label>
               <label class="switch">
                 <input type="checkbox" id="details-allow-char-block">
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <!-- 新增：允许小程序分享（下拉进入小程序，分享卡片邀请对方一起玩） -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>
+                </svg>
+                允许小程序分享
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-allow-miniprogram-share">
                 <span class="slider"></span>
               </label>
             </div>
@@ -2822,12 +2923,14 @@
                       <div class="form-group" style="margin-bottom:12px;">
                         <label style="font-size:11px; color:#15803d; font-weight:700; margin-bottom:4px; display:flex; justify-content:space-between;">
                           <span>3. 最低相似度阈值</span>
-                          <span id="vector-threshold-val">0.55</span>
                         </label>
-                        <input type="range" id="vector-threshold" min="0.3" max="0.8" step="0.05" value="0.55" style="width:100%;">
+                        <div style="display:flex; gap:8px; align-items:center;">
+                          <input type="range" id="vector-threshold" min="0.10" max="0.95" step="0.01" value="0.55" style="flex:1;">
+                          <input type="number" id="vector-threshold-input" min="0.10" max="0.95" step="0.01" value="0.55" style="width:60px; text-align:center; padding:4px; border:1.5px solid var(--border); border-radius:6px; font-weight:700; font-size:12px;">
+                        </div>
                         <div style="display:flex; justify-content:space-between; font-size:9px; color:#15803d; margin-top:2px;">
-                          <span>发散 (0.3)</span>
-                          <span>精确 (0.8)</span>
+                          <span>发散 (0.10)</span>
+                          <span>精确 (0.95)</span>
                         </div>
                       </div>
                       
@@ -2857,6 +2960,53 @@
                         <button id="btn-rebuild-vectors" class="btn btn-outline" style="width:100%; padding:8px; font-size:11px; border-color:#ca8a04; color:#ca8a04; border-radius:8px; font-weight:700; cursor:pointer;">
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>一键补建历史总结向量 (<span id="missing-vectors-count">检测中...</span>)
                         </button>
+                      </div>
+
+                      <!-- 5. 原始对话向量检索（第二维度，独立于三角形总结检索）[3] -->
+                      <div class="form-group" style="margin-top:14px; border-top:1px dashed #93c5fd; padding-top:12px;">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                          <label style="font-size:11px; color:#1d4ed8; font-weight:700;">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:3px;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>原始对话向量检索
+                          </label>
+                          <label class="ios-switch" style="margin:0;">
+                            <input type="checkbox" id="raw-dialogue-toggle">
+                            <span class="ios-slider"></span>
+                          </label>
+                        </div>
+                        <div id="raw-dialogue-config-section" style="display:none;">
+                          <div style="font-size:10px; color:#64748b; line-height:1.5; margin-bottom:10px; padding:8px; background:#eff6ff; border-radius:6px; border:1px solid #bfdbfe;">
+                            独立于三角形总结检索的第二维度。将每轮原始对话(user+char)预嵌入向量，检索时用当前消息匹配最相似的历史真实对话原文注入，精准且省token。与总结去重避免冗余。
+                          </div>
+                          <!-- 检索轮数 -->
+                          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                            <label style="font-size:11px; font-weight:700; color:#334155; white-space:nowrap; min-width:70px;">检索轮数</label>
+                            <input type="range" id="raw-dialogue-topk" min="1" max="10" step="1" value="3" style="flex:1;">
+                            <input type="number" id="raw-dialogue-topk-input" min="1" max="10" value="3" style="width:40px; text-align:center; font-size:11px; border:1px solid #cbd5e1; border-radius:4px; padding:2px;">
+                          </div>
+                          <!-- 相似度阈值 -->
+                          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                            <label style="font-size:11px; font-weight:700; color:#334155; white-space:nowrap; min-width:70px;">相似阈值</label>
+                            <input type="range" id="raw-dialogue-threshold" min="0.10" max="0.95" step="0.01" value="0.50" style="flex:1;">
+                            <input type="number" id="raw-dialogue-threshold-input" min="0.10" max="0.95" step="0.01" value="0.50" style="width:50px; text-align:center; font-size:11px; border:1px solid #cbd5e1; border-radius:4px; padding:2px;">
+                          </div>
+                          <!-- 上下文检索轮数：用最近N轮(user+char)消息拼接作为查询，索引连续话题 [2] -->
+                          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                            <label style="font-size:11px; font-weight:700; color:#334155; white-space:nowrap; min-width:70px;">上下文轮数</label>
+                            <input type="range" id="raw-dialogue-context-rounds" min="1" max="10" step="1" value="3" style="flex:1;">
+                            <input type="number" id="raw-dialogue-context-rounds-input" min="1" max="10" value="3" style="width:40px; text-align:center; font-size:11px; border:1px solid #cbd5e1; border-radius:4px; padding:2px;">
+                            <span id="raw-dialogue-context-rounds-val" style="font-size:10px; color:#64748b; min-width:28px;">3 轮</span>
+                          </div>
+                          <!-- 跳过最近轮数 -->
+                          <div style="display:flex; align-items:center; gap:8px; margin-bottom:10px;">
+                            <label style="font-size:11px; font-weight:700; color:#334155; white-space:nowrap; min-width:70px;">跳过最近</label>
+                            <input type="range" id="raw-dialogue-recent-skip" min="0" max="20" step="1" value="5" style="flex:1;">
+                            <span id="raw-dialogue-recent-skip-val" style="font-size:11px; font-weight:700; color:#1d4ed8; min-width:36px; text-align:right;">5 轮</span>
+                          </div>
+                          <!-- 补建按钮 -->
+                          <button id="btn-rebuild-raw-dialogue-vectors" class="btn btn-outline" style="width:100%; padding:8px; font-size:11px; border-color:#1d4ed8; color:#1d4ed8; border-radius:8px; font-weight:700; cursor:pointer;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle; margin-right:4px;"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>一键补建历史原始对话向量
+                          </button>
+                        </div>
                       </div>
                     </div>
 
@@ -3373,6 +3523,7 @@
                     <button id="btn-menu-multi">多选消息</button>
                     <button id="btn-menu-delete-single">删除此条</button>
                     <button id="btn-menu-recall">撤回消息</button>
+                    <button id="btn-menu-branch" style="color: #059669; font-weight: 700; display: none;">在此刻分支</button>
                     <button id="btn-menu-cancel" class="cancel-btn">取消</button>
                   </div>
                 </div>
@@ -3755,6 +3906,14 @@
                 <div class="check-phone-app-icon" data-app="music" style="cursor: pointer;">
                   <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
                   <span>音乐</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="monitor" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="1"/></svg></div>
+                  <span>监控</span>
+                </div>
+                <div class="check-phone-app-icon" data-app="files" style="cursor: pointer;">
+                  <div class="app-icon-img-wrapper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></div>
+                  <span>文件管理</span>
                 </div>
               </div>
             </div>
@@ -4204,6 +4363,7 @@
             <button id="btn-offline-menu-favorite">收藏消息</button>
             <button id="btn-offline-menu-multi">多选消息</button>
             <button id="btn-offline-menu-delete-single">删除此条</button>
+            <button id="btn-offline-menu-branch" style="color: #059669; font-weight: 700; display: none;">在此刻分支</button>
             <button id="btn-offline-menu-cancel" class="cancel-btn">取消</button>
           </div>
         </div>
@@ -4979,6 +5139,13 @@
               <span style="font-size:11px; color:#64748b; font-weight:700;">文字自定义色值：</span>
               <button class="btn btn-outline" style="padding:4px 8px; font-size:10px;" onclick="readerSystem.selectReadingTextCustomColor()">调色盘</button>
             </div>
+            <!-- 正文字体选择（仅作用于阅读正文，不影响全局） -->
+            <div class="reading-menu-row">
+              <span style="font-size:11px; color:#64748b; font-weight:700;">正文字体：</span>
+              <select id="reader-font-select" style="padding:3px 6px; font-size:11px; border:1px solid #cbd5e1; border-radius:6px; max-width:140px;" onchange="readerSystem.selectReadingFont(this.value)">
+                <option value="">系统默认</option>
+              </select>
+            </div>
           </div>
 
             </div> <!-- 关闭 win-reading-room -->
@@ -5739,6 +5906,7 @@
   <script src="app_chat_focus.js"></script>
   <script src="app_chat_check_phone.js"></script>
   <script src="app_chat_group.js"></script>
+  <script src="app_chat_archives.js"></script>
   <script src="app_chat_search.js"></script>
   <script src="app_chat_couples.js"></script>
   <script src="app_chat_beautify.js"></script>
@@ -5750,8 +5918,12 @@
   <script src="app_quicktravel.js"></script>
   <script src="app_quicktravel_fanwall.js"></script>
   <script src="app_floating_widget.js"></script>
+  <script src="app_miniprogram.js"></script>
+  <script src="app_miniprogram_workshop.js"></script>
+  <script src="app_miniprogram_games.js"></script>
   <script src="app_router.js"></script>
   <script src="app_assistant.js"></script>
+  <script src="app_auto_backup.js"></script>
   <script>
     // 微信展开面板滚动圆点指示器动态触发与点击导航脚本 (零依赖原生驱动)
     document.addEventListener("DOMContentLoaded", () => {
@@ -5779,5 +5951,23 @@
       }
     });
   </script>
+
+  <!-- 删除对话进度遮罩 -->
+  <div id="delete-progress-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:16px; padding:28px 32px; display:flex; flex-direction:column; align-items:center; gap:14px; min-width:220px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+      <svg viewBox="0 0 24 24" width="32" height="32" style="color:#ef4444;" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+      </svg>
+      <div id="delete-progress-text" style="font-size:14px; font-weight:700; color:var(--text-primary); text-align:center;">正在删除对话...</div>
+      <div id="delete-progress-sub" style="font-size:11px; color:var(--text-secondary); text-align:center;">请稍候，正在清理所有关联数据</div>
+      <!-- 伪装进度条：非旋转视觉反馈，代替会转圈的垃圾桶 -->
+      <svg width="180" height="6" viewBox="0 0 180 6" style="margin-top:2px;">
+        <rect width="180" height="6" rx="3" fill="rgba(0,0,0,0.08)"></rect>
+        <rect height="6" rx="3" fill="#07c160">
+          <animate attributeName="width" from="20" to="165" dur="22.5s" repeatCount="indefinite"/>
+        </rect>
+      </svg>
+    </div>
+  </div>
 </body>
 </html>

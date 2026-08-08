@@ -833,6 +833,8 @@ async function startReadingRoom() {
 
   // 载入历史阅读偏好
   applyReadingPreferences();
+  refreshReaderFontSelect();
+  applyReadingFont();
 
   // 载入第一章
   await loadChapter(currentReadingChapterNum);
@@ -1342,6 +1344,83 @@ function selectReadingTextCustomColor() {
   });
 }
 
+// 刷新阅读正文字体下拉选项（从全局字体索引中读取）
+function refreshReaderFontSelect() {
+  const select = document.getElementById("reader-font-select");
+  if (!select) return;
+  const prefs = JSON.parse(localStorage.getItem("reader_preferences") || "{}");
+  const activeFont = prefs.fontName || "";
+  let idx = {};
+  try { idx = (typeof loadFontIndex === "function") ? loadFontIndex() : JSON.parse(localStorage.getItem("custom-fonts-index") || "{}"); } catch (e) {}
+  select.innerHTML = '<option value="">系统默认</option>';
+  Object.keys(idx).forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (name === activeFont) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+// 选择阅读正文字体（仅作用于 #reading-content-container，不影响全局）
+function selectReadingFont(fontName) {
+  const prefs = JSON.parse(localStorage.getItem("reader_preferences") || "{}");
+  prefs.fontName = fontName || "";
+  localStorage.setItem("reader_preferences", JSON.stringify(prefs));
+  applyReadingFont();
+  showToast(fontName ? `阅读字体已切换为：${fontName}` : "阅读字体已恢复系统默认");
+}
+
+// 应用阅读正文字体（通过 FontFace API 加载后注入局部 CSS）
+async function applyReadingFont() {
+  const prefs = JSON.parse(localStorage.getItem("reader_preferences") || "{}");
+  const fontName = prefs.fontName || "";
+  const container = document.getElementById("reading-content-container");
+  if (!container) return;
+
+  // 移除旧的阅读字体注入
+  const oldStyle = document.getElementById("reader-custom-font-style");
+  if (oldStyle) oldStyle.remove();
+
+  if (!fontName) {
+    container.style.fontFamily = "";
+    return;
+  }
+
+  // 获取字体数据源
+  let src = null;
+  try { src = (typeof getFontSrc === "function") ? await getFontSrc(fontName) : null; } catch (e) {}
+  if (!src) {
+    console.warn("[Reader Font] 字体数据丢失:", fontName);
+    return;
+  }
+
+  const famName = "ReaderFont_" + fontName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, "");
+  const fallback = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif';
+
+  try {
+    // 先移除同名的旧 FontFace
+    try {
+      for (const ff of document.fonts) {
+        if (ff.family === famName) { document.fonts.delete(ff); break; }
+      }
+    } catch (e) {}
+    const fontFace = new FontFace(famName, `url("${src}")`);
+    await fontFace.load();
+    document.fonts.add(fontFace);
+  } catch (e) {
+    console.warn("[Reader Font] FontFace API 加载失败，回退到 @font-face CSS:", e);
+  }
+
+  // 注入局部 CSS：仅作用于阅读正文容器及其子元素
+  const styleEl = document.createElement("style");
+  styleEl.id = "reader-custom-font-style";
+  styleEl.textContent = `
+    @font-face { font-family: "${famName}"; src: url("${src}"); }
+    #reading-content-container, #reading-content-container * { font-family: "${famName}", ${fallback} !important; }
+  `;
+  document.head.appendChild(styleEl);
+}
+
 function changeReadingFlipStyle(style) {
   const prefs = JSON.parse(localStorage.getItem("reader_preferences") || "{}");
   prefs.flipStyle = style;
@@ -1496,6 +1575,9 @@ async function getActiveApiPreset() {
 }
 
 async function fetchAIResponse(api, promptText) {
+  if (typeof window.fwCallLLM === "function") {
+    return await window.fwCallLLM(api, [{ role: "user", content: promptText }], { temperature: api.temperature });
+  }
   const response = await fetch(`${api.url}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
@@ -2024,25 +2106,92 @@ async function triggerCharWritingHelp() {
   const char = await db.archives.get(writingCharId);
   if (!char) { showToast("角色不存在"); return; }
 
+  // [3] 查找该 char 关联的会话，提取总结/记忆/上下文/人设特性
+  let sessionContext = "";
+  let userName = "作者";
+  let charName = char.name;
+  try {
+    const sess = await db.sessions.where('charId').equals(writingCharId).first();
+    if (sess) {
+      charName = sess.customCharName || char.name;
+      const user = await db.archives.get(sess.userId);
+      userName = sess.customUserName || user?.name || "作者";
+
+      // 提取核心记忆
+      let coreMemoryText = "";
+      if (sess.coreSelfStatus) coreMemoryText += `- 我的现状：${sess.coreSelfStatus}\n`;
+      if (sess.coreSelfPurpose) coreMemoryText += `- 我的目的：${sess.coreSelfPurpose}\n`;
+      if (sess.coreSelfChanges) coreMemoryText += `- 我的转变：${sess.coreSelfChanges}\n`;
+      if (sess.coreRelationship) coreMemoryText += `- 我和${userName}的关系：${sess.coreRelationship}\n`;
+      if (sess.coreUserInEyes) coreMemoryText += `- 我眼中的${userName}：${sess.coreUserInEyes}\n`;
+
+      // 提取最近的总结记忆（取最近5条）
+      let summariesText = "";
+      try {
+        const allSummaries = await db.summaries.where('sessionId').equals(sess.id).sortBy('startRound');
+        const recentSummaries = allSummaries.slice(-5);
+        if (recentSummaries.length > 0) {
+          summariesText = recentSummaries.map(s => `- ${s.content}`).join("\n");
+        }
+      } catch(e) {}
+
+      // 提取最近对话上下文（取最近6条消息）
+      let recentDialogueText = "";
+      try {
+        const recentMsgs = await db.messages.where('sessionId').equals(sess.id).sortBy('timestamp');
+        const recentSlice = recentMsgs.slice(-6);
+        if (recentSlice.length > 0) {
+          recentDialogueText = recentSlice.map(m => {
+            const speaker = m.senderType === 'user' ? userName : (m.senderType === 'char' ? charName : '系统');
+            return `${speaker}: ${m.content.substring(0, 100)}`;
+          }).join("\n");
+        }
+      } catch(e) {}
+
+      if (coreMemoryText || summariesText || recentDialogueText) {
+        sessionContext = `\n【你和${userName}的真实交往记忆（请将这些情感与经历自然融入你的写作风格与情节构思中）】`;
+        if (coreMemoryText) sessionContext += `\n## 核心心智记忆\n${coreMemoryText}`;
+        if (summariesText) sessionContext += `\n## 历史事件印象\n${summariesText}`;
+        if (recentDialogueText) sessionContext += `\n## 最近对话上下文\n${recentDialogueText}`;
+      }
+    }
+  } catch(e) {
+    console.warn("提取角色会话记忆失败:", e);
+  }
+
   showToast("角色正在构思续写...");
   const api = await getActiveApiPreset();
   if (!api) { showToast("未配置全局 API 预设"); return; }
 
-  const prompt = `你是角色「${char.name}」。你的人设如下：
+  // [3] 增强 prompt：带总结/记忆/上下文/人设特性/个人思考
+  const prompt = `你是角色「${charName}」。你的人设如下：
 ${char.persona || char.remark || ''}
+${sessionContext}
 
-现在你正在协助创作一本小说。
+现在，${userName} 写了一本小说，写到一半想叫你来续写。在你的视角里，${userName} 是你认识的人，TA 正在创作这个故事，现在卡住了，邀请你来接力。
 【书名】${book?.title || ''}
 【书籍简介】${book?.summary || ''}
 【当前章节】${chap.title || '第' + chap.chapterNum + '章'}
 【已有正文（续写起点）】
 ${currentContent.slice(-800)}
 
-请基于以上内容，用你的风格和视角继续往下写 1000-1500 字。要求：
+请基于以上内容，用你自己的风格和视角继续往下写 1000-1500 字。要求：
 1. 紧承已有正文的情节和氛围，不要重复已有内容。
 2. 保持文风一致，情节有推进。
-3. 直接输出续写正文，不要任何解释、标注或前缀。
-4. 不要用代码块包裹。`;
+3. 融入你的人设特性与个性——你有自己的写作偏好和思考方式，写出来的文字要带着你的个人印记。
+4. 可以将你和${userName}真实交往中的情感、经历、记忆隐喻性地融入情节中（但不要直接照搬现实对话）。
+5. 续写正文结束后，另起一行用 --- 分隔，然后写一段 100-200 字的「你的思考与感想」：
+   - 你对${userName}写的这段内容的看法
+   - 你续写时的心路历程和构思思路
+   - 你对这个故事走向的个人见解
+6. 续写正文部分直接输出，不要任何解释、标注或前缀。
+7. 不要用代码块包裹。
+
+格式示例：
+（这里是1000-1500字的续写正文）
+---
+【${charName}的思考与感想】
+（这里是你个人的思考，100-200字）`;
 
   try {
     const result = await fetchAIResponse(api, prompt);
@@ -2081,6 +2230,8 @@ window.readerSystem = {
   toggleReadingMenuBar,
   selectReadingThemeColor,
   selectReadingTextCustomColor,
+  selectReadingFont,
+  refreshReaderFontSelect,
   changeReadingFlipStyle,
   openReadingDirectory,
   closeReadingDirectory,

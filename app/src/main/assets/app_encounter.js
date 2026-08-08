@@ -1175,6 +1175,10 @@
     options = options || {};
     const api = await getGlobalApi();
     if (!api) throw new Error('未配置全局 API，请前往系统设置 - API 协议设置中配置');
+    if (typeof window.fwCallLLM === 'function') {
+      try { return await window.fwCallLLM(api, messages, { temperature: options.temperature != null ? options.temperature : 0.85 }); }
+      catch (e) { /* fall through to original */ }
+    }
     const body = {
       model: api.model,
       messages: messages,

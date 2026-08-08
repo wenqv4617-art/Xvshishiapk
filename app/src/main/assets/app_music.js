@@ -23,6 +23,7 @@
     tempCropCoverBase64: "",
     unikey: "",
     qrPollTimer: null,
+    pendingLocalMusicFiles: [], // onchange 时缓存的待导入本地音频（规避部分 WebView 点击保存按钮时 input.files 丢失）
 
     async init() {
       this.bindAudioEvents();
@@ -598,6 +599,11 @@
       const overlay = document.getElementById("ncm-import-form-overlay");
       if (!overlay) return;
 
+      // 重置上次残留的文件缓存与文件输入，避免误用旧选择
+      this.pendingLocalMusicFiles = [];
+      const fileInput = document.getElementById("ncm-form-file-input");
+      if (fileInput) fileInput.value = "";
+
       document.getElementById("ncm-form-import-type").value = type;
       const fileGroup = document.getElementById("ncm-form-file-group");
       const urlGroup = document.getElementById("ncm-form-url-group");
@@ -614,6 +620,10 @@
     closeImportFormModal() {
       const overlay = document.getElementById("ncm-import-form-overlay");
       if (overlay) overlay.classList.remove("active");
+      // 关闭时清理文件缓存，避免下次打开误用
+      this.pendingLocalMusicFiles = [];
+      const fileInput = document.getElementById("ncm-form-file-input");
+      if (fileInput) fileInput.value = "";
     },
 
     populatePlaylistDropdownOptions(selectId) {
@@ -692,16 +702,20 @@
 
       if (type === 'local') {
         const fileInput = document.getElementById("ncm-form-file-input");
-        if (!fileInput.files || fileInput.files.length === 0) {
+        // 优先使用 onchange 缓存的文件，规避部分 WebView 点击保存按钮瞬间 input.files 被清空导致"没有选择文件"
+        let files = (this.pendingLocalMusicFiles && this.pendingLocalMusicFiles.length > 0)
+          ? this.pendingLocalMusicFiles
+          : (fileInput && fileInput.files ? Array.from(fileInput.files) : []);
+        if (files.length === 0) {
           if (typeof showToast === 'function') showToast("请先选择本地音频文件");
           return;
         }
         // 多选批量导入：以文件名作为歌名自动导入
-        if (fileInput.files.length > 1) {
-          await this.batchImportLocalFiles(fileInput.files, targetPlId);
+        if (files.length > 1) {
+          await this.batchImportLocalFiles(files, targetPlId);
           return;
         }
-        const file = fileInput.files[0];
+        const file = files[0];
         songObj.title = titleInput || file.name.replace(/\.[^/.]+$/, "");
         songObj.url = URL.createObjectURL(file);
         await this.saveSongToIndexedDB({ id: songObj.id, blob: file, ...songObj });
@@ -763,6 +777,10 @@
       const hint = document.getElementById("ncm-form-file-hint");
       if (!fileInput || !fileInput.files || fileInput.files.length === 0) return;
 
+      // 缓存选中文件：部分 Android WebView 在用户点击"保存"按钮时 input.files 已被清空，
+      // 此处于 onchange（文件刚选完、必定可用时）留底，提交时优先读取该缓存。
+      this.pendingLocalMusicFiles = Array.from(fileInput.files);
+
       const titleInput = document.getElementById("ncm-form-title");
       if (fileInput.files.length > 1) {
         if (hint) hint.textContent = `已选择 ${fileInput.files.length} 个文件，将以文件名作为歌名批量导入（下方歌名/歌手等字段将被忽略）。`;
@@ -821,6 +839,7 @@
 
       const fileInput = document.getElementById("ncm-form-file-input");
       if (fileInput) fileInput.value = "";
+      this.pendingLocalMusicFiles = [];
 
       this.closeImportFormModal();
       this.renderMine();
@@ -2052,24 +2071,33 @@
           messagesToSend.push({ role: "user", content: "你觉得这首歌听起来怎么样？" });
         }
 
-        const endpoint = api.url.endsWith('/chat/completions') ? api.url : `${api.url.replace(/\/+$/, '')}/chat/completions`;
-        const response = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${api.key}`
-          },
-          body: JSON.stringify({
-            model: api.model,
-            messages: messagesToSend,
-            temperature: api.temperature || 0.7
-          })
-        });
+        let islandContent;
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            islandContent = await window.fwCallLLM(api, messagesToSend, { temperature: api.temperature || 0.7 });
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (islandContent === undefined) {
+          const endpoint = api.url.endsWith('/chat/completions') ? api.url : `${api.url.replace(/\/+$/, '')}/chat/completions`;
+          const response = await fetch(endpoint, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${api.key}`
+            },
+            body: JSON.stringify({
+              model: api.model,
+              messages: messagesToSend,
+              temperature: api.temperature || 0.7
+            })
+          });
 
-        if (!response.ok) throw new Error("API 响应失败");
+          if (!response.ok) throw new Error("API 响应失败");
 
-        const data = await response.json();
-        let replyText = data.choices[0].message.content.trim();
+          const data = await response.json();
+          islandContent = data.choices[0].message.content;
+        }
+        let replyText = islandContent.trim();
 
         replyText = this.cleanCotText(replyText);
 

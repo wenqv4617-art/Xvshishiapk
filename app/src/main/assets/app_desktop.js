@@ -219,6 +219,10 @@ function applyGlobalSettingsOnLoad() {
     dockContainer.style.setProperty("background-color", `rgba(255, 255, 255, ${parseFloat(opacity) / 100})`, "important");
   }
 
+  // 桌面整体放缩配置（解决部分手机型号图标缩小/Dock上移问题）
+  const scale = localStorage.getItem("beautify-desktop-scale") || "100";
+  applyDesktopScale(parseFloat(scale));
+
   // 注入式自定义 CSS 预设
   const activeCss = localStorage.getItem("beautify-active-css") || "";
   let styleTag = document.getElementById("global-injected-css");
@@ -228,6 +232,27 @@ function applyGlobalSettingsOnLoad() {
     document.head.appendChild(styleTag);
   }
   styleTag.textContent = activeCss;
+
+  // 全局自定义字体（来自设置-桌面美化-全局字体板块）
+  if (typeof window.applyActiveFont === "function") {
+    try { window.applyActiveFont(); } catch (e) {}
+  }
+}
+
+// 桌面整体放缩：通过 CSS transform: scale 对桌面网格与 Dock 栏整体等比放缩
+// 解决部分手机型号因视口/DPR 差异导致图标缩小、Dock 栏上移的问题
+function applyDesktopScale(scalePercent) {
+  const scale = Math.max(0.5, Math.min(1.5, scalePercent / 100));
+  const desktop = document.getElementById("desktop");
+  const dock = document.getElementById("dock");
+  if (desktop) {
+    desktop.style.transformOrigin = "top center";
+    desktop.style.transform = `scale(${scale})`;
+  }
+  if (dock) {
+    dock.style.transformOrigin = "bottom center";
+    dock.style.transform = `scale(${scale})`;
+  }
 }
 
 // 浏览器免打扰全屏自锁函数 (隐藏工具栏与链接栏)
@@ -435,9 +460,100 @@ function loadDesktopLayout() {
   renderLayout(dock, dockLayout, "dock-slot");
   renderPageIndicator(pageCount, isPageBlank);
 
+  // [3] 应用每页独立的 dock 栏 Y 轴偏移
+  applyDockYOffset();
+
+  // [3] 编辑模式下添加 dock 栏拖拽手柄
+  setupDockDragHandle();
+
   // 清理任何残留的老版右上角删除按钮，保持 UI 清爽
   let delBtn = document.getElementById("btn-delete-page-indicator");
   if (delBtn) delBtn.remove();
+}
+
+// [3] dock 栏 Y 轴偏移：每页独立存储，解决部分浏览器 dock 栏缩到上方的问题
+function getDockYOffsetKey() {
+  return `dock-y-offset-page${currentDesktopPage}`;
+}
+function applyDockYOffset() {
+  const dock = document.getElementById("dock");
+  if (!dock) return;
+  const offset = parseFloat(localStorage.getItem(getDockYOffsetKey()) || "0");
+  dock.style.transform = offset ? `translateY(${offset}px)` : "";
+}
+// [3] 编辑模式下添加 dock 拖拽手柄，可上下移动整个 dock 栏
+function setupDockDragHandle() {
+  const dock = document.getElementById("dock");
+  if (!dock) return;
+  // 移除已有手柄
+  const existingHandle = document.getElementById("dock-drag-handle");
+  if (existingHandle) existingHandle.remove();
+
+  if (!isDesktopEditMode) {
+    dock.style.cursor = "";
+    return;
+  }
+
+  // 创建拖拽手柄条
+  const handle = document.createElement("div");
+  handle.id = "dock-drag-handle";
+  handle.style.cssText = "position:absolute; top:-28px; left:50%; transform:translateX(-50%); background:rgba(30,41,59,0.85); color:#fff; font-size:9px; font-weight:700; padding:3px 10px; border-radius:8px; white-space:nowrap; pointer-events:none; z-index:50;";
+  handle.textContent = "↑↓ 拖动 Dock 栏";
+  dock.style.position = "relative";
+  dock.appendChild(handle);
+
+  // 拖拽逻辑
+  dock.style.cursor = "ns-resize";
+  let startY = 0;
+  let startOffset = 0;
+  let isDragging = false;
+
+  const onTouchStart = (e) => {
+    // [3] 只在点击 dock 背景区域（非图标）时触发拖拽，避免与图标重排冲突
+    if (e.target.closest(".app-icon") || e.target.closest(".desktop-widget-container")) return;
+    isDragging = true;
+    startY = (e.touches ? e.touches[0].clientY : e.clientY);
+    startOffset = parseFloat(localStorage.getItem(getDockYOffsetKey()) || "0");
+    dock.style.transition = "none";
+    if (handle) {
+      handle.style.pointerEvents = "none";
+      handle.textContent = `偏移: ${Math.round(startOffset)}px`;
+    }
+    e.preventDefault();
+  };
+  const onTouchMove = (e) => {
+    if (!isDragging) return;
+    const currentY = (e.touches ? e.touches[0].clientY : e.clientY);
+    let delta = currentY - startY;
+    let newOffset = startOffset + delta;
+    // 限制范围：向上最多移动 200px，向下最多 100px
+    newOffset = Math.max(-200, Math.min(100, newOffset));
+    dock.style.transform = `translateY(${newOffset}px)`;
+    if (handle) handle.textContent = `偏移: ${Math.round(newOffset)}px`;
+    e.preventDefault();
+  };
+  const onTouchEnd = () => {
+    if (!isDragging) return;
+    isDragging = false;
+    dock.style.transition = "";
+    // 读取最终偏移并保存
+    const transform = dock.style.transform;
+    const match = transform.match(/translateY\(([-\d.]+)px\)/);
+    const finalOffset = match ? parseFloat(match[1]) : 0;
+    localStorage.setItem(getDockYOffsetKey(), String(finalOffset));
+    if (handle) {
+      handle.textContent = "↑↓ 拖动 Dock 栏";
+      handle.style.pointerEvents = "none";
+    }
+  };
+
+  dock.onmousedown = onTouchStart;
+  dock.onmousemove = onTouchMove;
+  dock.onmouseup = onTouchEnd;
+  dock.onmouseleave = onTouchEnd;
+  dock.ontouchstart = onTouchStart;
+  dock.ontouchmove = onTouchMove;
+  dock.ontouchend = onTouchEnd;
 }
 
 function renderPageIndicator(pageCount, isPageBlank) {

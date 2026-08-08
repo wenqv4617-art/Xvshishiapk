@@ -1317,55 +1317,6 @@ let isOfflineChatAppEventsBound = false;
       background: #07c160;
       color: #ffffff;
     }
-
-    /* 确认加载态：刻意不使用旋转动画（“转啊转”太搞笑了）
-       改为：静态垃圾桶 + 伪装进度条，或呼吸小圆圈 */
-    .pwa-modal-confirm-loading {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      width: 100%;
-      box-sizing: border-box;
-    }
-    .pwa-modal-trash {
-      width: 24px;
-      height: 24px;
-      color: #ffffff;
-    }
-    .pwa-modal-loading-text {
-      font-size: 12px;
-      color: #ffffff;
-      line-height: 1.2;
-    }
-    .pwa-modal-fake-progress {
-      width: 132px;
-      height: 5px;
-      border-radius: 3px;
-      background: rgba(255,255,255,0.30);
-      overflow: hidden;
-    }
-    .pwa-modal-fake-progress > i {
-      display: block;
-      height: 100%;
-      width: 0%;
-      background: #ffffff;
-      border-radius: 3px;
-      transition: width 0.7s cubic-bezier(0.25, 0.8, 0.25, 1);
-    }
-    .pwa-modal-circle {
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      border: 3px solid rgba(255,255,255,0.35);
-      border-top-color: #ffffff;
-      animation: pwa-modal-breathe 1s ease-in-out infinite;
-    }
-    @keyframes pwa-modal-breathe {
-      0%, 100% { transform: scale(0.82); opacity: 0.55; }
-      50% { transform: scale(1.05); opacity: 1; }
-    }
   `;
   document.head.appendChild(multimediaStyle);
 
@@ -1466,16 +1417,7 @@ let isOfflineChatAppEventsBound = false;
     };
   };
 
-  window.showCustomConfirm = function(title, message, onConfirm, onCancel, opts) {
-    // opts: { kind: 'trash' | 'circle', loadingText: '...' }
-    if (onCancel && typeof onCancel === 'object' && typeof onConfirm !== 'object') {
-      opts = onCancel; onCancel = undefined;
-    }
-    if (typeof opts === 'string') opts = { kind: opts };
-    opts = opts || {};
-    const kind = opts.kind || 'circle';
-    const loadingText = opts.loadingText || '';
-
+  window.showCustomConfirm = function(title, message, onConfirm, onCancel) {
     const overlay = document.createElement("div");
     overlay.className = "pwa-modal-overlay";
     overlay.innerHTML = '<div class="pwa-modal-card">' +
@@ -1490,83 +1432,20 @@ let isOfflineChatAppEventsBound = false;
     
     setTimeout(() => overlay.classList.add("show"), 10);
     
-    const confirmBtn = overlay.querySelector(".confirm");
-    const cancelBtn = overlay.querySelector(".cancel");
-
-    const closeModal = (cb) => {
+    overlay.querySelector(".cancel").onclick = () => {
       overlay.classList.remove("show");
       setTimeout(() => {
         overlay.remove();
-        if (typeof cb === 'function') cb();
+        if (typeof onCancel === 'function') onCancel();
       }, 200);
     };
     
-    cancelBtn.onclick = () => {
-      if (confirmBtn.disabled) return; // 加载中禁止关闭
-      closeModal(onCancel);
-    };
-    
-    confirmBtn.onclick = () => {
-      if (confirmBtn.disabled) return;
-      // 没有指定加载态：保持原行为，立即执行
-      if (!opts || (!opts.kind && !loadingText)) {
-        overlay.classList.remove("show");
-        setTimeout(() => {
-          overlay.remove();
-          if (typeof onConfirm === 'function') onConfirm();
-        }, 200);
-        return;
-      }
-
-      // 进入“加载态”：非旋转指示（静态垃圾桶 + 伪装进度条 / 呼吸小圆圈）
-      cancelBtn.disabled = true;
-      confirmBtn.disabled = true;
-      cancelBtn.style.opacity = '0.5';
-      confirmBtn.style.opacity = '1';
-      confirmBtn.style.cursor = 'default';
-      confirmBtn.style.height = 'auto';
-      confirmBtn.style.paddingTop = '14px';
-      confirmBtn.style.paddingBottom = '14px';
-      confirmBtn.style.display = 'flex';
-      confirmBtn.style.alignItems = 'center';
-      confirmBtn.style.justifyContent = 'center';
-
-      const trashSvg = '<svg class="pwa-modal-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
-
-      if (kind === 'circle') {
-        confirmBtn.innerHTML = '<span class="pwa-modal-circle"></span>' + (loadingText ? '<span class="pwa-modal-loading-text">' + escapeHtml(loadingText) + '</span>' : '');
-        confirmBtn.style.gap = '8px';
-      } else {
-        // 垃圾桶 + 伪装进度条（不旋转）
-        confirmBtn.innerHTML = '<div class="pwa-modal-confirm-loading">' +
-          trashSvg +
-          (loadingText ? '<div class="pwa-modal-loading-text">' + escapeHtml(loadingText) + '</div>' : '') +
-          '<div class="pwa-modal-fake-progress"><i></i></div>' +
-        '</div>';
-        const fill = confirmBtn.querySelector('.pwa-modal-fake-progress > i');
-        setTimeout(() => { if (fill) fill.style.width = '86%'; }, 30);
-      }
-
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        const fill = confirmBtn.querySelector('.pwa-modal-fake-progress > i');
-        if (fill) { fill.style.transition = 'width 0.2s linear'; fill.style.width = '100%'; }
-        setTimeout(() => closeModal(null), 260);
-      };
-
-      try {
-        const ret = (typeof onConfirm === 'function') ? onConfirm() : null;
-        if (ret && typeof ret.then === 'function') {
-          ret.then(finish, finish);
-        } else {
-          // 同步回调：保证伪装进度条至少走完一轮
-          setTimeout(finish, 680);
-        }
-      } catch (e) {
-        finish();
-      }
+    overlay.querySelector(".confirm").onclick = () => {
+      overlay.classList.remove("show");
+      setTimeout(() => {
+        overlay.remove();
+        if (typeof onConfirm === 'function') onConfirm();
+      }, 200);
     };
   };
 
@@ -1680,8 +1559,8 @@ function getMessagePreviewText(msg) {
   // 3. 剥离 HTML 标签（卡片、富文本等渲染后的标签不留预览里）
   text = text.replace(/<[^>]+>/g, '');
 
-  // 4. 剥离引用前缀 [QUOTE: xxx] / 【引用: xxx】
-  text = text.replace(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i, '');
+  // 4. 剥离引用标签 [QUOTE: xxx] / 【引用: xxx】（全局，支持中间引用）[5]
+  text = text.replace(/[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/gi, '');
 
   // 5. 剥离 Markdown 图片/链接语法残留
   text = text.replace(/!\[[^\]]*\]\([^)]*\)/g, '');
@@ -1986,7 +1865,8 @@ async function initChatApp() {
       const btnNewChat = document.getElementById("btn-new-chat");
       const btnMomentsPost = document.getElementById("btn-moments-post");
       const btnMomentsSettings = document.getElementById("btn-moments-settings");
-      
+      const btnMpEntry = document.getElementById("btn-miniprogram-entry");
+
       if (btnNewChat) {
         btnNewChat.style.display = currentChatTab === 'sessions' ? 'flex' : 'none';
       }
@@ -1995,6 +1875,10 @@ async function initChatApp() {
       }
       if (btnMomentsSettings) {
         btnMomentsSettings.style.display = currentChatTab === 'moments' ? 'flex' : 'none';
+      }
+      // 小程序入口仅保留在聊天列表页（sessions），朋友圈/我的页隐藏
+      if (btnMpEntry) {
+        btnMpEntry.style.display = currentChatTab === 'sessions' ? 'flex' : 'none';
       }
 
       // 动态更新主标题内容
@@ -2037,6 +1921,7 @@ chatFooterTabs.forEach(tab => {
     const btnNewChat = document.getElementById("btn-new-chat");
     const btnMomentsPost = document.getElementById("btn-moments-post");
     const btnMomentsSettings = document.getElementById("btn-moments-settings");
+    const btnMpEntry = document.getElementById("btn-miniprogram-entry");
 
     if (btnNewChat) {
       btnNewChat.style.display = currentChatTab === 'sessions' ? 'flex' : 'none';
@@ -2046,6 +1931,10 @@ chatFooterTabs.forEach(tab => {
     }
     if (btnMomentsSettings) {
       btnMomentsSettings.style.display = currentChatTab === 'moments' ? 'flex' : 'none';
+    }
+    // 小程序入口仅保留在聊天列表页（sessions），朋友圈/我的页隐藏
+    if (btnMpEntry) {
+      btnMpEntry.style.display = currentChatTab === 'sessions' ? 'flex' : 'none';
     }
 
     // 动态更新主标题内容
@@ -2230,7 +2119,7 @@ async function renderSessionList() {
             <img class="session-avatar" src="${resolveAvatar(s.customCharAvatar || char?.avatar, s.customCharName || char?.name || '未知')}" onerror="avatarFallback(this, '${escapeHtml(s.customCharName || char?.name || '未知')}')">
             <div class="session-detail">
               <div class="session-row">
-                <span class="session-name">${escapeHtml(s.customCharName || char?.name || '未知角色')}</span>
+                <span class="session-name">${escapeHtml(s.customCharName || char?.name || '未知角色')}${s.charRemark ? `<span style="font-size:10px; color:var(--text-secondary); font-weight:400; margin-left:4px;">(${escapeHtml(s.charRemark)})</span>` : ''}</span>
                 <span class="session-time">${timeDisplay}</span>
               </div>
               <div class="session-msg">${escapeHtml(latestText)}</div>
@@ -2454,10 +2343,90 @@ async function renderDialogMessages(isInitial = true) {
   }
 
   let prevMsgDisplayTime = null;
+  // 用于跟踪当前正在折叠渲染的查手机会话 ID，避免重复折叠 [11]
+  let currentFoldedPhoneSession = null;
 
-  for (const m of msgs) {
+  for (let msgIdx = 0; msgIdx < msgs.length; msgIdx++) {
+        const m = msgs[msgIdx];
         // 通话中的对白消息（带 callId）不上屏，只在通话记录卡片内查看
         if (m.callId) continue;
+
+        // 查手机系统消息折叠机制：连续的相同 phoneSessionId 的查手机操作折叠为一个可展开条目 [11]
+        // 上下文机制不变（仍按条存数据库），仅在 UI 渲染层做折叠
+        if (m.senderType === 'system' && m.isPhoneAction === 1 && m.phoneSessionId) {
+          // 已经折叠过这个会话，跳过后续相同 phoneSessionId 的消息
+          if (currentFoldedPhoneSession === m.phoneSessionId) continue;
+
+          // 收集所有相同 phoneSessionId 的查手机操作消息
+          const groupedActions = [];
+          for (let j = msgIdx; j < msgs.length; j++) {
+            const jm = msgs[j];
+            if (jm.senderType === 'system' && jm.isPhoneAction === 1 && jm.phoneSessionId === m.phoneSessionId) {
+              groupedActions.push(jm);
+            } else if (jm.senderType === 'system' && jm.isPhoneAction === 1 && !jm.phoneSessionId) {
+              // 兼容旧数据：未带 phoneSessionId 的查手机操作，按时间临近性归入当前组
+              if (groupedActions.length > 0 && (jm.timestamp - groupedActions[groupedActions.length - 1].timestamp) < 5 * 60 * 1000) {
+                groupedActions.push(jm);
+              }
+            }
+          }
+
+          if (groupedActions.length > 0) {
+            currentFoldedPhoneSession = m.phoneSessionId;
+            // 渲染折叠条目
+            const foldEl = document.createElement("div");
+            foldEl.className = "group-system-notice-container phone-action-fold";
+            foldEl.setAttribute("data-msg-id", m.id);
+            // 上下展开布局：flex-direction:column 让 summary 在上、details 在下 [3]
+            foldEl.style.cssText = "display:flex; flex-direction:column; align-items:center; width:100%; margin:8px 0; box-sizing:border-box; padding:0 16px; gap:0;";
+
+            // 概要：从所有操作中提取关键动作
+            const actionCount = groupedActions.length;
+            const firstActionTime = new Date(groupedActions[0].timestamp);
+            const timeStr = firstActionTime.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+
+            // 提取操作类型摘要
+            const actionTypes = groupedActions.map(a => {
+              const c = a.content || '';
+              if (c.includes('冒充')) return '冒充发消息';
+              if (c.includes('远程把')) return '操控家电';
+              if (c.includes('私密保险箱')) return '查看私密文件';
+              return '其他操作';
+            });
+            // 去重保留顺序
+            const uniqueTypes = [];
+            actionTypes.forEach(t => { if (!uniqueTypes.includes(t)) uniqueTypes.push(t); });
+
+            foldEl.innerHTML = `
+              <div class="phone-action-fold-summary" style="background-color:rgba(99,102,241,0.08); padding:6px 12px; border-radius:6px; font-size:11px; color:#6366f1; max-width:85%; text-align:center; line-height:1.4; cursor:pointer; user-select:none; border:1px solid rgba(99,102,241,0.2);">
+                <div style="display:flex; align-items:center; gap:6px; justify-content:center;">
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2" ry="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+                  <span style="font-weight:700;">查手机操作记录</span>
+                  <span style="font-size:10px; color:#94a3b8; font-weight:600;">${timeStr} · ${actionCount} 条</span>
+                  <svg class="fold-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="transition:transform 0.2s;"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </div>
+                <div style="font-size:10px; color:#94a3b8; margin-top:2px;">${uniqueTypes.join(' / ')}</div>
+              </div>
+              <div class="phone-action-fold-details" style="display:none; margin-top:8px; flex-direction:column; gap:4px; width:100%; max-width:85%; align-self:center;">
+                ${groupedActions.map(a => {
+                  const t = new Date(a.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+                  return `<div style="background-color:rgba(0,0,0,0.05); padding:4px 10px; border-radius:4px; font-size:10.5px; color:#7f7f7f; text-align:center; line-height:1.4;"><span style="color:#94a3b8; font-size:9.5px;">${t}</span> ${escapeHtml(a.content)}</div>`;
+                }).join('')}
+              </div>
+            `;
+            // 点击展开/收起
+            const summary = foldEl.querySelector(".phone-action-fold-summary");
+            const details = foldEl.querySelector(".phone-action-fold-details");
+            const chevron = foldEl.querySelector(".fold-chevron");
+            summary.onclick = () => {
+              const isHidden = details.style.display === 'none';
+              details.style.display = isHidden ? 'flex' : 'none';
+              chevron.style.transform = isHidden ? 'rotate(180deg)' : 'rotate(0deg)';
+            };
+            fragment.appendChild(foldEl);
+            continue;
+          }
+        }
 
         // 历史消息残留标签清洗：[图片描述: xxx] / [图片: xxx] 归一化为图片消息
         // 仅对文本类型消息处理，避免重复处理已是 image 类型的消息
@@ -2527,15 +2496,19 @@ async function renderDialogMessages(isInitial = true) {
             e.preventDefault();
             if (isMultiSelectMode) return;
             selectedMsgId = m.id;
-            
+
             if (window.momentShareClickTimer) {
               clearTimeout(window.momentShareClickTimer);
               window.momentShareClickTimer = null;
             }
-            
+
             const btnRecall = document.getElementById("btn-menu-recall");
             if (btnRecall) btnRecall.style.display = "none";
-            
+
+            // 撤回消息不显示分支按钮
+            const btnBranch = document.getElementById("btn-menu-branch");
+            if (btnBranch) btnBranch.style.display = "none";
+
             document.getElementById("bubble-context-menu").style.display = "flex";
           };
           fragment.appendChild(recallEl);
@@ -2551,12 +2524,12 @@ async function renderDialogMessages(isInitial = true) {
       e.preventDefault();
       if (isMultiSelectMode) return;
       selectedMsgId = m.id;
-      
+
       if (window.momentShareClickTimer) {
         clearTimeout(window.momentShareClickTimer);
         window.momentShareClickTimer = null;
       }
-      
+
       const msg = await db.messages.get(m.id);
       const btnRecall = document.getElementById("btn-menu-recall");
       if (btnRecall && msg) {
@@ -2567,7 +2540,17 @@ async function renderDialogMessages(isInitial = true) {
           btnRecall.style.display = "none";
         }
       }
-      
+
+      // 分支按钮：仅单聊 + 最后一轮才显示
+      const btnBranch = document.getElementById("btn-menu-branch");
+      if (btnBranch) {
+        let showBranch = false;
+        if (window.chatArchiveSystem && window.chatArchiveSystem.isMsgInLastRoundOnline) {
+          showBranch = await window.chatArchiveSystem.isMsgInLastRoundOnline(m.id, activeSessionId);
+        }
+        btnBranch.style.display = showBranch ? "block" : "none";
+      }
+
       document.getElementById("bubble-context-menu").style.display = "flex";
     };
 
@@ -2842,6 +2825,13 @@ async function renderDialogMessages(isInitial = true) {
       } catch(e) {
         contentHtml = `<div class="msg-text" style="position: relative;">论坛帖子分享格式错误${emojiHtml}</div>`;
       }
+    } else if (m.contentType === 'miniprogram_share') {
+      // 小程序分享卡片（批量渲染分支）：user/char 邀请对方一起玩小程序
+      if (window.miniProgramSystem && typeof window.miniProgramSystem.renderShareCardHtml === "function") {
+        contentHtml = window.miniProgramSystem.renderShareCardHtml(m);
+      } else {
+        contentHtml = `<div class="msg-text" style="position: relative;">[小程序分享]${emojiHtml}</div>`;
+      }
     } else if (m.contentType === 'mcp_tool') {
       try {
         const toolData = JSON.parse(m.content);
@@ -2928,12 +2918,23 @@ async function renderDialogMessages(isInitial = true) {
         thoughtDiv.setAttribute("data-msg-id", m.id);
         thoughtDiv.style.cssText = "width: 100%; display: flex; justify-content: center; align-items: center; position: relative; margin: 4px 0;";
         
-        thoughtDiv.ondblclick = (e) => {
+        thoughtDiv.ondblclick = async (e) => {
           e.preventDefault();
           if (isMultiSelectMode) return;
           selectedMsgId = m.id;
           const btnRecall = document.getElementById("btn-menu-recall");
           if (btnRecall) btnRecall.style.display = "none";
+
+          // 分支按钮：仅单聊 + 最后一轮才显示
+          const btnBranch = document.getElementById("btn-menu-branch");
+          if (btnBranch) {
+            let showBranch = false;
+            if (window.chatArchiveSystem && window.chatArchiveSystem.isMsgInLastRoundOnline) {
+              showBranch = await window.chatArchiveSystem.isMsgInLastRoundOnline(m.id, activeSessionId);
+            }
+            btnBranch.style.display = showBranch ? "block" : "none";
+          }
+
           document.getElementById("bubble-context-menu").style.display = "flex";
         };
 
@@ -3004,6 +3005,24 @@ async function renderDialogMessages(isInitial = true) {
           const charSender = await db.archives.get(Number(m.senderId));
           finalSenderName = charSender ? (charSender.remark || charSender.name) : "群成员";
           finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar, charSender.name) : finalAvatarUrl;
+          // 文件管理「对话快照分支」成员：按消息自身携带的 sourceArchiveId 精确匹配分支，
+          // 确保同一角色的不同对话分支在群聊中各自独立显示，互不串名
+          let snapMember = memberInfo;
+          if (m.senderSnapshotId) {
+            const sm = await db.group_members.where('groupId').equals(sess.groupId)
+              .and(x => x.memberType === m.senderType && x.sourceArchiveId === m.senderSnapshotId).first();
+            if (sm) snapMember = sm;
+          }
+          if (snapMember && snapMember.sourceArchiveId) {
+            try {
+              const srcArchive = await db.chat_archives.get(snapMember.sourceArchiveId);
+              if (srcArchive) {
+                const parts = srcArchive.customLabel.split('-');
+                const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
+                finalSenderName = `${finalSenderName}（${tag}）`;
+              }
+            } catch(e) {}
+          }
         }
         if (memberInfo && memberInfo.title) {
           const badgeColor = memberInfo.role === 'owner' ? '#ef4444' : (memberInfo.role === 'admin' ? '#3b82f6' : '#10b981');
@@ -3232,15 +3251,19 @@ async function appendMessageToDOM(msg) {
       e.preventDefault();
       if (isMultiSelectMode) return;
       selectedMsgId = msg.id;
-      
+
       if (window.momentShareClickTimer) {
         clearTimeout(window.momentShareClickTimer);
         window.momentShareClickTimer = null;
       }
-      
+
       const btnRecall = document.getElementById("btn-menu-recall");
       if (btnRecall) btnRecall.style.display = "none";
-      
+
+      // 撤回消息不显示分支按钮
+      const btnBranch = document.getElementById("btn-menu-branch");
+      if (btnBranch) btnBranch.style.display = "none";
+
       document.getElementById("bubble-context-menu").style.display = "flex";
     };
     container.appendChild(recallEl);
@@ -3257,12 +3280,12 @@ async function appendMessageToDOM(msg) {
     e.preventDefault();
     if (isMultiSelectMode) return;
     selectedMsgId = msg.id;
-    
+
     if (window.momentShareClickTimer) {
       clearTimeout(window.momentShareClickTimer);
       window.momentShareClickTimer = null;
     }
-    
+
     const dbMsg = await db.messages.get(msg.id);
     const btnRecall = document.getElementById("btn-menu-recall");
     if (btnRecall && dbMsg) {
@@ -3273,7 +3296,17 @@ async function appendMessageToDOM(msg) {
         btnRecall.style.display = "none";
       }
     }
-    
+
+    // 分支按钮：仅单聊 + 最后一轮才显示
+    const btnBranch = document.getElementById("btn-menu-branch");
+    if (btnBranch) {
+      let showBranch = false;
+      if (window.chatArchiveSystem && window.chatArchiveSystem.isMsgInLastRoundOnline) {
+        showBranch = await window.chatArchiveSystem.isMsgInLastRoundOnline(msg.id, activeSessionId);
+      }
+      btnBranch.style.display = showBranch ? "block" : "none";
+    }
+
     document.getElementById("bubble-context-menu").style.display = "flex";
   };
 
@@ -3513,6 +3546,13 @@ async function appendMessageToDOM(msg) {
     } catch(e) {
       contentHtml = `<div class="msg-text">朋友圈分享格式错误</div>`;
     }
+  } else if (msg.contentType === 'miniprogram_share') {
+    // 小程序分享卡片（追加渲染分支）：user/char 邀请对方一起玩小程序
+    if (window.miniProgramSystem && typeof window.miniProgramSystem.renderShareCardHtml === "function") {
+      contentHtml = window.miniProgramSystem.renderShareCardHtml(msg);
+    } else {
+      contentHtml = `<div class="msg-text">[小程序分享]</div>`;
+    }
   } else if (msg.contentType === 'mcp_tool') {
     try {
       const toolData = JSON.parse(msg.content);
@@ -3602,12 +3642,23 @@ async function appendMessageToDOM(msg) {
         thoughtDiv.setAttribute("data-msg-id", msg.id);
         thoughtDiv.style.cssText = "width: 100%; display: flex; justify-content: center; align-items: center; position: relative; margin: 4px 0;";
 
-        thoughtDiv.ondblclick = (e) => {
+        thoughtDiv.ondblclick = async (e) => {
           e.preventDefault();
           if (isMultiSelectMode) return;
           selectedMsgId = msg.id;
           const btnRecall = document.getElementById("btn-menu-recall");
           if (btnRecall) btnRecall.style.display = "none";
+
+          // 分支按钮：仅单聊 + 最后一轮才显示
+          const btnBranch = document.getElementById("btn-menu-branch");
+          if (btnBranch) {
+            let showBranch = false;
+            if (window.chatArchiveSystem && window.chatArchiveSystem.isMsgInLastRoundOnline) {
+              showBranch = await window.chatArchiveSystem.isMsgInLastRoundOnline(msg.id, activeSessionId);
+            }
+            btnBranch.style.display = showBranch ? "block" : "none";
+          }
+
           document.getElementById("bubble-context-menu").style.display = "flex";
         };
 
@@ -3673,6 +3724,23 @@ async function appendMessageToDOM(msg) {
             const charSender = await db.archives.get(Number(msg.senderId));
             finalSenderName = charSender ? (charSender.remark || charSender.name) : "群成员";
             finalAvatarUrl = charSender ? resolveAvatar(charSender.avatar, charSender.name) : finalAvatarUrl;
+            // 文件管理「对话快照分支」成员：按消息自身携带的 sourceArchiveId 精确匹配分支
+            let snapMember = memberInfo;
+            if (msg.senderSnapshotId) {
+              const sm = await db.group_members.where('groupId').equals(sess.groupId)
+                .and(x => x.memberType === msg.senderType && x.sourceArchiveId === msg.senderSnapshotId).first();
+              if (sm) snapMember = sm;
+            }
+            if (snapMember && snapMember.sourceArchiveId) {
+              try {
+                const srcArchive = await db.chat_archives.get(snapMember.sourceArchiveId);
+                if (srcArchive) {
+                  const parts = srcArchive.customLabel.split('-');
+                  const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
+                  finalSenderName = `${finalSenderName}（${tag}）`;
+                }
+              } catch(e) {}
+            }
           }
           if (memberInfo && memberInfo.title) {
             const badgeColor = memberInfo.role === 'owner' ? '#ef4444' : (memberInfo.role === 'admin' ? '#3b82f6' : '#10b981');
@@ -3990,6 +4058,18 @@ function initContextMenuHandlers() {
     };
   }
 
+  const btnBranch = document.getElementById("btn-menu-branch");
+  if (btnBranch) {
+    btnBranch.onclick = async () => {
+      menu.style.display = "none";
+      if (window.chatArchiveSystem && window.chatArchiveSystem.promptAndCreateSnapshot) {
+        window.chatArchiveSystem.promptAndCreateSnapshot(activeSessionId);
+      } else {
+        showToast("分支功能加载中...");
+      }
+    };
+  }
+
   const btnReroll = document.getElementById("btn-menu-reroll");
   if (btnReroll) {
     btnReroll.onclick = async () => {
@@ -4236,15 +4316,88 @@ function bindChatAppEvents() {
   if (btnDetailsDeleteSession) {
     btnDetailsDeleteSession.onclick = () => {
       showCustomConfirm("删除对话", "确定要彻底删除该对话及其中包含的所有对白消息与环境设定吗？此操作不可逆！", async () => {
-        await db.messages.where('sessionId').equals(activeSessionId).delete();
-        await db.offline_messages.where('sessionId').equals(activeSessionId).delete();
-        await db.summaries.where('sessionId').equals(activeSessionId).delete();
-        await db.sessions.delete(activeSessionId);
+        const sid = Number(activeSessionId);
+        if (!sid || isNaN(sid)) {
+          showToast("无法确定要删除的对话");
+          return;
+        }
 
-        showToast("对话已成功彻底注销并抹除");
-        closeChatDetails();
-        closeChatDialog();
-      }, null, { kind: 'trash', loadingText: '正在注销并抹除对话…' });
+        // 显示删除进度遮罩
+        const progOverlay = document.getElementById("delete-progress-overlay");
+        const progText = document.getElementById("delete-progress-text");
+        const progSub = document.getElementById("delete-progress-sub");
+        if (progOverlay) {
+          progOverlay.style.display = "flex";
+          if (progText) progText.innerText = "正在删除对话...";
+          if (progSub) progSub.innerText = "请稍候，正在清理所有关联数据";
+        }
+
+        // 让 UI 有机会渲染遮罩再开始删除
+        await new Promise(r => setTimeout(r, 50));
+
+        try {
+          if (progSub) progSub.innerText = "正在清理对话消息...";
+          try { await db.messages.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删messages失败:", e); }
+          if (progSub) progSub.innerText = "正在清理线下消息...";
+          try { await db.offline_messages.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删offline_messages失败:", e); }
+
+          // 剧场关联数据
+          try {
+            const theaters = await db.theaters.where('sessionId').equals(sid).toArray();
+            for (const t of theaters) {
+              try { await db.offline_messages.where('theaterId').equals(t.id).delete(); } catch(e) {}
+              try { await db.status_history.where('theaterId').equals(t.id).delete(); } catch(e) {}
+            }
+          } catch(e) { console.warn("删剧场关联失败:", e); }
+
+          if (progSub) progSub.innerText = "正在清理总结与心声...";
+          try { await db.summaries.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删summaries失败:", e); }
+          try { await db.status_history.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删status_history失败:", e); }
+          try { await db.check_phone_states.delete(sid); } catch(e) { console.warn("删check_phone_states失败:", e); }
+          try { await db.html_cards.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删html_cards失败:", e); }
+          try { await db.dialogue_vectors.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删dialogue_vectors失败:", e); }
+          try { await db.theaters.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删theaters失败:", e); }
+
+          if (progSub) progSub.innerText = "正在清理深谈与生图...";
+          try {
+            const deeptalks = await db.deeptalks.where('sessionId').equals(sid).toArray();
+            for (const dt of deeptalks) {
+              try { await db.deeptalk_messages.where('deeptalkId').equals(dt.id).delete(); } catch(e) {}
+            }
+            await db.deeptalks.where('sessionId').equals(sid).delete();
+          } catch(e) { console.warn("删deeptalks失败:", e); }
+          try { await db.deeptalk_thoughts.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删deeptalk_thoughts失败:", e); }
+          try { await db.imagegen_session_settings.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("删imagegen_settings失败:", e); }
+
+          if (progSub) progSub.innerText = "正在删除会话本身...";
+          try {
+            await db.sessions.delete(sid);
+          } catch(e) {
+            console.error("删除会话本身失败:", e);
+            if (progOverlay) progOverlay.style.display = "none";
+            showToast("删除对话失败: " + (e.message || "未知错误"));
+            return;
+          }
+
+          // 重置 activeSessionId，防止后续代码引用已删除的会话
+          activeSessionId = null;
+
+          if (progText) progText.innerText = "删除成功";
+          if (progSub) progSub.innerText = "正在返回对话列表...";
+
+          // 短暂展示成功状态后关闭遮罩并返回
+          await new Promise(r => setTimeout(r, 400));
+
+          if (progOverlay) progOverlay.style.display = "none";
+          showToast("对话已成功彻底注销并抹除");
+          closeChatDetails();
+          closeChatDialog();
+        } catch (err) {
+          console.error("删除对话异常:", err);
+          if (progOverlay) progOverlay.style.display = "none";
+          showToast("删除对话失败: " + (err.message || "未知错误"));
+        }
+      });
     };
   }
 
@@ -4562,6 +4715,14 @@ function bindChatAppEvents() {
 本次回复的完整翻译内容`;
         }
 
+        // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
+        if (window.miniProgramSystem && typeof window.miniProgramSystem.buildSharePrompt === "function") {
+          try {
+            const mpPrompt = await window.miniProgramSystem.buildSharePrompt(activeSessionId);
+            if (mpPrompt) finalSystemPrompt += mpPrompt;
+          } catch (e) {}
+        }
+
         // 注入回溯重回要求（若存在），约束 char 本次重回的内容方向
         if (window._rerollRequirement) {
           finalSystemPrompt += `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
@@ -4695,6 +4856,16 @@ function bindChatAppEvents() {
                 displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
               }
             } catch(e) { displayContent = "[转发了一条论坛帖子]"; }
+          } else if (h.contentType === 'miniprogram_share') {
+            // 小程序分享卡片在上下文中转为可读摘要（避免裸 JSON 污染）
+            try {
+              const mp = JSON.parse(h.content);
+              if (h.senderType === 'user') {
+                displayContent = `[小程序分享] ${_chatMyName} 邀请 ${_chatCharName} 一起玩「${mp.mpName || '小程序'}」：${mp.inviteText || ''}`;
+              } else {
+                displayContent = `[小程序分享] ${_chatCharName} 邀请 ${_chatMyName} 一起玩「${mp.mpName || '小程序'}」：${mp.inviteText || ''}`;
+              }
+            } catch(e) { displayContent = "[小程序分享]"; }
           } else if (h.contentType === 'pay_for_me') {
             // 代付请求卡片在上下文中转为明确摘要，便于 AI 识别这是一个"需要它代付的订单"
             // 而不是普通转账/红包，从而使用 AGREE_PAY 指令而非发起转账。
@@ -4755,7 +4926,19 @@ function bindChatAppEvents() {
           // 核心 Few-shot 历史格式对齐
           if (sessObj && sessObj.isGroup === 1 && h.senderType === 'char') {
             const charSender = await db.archives.get(Number(h.senderId));
-            const senderName = charSender ? charSender.name : "群成员";
+            let senderName = charSender ? charSender.name : "群成员";
+            // 文件管理来源的角色加括号标记
+            try {
+              const gm = await db.group_members.where('[groupId+memberId+memberType]').equals([sessObj.groupId, Number(h.senderId), 'char']).first();
+              if (gm && gm.sourceArchiveId) {
+                const srcArchive = await db.chat_archives.get(gm.sourceArchiveId);
+                if (srcArchive) {
+                  const parts = srcArchive.customLabel.split('-');
+                  const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
+                  senderName = `${senderName}(${tag})`;
+                }
+              }
+            } catch(e) {}
             displayContent = `[SENDER: ${senderName}] ${displayContent}`;
           }
 
@@ -5255,13 +5438,27 @@ function bindChatAppEvents() {
         }
 
         // 尝试解析翻译随动 [TRANSLATE] 格式
+        // 关键修复：上方 [STATUS] 解析已把 textReply 截断到 [STATUS] 之前，
+        // 而 prompt 要求翻译位于心声之后（即 [STATUS] 之后），此时 textReply 已不含 [TRANSLATE]，
+        // 导致翻译永远解析不到。这里必须从原始 rawReply 提取，再从 textReply 中擦除。
         let translationText = null;
         if (isTranslateAutoOn) {
-          const translateMatch = textReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
+          const translateMatch = rawReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
           if (translateMatch) {
             translationText = translateMatch[1].trim();
             textReply = textReply.replace(/\[TRANSLATE\]\s*[\s\S]*?(?=\[STATUS\]|$)/, '').trim();
           }
+        }
+
+        // 小程序分享：解析 AI 回复中的 [MP_INVITE] 指令 → 转为 char 发出的分享卡片（无损，未开启开关则无效）
+        if (window.miniProgramSystem && typeof window.miniProgramSystem.parseAndApplyInvite === "function") {
+          try {
+            const cleaned = await window.miniProgramSystem.parseAndApplyInvite(rawReply, activeSessionId);
+            if (cleaned && cleaned !== rawReply) {
+              rawReply = cleaned;
+              textReply = textReply.replace(/\[MP_INVITE\]\s*\{[\s\S]*?\}/, "").trim();
+            }
+          } catch (e) {}
         }
 
         // === 【全模态多语境时序渲染中枢 3.0】：绑定未消耗的 CoT + 顺序分发文本与多媒体指令 ===
@@ -5633,6 +5830,13 @@ function openMeSub(target) {
     } else {
       body.innerHTML = `<div style="padding:40px; text-align:center;"><div style="font-size:32px; font-weight:700; color:#1e293b;">￥ 88,888.00</div></div>`;
     }
+  } else if (target === 'files') {
+    title.innerText = "文件管理";
+    if (window.chatArchiveSystem && window.chatArchiveSystem.renderFileManagementPage) {
+      window.chatArchiveSystem.renderFileManagementPage(body);
+    } else {
+      body.innerHTML = `<p style="padding:40px; text-align:center; color:var(--text-secondary);">文件管理模块加载中...</p>`;
+    }
   }
 }
 
@@ -5739,7 +5943,7 @@ async function loadFavoritesList() {
         const barWidth = Math.min(160, 60 + duration * 3);
         contentHtml = `
           <div style="display:flex; align-items:center; gap:8px;">
-            <button onclick="playFavVoice('${escapeHtml(voiceText).replace(/'/g, "\\'")}', ${f.id})" style="width:32px; height:32px; border-radius:50%; border:none; background:#07c160; color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+            <button onclick="playFavVoice('${escapeHtml(voiceText).replace(/'/g, "\\'")}', ${f.id}, '${f.source}')" style="width:32px; height:32px; border-radius:50%; border:none; background:#07c160; color:#fff; cursor:pointer; display:flex; align-items:center; justify-content:center; flex-shrink:0;">
               <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
             </button>
             <div style="flex:1; min-width:0;">
@@ -5852,18 +6056,58 @@ async function loadFavoritesList() {
 }
 
 // 播放收藏的语音消息（不受3天缓存清理影响）
-function playFavVoice(voiceText, msgId) {
-  if (window.ttsSystem) {
-    const sessionId = activeSessionId || null;
-    window.ttsSystem.getOrSynthesize(voiceText, null, sessionId).then(blob => {
-      if (blob) {
-        window.ttsSystem.playBlob(blob);
-      } else {
-        showToast("语音播放失败，请检查 TTS 配置");
+// 关键修复：之前传 null 作为 voiceId，导致缓存 key 不匹配、用默认音色重新合成，
+// 与聊天中听到的音色不一致。现改为还原首次播放时的音色 ID，并优先复用已落库的原音频。
+async function playFavVoice(voiceText, msgId, source) {
+  if (!window.ttsSystem) { showToast("TTS 系统未加载"); return; }
+  try {
+    // 1. 找到原始消息记录（线上 / 线下），优先用首次播放时落库的原音频 blob（真正的"复制"）
+    let msg = null;
+    const numId = Number(msgId);
+    if (source === 'offline') {
+      msg = await db.offline_messages.get(numId);
+    } else if (source === 'online') {
+      msg = await db.messages.get(numId);
+    } else {
+      // 兜底：两张表都试一下
+      msg = await db.messages.get(numId);
+      if (msg) { source = 'online'; }
+      else { msg = await db.offline_messages.get(numId); source = msg ? 'offline' : 'online'; }
+    }
+
+    if (msg && msg.voiceBlob) {
+      // 命中首次播放时保存的原音色音频，直接播放（与聊天中听到的完全一致）
+      window.ttsSystem.playBlob(msg.voiceBlob);
+      return;
+    }
+
+    // 2. 还原音色 ID：优先消息记录的 voiceIdUsed，其次会话 ttsVoiceId，最后默认
+    let voiceId = (msg && msg.voiceIdUsed) ? String(msg.voiceIdUsed).trim() : '';
+    if (!voiceId) {
+      const sid = (msg && msg.sessionId) ? msg.sessionId : (activeSessionId || null);
+      let sess = null;
+      if (sid) sess = await db.sessions.get(sid);
+      voiceId = (sess && sess.ttsVoiceId) ? String(sess.ttsVoiceId).trim() : '';
+    }
+    if (!voiceId) voiceId = 'male-qn-jingying';
+
+    const sessionId = (msg && msg.sessionId) ? msg.sessionId : (activeSessionId || null);
+    const blob = await window.ttsSystem.getOrSynthesize(voiceText, voiceId, sessionId);
+    if (blob) {
+      window.ttsSystem.playBlob(blob);
+      // 3. 把这次合成的音频与音色 ID 落库，下次即为真正的"原音复制"
+      if (msg) {
+        try {
+          if (source === 'offline') await db.offline_messages.update(numId, { voiceBlob: blob, voiceIdUsed: voiceId });
+          else await db.messages.update(numId, { voiceBlob: blob, voiceIdUsed: voiceId });
+        } catch (e) { /* 落库失败不影响播放 */ }
       }
-    });
-  } else {
-    showToast("TTS 系统未加载");
+    } else {
+      showToast("语音播放失败，请检查 TTS 配置");
+    }
+  } catch (e) {
+    console.warn('[TTS] 收藏语音播放失败', e);
+    showToast("语音播放失败，请检查 TTS 配置");
   }
 }
 
@@ -5914,6 +6158,7 @@ if (btnDialogDetails) {
       const user = sess.userId ? await db.archives.get(sess.userId) : null;
 
       document.getElementById("details-char-name").value = sess.customCharName || char?.name || "";
+      document.getElementById("details-char-remark").value = sess.charRemark || char?.remark || "";
       
       const cAvatar = sess.customCharAvatar || char?.avatar;
       document.getElementById("details-char-avatar").value = (cAvatar instanceof Blob) ? "[本地上传图片]" : (cAvatar || "");
@@ -5941,6 +6186,10 @@ if (btnDialogDetails) {
       document.getElementById("details-allow-recall-toggle").checked = !!sess.allowCharRecall;
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
       document.getElementById("details-allow-char-block").checked = !!sess.allowCharToBlock;
+
+      // 渲染小程序分享开关（无损：未开启即不注入任何 prompt）
+      const mpShareToggle = document.getElementById("details-allow-miniprogram-share");
+      if (mpShareToggle) mpShareToggle.checked = !!sess.allowMiniprogramShare;
 
       // 渲染 TTS 语音开关与音色 ID，并绑定开关展开/收起
       const ttsToggle = document.getElementById("details-tts-toggle");
@@ -6062,6 +6311,7 @@ const btnSaveDetails = document.getElementById("btn-save-details");
 if (btnSaveDetails) {
   btnSaveDetails.onclick = async () => {
     const charName = document.getElementById("details-char-name").value.trim();
+    const charRemark = document.getElementById("details-char-remark").value.trim();
     const charAvatarInput = document.getElementById("details-char-avatar").value.trim();
     
     let charAvatar = null;
@@ -6096,6 +6346,10 @@ if (btnSaveDetails) {
     const allowCharRecall = document.getElementById("details-allow-recall-toggle").checked;
     const allowCharReaction = document.getElementById("details-allow-reaction-toggle").checked;
     const allowCharToBlock = document.getElementById("details-allow-char-block").checked;
+
+    // 读取小程序分享开关（无损：默认关闭，不影响现有功能）
+    const mpShareToggleEl = document.getElementById("details-allow-miniprogram-share");
+    const allowMiniprogramShare = mpShareToggleEl ? (mpShareToggleEl.checked ? 1 : 0) : 0;
 
     // 读取 TTS 语音开关与音色 ID
     const ttsToggleEl = document.getElementById("details-tts-toggle");
@@ -6132,6 +6386,7 @@ if (btnSaveDetails) {
       customCharName: charName,
       customCharAvatar: charAvatar,
       customCharPersona: charPersona,
+      charRemark: charRemark,
       customUserName: userName,
       customUserAvatar: userAvatar,
       customUserPersona: userPersona,
@@ -6143,6 +6398,7 @@ if (btnSaveDetails) {
       allowCharRecall: allowCharRecall ? 1 : 0,
       allowCharReaction: allowCharReaction ? 1 : 0,
       allowCharToBlock: allowCharToBlock ? 1 : 0,
+      allowMiniprogramShare: allowMiniprogramShare,
       ttsEnabled: ttsEnabled,
       ttsVoiceId: ttsVoiceId,
       allowCharAutoCall: allowCharAutoCall,
@@ -6270,6 +6526,10 @@ window.toggleVoiceTranslation = async function(msgId, el) {
     const blob = await window.ttsSystem.getOrSynthesize(voiceText, voiceId, activeSessionId);
     if (blob) {
       window.ttsSystem.playBlob(blob);
+      // 落库本次合成的音频与音色 ID，供收藏室"原音复制"播放（与聊天中听到的完全一致）
+      try {
+        await db.messages.update(Number(msgId), { voiceBlob: blob, voiceIdUsed: voiceId });
+      } catch (e) { /* 落库失败不影响播放 */ }
     }
   } catch (e) {
     console.warn('[TTS] 语音播放失败', e);
@@ -6637,10 +6897,21 @@ async function renderOfflineMessages() {
     card.className = `offline-card ${m.senderType === 'user' ? 'user' : 'char'}`;
     card.setAttribute("data-msg-id", m.id);
 
-    card.ondblclick = (e) => {
+    card.ondblclick = async (e) => {
       e.preventDefault();
       if (isOfflineMultiSelectMode) return;
       activeOfflineSelectedMsgId = Number(m.id);
+
+      // 分支按钮：仅单聊 + 最后一轮才显示
+      const btnOfflineBranch = document.getElementById("btn-offline-menu-branch");
+      if (btnOfflineBranch) {
+        let showBranch = false;
+        if (window.chatArchiveSystem && window.chatArchiveSystem.isMsgInLastRoundOffline) {
+          showBranch = await window.chatArchiveSystem.isMsgInLastRoundOffline(m.id, activeSessionId, isOfflineTheater ? activeTheaterId : null);
+        }
+        btnOfflineBranch.style.display = showBranch ? "block" : "none";
+      }
+
       document.getElementById("offline-bubble-context-menu").style.display = "flex";
     };
 
@@ -6756,6 +7027,18 @@ function initOfflineContextMenuHandlers() {
         await db.offline_messages.delete(activeOfflineSelectedMsgId);
         renderOfflineMessages();
       });
+    };
+  }
+
+  const btnOfflineBranch = document.getElementById("btn-offline-menu-branch");
+  if (btnOfflineBranch) {
+    btnOfflineBranch.onclick = async () => {
+      menu.style.display = "none";
+      if (window.chatArchiveSystem && window.chatArchiveSystem.promptAndCreateSnapshot) {
+        window.chatArchiveSystem.promptAndCreateSnapshot(activeSessionId);
+      } else {
+        showToast("分支功能加载中...");
+      }
     };
   }
 
@@ -7139,6 +7422,9 @@ async function triggerOfflineReply() {
         }
 
         // 解析线下心声随动 [STATUS]（用括号平衡法提取完整 JSON）
+        // 关键修复：[STATUS] 解析会把 rawReply 截断到 [STATUS] 之前，而 prompt 要求翻译位于心声之后，
+        // 此时 [TRANSLATE] 会被一并丢弃导致翻译永远解析不到。先保留截断前的完整回复供翻译解析使用。
+        const offlineFullReply = rawReply;
         let offlineStatusJson = null;
         if (offlineStatusAutoOn) {
           const statusIdx = rawReply.indexOf('[STATUS]');
@@ -7171,12 +7457,14 @@ async function triggerOfflineReply() {
         }
 
         // 解析线下翻译随动 [TRANSLATE]
+        // 关键修复：必须从 [STATUS] 截断前的完整回复中查找，否则翻译（位于心声之后）会被丢失。
         let offlineTranslationText = null;
         if (offlineTranslateAutoOn) {
-          const translateIdx = rawReply.indexOf('[TRANSLATE]');
-          if (translateIdx !== -1) {
-            offlineTranslationText = rawReply.substring(translateIdx + 11).trim();
-            rawReply = rawReply.substring(0, translateIdx).trim();
+          const translateMatch = offlineFullReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
+          if (translateMatch) {
+            offlineTranslationText = translateMatch[1].trim();
+            // 若 [TRANSLATE] 残留在截断后的 rawReply 中（即无心声或翻译在心声前），一并擦除
+            rawReply = rawReply.replace(/\[TRANSLATE\][\s\S]*$/,'').trim();
           }
         }
 
@@ -7421,20 +7709,28 @@ ${dialogText}`;
 ${dialogText}`;
       }
 
-      const response = await fetch(`${api.url}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-        body: JSON.stringify({
-          model: api.model,
-          messages: [{ role: "user", content: systemPrompt }],
-          temperature: 0.3
-        })
-      });
+      let rawSummaryText;
+      if (typeof window.fwCallLLM === "function") {
+        try {
+          rawSummaryText = await window.fwCallLLM(api, [{ role: "user", content: systemPrompt }], { temperature: 0.3 });
+        } catch(e) { /* fall through to original fetch */ }
+      }
+      if (rawSummaryText === undefined) {
+        const response = await fetch(`${api.url}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+          body: JSON.stringify({
+            model: api.model,
+            messages: [{ role: "user", content: systemPrompt }],
+            temperature: 0.3
+          })
+        });
 
-      if (!response.ok) throw new Error("API 总结调用失败");
+        if (!response.ok) throw new Error("API 总结调用失败");
 
-      const result = await response.json();
-      const rawSummaryText = result.choices[0].message.content.trim();
+        const result = await response.json();
+        rawSummaryText = result.choices[0].message.content.trim();
+      }
 
       // 解析生成碎片集合
       const items = parseClassificationText(rawSummaryText, formatChoice);
@@ -7732,20 +8028,28 @@ ${dialogText}`;
 ${dialogText}`;
   }
 
-  const response = await fetch(`${api.url}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-    body: JSON.stringify({
-      model: api.model,
-      messages: [{ role: "user", content: systemPrompt }],
-      temperature: 0.3
-    })
-  });
+  let rawSummaryText;
+  if (typeof window.fwCallLLM === "function") {
+    try {
+      rawSummaryText = await window.fwCallLLM(api, [{ role: "user", content: systemPrompt }], { temperature: 0.3 });
+    } catch(e) { /* fall through to original fetch */ }
+  }
+  if (rawSummaryText === undefined) {
+    const response = await fetch(`${api.url}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+      body: JSON.stringify({
+        model: api.model,
+        messages: [{ role: "user", content: systemPrompt }],
+        temperature: 0.3
+      })
+    });
 
-  if (!response.ok) throw new Error("API 总结调用失败");
+    if (!response.ok) throw new Error("API 总结调用失败");
 
-  const result = await response.json();
-  const rawSummaryText = result.choices[0].message.content.trim();
+    const result = await response.json();
+    rawSummaryText = result.choices[0].message.content.trim();
+  }
 
   const items = parseClassificationText(rawSummaryText, formatChoice);
 
@@ -8060,8 +8364,8 @@ function extractBareTextForTranslation(msg) {
     } catch(e) {}
   }
   if (typeof raw === 'string') {
-    // 物理剥离首部的 [QUOTE:消息ID] 或 【QUOTE:消息ID】 引用标签，防止引用标记被误送去翻译
-    raw = raw.replace(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i, '').trim();
+    // 物理剥离所有 [QUOTE:消息ID] 引用标签（全局，支持中间引用）[5]，防止引用标记被误送去翻译
+    raw = raw.replace(/[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/gi, '').trim();
     // 物理剥离旧思维链（覆盖所有标签变体 + 未闭合兜底）
     raw = raw.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
   }
@@ -8102,20 +8406,28 @@ async function translateChatMessage(msgId, isOffline = false) {
 需要翻译的原文：
 ${textToTranslate}`;
 
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "user", content: translatePrompt }],
-        temperature: 0.3
-      })
-    });
+    let translationText;
+    if (typeof window.fwCallLLM === "function") {
+      try {
+        translationText = await window.fwCallLLM(api, [{ role: "user", content: translatePrompt }], { temperature: 0.3 });
+      } catch(e) { /* fall through to original fetch */ }
+    }
+    if (translationText === undefined) {
+      const response = await fetch(`${api.url}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+        body: JSON.stringify({
+          model: api.model,
+          messages: [{ role: "user", content: translatePrompt }],
+          temperature: 0.3
+        })
+      });
 
-    if (!response.ok) throw new Error("翻译接口响应失败");
+      if (!response.ok) throw new Error("翻译接口响应失败");
 
-    const result = await response.json();
-    const translationText = result.choices[0].message.content.trim();
+      const result = await response.json();
+      translationText = result.choices[0].message.content.trim();
+    }
 
     // 3. 将翻译结果存入数据库，下次直接读取！
     await table.update(Number(msgId), {
@@ -8183,20 +8495,28 @@ async function batchTranslateMessages(isOffline = false) {
 需要翻译的文本数组：
 ${JSON.stringify(pureTexts)}`;
 
-      const response = await fetch(`${api.url}/chat/completions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-        body: JSON.stringify({
-          model: api.model,
-          messages: [{ role: "user", content: batchPrompt }],
-          temperature: 0.3
-        })
-      });
+      let rawText;
+      if (typeof window.fwCallLLM === "function") {
+        try {
+          rawText = await window.fwCallLLM(api, [{ role: "user", content: batchPrompt }], { temperature: 0.3 });
+        } catch(e) { /* fall through to original fetch */ }
+      }
+      if (rawText === undefined) {
+        const response = await fetch(`${api.url}/chat/completions`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+          body: JSON.stringify({
+            model: api.model,
+            messages: [{ role: "user", content: batchPrompt }],
+            temperature: 0.3
+          })
+        });
 
-      if (!response.ok) throw new Error("批量翻译接口响应失败");
+        if (!response.ok) throw new Error("批量翻译接口响应失败");
 
-      const result = await response.json();
-      const rawText = result.choices[0].message.content.trim();
+        const result = await response.json();
+        rawText = result.choices[0].message.content.trim();
+      }
       const cleanJson = rawText.replace(/^```json/i, '').replace(/```$/i, '').trim();
 
       let parsedArray = [];

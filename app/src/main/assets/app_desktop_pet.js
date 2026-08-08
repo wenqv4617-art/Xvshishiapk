@@ -408,20 +408,30 @@
 请以符合你自身性格、当前情绪和桌宠身份的口吻，简短地对用户说一句话（必须控制在20个字以内，严禁长篇大论）。
 同时你必须在回答的最后一行以 \`[PET_STATE]状态名\` 的格式返回你的新状态动作（状态名只能是以下之一：初始化, 开心, 难过, 生气, 犹豫, 洗漱, 吃饭, 睡觉, 看着你）。`;
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: [{ role: "system", content: prompt }, { role: "user", content: "双击了你" }],
-            temperature: 0.8
-          })
-        });
+        let apiContent;
+        const apiMessages = [{ role: "system", content: prompt }, { role: "user", content: "双击了你" }];
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            apiContent = await window.fwCallLLM(api, apiMessages, { temperature: 0.8 });
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (apiContent === undefined) {
+          const response = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({
+              model: api.model,
+              messages: apiMessages,
+              temperature: 0.8
+            })
+          });
 
-        if (!response.ok) throw new Error("连接 API 失败");
+          if (!response.ok) throw new Error("连接 API 失败");
 
-        const result = await response.json();
-        let reply = result.choices[0].message.content.trim();
+          const result = await response.json();
+          apiContent = result.choices[0].message.content;
+        }
+        let reply = apiContent.trim();
 
         const stateMatch = reply.match(/\[PET_STATE\]\s*([\s\S]*?)$/i);
         let foundState = 'default';
@@ -769,19 +779,28 @@
         const api = await db.api_presets.get(Number(presetId));
         if (!api) return;
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: messagesToSend,
-            temperature: api.temperature
-          })
-        });
+        let activeContent;
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            activeContent = await window.fwCallLLM(api, messagesToSend, { temperature: api.temperature });
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (activeContent === undefined) {
+          const response = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({
+              model: api.model,
+              messages: messagesToSend,
+              temperature: api.temperature
+            })
+          });
 
-        if (!response.ok) return;
-        const result = await response.json();
-        let reply = result.choices[0].message.content.trim();
+          if (!response.ok) return;
+          const result = await response.json();
+          activeContent = result.choices[0].message.content;
+        }
+        let reply = activeContent.trim();
 
         // 剥离 MSG_ID 标签 + think 标签 + AI 可能模仿输出的系统提示标签
         reply = reply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "");

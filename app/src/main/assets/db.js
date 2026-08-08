@@ -328,3 +328,31 @@ db.version(33).stores({
 db.version(34).stores({
   qt_styles: 'id++, name, builtin, version, createdAt'
 });
+
+// ============================================
+// 🎯 Version 35：原始对话向量检索表
+// - dialogue_vectors: 每一轮原始对话(user+char)的预计算向量
+//   * sessionId: 所属会话
+//   * roundIndex: 轮次序号（用于排序与去重）
+//   * userText / charText / combinedText: 该轮对话原文（截断存储）
+//   * vector: 该轮 combinedText 的 embedding（Dexie 透明存储，不声明索引）
+//   * timestamp: 该轮时间戳（用于时间衰减）
+//   独立于 summaries 表的总结检索，作为第二维"原始对话"召回源 [3]
+// ============================================
+db.version(35).stores({
+  dialogue_vectors: 'id++, sessionId, roundIndex, timestamp'
+});
+
+// ============================================
+// Version 36：对话快照（文件管理）表
+// - chat_archives: 单聊对话的即时快照存档
+//   * userId: 快照归属的 user 面具 ID（用于按 user 分类）
+//   * charId: 快照对应的 char 档案 ID（用于按 char 分类）
+//   * customLabel: 用户自定义字段（全局唯一，用于命名与检索）
+//   * charName / userName: 快照时刻的显示名（冗余存储，便于分类展示）
+//   * createdAt: 创建时间戳
+//   * snapshotData: 完整对话数据快照（透明存储，含 session/messages/summaries/status_history 等）
+// ============================================
+db.version(36).stores({
+  chat_archives: 'id++, userId, charId, customLabel, createdAt'
+});

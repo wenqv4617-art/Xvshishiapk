@@ -80,26 +80,42 @@ async function safeGetEmbedding(text) {
 }
 
 // 1. 提取对话轮次列表算法 (一轮 = user连续发言段 + char连续回复段)
+// [6] 语音/视频通话记录(senderType=system, contentType=call)也计入对话轮次，参与向量检索与被检索
 function getRoundsList(messages) {
   let rounds = [];
   let currentRound = { userMsgContent: "", charMsgContent: "", timestamp: 0 };
-  
+
   for (let m of messages) {
     if (m.senderType === 'user') {
       if (currentRound.userMsgContent && currentRound.charMsgContent) {
         rounds.push(currentRound);
         currentRound = { userMsgContent: "", charMsgContent: "", timestamp: 0 };
       }
-      currentRound.userMsgContent = currentRound.userMsgContent 
-        ? currentRound.userMsgContent + "\n" + m.content 
+      currentRound.userMsgContent = currentRound.userMsgContent
+        ? currentRound.userMsgContent + "\n" + m.content
         : m.content;
       currentRound.timestamp = m.timestamp;
     } else if (m.senderType === 'char') {
       if (currentRound.userMsgContent) {
-        currentRound.charMsgContent = currentRound.charMsgContent 
-          ? currentRound.charMsgContent + "\n" + m.content 
+        currentRound.charMsgContent = currentRound.charMsgContent
+          ? currentRound.charMsgContent + "\n" + m.content
           : m.content;
       }
+    } else if (m.senderType === 'system' && m.contentType === 'call') {
+      // [6] 通话记录计入轮次：解析 summary 作为对话内容
+      try {
+        const callData = JSON.parse(m.content);
+        const callSummary = callData.summary || `${callData.type === 'video' ? '视频' : '语音'}通话 ${callData.durationSec || 0}秒`;
+        // 通话记录作为 user 发起的内容（user 主动呼叫或接听）
+        if (currentRound.userMsgContent && currentRound.charMsgContent) {
+          rounds.push(currentRound);
+          currentRound = { userMsgContent: "", charMsgContent: "", timestamp: 0 };
+        }
+        currentRound.userMsgContent = currentRound.userMsgContent
+          ? currentRound.userMsgContent + "\n" + `[${callSummary}]`
+          : `[${callSummary}]`;
+        if (!currentRound.timestamp) currentRound.timestamp = m.timestamp;
+      } catch(e) {}
     }
   }
   if (currentRound.userMsgContent && currentRound.charMsgContent) {
@@ -153,12 +169,14 @@ async function retrieveSummaries(sessionId, latestUserMessageText) {
     otherSummaries.forEach(s => {
       if (s.vector) {
         const sim = cosineSimilarity(queryVector, s.vector);
-        const daysAgo = (Date.now() - s.timestamp) / (1000 * 60 * 60 * 24);
-        const decayFactor = Math.exp(-lambda * daysAgo);
-        const score = sim * decayFactor;
-
-        if (score >= threshold) {
-          const item = { s, score };
+        // 修复 [6]：用原始相似度做阈值过滤，衰减仅用于排序偏好。
+        // 旧逻辑 score = sim * decayFactor >= threshold 导致久远总结永远无法被召回
+        // （lambda=0.05 时，14天前的总结即使 sim=1.0 也无法通过 0.55 阈值）。
+        if (sim >= threshold) {
+          const daysAgo = (Date.now() - s.timestamp) / (1000 * 60 * 60 * 24);
+          const decayFactor = Math.exp(-lambda * daysAgo);
+          const rankScore = sim * decayFactor; // 衰减仅用于排序（近期优先），不用于过滤
+          const item = { s, rankScore, sim };
           if (s.category === 'emotional') emoGroup.push(item);
           else if (s.category === 'core') corGroup.push(item);
           else facGroup.push(item); // factual 事实及降级分类
@@ -166,10 +184,10 @@ async function retrieveSummaries(sessionId, latestUserMessageText) {
       }
     });
 
-    // 各大分类独立执行降序排列
-    emoGroup.sort((a, b) => b.score - a.score);
-    facGroup.sort((a, b) => b.score - a.score);
-    corGroup.sort((a, b) => b.score - a.score);
+    // 各大分类独立执行降序排列（按衰减后得分，近期优先）
+    emoGroup.sort((a, b) => b.rankScore - a.rankScore);
+    facGroup.sort((a, b) => b.rankScore - a.rankScore);
+    corGroup.sort((a, b) => b.rankScore - a.rankScore);
 
     // 精确拉取对应配额的 Top-K 向量记忆片
     const slicedEmo = emoGroup.slice(0, limitEmo).map(item => item.s);
@@ -203,11 +221,185 @@ async function retrieveSummaries(sessionId, latestUserMessageText) {
   const combined = [...recentSummaries, ...matchedSummaries];
   const uniqueMap = new Map();
   combined.forEach(s => uniqueMap.set(s.id, s));
-  
-  return Array.from(uniqueMap.values()).sort((a,b) => a.startRound - b.startRound);
+
+  const finalSummaries = Array.from(uniqueMap.values()).sort((a,b) => a.startRound - b.startRound);
+  // 详细打印匹配内容供调试 [2]
+  console.groupCollapsed(`[向量检索-总结] 全部${allSummaries.length}条 → 注入${finalSummaries.length}条 (近期固定${recentSummaries.length}+匹配${matchedSummaries.length})`);
+  console.log(`查询文本: "${latestUserMessageText.substring(0, 80)}${latestUserMessageText.length > 80 ? '...' : ''}"`);
+  matchedSummaries.forEach((s, i) => {
+    console.log(`  #${i + 1} [第${s.startRound}-${s.endRound}轮 ${s.category || 'factual'}] ${s.content.substring(0, 100)}`);
+  });
+  console.groupEnd();
+  return finalSummaries;
 }
 
-// 3. AI 总结碎片生成器 (升级为双响应协议，高自愈性多模块解析及向量写入通道) [1]
+// ============================================================
+// 原始对话向量检索（第二维度，独立于三角形总结检索）[3]
+// ============================================================
+
+// 截断辅助：保留前 N 字符，超出加省略号
+function truncateForVector(text, maxLen) {
+  if (!text) return "";
+  if (text.length <= maxLen) return text;
+  return text.slice(0, maxLen) + "…";
+}
+
+// 预嵌入并存储一轮原始对话（在每轮 AI 回复完成后调用）
+// 将 user+char 拼接文本转向量并存入 dialogue_vectors 表
+async function embedAndStoreDialogueRound(sessionId, roundIndex, userText, charText, timestamp) {
+  if (!sessionId || !userText) return;
+  const vectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  if (!vectorEnabled) return;
+
+  // 截断存储，控制 token 成本（user 100 字 + char 200 字）[3]
+  const truncatedUser = truncateForVector(userText, 100);
+  const truncatedChar = truncateForVector(charText, 200);
+  const combinedText = `${truncatedUser}\n${truncatedChar}`;
+
+  // 检查是否已存在该轮次的向量（避免重复嵌入）
+  const existing = await db.dialogue_vectors
+    .where('sessionId').equals(sessionId)
+    .and(d => d.roundIndex === roundIndex)
+    .first();
+  if (existing && existing.vector) return; // 已有向量，跳过
+
+  const vector = await safeGetEmbedding(combinedText);
+  if (!vector) return;
+
+  if (existing) {
+    // 已有记录但缺向量，更新
+    await db.dialogue_vectors.update(existing.id, {
+      userText: truncatedUser,
+      charText: truncatedChar,
+      combinedText,
+      vector,
+      timestamp: timestamp || Date.now()
+    });
+  } else {
+    await db.dialogue_vectors.add({
+      sessionId,
+      roundIndex,
+      userText: truncatedUser,
+      charText: truncatedChar,
+      combinedText,
+      vector,
+      timestamp: timestamp || Date.now()
+    });
+  }
+}
+
+// 原始对话向量检索：用当前用户消息检索最相似的历史原始对话轮次 [3]
+// 独立于 retrieveSummaries 的三角形机制，作为第二召回维度
+async function retrieveRawDialogues(sessionId, latestUserMessageText, excludeRanges) {
+  if (!sessionId || !latestUserMessageText) return [];
+
+  const vectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  const rawEnabled = localStorage.getItem("raw-dialogue-enabled") === "true";
+  if (!vectorEnabled || !rawEnabled) return [];
+
+  // 获取该会话所有已嵌入的原始对话轮次
+  const allRounds = await db.dialogue_vectors
+    .where('sessionId').equals(sessionId)
+    .sortBy('roundIndex');
+  if (allRounds.length === 0) return [];
+
+  // 排除最近 N 轮（这些已在当前上下文窗口中，无需重复注入）
+  const recentSkip = parseInt(localStorage.getItem("raw-dialogue-recent-skip") || "5");
+  const candidates = allRounds.slice(0, Math.max(0, allRounds.length - recentSkip));
+  if (candidates.length === 0) return [];
+
+  const queryVector = await safeGetEmbedding(latestUserMessageText);
+  if (!queryVector) return [];
+
+  // 检索参数（独立于总结检索的参数）
+  const threshold = parseFloat(localStorage.getItem("raw-dialogue-threshold") || "0.50");
+  const topk = parseInt(localStorage.getItem("raw-dialogue-topk") || "3");
+  const decayType = localStorage.getItem("vector-decay-type") || "medium";
+  let lambda = 0.02; // 原始对话用更轻的衰减（比总结的 0.05 更平缓）
+  if (decayType === "high") lambda = 0.2;
+  else if (decayType === "low") lambda = 0.001;
+
+  // excludeRanges: 已被总结召回覆盖的轮次范围 [{start, end}]，去重避免冗余 [3]
+  const isExcluded = (roundIndex) => {
+    if (!excludeRanges || excludeRanges.length === 0) return false;
+    return excludeRanges.some(r => roundIndex >= r.start && roundIndex <= r.end);
+  };
+
+  const scored = [];
+  candidates.forEach(d => {
+    if (!d.vector) return;
+    if (isExcluded(d.roundIndex)) return; // 跳过已被总结覆盖的轮次
+    const sim = cosineSimilarity(queryVector, d.vector);
+    // 修复 [6]：用原始相似度做阈值过滤，衰减仅用于排序偏好。
+    // 旧逻辑 score = sim * decayFactor >= threshold 导致久远记忆永远无法被召回
+    // （60天前的记忆即使 sim=1.0，decayFactor≈0.30，score 也无法通过 0.50 阈值）。
+    if (sim >= threshold) {
+      const daysAgo = (Date.now() - d.timestamp) / (1000 * 60 * 60 * 24);
+      const decayFactor = Math.exp(-lambda * daysAgo);
+      const rankScore = sim * decayFactor; // 衰减仅用于排序（近期优先），不用于过滤
+      scored.push({ d, rankScore, sim });
+    }
+  });
+
+  // 按衰减后得分降序（近期记忆优先），取 Top-K
+  scored.sort((a, b) => b.rankScore - a.rankScore);
+  const result = scored.slice(0, topk).map(item => item.d);
+  // 详细打印匹配内容供调试 [2]
+  console.groupCollapsed(`[向量检索-原始对话] 候选${candidates.length}轮 → 命中${result.length}条 (阈值≥${threshold}, TopK=${topk})`);
+  console.log(`查询文本: "${latestUserMessageText.substring(0, 80)}${latestUserMessageText.length > 80 ? '...' : ''}"`);
+  scored.slice(0, topk).forEach((item, i) => {
+    console.log(`  #${i + 1} [sim=${item.sim.toFixed(4)} rank=${item.rankScore.toFixed(4)} 轮次${item.d.roundIndex}]`);
+    console.log(`    对方说: ${item.d.userText}`);
+    console.log(`    你回: ${item.d.charText}`);
+  });
+  console.groupEnd();
+  return result;
+}
+
+// 一键补建历史原始对话向量（扫描全部消息，按轮次嵌入）
+async function rebuildDialogueVectors(sessionId, progressCb) {
+  if (!sessionId) return 0;
+  const vectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  if (!vectorEnabled) return 0;
+
+  const rawMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
+  if (rawMsgs.length === 0) return 0;
+  const rounds = getRoundsList(rawMsgs);
+  if (rounds.length === 0) return 0;
+
+  let built = 0;
+  for (let i = 0; i < rounds.length; i++) {
+    const r = rounds[i];
+    // 检查是否已有向量
+    const existing = await db.dialogue_vectors
+      .where('sessionId').equals(sessionId)
+      .and(d => d.roundIndex === i)
+      .first();
+    if (existing && existing.vector) continue; // 已有，跳过
+
+    const truncatedUser = truncateForVector(r.userMsgContent, 100);
+    const truncatedChar = truncateForVector(r.charMsgContent, 200);
+    const combinedText = `${truncatedUser}\n${truncatedChar}`;
+    const vector = await safeGetEmbedding(combinedText);
+    if (!vector) continue;
+
+    if (existing) {
+      await db.dialogue_vectors.update(existing.id, {
+        userText: truncatedUser, charText: truncatedChar, combinedText, vector,
+        timestamp: r.timestamp || Date.now()
+      });
+    } else {
+      await db.dialogue_vectors.add({
+        sessionId, roundIndex: i,
+        userText: truncatedUser, charText: truncatedChar, combinedText, vector,
+        timestamp: r.timestamp || Date.now()
+      });
+    }
+    built++;
+    if (progressCb) progressCb(i + 1, rounds.length);
+  }
+  return built;
+}
 async function generateSummaryForRounds(sessionId, startRound, endRound, customPrompt) {
   const presetId = localStorage.getItem("global_api_preset_id");
   const api = await db.api_presets.get(Number(presetId));
@@ -262,19 +454,27 @@ ${dialogText}`;
 ${dialogText}`;
   }
 
-  const response = await fetch(`${api.url}/chat/completions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-    body: JSON.stringify({
-      model: api.model,
-      messages: [{ role: "user", content: systemPrompt }],
-      temperature: 0.3
-    })
-  });
+  let rawText;
+  if (typeof window.fwCallLLM === "function") {
+    try {
+      rawText = await window.fwCallLLM(api, [{ role: "user", content: systemPrompt }], { temperature: 0.3 });
+    } catch(e) { /* fall through to original fetch */ }
+  }
+  if (rawText === undefined) {
+    const response = await fetch(`${api.url}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+      body: JSON.stringify({
+        model: api.model,
+        messages: [{ role: "user", content: systemPrompt }],
+        temperature: 0.3
+      })
+    });
 
-  if (!response.ok) throw new Error("API 调用整合总结失败");
-  const result = await response.json();
-  let rawText = result.choices[0].message.content.trim();
+    if (!response.ok) throw new Error("API 调用整合总结失败");
+    const result = await response.json();
+    rawText = result.choices[0].message.content.trim();
+  }
 
   let items = [];
 
@@ -400,8 +600,39 @@ async function checkAndTriggerAutoSummary(sessionId) {
   if (endRound - startRound + 1 >= interval && startRound <= endRound) {
     try {
       await generateSummaryForRounds(sessionId, startRound, endRound, sess.summarySystemPrompt);
+
+      // 群聊记忆双向同步：群聊产生新总结后，回写到开启了同步的角色单聊会话
+      if (sess.isGroup === 1 && sess.groupId && window.chatArchiveSystem && window.chatArchiveSystem.syncGroupMemoryToSingleChat) {
+        try {
+          const groupMembers = await db.group_members.where('groupId').equals(sess.groupId).toArray();
+          for (const m of groupMembers) {
+            if (m.memberType === 'char' && m.syncToSingle) {
+              await window.chatArchiveSystem.syncGroupMemoryToSingleChat(sess.groupId, m.memberId);
+            }
+          }
+        } catch (syncErr) {
+          console.warn("群聊→单聊记忆同步失败:", syncErr);
+        }
+      }
     } catch(e) {
       console.error("对话自动后台总结失败:", e);
+    }
+  }
+
+  // 原始对话向量预嵌入：每轮 AI 回复完成后，将该轮 user+char 文本嵌入并存入 dialogue_vectors [3]
+  // 与总结独立运行——即使总结未达触发条件，原始对话向量仍会逐轮积累
+  if (totalRounds > 0 && typeof embedAndStoreDialogueRound === 'function') {
+    try {
+      const latestRound = rounds[totalRounds - 1];
+      await embedAndStoreDialogueRound(
+        sessionId,
+        totalRounds - 1,
+        latestRound.userMsgContent,
+        latestRound.charMsgContent,
+        latestRound.timestamp
+      );
+    } catch(e) {
+      console.warn("原始对话向量预嵌入失败:", e);
     }
   }
 }
@@ -488,7 +719,8 @@ async function loadCoreMemory(sessionId) {
     if (topkInputText) topkInputText.value = topk;
 
     document.getElementById("vector-threshold").value = threshold;
-    document.getElementById("vector-threshold-val").innerText = threshold;
+    const vectorThresholdInput = document.getElementById("vector-threshold-input");
+    if (vectorThresholdInput) vectorThresholdInput.value = threshold;
 
     document.querySelectorAll(".vector-decay-btn").forEach(btn => {
       const isActive = btn.getAttribute("data-decay") === decay;
@@ -537,6 +769,118 @@ async function loadCoreMemory(sessionId) {
     const countEl = document.getElementById("missing-vectors-count");
     if (countEl) {
       countEl.innerText = `${missingSums.length} 条待补建`;
+    }
+
+    // === 原始对话向量检索配置回填与绑定 [3] ===
+    const rawEnabled = localStorage.getItem("raw-dialogue-enabled") === "true";
+    const rawToggle = document.getElementById("raw-dialogue-toggle");
+    const rawSection = document.getElementById("raw-dialogue-config-section");
+    if (rawToggle) {
+      rawToggle.checked = rawEnabled;
+      if (rawSection) rawSection.style.display = rawEnabled ? "block" : "none";
+      rawToggle.onchange = () => {
+        localStorage.setItem("raw-dialogue-enabled", rawToggle.checked ? "true" : "false");
+        if (rawSection) rawSection.style.display = rawToggle.checked ? "block" : "none";
+      };
+    }
+    // 检索轮数
+    const rawTopk = localStorage.getItem("raw-dialogue-topk") || "3";
+    const rawTopkSlider = document.getElementById("raw-dialogue-topk");
+    const rawTopkInput = document.getElementById("raw-dialogue-topk-input");
+    if (rawTopkSlider) {
+      rawTopkSlider.value = rawTopk;
+      rawTopkSlider.oninput = () => {
+        localStorage.setItem("raw-dialogue-topk", rawTopkSlider.value);
+        if (rawTopkInput) rawTopkInput.value = rawTopkSlider.value;
+      };
+    }
+    if (rawTopkInput) {
+      rawTopkInput.value = rawTopk;
+      rawTopkInput.oninput = () => {
+        let val = Math.max(1, Math.min(10, parseInt(rawTopkInput.value) || 3));
+        localStorage.setItem("raw-dialogue-topk", val);
+        if (rawTopkSlider) rawTopkSlider.value = val;
+      };
+    }
+    // 相似度阈值（滑块+数字输入框双向绑定）[2]
+    const rawThreshold = localStorage.getItem("raw-dialogue-threshold") || "0.50";
+    const rawThresholdSlider = document.getElementById("raw-dialogue-threshold");
+    const rawThresholdNumberInput = document.getElementById("raw-dialogue-threshold-input");
+    if (rawThresholdSlider) {
+      rawThresholdSlider.value = rawThreshold;
+      if (rawThresholdNumberInput) rawThresholdNumberInput.value = parseFloat(rawThreshold).toFixed(2);
+      rawThresholdSlider.oninput = () => {
+        localStorage.setItem("raw-dialogue-threshold", rawThresholdSlider.value);
+        if (rawThresholdNumberInput) rawThresholdNumberInput.value = parseFloat(rawThresholdSlider.value).toFixed(2);
+      };
+    }
+    if (rawThresholdNumberInput) {
+      rawThresholdNumberInput.oninput = () => {
+        let val = parseFloat(rawThresholdNumberInput.value);
+        if (isNaN(val)) val = 0.50;
+        val = Math.max(0.10, Math.min(0.95, val));
+        localStorage.setItem("raw-dialogue-threshold", val);
+        if (rawThresholdSlider) rawThresholdSlider.value = val;
+      };
+    }
+    // 上下文检索轮数：用最近N轮(user+char)消息拼接作为查询，索引连续话题 [2]
+    const contextRounds = localStorage.getItem("raw-dialogue-context-rounds") || "3";
+    const contextRoundsSlider = document.getElementById("raw-dialogue-context-rounds");
+    const contextRoundsNumberInput = document.getElementById("raw-dialogue-context-rounds-input");
+    const contextRoundsVal = document.getElementById("raw-dialogue-context-rounds-val");
+    if (contextRoundsSlider) {
+      contextRoundsSlider.value = contextRounds;
+      if (contextRoundsVal) contextRoundsVal.innerText = contextRounds + " 轮";
+      contextRoundsSlider.oninput = () => {
+        localStorage.setItem("raw-dialogue-context-rounds", contextRoundsSlider.value);
+        if (contextRoundsVal) contextRoundsVal.innerText = contextRoundsSlider.value + " 轮";
+        if (contextRoundsNumberInput) contextRoundsNumberInput.value = contextRoundsSlider.value;
+      };
+    }
+    if (contextRoundsNumberInput) {
+      contextRoundsNumberInput.value = contextRounds;
+      contextRoundsNumberInput.oninput = () => {
+        let val = Math.max(1, Math.min(10, parseInt(contextRoundsNumberInput.value) || 3));
+        localStorage.setItem("raw-dialogue-context-rounds", val);
+        if (contextRoundsSlider) contextRoundsSlider.value = val;
+        if (contextRoundsVal) contextRoundsVal.innerText = val + " 轮";
+      };
+    }
+    // 跳过最近轮数
+    const rawSkip = localStorage.getItem("raw-dialogue-recent-skip") || "5";
+    const rawSkipSlider = document.getElementById("raw-dialogue-recent-skip");
+    const rawSkipVal = document.getElementById("raw-dialogue-recent-skip-val");
+    if (rawSkipSlider) {
+      rawSkipSlider.value = rawSkip;
+      if (rawSkipVal) rawSkipVal.innerText = rawSkip + " 轮";
+      rawSkipSlider.oninput = () => {
+        localStorage.setItem("raw-dialogue-recent-skip", rawSkipSlider.value);
+        if (rawSkipVal) rawSkipVal.innerText = rawSkipSlider.value + " 轮";
+      };
+    }
+    // 补建按钮
+    const btnRebuildRaw = document.getElementById("btn-rebuild-raw-dialogue-vectors");
+    if (btnRebuildRaw) {
+      btnRebuildRaw.onclick = async () => {
+        if (!activeSessionId) {
+          showToast("请先选择一个对话会话");
+          return;
+        }
+        btnRebuildRaw.disabled = true;
+        const origText = btnRebuildRaw.innerHTML;
+        btnRebuildRaw.innerHTML = "正在补建中...";
+        try {
+          const built = await rebuildDialogueVectors(activeSessionId, (cur, total) => {
+            btnRebuildRaw.innerHTML = `正在补建中... ${cur}/${total}`;
+          });
+          showToast(`原始对话向量补建完成，新增 ${built} 条`);
+        } catch(e) {
+          console.error("补建原始对话向量失败:", e);
+          showToast("补建失败，请检查向量 API 配置");
+        }
+        btnRebuildRaw.disabled = false;
+        btnRebuildRaw.innerHTML = origText;
+      };
     }
   }
 
@@ -734,19 +1078,27 @@ async function generateCoreMemoryFromAI(sessionId) {
 经历事件总结：
 ${summariesText}`;
 
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: [{ role: "user", content: systemPrompt }],
-        temperature: 0.5
-      })
-    });
+    let text;
+    if (typeof window.fwCallLLM === "function") {
+      try {
+        text = await window.fwCallLLM(api, [{ role: "user", content: systemPrompt }], { temperature: 0.5 });
+      } catch(e) { /* fall through to original fetch */ }
+    }
+    if (text === undefined) {
+      const response = await fetch(`${api.url}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+        body: JSON.stringify({
+          model: api.model,
+          messages: [{ role: "user", content: systemPrompt }],
+          temperature: 0.5
+        })
+      });
 
-    if (!response.ok) throw new Error("API 核心记忆提炼调用失败");
-    const result = await response.json();
-    let text = result.choices[0].message.content.trim();
+      if (!response.ok) throw new Error("API 核心记忆提炼调用失败");
+      const result = await response.json();
+      text = result.choices[0].message.content.trim();
+    }
     text = text.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
 
     const parsed = JSON.parse(text);
@@ -895,8 +1247,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
   if (thresholdInput) {
     thresholdInput.oninput = (e) => {
-      document.getElementById("vector-threshold-val").innerText = e.target.value;
-      localStorage.setItem("vector-threshold", e.target.value);
+      const val = e.target.value;
+      localStorage.setItem("vector-threshold", val);
+      const tInput = document.getElementById("vector-threshold-input");
+      if (tInput) tInput.value = val;
+    };
+  }
+  // vector-threshold 数字输入框双向绑定 [2]
+  const vectorThresholdNumberInput = document.getElementById("vector-threshold-input");
+  if (vectorThresholdNumberInput) {
+    vectorThresholdNumberInput.oninput = (e) => {
+      let val = parseFloat(e.target.value);
+      if (isNaN(val)) val = 0.55;
+      val = Math.max(0.10, Math.min(0.95, val));
+      localStorage.setItem("vector-threshold", val);
+      if (thresholdInput) thresholdInput.value = val;
     };
   }
 

@@ -483,19 +483,26 @@ ${sess?.customCharPersona || char?.persona}
       messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: h.content });
     });
 
-    const response = await fetch(`${api.url}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-      body: JSON.stringify({
-        model: api.model,
-        messages: messagesToSend,
-        temperature: 0.8
-      })
-    });
-
-    if (!response.ok) throw new Error(`HTTP ${response.status} 错误`);
-    const result = await response.json();
-    let replyText = result.choices[0].message.content.trim();
+    let replyText;
+    if (typeof window.fwCallLLM === "function") {
+      try {
+        replyText = await window.fwCallLLM(api, messagesToSend, { temperature: 0.8 });
+      } catch(e) { /* fall through to original fetch */ }
+    }
+    if (replyText === undefined) {
+      const response = await fetch(`${api.url}/chat/completions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+        body: JSON.stringify({
+          model: api.model,
+          messages: messagesToSend,
+          temperature: 0.8
+        })
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} 错误`);
+      const result = await response.json();
+      replyText = result.choices[0].message.content.trim();
+    }
 
     // === 【对话思想截获核心】：剥离 [THOUGHT]...[/THOUGHT] 并存入小宇宙 ===
     const dialogueData = extractDialogueThought(replyText);

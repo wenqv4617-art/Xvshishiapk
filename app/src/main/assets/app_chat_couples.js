@@ -776,19 +776,29 @@
 最近对话历史：
 ${historyText || "刚刚相见，倍感温润。"}`;
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.8
-          })
-        });
+        let rawContent;
+        const schedMessages = [{ role: "user", content: prompt }];
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            rawContent = await window.fwCallLLM(api, schedMessages, { temperature: 0.8 });
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (rawContent === undefined) {
+          const response = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({
+              model: api.model,
+              messages: schedMessages,
+              temperature: 0.8
+            })
+          });
 
-        if (!response.ok) throw new Error("API响应异常");
-        const res = await response.json();
-        const rawJsonText = res.choices[0].message.content.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
+          if (!response.ok) throw new Error("API响应异常");
+          const res = await response.json();
+          rawContent = res.choices[0].message.content;
+        }
+        const rawJsonText = rawContent.replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
         const schedulesArr = JSON.parse(rawJsonText);
 
         const year = this.calendarSelectedDate.getFullYear();
@@ -1773,18 +1783,30 @@ ${historyText || "刚刚相见，倍感温润。"}`;
 你现在是 [${char?.name || '对方'}]。你们情侣空间里正在制作纪念手账。
 请为这页手账写下一句极其温暖、带有双端恋爱回忆质感的 30 字以内的小配文，不准带 Emoji 字符和任何系统指示标签！`;
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: [{ role: "user", content: prompt }]
-          })
-        });
+        let journalContent;
+        const journalMessages = [{ role: "user", content: prompt }];
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            journalContent = await window.fwCallLLM(api, journalMessages, {});
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (journalContent === undefined) {
+          const response = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({
+              model: api.model,
+              messages: journalMessages
+            })
+          });
 
-        if (response.ok) {
-          const res = await response.json();
-          const txt = res.choices[0].message.content.trim();
+          if (response.ok) {
+            const res = await response.json();
+            journalContent = res.choices[0].message.content;
+          }
+        }
+        if (journalContent !== undefined) {
+          const txt = journalContent.trim();
           this.selectedElement.querySelector("textarea").value = txt;
           showToast("AI 手账配文写入就绪！");
         }
@@ -2237,19 +2259,29 @@ ${char?.persona || "一个普通人"}
 ${topicPrompt}
 ${commandInstruction}`;
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: [{ role: "user", content: prompt + `\n\n当前话题对白历史：\n${historyText}` }],
-            temperature: 0.85
-          })
-        });
+        let whisperContent;
+        const whisperMessages = [{ role: "user", content: prompt + `\n\n当前话题对白历史：\n${historyText}` }];
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            whisperContent = await window.fwCallLLM(api, whisperMessages, { temperature: 0.85 });
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (whisperContent === undefined) {
+          const response = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({
+              model: api.model,
+              messages: whisperMessages,
+              temperature: 0.85
+            })
+          });
 
-        if (!response.ok) throw new Error("网络异常");
-        const res = await response.json();
-        let reply = res.choices[0].message.content.trim();
+          if (!response.ok) throw new Error("网络异常");
+          const res = await response.json();
+          whisperContent = res.choices[0].message.content;
+        }
+        let reply = whisperContent.trim();
 
         // 1. 解析 [WHISPER_TOPIC_END]{} —— AI 主动结束并归档当前话题
         let topicEndRequested = false;
@@ -2638,26 +2670,38 @@ ${commandInstruction}`;
 1. 愿望内容：极其温柔性格化，30 字以内的一句话心愿（如：想在下个雪天，拉着你去买刚出炉的烤红薯）。
 2. 绝对不准带有任何 Emoji，直接输出心愿文字本身！`;
 
-        const response = await fetch(`${api.url}/chat/completions`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-          body: JSON.stringify({
-            model: api.model,
-            messages: [{ role: "user", content: prompt + `\n\n最近对白参考：\n${historyText}` }]
-          })
-        });
+        let wishContent;
+        const wishMessages = [{ role: "user", content: prompt + `\n\n最近对白参考：\n${historyText}` }];
+        if (typeof window.fwCallLLM === "function") {
+          try {
+            wishContent = await window.fwCallLLM(api, wishMessages, {});
+          } catch(e) { /* fall through to original fetch */ }
+        }
+        if (wishContent === undefined) {
+          const response = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({
+              model: api.model,
+              messages: wishMessages
+            })
+          });
 
-        if (response.ok) {
-          const res = await response.json();
-          const wishText = res.choices[0].message.content.trim().replace(/[\[【]?[A-Z_]+[\]】]?/g, "");
-          
+          if (response.ok) {
+            const res = await response.json();
+            wishContent = res.choices[0].message.content;
+          }
+        }
+        if (wishContent !== undefined) {
+          const wishText = wishContent.trim().replace(/[\[【]?[A-Z_]+[\]】]?/g, "");
+
           await db.table('summaries').add({
             sessionId: Number(this.activeSessionId),
             startRound: 1,
             endRound: 0,
-            content: wishText, 
+            content: wishText,
             category: 'factual',
-            keywords: JSON.stringify(["wishlist", "char_wish"]), 
+            keywords: JSON.stringify(["wishlist", "char_wish"]),
             timestamp: Date.now(),
             source: 'couples_wish'
           });

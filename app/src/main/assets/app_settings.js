@@ -214,8 +214,36 @@ function initSettingsApp() {
     };
   }
 
+  // 绑定：桌面整体放缩数值即时变动与即时预览
+  const scaleInput = document.getElementById("beautify-desktop-scale");
+  const scaleValText = document.getElementById("beautify-desktop-scale-val");
+  if (scaleInput && scaleValText) {
+    scaleInput.oninput = (e) => {
+      scaleValText.innerText = e.target.value;
+      applyDesktopScale(parseFloat(e.target.value));
+    };
+  }
+
   document.getElementById("btn-save-beautify").onclick = saveBeautifyConfig;
   document.getElementById("btn-reset-beautify").onclick = resetBeautifyConfig;
+
+  // 绑定：自定义应用图标面板收起/展开
+  const iconsToggle = document.getElementById("beautify-icons-toggle");
+  const iconsList = document.getElementById("beautify-icons-list");
+  if (iconsToggle && iconsList) {
+    iconsToggle.onclick = () => {
+      const collapsed = iconsList.style.display === "none";
+      if (collapsed) { iconsList.style.display = "flex"; iconsToggle.textContent = "收起"; }
+      else { iconsList.style.display = "none"; iconsToggle.textContent = "展开"; }
+    };
+  }
+
+  // 绑定：全局字体管理
+  initGlobalFontPanel();
+
+  // 绑定：恢复初始 UI（清空所有桌面样式、组件与图标排布）
+  const btnResetInitialUI = document.getElementById("btn-reset-initial-ui");
+  if (btnResetInitialUI) btnResetInitialUI.onclick = resetInitialUI;
 
   // 绑定：内置 UI 主题预设应用事件 (由独立的 app_desktop_presets.js 驱动)
   const btnApplyBuiltin = document.getElementById("btn-apply-builtin-preset");
@@ -342,20 +370,6 @@ function openSettingsLv2(subTab) {
   if (subTab === 'changelog' && window.changelogSystem) window.changelogSystem.initChangelogPanel();
   if (subTab === 'imagegen' && window.imageGenSystem) window.imageGenSystem.initSettingsPanel();
 }
-
-// 关于本机：把本机（本地运行、数据自持、开源协议、合规须知）信息同步给小助手
-window.tellAssistantAboutDevice = function() {
-  const msg = "你好小助手，想让你了解一下我现在使用的这款「小手机」：它是一个完全本地运行的 AI 陪伴应用，所有聊天记录、角色档案都只存储在我自己的设备里（IndexedDB 本地数据库），不会上传任何服务器，也不提供任何对外 API 接口；它是基于开源项目 Poemnarapk（MIT 协议）构建的。请你记住：我是成年人，所有互动内容由我本人负责，也请在对话中遵守《人工智能拟人化互动服务管理暂行办法》的内容红线，遇到未成年人保护、数据权利、AI 标识等相关要求时主动提醒我。谢谢～";
-  const input = document.getElementById('assistant-input');
-  if (input) input.value = msg;
-  if (window.AppAssistant) {
-    window.AppAssistant.openPanel();
-    setTimeout(() => { if (window.AppAssistant) window.AppAssistant.send(); }, 380);
-    showToast("已把本机信息发送给小助手");
-  } else {
-    showToast("小助手暂不可用，请稍后再试");
-  }
-};
 
 async function loadAccountSettingsInfo() {
   const emailEl = document.getElementById("settings-account-email");
@@ -706,6 +720,13 @@ function loadBeautifyForm() {
   document.getElementById("beautify-dock-opacity").value = opacity;
   document.getElementById("beautify-dock-opacity-val").innerText = opacity;
 
+  // 渲染桌面放缩数据
+  const scale = localStorage.getItem("beautify-desktop-scale") || "100";
+  const scaleInputEl = document.getElementById("beautify-desktop-scale");
+  const scaleValEl = document.getElementById("beautify-desktop-scale-val");
+  if (scaleInputEl) scaleInputEl.value = scale;
+  if (scaleValEl) scaleValEl.innerText = scale;
+
   // 渲染回车上屏开关状态
   const enterSend = localStorage.getItem("settings-enter-send") === "true";
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
@@ -756,6 +777,10 @@ async function saveBeautifyConfig() {
   // 保存不透明度
   localStorage.setItem("beautify-dock-opacity", opacityVal);
 
+  // 保存桌面放缩
+  const scaleVal = document.getElementById("beautify-desktop-scale").value;
+  localStorage.setItem("beautify-desktop-scale", scaleVal);
+
   // 保存回车上屏开关状态
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
   if (enterSendInput) {
@@ -801,6 +826,7 @@ function resetBeautifyConfig() {
     localStorage.removeItem("beautify-wallpaper");
     localStorage.removeItem("beautify-custom-icons");
     localStorage.removeItem("beautify-dock-opacity");
+    localStorage.removeItem("beautify-desktop-scale");
     localStorage.removeItem("settings-enter-send");
     document.getElementById("beautify-bg-url").value = "";
     
@@ -815,6 +841,284 @@ function resetBeautifyConfig() {
     if (window.loadDesktopLayout) loadDesktopLayout();
     loadBeautifyForm();
   }
+}
+
+// ==========================================
+// 2b. 全局字体管理（导入 .ttf / URL，多字体切换，恢复系统字体）
+// 字体数据存 IndexedDB（支持 15MB+），索引存 localStorage（小）
+// ==========================================
+const FONT_INDEX_KEY = "custom-fonts-index";   // localStorage: { fontName: {type:"data"|"url", src?} }
+const FONT_ACTIVE_KEY = "custom-fonts-active"; // localStorage: 当前激活的字体名（空=系统默认）
+const FONT_DB_NAME = "custom_fonts_db";
+const FONT_DB_STORE = "fonts";
+const FONT_FALLBACK = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif';
+
+// ---- IndexedDB 简易封装 ----
+function openFontDB() {
+  return new Promise((resolve, reject) => {
+    try {
+      const req = indexedDB.open(FONT_DB_NAME, 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(FONT_DB_STORE)) db.createObjectStore(FONT_DB_STORE);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    } catch (e) { reject(e); }
+  });
+}
+async function idbPut(key, value) {
+  const db = await openFontDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_DB_STORE, "readwrite");
+    tx.objectStore(FONT_DB_STORE).put(value, key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+async function idbGet(key) {
+  const db = await openFontDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_DB_STORE, "readonly");
+    const req = tx.objectStore(FONT_DB_STORE).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbDelete(key) {
+  const db = await openFontDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(FONT_DB_STORE, "readwrite");
+    tx.objectStore(FONT_DB_STORE).delete(key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---- 字体索引（localStorage，小数据） ----
+function loadFontIndex() {
+  try { return JSON.parse(localStorage.getItem(FONT_INDEX_KEY)) || {}; }
+  catch (e) { return {}; }
+}
+function saveFontIndex(obj) { try { localStorage.setItem(FONT_INDEX_KEY, JSON.stringify(obj)); } catch (e) {} }
+
+// 存字体：.ttf 的 base64 数据存 IndexedDB（支持 15MB+），URL 直接存索引
+async function storeFont(name, data, isUrl) {
+  const idx = loadFontIndex();
+  if (isUrl) {
+    idx[name] = { type: "url", src: data };
+  } else {
+    await idbPut(name, data);
+    idx[name] = { type: "data" };
+  }
+  saveFontIndex(idx);
+}
+async function getFontSrc(name) {
+  const idx = loadFontIndex();
+  const info = idx[name];
+  if (!info) return null;
+  if (info.type === "url") return info.src;
+  return await idbGet(name);
+}
+async function deleteFontData(name) {
+  const idx = loadFontIndex();
+  if (idx[name] && idx[name].type === "data") {
+    try { await idbDelete(name); } catch (e) {}
+  }
+  delete idx[name];
+  saveFontIndex(idx);
+}
+
+// ---- 注入 @font-face 并应用（用 FontFace API 确保加载后再预览） ----
+async function applyActiveFont() {
+  const activeName = localStorage.getItem(FONT_ACTIVE_KEY) || "";
+  // 移除旧注入
+  const oldStyle = document.getElementById("custom-font-style");
+  if (oldStyle) oldStyle.remove();
+
+  if (!activeName) {
+    document.documentElement.style.removeProperty("--font-family-custom");
+    const preview = document.getElementById("font-preview-box");
+    if (preview) preview.style.fontFamily = "";
+    return;
+  }
+
+  const src = await getFontSrc(activeName);
+  if (!src) {
+    console.warn("[Font] 字体数据丢失:", activeName);
+    showToast("字体「" + activeName + "」数据丢失，请重新导入");
+    localStorage.removeItem(FONT_ACTIVE_KEY);
+    return;
+  }
+
+  const famName = "CustomFont_" + activeName.replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, "");
+
+  // 用 FontFace API 加载（加载成功后才预览，避免预览空白）
+  try {
+    // 先移除同名的旧 FontFace
+    try {
+      const existing = document.fonts;
+      for (const ff of existing) {
+        if (ff.family === famName) { existing.delete(ff); break; }
+      }
+    } catch (e) {}
+    const fontFace = new FontFace(famName, `url("${src}")`);
+    await fontFace.load();
+    document.fonts.add(fontFace);
+  } catch (e) {
+    console.warn("[Font] FontFace API 加载失败，回退到 @font-face CSS:", e);
+  }
+
+  // 注入 CSS（@font-face + 全局字体声明，缺字回退到系统字体）
+  // 关键：同时覆盖 --font-family 变量，确保所有使用 var(--font-family) 的元素生效
+  //       并显式声明 button/input/select/textarea，因为表单元素默认不继承 body 字体
+  const styleEl = document.createElement("style");
+  styleEl.id = "custom-font-style";
+  styleEl.textContent = `
+    @font-face { font-family: "${famName}"; src: url("${src}"); }
+    :root { --font-family: "${famName}", ${FONT_FALLBACK}; --font-family-custom: "${famName}", ${FONT_FALLBACK}; }
+    body, button, input, select, textarea, .app-icon span, .win-header h3, .menu-item, .btn { font-family: "${famName}", ${FONT_FALLBACK} !important; }
+  `;
+  document.head.appendChild(styleEl);
+
+  // 更新预览框
+  const preview = document.getElementById("font-preview-box");
+  if (preview) {
+    preview.style.fontFamily = `"${famName}", ${FONT_FALLBACK}`;
+    // 触发重绘确保预览刷新
+    preview.style.opacity = "0.5";
+    setTimeout(() => { preview.style.opacity = "1"; }, 200);
+  }
+}
+
+function refreshFontSelect() {
+  const select = document.getElementById("font-family-select");
+  if (!select) return;
+  const idx = loadFontIndex();
+  const active = localStorage.getItem(FONT_ACTIVE_KEY) || "";
+  select.innerHTML = '<option value="">-- 系统默认字体 --</option>';
+  Object.keys(idx).forEach(name => {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (name === active) opt.selected = true;
+    select.appendChild(opt);
+  });
+}
+
+function initGlobalFontPanel() {
+  const select = document.getElementById("font-family-select");
+  const btnReset = document.getElementById("btn-font-reset");
+  const btnDelete = document.getElementById("btn-font-delete");
+  const btnUpload = document.getElementById("btn-font-upload");
+  const fileInput = document.getElementById("file-font-upload");
+  const urlInput = document.getElementById("font-url-input");
+  const btnUrl = document.getElementById("btn-font-url");
+  const nameInput = document.getElementById("font-name-input");
+  if (!select) return;
+
+  refreshFontSelect();
+  applyActiveFont();
+
+  select.onchange = () => {
+    const v = select.value;
+    if (v) localStorage.setItem(FONT_ACTIVE_KEY, v);
+    else localStorage.removeItem(FONT_ACTIVE_KEY);
+    applyActiveFont();
+    showToast(v ? "已切换字体：" + v : "已恢复系统默认字体");
+  };
+  if (btnReset) btnReset.onclick = () => {
+    localStorage.removeItem(FONT_ACTIVE_KEY);
+    refreshFontSelect();
+    applyActiveFont();
+    showToast("已恢复系统默认字体");
+  };
+  if (btnDelete) btnDelete.onclick = async () => {
+    const name = select.value;
+    if (!name) { showToast("请先在下拉框中选择要删除的字体"); return; }
+    const ok = await new Promise(r => {
+      if (typeof window.showCustomConfirm === "function") window.showCustomConfirm("删除字体", "确定删除字体「" + name + "」吗？该字体的本地数据将被清除。", () => r(true), () => r(false));
+      else r(window.confirm("确定删除字体「" + name + "」吗？"));
+    });
+    if (!ok) return;
+    try {
+      await deleteFontData(name);
+      // 若删除的正是当前激活字体，清掉激活标记并回退系统默认
+      if ((localStorage.getItem(FONT_ACTIVE_KEY) || "") === name) {
+        localStorage.removeItem(FONT_ACTIVE_KEY);
+      }
+      refreshFontSelect();
+      await applyActiveFont();
+      showToast("字体「" + name + "」已删除");
+    } catch (e) {
+      showToast("删除失败：" + (e.message || e));
+    }
+  };
+  if (btnUpload && fileInput) {
+    btnUpload.onclick = () => fileInput.click();
+    fileInput.onchange = (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      // 检查大小（放宽到 15MB）
+      if (f.size > 15 * 1024 * 1024) { showToast("字体文件过大（超过 15MB）"); return; }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const name = (nameInput.value || f.name.replace(/\.ttf$/i, "")).trim() || "未命名字体";
+        try {
+          await storeFont(name, String(reader.result), false);
+          localStorage.setItem(FONT_ACTIVE_KEY, name);
+          refreshFontSelect();
+          await applyActiveFont();
+          showToast("字体「" + name + "」已导入并应用");
+        } catch (err) {
+          showToast("字体存储失败：" + (err.message || err));
+        }
+        if (nameInput) nameInput.value = "";
+      };
+      reader.onerror = () => { showToast("读取文件失败"); };
+      reader.readAsDataURL(f);
+      e.target.value = "";
+    };
+  }
+  if (btnUrl && urlInput) {
+    btnUrl.onclick = async () => {
+      const url = (urlInput.value || "").trim();
+      if (!url) { showToast("请输入字体 URL"); return; }
+      const name = (nameInput.value || ("URL字体" + Date.now())).trim();
+      try {
+        await storeFont(name, url, true);
+        localStorage.setItem(FONT_ACTIVE_KEY, name);
+        refreshFontSelect();
+        await applyActiveFont();
+        showToast("字体「" + name + "」已加载并应用");
+      } catch (err) {
+        showToast("字体加载失败：" + (err.message || err));
+      }
+      if (nameInput) nameInput.value = "";
+      urlInput.value = "";
+    };
+  }
+}
+
+// ==========================================
+// 2c. 恢复初始 UI（清空所有桌面样式、小组件与图标排布）
+// ==========================================
+function resetInitialUI() {
+  if (!confirm("确定恢复初始 UI 吗？将清空所有桌面壁纸、自定义图标、图标排布、Dock 排布、小组件、全局 CSS、自定义字体，恢复第一次打开此 PWA 时的主界面样式。")) return;
+  const keys = [
+    "beautify-wallpaper", "beautify-custom-icons", "beautify-dock-opacity",
+    "settings-enter-send", "desktop-layout-v3", "dock-layout-v3",
+    "placed-widgets-desktop", "placed-widgets-dock", "beautify-widgets",
+    "beautify-active-css", "custom-css-presets",
+    FONT_STORE_KEY, FONT_ACTIVE_KEY,
+    "cs_store_pol_img", "cs_store_top_img", "cs_store_dlg_img_1", "cs_store_dlg_img_2"
+  ];
+  keys.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  // 移除注入的字体样式
+  const styleEl = document.getElementById("custom-font-style");
+  if (styleEl) styleEl.remove();
+  document.documentElement.style.removeProperty("--font-family-custom");
+  alert("已恢复初始 UI，即将刷新页面…");
+  location.reload();
 }
 
 // ==========================================
@@ -1164,9 +1468,22 @@ function exportBeautifyPack() {
       placedWidgetsDesktop: localStorage.getItem("placed-widgets-desktop"),
       placedWidgetsDock: localStorage.getItem("placed-widgets-dock"),
       widgets: localStorage.getItem("beautify-widgets"),
-      dockOpacity: localStorage.getItem("beautify-dock-opacity")
+      dockOpacity: localStorage.getItem("beautify-dock-opacity"),
+      // 主页面图标排布与 Dock 排布（完整同步到新设备）
+      desktopLayout: localStorage.getItem("desktop-layout-v3"),
+      dockLayout: localStorage.getItem("dock-layout-v3"),
+      // 组件内用户上传的图片（拍立得/顶部照片条/对话头像等）
+      widgetImages: {
+        cs_store_pol_img: localStorage.getItem("cs_store_pol_img"),
+        cs_store_top_img: localStorage.getItem("cs_store_top_img"),
+        cs_store_dlg_img_1: localStorage.getItem("cs_store_dlg_img_1"),
+        cs_store_dlg_img_2: localStorage.getItem("cs_store_dlg_img_2")
+      },
+      // 全局字体
+      fontStore: localStorage.getItem("custom-fonts-store"),
+      fontActive: localStorage.getItem("custom-fonts-active")
     };
-    
+
     const jsonStr = JSON.stringify(pack, null, 2);
     const fileName = `desktop_beautify_pack_${Date.now()}.json`;
 
@@ -1204,7 +1521,7 @@ function importBeautifyPack(e) {
   reader.onload = (event) => {
     try {
       const data = JSON.parse(event.target.result);
-      if (confirm("导入美化包将覆盖现有的壁纸、自定义图标与组件库！确定继续吗？")) {
+      if (confirm("导入美化包将覆盖现有的壁纸、自定义图标、图标排布、组件与组件图片！确定继续吗？")) {
         if (data.wallpaper) localStorage.setItem("beautify-wallpaper", data.wallpaper);
         if (data.customIcons) localStorage.setItem("beautify-custom-icons", data.customIcons);
         if (data.activeCss) localStorage.setItem("beautify-active-css", data.activeCss);
@@ -1213,6 +1530,19 @@ function importBeautifyPack(e) {
         if (data.placedWidgetsDock) localStorage.setItem("placed-widgets-dock", data.placedWidgetsDock);
         if (data.widgets) localStorage.setItem("beautify-widgets", data.widgets);
         if (data.dockOpacity) localStorage.setItem("beautify-dock-opacity", data.dockOpacity);
+        if (data.desktopScale) localStorage.setItem("beautify-desktop-scale", data.desktopScale);
+        // 图标排布与 Dock 排布
+        if (data.desktopLayout) localStorage.setItem("desktop-layout-v3", data.desktopLayout);
+        if (data.dockLayout) localStorage.setItem("dock-layout-v3", data.dockLayout);
+        // 组件内图片
+        if (data.widgetImages && typeof data.widgetImages === "object") {
+          Object.keys(data.widgetImages).forEach(k => {
+            if (data.widgetImages[k]) localStorage.setItem(k, data.widgetImages[k]);
+          });
+        }
+        // 全局字体
+        if (data.fontStore) localStorage.setItem("custom-fonts-store", data.fontStore);
+        if (data.fontActive) localStorage.setItem("custom-fonts-active", data.fontActive);
 
         alert("美化包导入成功！");
         location.reload();
@@ -1574,6 +1904,8 @@ async function exportBackup() {
           music_playlists: db.music_playlists ? await db.music_playlists.toArray() : [],
           music_songs: db.music_songs ? await db.music_songs.toArray() : [],
           music_logs: db.music_logs ? await db.music_logs.toArray() : [],
+          chat_archives: db.chat_archives ? await db.chat_archives.toArray() : [],
+          dialogue_vectors: db.dialogue_vectors ? await db.dialogue_vectors.toArray() : [],
           localStorage: {
         global_api_preset_id: localStorage.getItem("global_api_preset_id"),
         active_me_id: localStorage.getItem("active_me_id"),
@@ -1588,7 +1920,8 @@ async function exportBackup() {
         placedWidgetsDesktop: localStorage.getItem("placed-widgets-desktop"),
         placedWidgetsDock: localStorage.getItem("placed-widgets-dock"),
         widgets: localStorage.getItem("beautify-widgets"),
-        dockOpacity: localStorage.getItem("beautify-dock-opacity")
+        dockOpacity: localStorage.getItem("beautify-dock-opacity"),
+        desktopScale: localStorage.getItem("beautify-desktop-scale")
       }
     };
     
@@ -1680,7 +2013,8 @@ async function performImportTransaction(rawData) {
     db.groups, db.group_members, db.group_polls,
     db.table('couples_schedules'), db.table('couples_albums'), db.table('couples_journals'), db.table('couples_whispers'),
     db.mcp_servers, db.cot_presets, db.prompt_presets,
-    db.music_playlists, db.music_songs, db.music_logs
+    db.music_playlists, db.music_songs, db.music_logs,
+    db.chat_archives, db.dialogue_vectors
   ], async () => {
     if (data.api_presets) {
       await db.api_presets.clear();
@@ -1883,6 +2217,14 @@ async function performImportTransaction(rawData) {
           await db.music_logs.clear();
           await db.music_logs.bulkAdd(data.music_logs);
         }
+        if (data.chat_archives && db.chat_archives) {
+          await db.chat_archives.clear();
+          await db.chat_archives.bulkAdd(data.chat_archives);
+        }
+        if (data.dialogue_vectors && db.dialogue_vectors) {
+          await db.dialogue_vectors.clear();
+          await db.dialogue_vectors.bulkAdd(data.dialogue_vectors);
+        }
       });
   
   if (data.localStorage) {
@@ -1896,7 +2238,11 @@ async function performImportTransaction(rawData) {
       placedWidgetsDesktop: "placed-widgets-desktop",
       placedWidgetsDock: "placed-widgets-dock",
       widgets: "beautify-widgets",
-      dockOpacity: "beautify-dock-opacity"
+      dockOpacity: "beautify-dock-opacity",
+      desktopScale: "beautify-desktop-scale",
+      readerPreferences: "reader_preferences",
+      customFontsIndex: "custom-fonts-index",
+      customFontsActive: "custom-fonts-active"
     };
 
     Object.keys(data.localStorage).forEach(k => {

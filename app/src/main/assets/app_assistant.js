@@ -22,6 +22,10 @@ const AppAssistant = {
     'settings-vector': '向量化记忆设置',
     'settings-imagegen': '生图设置',
     'settings-desktop': '桌面美化设置',
+    'settings-font': '字体管理',
+    'settings-floating-widget': '悬浮窗设置',
+    'miniprogram': '小程序页面',
+    'miniprogram-workshop': '小程序工坊',
     'chat-sessions': '聊天会话列表',
     'chat-me': '聊天-我的',
     'chat-moments': '朋友圈',
@@ -168,11 +172,21 @@ const AppAssistant = {
 - TTS 语音设置 [跳转:settings-tts]
 - 向量化记忆设置 [跳转:settings-vector]
 - 生图设置 [跳转:settings-imagegen]
-- 桌面美化设置 [跳转:settings-desktop]: 桌面壁纸/图标/Dock 不透明度/系统内置 UI 预设
+- 桌面美化设置 [跳转:settings-desktop]: 桌面壁纸/图标/Dock 不透明度/系统内置 UI 预设/**全局字体管理**（上传/预览/切换/删除自定义字体，最大15MB，缺字回退系统字体）[跳转:settings-font]
+- 悬浮窗 [跳转:settings-floating-widget]: 开关悬浮窗/配置图片/透明度/尺寸/快捷入口
 - 全局 CSS 注入: 自定义 CSS 代码编辑与预设
 - 组件工坊: 编译/保存自定义桌面小部件
 - 数据分区管理: 导入导出备份、压缩图片体积（7 块隔离）
+- 自动备份中心: 自动备份开关 + Supabase 云备份 + GitHub 仓库备份（详见下方第 16 节）
 - 系统强更新 / 更新日志
+
+## 2.1 小程序（聊天页面顶部下拉进入）[跳转:miniprogram]
+- 进入路径: 在聊天页面顶部**下拉**手势即可进入小程序页面
+- 小程序页面: 安装/运行/管理小程序
+- 小程序工坊 [跳转:miniprogram-workshop]: 制作/安装/编辑小程序，内置完整 API 文档与 Prompt 模板。已安装列表中每个小程序都有「初始化」按钮（刷新图标）可清除存档进度（含内置小程序）
+- 内置小程序: 真心话大冒险、情侣飞行棋等
+- 分享机制: 运行小程序时点右上角胶囊「分享」可拉入 char/群聊角色进入房间。分享配置(api.shareConfig)可自定义携带数据、是否跟随面具、邀请文案
+- 小程序 API: 可完整接入宿主资源——读取/写入角色档案、记忆、关系网、对话上下文、会话、群成员、世界书；调用 LLM 生成回复；读写本地文件；持久化状态
 
 ## 3. 档案馆（桌面 → 档案馆）[跳转:archive]
 顶部四个 tab: 角色 / 用户 / npc / 关系网
@@ -246,10 +260,105 @@ const AppAssistant = {
 - 在世界观下点「开始游戏」→ 配置美化、世界书 → 进入副本
 - 副本内右上角工具栏: 显示/隐藏系统、弹幕系统(每轮额外调用一次api/随动/禁用)、总结管理、变量控制、剧情引擎、完结剧本
 - 长按气泡: 工具栏(重回/编辑/删除)
-- 系统球: 点一下互动(调用api)，长按唤出面板: 随机道具(内置10个，用完后调用api生成，使用后下一轮生效)/求助(跟系统说需要什么帮助，下一轮开金手指)`
+- 系统球: 点一下互动(调用api)，长按唤出面板: 随机道具(内置10个，用完后调用api生成，使用后下一轮生效)/求助(跟系统说需要什么帮助，下一轮开金手指)
+
+## 13. 查手机（聊天页 → 双击气泡工具栏 → 查手机）
+- 在聊天页面双击对方气泡，唤出工具栏，点击「查手机」进入对方手机界面
+- 桌面应用: 通讯录(冒充发消息)、论坛(树洞帖+5-7评论)、相册、备忘录、文件管理(含私密保险箱)、浏览器、监控、智能家居、音乐、日记
+- 危险度系统: 查看私密内容会累积危险度，超过阈值会触发 char 觉察质问
+- 退出查手机会清空危险度；内容持久化到 IndexedDB，直到手动刷新
+- 查手机系统消息会按会话折叠(一次查手机的所有操作收起为一个可展开条目)
+- 查手机所有 API 调用会计入悬浮窗监控(fwTrackUsage/fwTrackError)
+
+## 14. 向量记忆系统（设置 → 向量记忆）
+- 三角形总结检索: 按情感/事实/核心三类召回历史事件碎片
+- 原始对话向量检索: 用最近N轮(user+char)消息拼接查询，检索最相似的历史真实对话原文
+- 相似度阈值可手填(滑块+数字输入框，范围0.10-0.95)
+- 上下文检索轮数: 设置用最近几轮消息作为查询(默认3轮)，索引连续话题
+- 跳过最近轮数: 排除已在上下文窗口中的近期对话(默认5轮)
+- 控制台会打印匹配详情(console.groupCollapsed)，可展开查看每条匹配的相似度分数和实际内容
+- 检索注入会带上时间戳(约X天前)，让 char 感知记忆的新旧
+- 查询文本会自动去标签(QUOTE/MSG_ID/指令标签)，避免污染向量语义
+- 语音/视频通话记录也计入对话轮次，参与检索与被检索
+
+## 15. API 报错排查指南（小助手专属知识库）
+当用户报告 API 报错时，按以下常见错误对照排查：
+
+### 查手机相关报错
+- "API连接超时或格式异常，执行安全物理兜底" → callCheckPhoneApi 老版包装器异常，检查 API 配置(URL/Key/Model)是否正确，网络是否通畅
+- "查手机 API 响应失败: XXX" → HTTP 状态码非2xx，常见: 401(密钥错误/过期)、429(限流)、500(服务端错误)、503(服务不可用)
+- "查手机API响应异常，执行降级对齐" → fetchGeneratedCheckPhoneContent 新版包装器异常，会自动上报到悬浮窗监控
+- "查手机数据长期存储直写失败" → IndexedDB 写入失败，可能是存储空间不足或浏览器隐私模式
+- "应用 [XXX] 同步生成失败" → 单个应用刷新失败，不影响其他应用
+
+### 通用 API 报错
+- 401 Unauthorized → API Key 错误或过期，前往 设置 → API协议 重新填写
+- 429 Too Many Requests → 请求频率超限，稍等片刻或降低调用频率
+- 500/502/503 → 服务端错误，等待服务商恢复
+- "HTTP XXX" → 小助手自身 API 调用失败，检查全局 API 预设
+- 网络超时 → 检查网络连接，或增加超时时间设置
+- 模型不存在 → 检查 API 预设里的 model 名称是否正确
+
+### 悬浮窗监控
+- 悬浮窗会记录所有 API 调用的 token 用量和报错信息
+- 设置 → 悬浮窗 可配置监控选项
+- fwTrackUsage/fwTrackError 是全局安全钩子，即使悬浮窗未加载也不会报错
+
+## 16. 自动备份中心（设置 → 数据管理）
+数据管理最顶部有「自动备份提醒」开关，开启后每天首次打开主界面会弹出备份提示卡片，提供「备份到本地 / Supabase 备份 / GitHub 备份」三个按钮。所有备份/恢复操作都有进度条显示进度。
+
+### Supabase 自动备份
+- 位置: 设置 → 数据管理 → 展开底部「Supabase 自动备份」板块
+- 使用步骤:
+  1. 在 Supabase 官网注册并新建一个项目
+  2. 进入项目的 SQL Editor，点击板块内「一键复制建表 SQL 命令行」按钮，粘贴并执行（会创建 app_backups 表并开启行级安全）
+  3. 在「项目设置 → API」复制 Project URL 和 anon key（或 service_role key），填入板块对应输入框
+  4. 点击「备份全部数据」（含美化图片）或「备份纯文字」（仅人设与聊天记录，体积小）
+  5. 恢复时点击「一键恢复数据」，会拉取云端最新备份覆盖本地
+- 配置（URL/Key）会自动保存在本地，无需重复填写
+
+### GitHub 自动备份
+- 位置: 设置 → 数据管理 → 展开底部「GitHub 自动备份」板块
+- 使用步骤:
+  1. 在 GitHub 新建一个空仓库（公开或私有均可）
+  2. 前往 GitHub「Settings → Developer settings → Personal access tokens」生成 Token，必须勾选 repo 权限
+  3. 将 Token、用户名、仓库名填入板块，点击「测试连接」验证可访问
+  4. 点击「备份全部数据」或「备份纯文字」，数据会以 JSON 文件（story_phone_backup.json）推送到仓库
+  5. 恢复时点击「一键恢复数据」，从仓库拉取备份覆盖本地
+- 注意: GitHub 单文件上限 100MB，数据量很大时建议用「备份纯文字」
+- 配置（Token/用户名/仓库名）会自动保存在本地
+
+### 备份类型说明
+- 全部数据(full): 包含所有数据表 + 美化壁纸/图标/CSS/组件等（含图片二进制，体积大）
+- 纯文字(text): 仅包含档案库、关系、会话、消息、离线消息、状态历史（无美化图片，体积小，适合快速备份）`
+
+  // ===== 关于本机知识（写入小助手知识库）=====
+  ,
+  aboutDeviceKnowledge: `# 关于本机 · 叙事诗小手机（应用本体说明）
+
+这是一款完全在本地运行的虚拟手机 / AI 陪伴应用，由开发者独立打造。以下是小助手应当掌握的本机事实，当用户问到"这是什么应用 / 谁开发的 / 数据存在哪 / 是否合规"等问题时，据此如实回答：
+
+### 一、产品与作者
+- 本应用是一款纯本地运行的虚拟手机 / AI 陪伴应用，所有对话、设定与记忆都存储在使用者自己的设备本地（浏览器 IndexedDB），不上传任何服务器。
+- 它不联网、不依赖云端，只在浏览器里运行，用于陪使用者聊天、记录与想象。
+- 本应用为个人独立开发作品。
+
+### 二、开源与协议
+- 开源地址：https://github.com/Island-glitch/Poemnarapk
+- 开源协议：MIT（可自由使用、修改与分发，需保留版权声明）。
+
+### 三、数据存储
+- 一切数据均存储于使用者本地设备（浏览器 IndexedDB）。
+- 本应用不提供任何对外 API 功能，所有内容由本地数据驱动；除本地存储外没有远程服务能力。
+
+### 四、责任与合规须知
+- 本应用仅为个人娱乐与创作工具，使用过程中产生的一切责任由使用者本人承担。
+- 请务必在合法合规的前提下使用，勿用于任何违法违规场景。
+- 依据《人工智能拟人化互动服务管理暂行办法》（俗称 715 新规），本应用已落实 AI 身份标识、未成年人保护、用户数据权利与清晰退出路径等要求，保障使用者的知情权与选择权。
+- 若用户就合规、数据归属、未成年人保护等提问，应如实说明：数据均在本地、应用无远程 API、责任由使用者自负，并提示合法合规使用。
+`,
 
   // ===== CSS 美化代码库（供 AI 查询和参考）=====
-  ,
   cssLibraryText: `### 微信式消息气泡 (文件: chat.css)
 关键词: 气泡, msg-bubble, 微信气泡, 聊天气泡
 \`\`\`css
@@ -380,6 +489,9 @@ ${cmdList}
 
 ## 应用使用手册
 ${this.manualText}
+
+## 关于本机（应用本体说明 · 小助手应掌握）
+${this.aboutDeviceKnowledge}
 
 ## 内置 CSS 美化代码库（可参考、可修改、可扩展）
 ${this.cssLibraryText}`;
@@ -521,6 +633,40 @@ ${this.cssLibraryText}`;
       'settings-vector': () => openSettings('vector-memory'),
       'settings-imagegen': () => openSettings('imagegen'),
       'settings-desktop': () => openSettings('beautify'),
+      'settings-font': () => openSettings('beautify'),
+      'settings-floating-widget': () => openSettings('floating-widget'),
+      'miniprogram': () => {
+        // 小程序 hub/runtime overlay 是 fixed 高 z-index，能盖住 win-chat；
+        // 保留 win-chat active，退出小程序后下方仍是聊天页，避免"卡在主界面"。
+        // 仅确保 win-chat 已激活（从其他应用进入时）。
+        const chatWin = document.getElementById('win-chat');
+        if (!chatWin || !chatWin.classList.contains('active')) {
+          if (typeof window.openApp === 'function') window.openApp('chat');
+          else if (typeof openApp === 'function') openApp('chat');
+        }
+        setTimeout(() => {
+          if (window.miniProgramSystem && typeof window.miniProgramSystem.openHub === 'function') {
+            window.miniProgramSystem.openHub();
+          }
+        }, 250);
+      },
+      'miniprogram-workshop': () => {
+        const chatWin = document.getElementById('win-chat');
+        if (!chatWin || !chatWin.classList.contains('active')) {
+          if (typeof window.openApp === 'function') window.openApp('chat');
+          else if (typeof openApp === 'function') openApp('chat');
+        }
+        setTimeout(() => {
+          if (window.miniProgramSystem && typeof window.miniProgramSystem.openHub === 'function') {
+            window.miniProgramSystem.openHub();
+          }
+          setTimeout(() => {
+            if (window.miniProgramWorkshop && typeof window.miniProgramWorkshop.open === 'function') {
+              window.miniProgramWorkshop.open();
+            }
+          }, 400);
+        }, 250);
+      },
       'chat-sessions': () => switchChatTab('sessions'),
       'chat-me': () => switchChatTab('me'),
       'chat-moments': () => switchChatTab('moments'),
@@ -1104,9 +1250,83 @@ ${this.cssLibraryText}`;
       };
     }
 
+    // 小程序
+    if (ql.includes('小程序') || ql.includes('miniprogram') || ql.includes('mini program')) {
+      if (ql.includes('做') || ql.includes('制作') || ql.includes('开发') || ql.includes('写') || ql.includes('创建') || ql.includes('工坊')) {
+        return {
+          answer: '## 制作小程序\n\n小程序在**小程序工坊**里制作。\n\n**进入路径**：聊天页面顶部下拉 → 小程序页面 → 底部「小程序工坊」\n\n工坊内置完整的 API 文档和 Prompt 模板，可直接复制发给 AI 生成小程序代码，也可从 GitHub 链接安装。',
+          actions: [{ label: '前往小程序工坊', target: 'miniprogram-workshop' }]
+        };
+      }
+      return {
+        answer: '## 小程序\n\n**进入路径**：在聊天页面顶部**下拉**即可进入小程序页面。\n\n小程序页面里可以安装、运行和管理各种小程序（真心话大冒险、情侣飞行棋等），也可通过工坊自制小程序。',
+        actions: [{ label: '打开小程序页面', target: 'miniprogram' }]
+      };
+    }
+
+    // 字体
+    if (ql.includes('字体') && (ql.includes('在哪') || ql.includes('换') || ql.includes('改') || ql.includes('设置') || ql.includes('管理') || ql.includes('导入') || ql.includes('上传'))) {
+      return {
+        answer: '## 字体管理\n\n**位置**：设置 → 桌面美化设置 → **全局字体管理**\n\n支持上传自定义字体（最大 15MB），可预览、切换、删除。缺字会自动回退到系统字体。',
+        actions: [{ label: '前往字体管理', target: 'settings-font' }]
+      };
+    }
+
+    // 悬浮窗
+    if (ql.includes('悬浮') && (ql.includes('在哪') || ql.includes('管理') || ql.includes('设置') || ql.includes('开') || ql.includes('关') || ql.includes('配置'))) {
+      return {
+        answer: '## 悬浮窗管理\n\n**位置**：设置 → **悬浮窗**\n\n可开关悬浮窗、配置图片/透明度/尺寸、管理快捷入口。悬浮窗开启后会出现在所有页面，点击展开快捷卡片（API 状态 + 快捷入口）。',
+        actions: [{ label: '前往悬浮窗设置', target: 'settings-floating-widget' }]
+      };
+    }
+
+    // API 报错排查 [7]
+    if (ql.includes('报错') || ql.includes('错误') || ql.includes('失败') || ql.includes('error') || ql.includes('异常') || ql.includes('超时') || ql.includes('401') || ql.includes('429') || ql.includes('500') || ql.includes('502') || ql.includes('503')) {
+      let answer = '## API 报错排查\n\n';
+      if (ql.includes('401') || ql.includes('密钥') || ql.includes('key') || ql.includes('unauthorized')) {
+        answer += '**401 Unauthorized** → API Key 错误或过期\n- 前往 **设置 → API协议** 重新填写密钥\n- 确认密钥没有多余空格\n- 检查密钥是否已过期或被吊销\n\n';
+      }
+      if (ql.includes('429') || ql.includes('限流') || ql.includes('频率') || ql.includes('too many')) {
+        answer += '**429 Too Many Requests** → 请求频率超限\n- 稍等片刻后重试\n- 降低调用频率（查手机刷新、向量检索等会消耗额度）\n- 检查是否多个应用同时刷新\n\n';
+      }
+      if (ql.includes('500') || ql.includes('502') || ql.includes('503') || ql.includes('服务端') || ql.includes('server')) {
+        answer += '**500/502/503 服务端错误** → API 服务商问题\n- 等待服务商恢复\n- 可尝试切换到其他 API 预设\n- 查看服务商状态页\n\n';
+      }
+      if (ql.includes('查手机') || ql.includes('check_phone') || ql.includes('安全物理兜底') || ql.includes('降级对齐')) {
+        answer += '**查手机报错**\n- "安全物理兜底" → 老版包装器异常，检查 API 配置\n- "降级对齐" → 新版包装器异常，已自动上报悬浮窗\n- "直写失败" → IndexedDB 存储问题，清理浏览器存储或退出隐私模式\n- 单个应用失败不影响其他应用\n\n';
+      }
+      if (ql.includes('超时') || ql.includes('timeout') || ql.includes('连接')) {
+        answer += '**网络超时**\n- 检查网络连接是否正常\n- 查手机/向量检索调用较多，可能耗时较长\n- 可尝试切换网络环境\n\n';
+      }
+      if (ql.includes('模型') || ql.includes('model') || ql.includes('不存在')) {
+        answer += '**模型不存在**\n- 检查 API 预设里的 model 名称是否正确\n- 常见模型名: gpt-4o, gpt-4o-mini, deepseek-chat 等\n- 前往 **设置 → API协议** 修改\n\n';
+      }
+      answer += '**通用建议**：\n- 查看悬浮窗监控里的报错记录（设置 → 悬浮窗）\n- 控制台(F12)查看详细错误日志\n- 确认 API 预设的 URL/Key/Model 三项都正确填写';
+      return {
+        answer: answer,
+        actions: [{ label: '前往 API 设置', target: 'settings-api' }]
+      };
+    }
+
+    // 查手机
+    if (ql.includes('查手机') || ql.includes('check phone') || ql.includes('查对方手机') || ql.includes('危险度')) {
+      return {
+        answer: '## 查手机\n\n**进入路径**：聊天页面 → **双击对方气泡** → 工具栏 → 「查手机」\n\n进入后可查看对方的：通讯录(可冒充发消息)、论坛(树洞帖+评论)、相册、备忘录、文件管理(含私密保险箱)、浏览器、监控、智能家居等。\n\n**危险度系统**：查看私密内容会累积危险度，超过阈值 char 会觉察质问。退出查手机会清空危险度。\n\n**持久化**：内容保存到 IndexedDB，直到手动刷新。查手机操作会按会话折叠显示。',
+        actions: []
+      };
+    }
+
+    // 向量记忆
+    if (ql.includes('向量') || ql.includes('记忆') || ql.includes('检索') || ql.includes('vector') || ql.includes('embedding')) {
+      return {
+        answer: '## 向量记忆系统\n\n**位置**：设置 → 向量记忆\n\n两大检索维度：\n1. **三角形总结检索**：按情感/事实/核心三类召回历史事件碎片\n2. **原始对话向量检索**：用最近N轮消息拼接查询，检索最相似的历史真实对话\n\n**关键参数**：\n- 相似度阈值（可手填，0.10-0.95）\n- 上下文检索轮数（默认3轮，索引连续话题）\n- 跳过最近轮数（默认5轮，避免重复）\n\n控制台(F12)会打印匹配详情，可展开查看每条匹配的相似度和内容。检索注入会带时间戳，查询会自动去标签。',
+        actions: [{ label: '前往向量记忆设置', target: 'settings-vector' }]
+      };
+    }
+
     // 兜底
     return {
-      answer: '抱歉，我没能理解 **"' + escapeHtml(q) + '"**。\n\n你可以试试：\n- "mcp 在哪？"\n- "api 怎么设置？"\n- "状态栏怎么开？"\n- "怎么注册？"\n\n或者描述你想要的 CSS 美化效果。',
+      answer: '抱歉，我没能理解 **"' + escapeHtml(q) + '"**。\n\n你可以试试：\n- "小程序怎么玩？"\n- "字体在哪换？"\n- "悬浮窗在哪管理？"\n- "mcp 在哪？"\n- "api 怎么设置？"\n- "查手机怎么用？"\n- "向量记忆是什么？"\n- "API 报错 401 怎么办？"\n\n或者描述你想要的 CSS 美化效果。',
       actions: []
     };
   }

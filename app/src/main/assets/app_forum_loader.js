@@ -1153,6 +1153,15 @@ async function forumCallAI(systemPrompt, userPrompt) {
   const api = await db.api_presets.get(Number(presetId));
   if (!api) throw new Error("API 配置预设未找到");
 
+  if (typeof window.fwCallLLM === "function") {
+    try {
+      return await window.fwCallLLM(api, [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt }
+      ], { temperature: api.temperature });
+    } catch (e) { /* fall through to original */ }
+  }
+
   const response = await fetch(`${api.url}/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
