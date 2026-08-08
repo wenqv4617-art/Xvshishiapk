@@ -795,6 +795,8 @@ JSON格式：
       if (!state.music.history.includes(track)) {
         state.music.history.unshift(track);
       }
+      // 持久化：生成的曲目与历史立即落盘，避免重进查手机丢失
+      savePhoneStateToDb();
     }
   }
 
@@ -2016,6 +2018,8 @@ JSON格式：
       disc.classList.toggle("spinning", state.music.isPlaying);
       toggleBtn.innerText = state.music.isPlaying ? '暂停放歌' : '模拟播放';
       showToast(state.music.isPlaying ? "音乐环境音伴随已开启" : "伴随播放已暂停");
+      // 持久化：播放/暂停状态需长期保存，避免重进查手机被重置
+      savePhoneStateToDb();
     };
 
     const playlistHeader = document.createElement("div");
@@ -2038,6 +2042,8 @@ JSON格式：
         state.music.currentTrack = track;
         state.music.isPlaying = true;
         renderMusic(content);
+        // 持久化：选中的曲目与播放状态需长期保存
+        savePhoneStateToDb();
       };
       list.appendChild(item);
     });

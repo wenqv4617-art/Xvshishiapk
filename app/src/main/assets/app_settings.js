@@ -332,7 +332,8 @@ function openSettingsLv2(subTab) {
     imagegen: '生图设置',
     data: '数据分区管理',
     'force-update': '系统强更新',
-    changelog: '更新日志'
+    changelog: '更新日志',
+    about: '关于本机'
   };
   document.getElementById("settings-title").innerText = titles[subTab] || '系统设置';
 
@@ -341,6 +342,20 @@ function openSettingsLv2(subTab) {
   if (subTab === 'changelog' && window.changelogSystem) window.changelogSystem.initChangelogPanel();
   if (subTab === 'imagegen' && window.imageGenSystem) window.imageGenSystem.initSettingsPanel();
 }
+
+// 关于本机：把本机（本地运行、数据自持、开源协议、合规须知）信息同步给小助手
+window.tellAssistantAboutDevice = function() {
+  const msg = "你好小助手，想让你了解一下我现在使用的这款「小手机」：它是一个完全本地运行的 AI 陪伴应用，所有聊天记录、角色档案都只存储在我自己的设备里（IndexedDB 本地数据库），不会上传任何服务器，也不提供任何对外 API 接口；它是基于开源项目 Poemnarapk（MIT 协议）构建的。请你记住：我是成年人，所有互动内容由我本人负责，也请在对话中遵守《人工智能拟人化互动服务管理暂行办法》的内容红线，遇到未成年人保护、数据权利、AI 标识等相关要求时主动提醒我。谢谢～";
+  const input = document.getElementById('assistant-input');
+  if (input) input.value = msg;
+  if (window.AppAssistant) {
+    window.AppAssistant.openPanel();
+    setTimeout(() => { if (window.AppAssistant) window.AppAssistant.send(); }, 380);
+    showToast("已把本机信息发送给小助手");
+  } else {
+    showToast("小助手暂不可用，请稍后再试");
+  }
+};
 
 async function loadAccountSettingsInfo() {
   const emailEl = document.getElementById("settings-account-email");

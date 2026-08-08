@@ -1317,6 +1317,55 @@ let isOfflineChatAppEventsBound = false;
       background: #07c160;
       color: #ffffff;
     }
+
+    /* 确认加载态：刻意不使用旋转动画（“转啊转”太搞笑了）
+       改为：静态垃圾桶 + 伪装进度条，或呼吸小圆圈 */
+    .pwa-modal-confirm-loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+    .pwa-modal-trash {
+      width: 24px;
+      height: 24px;
+      color: #ffffff;
+    }
+    .pwa-modal-loading-text {
+      font-size: 12px;
+      color: #ffffff;
+      line-height: 1.2;
+    }
+    .pwa-modal-fake-progress {
+      width: 132px;
+      height: 5px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.30);
+      overflow: hidden;
+    }
+    .pwa-modal-fake-progress > i {
+      display: block;
+      height: 100%;
+      width: 0%;
+      background: #ffffff;
+      border-radius: 3px;
+      transition: width 0.7s cubic-bezier(0.25, 0.8, 0.25, 1);
+    }
+    .pwa-modal-circle {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.35);
+      border-top-color: #ffffff;
+      animation: pwa-modal-breathe 1s ease-in-out infinite;
+    }
+    @keyframes pwa-modal-breathe {
+      0%, 100% { transform: scale(0.82); opacity: 0.55; }
+      50% { transform: scale(1.05); opacity: 1; }
+    }
   `;
   document.head.appendChild(multimediaStyle);
 
@@ -1417,7 +1466,16 @@ let isOfflineChatAppEventsBound = false;
     };
   };
 
-  window.showCustomConfirm = function(title, message, onConfirm, onCancel) {
+  window.showCustomConfirm = function(title, message, onConfirm, onCancel, opts) {
+    // opts: { kind: 'trash' | 'circle', loadingText: '...' }
+    if (onCancel && typeof onCancel === 'object' && typeof onConfirm !== 'object') {
+      opts = onCancel; onCancel = undefined;
+    }
+    if (typeof opts === 'string') opts = { kind: opts };
+    opts = opts || {};
+    const kind = opts.kind || 'circle';
+    const loadingText = opts.loadingText || '';
+
     const overlay = document.createElement("div");
     overlay.className = "pwa-modal-overlay";
     overlay.innerHTML = '<div class="pwa-modal-card">' +
@@ -1432,20 +1490,83 @@ let isOfflineChatAppEventsBound = false;
     
     setTimeout(() => overlay.classList.add("show"), 10);
     
-    overlay.querySelector(".cancel").onclick = () => {
+    const confirmBtn = overlay.querySelector(".confirm");
+    const cancelBtn = overlay.querySelector(".cancel");
+
+    const closeModal = (cb) => {
       overlay.classList.remove("show");
       setTimeout(() => {
         overlay.remove();
-        if (typeof onCancel === 'function') onCancel();
+        if (typeof cb === 'function') cb();
       }, 200);
     };
     
-    overlay.querySelector(".confirm").onclick = () => {
-      overlay.classList.remove("show");
-      setTimeout(() => {
-        overlay.remove();
-        if (typeof onConfirm === 'function') onConfirm();
-      }, 200);
+    cancelBtn.onclick = () => {
+      if (confirmBtn.disabled) return; // 加载中禁止关闭
+      closeModal(onCancel);
+    };
+    
+    confirmBtn.onclick = () => {
+      if (confirmBtn.disabled) return;
+      // 没有指定加载态：保持原行为，立即执行
+      if (!opts || (!opts.kind && !loadingText)) {
+        overlay.classList.remove("show");
+        setTimeout(() => {
+          overlay.remove();
+          if (typeof onConfirm === 'function') onConfirm();
+        }, 200);
+        return;
+      }
+
+      // 进入“加载态”：非旋转指示（静态垃圾桶 + 伪装进度条 / 呼吸小圆圈）
+      cancelBtn.disabled = true;
+      confirmBtn.disabled = true;
+      cancelBtn.style.opacity = '0.5';
+      confirmBtn.style.opacity = '1';
+      confirmBtn.style.cursor = 'default';
+      confirmBtn.style.height = 'auto';
+      confirmBtn.style.paddingTop = '14px';
+      confirmBtn.style.paddingBottom = '14px';
+      confirmBtn.style.display = 'flex';
+      confirmBtn.style.alignItems = 'center';
+      confirmBtn.style.justifyContent = 'center';
+
+      const trashSvg = '<svg class="pwa-modal-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>';
+
+      if (kind === 'circle') {
+        confirmBtn.innerHTML = '<span class="pwa-modal-circle"></span>' + (loadingText ? '<span class="pwa-modal-loading-text">' + escapeHtml(loadingText) + '</span>' : '');
+        confirmBtn.style.gap = '8px';
+      } else {
+        // 垃圾桶 + 伪装进度条（不旋转）
+        confirmBtn.innerHTML = '<div class="pwa-modal-confirm-loading">' +
+          trashSvg +
+          (loadingText ? '<div class="pwa-modal-loading-text">' + escapeHtml(loadingText) + '</div>' : '') +
+          '<div class="pwa-modal-fake-progress"><i></i></div>' +
+        '</div>';
+        const fill = confirmBtn.querySelector('.pwa-modal-fake-progress > i');
+        setTimeout(() => { if (fill) fill.style.width = '86%'; }, 30);
+      }
+
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        const fill = confirmBtn.querySelector('.pwa-modal-fake-progress > i');
+        if (fill) { fill.style.transition = 'width 0.2s linear'; fill.style.width = '100%'; }
+        setTimeout(() => closeModal(null), 260);
+      };
+
+      try {
+        const ret = (typeof onConfirm === 'function') ? onConfirm() : null;
+        if (ret && typeof ret.then === 'function') {
+          ret.then(finish, finish);
+        } else {
+          // 同步回调：保证伪装进度条至少走完一轮
+          setTimeout(finish, 680);
+        }
+      } catch (e) {
+        finish();
+      }
     };
   };
 
@@ -4119,11 +4240,11 @@ function bindChatAppEvents() {
         await db.offline_messages.where('sessionId').equals(activeSessionId).delete();
         await db.summaries.where('sessionId').equals(activeSessionId).delete();
         await db.sessions.delete(activeSessionId);
-        
+
         showToast("对话已成功彻底注销并抹除");
         closeChatDetails();
         closeChatDialog();
-      });
+      }, null, { kind: 'trash', loadingText: '正在注销并抹除对话…' });
     };
   }
 

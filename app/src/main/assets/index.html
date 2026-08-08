@@ -454,11 +454,91 @@
                 <span>更新日志</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
+              <!-- 新增：关于本机入口（置于设置列表最底部） -->
+              <div class="menu-item" onclick="openSettingsLv2('about')" style="border-top: 1px dashed var(--border); margin-top: 4px; padding-top: 14px;">
+                <span>关于本机</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
             </div>
 
           <!-- 二级：更新日志 -->
           <div id="settings-lv2-changelog" class="settings-lv2-panel" style="display:none;">
             <div id="changelog-content" style="padding:4px 0;"></div>
+          </div>
+
+          <!-- 二级：关于本机 -->
+          <div id="settings-lv2-about" class="settings-lv2-panel" style="display:none; padding-bottom: 20px;">
+            <!-- 顶部：设备标识 -->
+            <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:14px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:center;">
+              <div style="width:56px; height:56px; border-radius:16px; background:linear-gradient(135deg,#07c160,#10b981); display:flex; align-items:center; justify-content:center; margin:0 auto 10px;">
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+              </div>
+              <div style="font-size:15px; font-weight:800; color:var(--text-primary);">小手机 · 本地 AI 陪伴</div>
+              <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">Xvshishi · 纯本地运行 · 数据不出本机</div>
+            </div>
+
+            <!-- 作者与开源 -->
+            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">作者与开源</div>
+            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+              <div style="font-size:13px; font-weight:700; color:var(--text-primary); margin-bottom:6px;">关于作者</div>
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">
+                本应用由独立开发者与开源社区共同维护，是一款面向个人情感陪伴与角色演绎的本地化实验性作品。我们始终相信：陪伴应当私密、可控，并且只属于你自己。
+              </div>
+              <div style="font-size:13px; font-weight:700; color:var(--text-primary); margin:12px 0 6px;">开源地址</div>
+              <a href="https://github.com/Island-glitch/Poemnarapk" target="_blank" rel="noopener" style="font-size:12px; color:var(--primary); word-break:break-all; text-decoration:none;">github.com/Island-glitch/Poemnarapk ↗</a>
+              <div style="font-size:13px; font-weight:700; color:var(--text-primary); margin:12px 0 6px;">开源协议</div>
+              <div style="display:inline-block; font-size:11px; font-weight:700; color:#07c160; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:6px; padding:3px 10px;">MIT License · 可自由使用、修改与分发</div>
+            </div>
+
+            <!-- 小手机介绍 -->
+            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">小手机是什么</div>
+            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">
+                「小手机」是一台运行在你设备里的虚拟手机：你可以在其中与 AI 角色对话、建立群组，并查看「查手机」里的相册、备忘录、音乐、论坛等拟真内容。所有内容均由本地模型即时演绎生成，旨在为你提供一个安全、私密的空间来释放想象与情绪，而非替代任何真实的人际联结。
+              </div>
+            </div>
+
+            <!-- 数据存储 -->
+            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">数据存储说明</div>
+            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+              <div style="display:flex; gap:8px; align-items:flex-start; font-size:12px; color:var(--text-secondary); line-height:1.6;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#07c160" stroke-width="2.5" style="flex-shrink:0; margin-top:2px;"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                <span>本应用<strong style="color:var(--text-primary);">一切数据均存储在你本地的设备</strong>（IndexedDB / 浏览器本地数据库）中，包括聊天记录、角色档案、相册、备忘录、查手机状态等。</span>
+              </div>
+              <div style="display:flex; gap:8px; align-items:flex-start; font-size:12px; color:var(--text-secondary); line-height:1.6; margin-top:8px;">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#07c160" stroke-width="2.5" style="flex-shrink:0; margin-top:2px;"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                <span>我们<strong style="color:var(--text-primary);">不收集、不上传、不备份</strong>你的任何对话与隐私内容到远程服务器；卸载应用或清除浏览器数据，即可彻底抹除全部痕迹。</span>
+              </div>
+            </div>
+
+            <!-- 告诉小助手 -->
+            <button class="btn btn-outline" onclick="tellAssistantAboutDevice()" style="width:100%; padding:11px; font-weight:700; font-size:13px; background-color:transparent; display:flex; align-items:center; justify-content:center; gap:6px; margin-bottom:14px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+              把本机信息告诉小助手
+            </button>
+
+            <!-- 使用须知与合规承诺（专业合规说明，不直称“免责声明”） -->
+            <div class="setting-section-title" style="font-size:13px; font-weight:700; color:var(--text-primary); margin:4px 2px 8px;">使用须知与合规承诺</div>
+            <div class="mcp-card" style="background:#fff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm); margin-bottom:12px; text-align:left;">
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.7;">
+                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">一、本应用不提供任何对外 API 功能。</strong>所有互动均在本地完成，不存在可供第三方调用的接口，也不会与任何外部系统进行数据交换。</p>
+                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">二、责任归属。</strong>本应用仅为个人娱乐与情感陪伴的工具，<strong>一切使用行为及其后果均由用户本人自行承担</strong>。开发者不对用户利用本应用产生的任何内容、纠纷或损失承担责任。</p>
+                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">三、合法合规使用。</strong>你承诺在使用本应用过程中严格遵守所在国家与地区的法律法规，不生成、不传播任何违法违规、侵权或违背公序良俗的内容。</p>
+                <p style="margin:0 0 8px;"><strong style="color:var(--text-primary);">四、配合《人工智能拟人化互动服务管理暂行办法》。</strong>自 2026 年 7 月 15 日起施行、以国务院令第 21 号公布的《人工智能拟人化互动服务管理暂行办法》对拟人化 AI 互动服务提出明确要求，本应用据此作出以下承诺：</p>
+                <ul style="margin:4px 0 8px; padding-left:18px; font-size:12px; line-height:1.7; color:var(--text-secondary);">
+                  <li><strong style="color:var(--text-primary);">内容红线：</strong>坚决不生成违法不良信息，不模拟、不美化任何违反法律法规的情节；</li>
+                  <li><strong style="color:var(--text-primary);">未成年人保护：</strong>严禁以任何形式诱导、侵害未成年人，亦不生成面向未成年人的不适宜内容；</li>
+                  <li><strong style="color:var(--text-primary);">用户数据权利：</strong>你的数据完全由你掌控，可随时查看、导出或彻底删除；</li>
+                  <li><strong style="color:var(--text-primary);">AI 标识与适度提醒：</strong>本应用为 AI 拟人化互动，并非真实人类；长时间沉浸时将主动提示你休息；</li>
+                  <li><strong style="color:var(--text-primary);">退出机制：</strong>你随时可关闭对话、清除数据、结束一切互动，无需任何理由。</li>
+                </ul>
+                <p style="margin:0;">如你不同意上述须知，请立即停止使用本应用。</p>
+              </div>
+            </div>
+
+            <div style="text-align:center; font-size:10px; color:var(--text-secondary); margin-top:6px; line-height:1.6;">
+              本页面内容随版本更新 · 仅供个人学习与研究使用<br/>© Xvshishi · 基于 Poemnarapk（MIT）构建
+            </div>
           </div>
 
           <!-- 二级：账号安全管理 -->
@@ -2117,16 +2197,19 @@
 
             <!-- 邀请成员专属多选浮层 -->
             <div id="group-invite-overlay" class="modal-overlay" style="z-index: 1200;">
-              <div class="modal" style="max-height: 85%;">
-                <header class="modal-header">
+              <div class="modal" style="max-height: 85%; display: flex; flex-direction: column;">
+                <header class="modal-header" style="flex-shrink: 0;">
                   <h4>邀请新成员入群</h4>
                   <button class="btn-icon" onclick="document.getElementById('group-invite-overlay').classList.remove('active')">
                     <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
                   </button>
                 </header>
-                <div class="win-body" style="padding: 16px; overflow-y: auto;">
-                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 240px; overflow-y: auto; padding: 4px 2px; margin-bottom: 16px;"></div>
-                  <button class="btn btn-primary" onclick="if(window.groupChatSystem){window.groupChatSystem.submitGroupInvitation();}" style="width:100%; font-weight:700;">确认邀请加入</button>
+                <div class="win-body" style="padding: 16px; overflow-y: auto; flex: 1 1 auto;">
+                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; padding: 4px 2px;"></div>
+                </div>
+                <!-- 底部操作区：透明线框按钮，独立于列表滚动，绝不遮挡成员 -->
+                <div style="flex-shrink: 0; padding: 12px 16px 16px; border-top: 1px solid var(--border); background: var(--bg-main);">
+                  <button class="btn btn-outline" onclick="if(window.groupChatSystem){window.groupChatSystem.submitGroupInvitation();}" style="width:100%; font-weight:700; background-color: transparent !important;">确认邀请加入</button>
                 </div>
               </div>
             </div> <!-- 邀请成员专属多选浮层 -->
