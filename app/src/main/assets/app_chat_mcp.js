@@ -665,11 +665,25 @@
       this._stopAlarmCountdown();
       this.activeAlarm = null;
       try { localStorage.removeItem("mcp_active_alarm_state"); } catch(e) {}
+      // 取消闹钟时同时停止循环铃声
+      this.stopAlarmRingtone();
       this._renderAlarmStatus();
       if (inAppCancelled) {
         showToast("已取消应用内闹钟（系统时钟App的闹钟需手动删除）");
       } else {
         showToast("闹钟状态已清除（系统时钟App的闹钟需手动删除）");
+      }
+    },
+
+    /** 停止闹钟循环铃声（用户手动关闭） */
+    stopAlarmRingtone: function() {
+      if (window.AndroidMCP && typeof window.AndroidMCP.stopAlarmRingtone === 'function') {
+        try {
+          window.AndroidMCP.stopAlarmRingtone();
+          showToast("闹钟铃声已停止");
+        } catch(e) {
+          console.warn("停止闹钟铃声失败:", e);
+        }
       }
     },
 

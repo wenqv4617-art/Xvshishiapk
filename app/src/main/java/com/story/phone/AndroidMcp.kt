@@ -469,6 +469,16 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    /** 停止闹钟循环铃声（用户手动关闭） */
+    @JavascriptInterface
+    fun stopAlarmRingtone() {
+        InAppAlarmReceiver.stopRingtone()
+    }
+
+    /** 查询闹钟铃声是否正在响 */
+    @JavascriptInterface
+    fun isAlarmRingtonePlaying(): Boolean = InAppAlarmReceiver.isRingtonePlaying()
+
     private fun registerMediaReceiver() {
         try {
             val filter = android.content.IntentFilter().apply {

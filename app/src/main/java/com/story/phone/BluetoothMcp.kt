@@ -110,15 +110,20 @@ class BluetoothMcp(private val context: Context) {
             )
             val connectedProfiles = HashMap<String, MutableList<String>>()
             for (p in profiles) {
-                val connDevices = bluetoothManager?.getConnectedDevices(p) ?: emptyList()
-                for (d in connDevices) {
-                    if (seen.add(d.address)) {
-                        devices.put(deviceToJson(d, "connected", profileNames[p] ?: "未知", true))
-                    } else {
-                        connectedProfiles.getOrPut(d.address) { mutableListOf() }
+                // ★ 关键修复：部分 ROM 未注册某些 Profile 服务时 getConnectedDevices 会抛
+                //   IllegalArgumentException("Profile not supported: N")，
+                //   必须逐 profile 捕获并跳过，否则整个设备列表读取失败
+                try {
+                    val connDevices = bluetoothManager?.getConnectedDevices(p) ?: emptyList()
+                    for (d in connDevices) {
+                        if (seen.add(d.address)) {
+                            devices.put(deviceToJson(d, "connected", profileNames[p] ?: "未知", true))
+                        }
+                        // 记录该地址已连接的 profile
+                        connectedProfiles.getOrPut(d.address) { mutableListOf() }.add(profileNames[p] ?: "")
                     }
-                    // 记录该地址已连接的 profile
-                    connectedProfiles.getOrPut(d.address) { mutableListOf() }.add(profileNames[p] ?: "")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Profile ${profileNames[p] ?: p} 查询被跳过: ${e.message}")
                 }
             }
             // 为已连接设备补充多 profile 标注（如既是耳机又是媒体音频）

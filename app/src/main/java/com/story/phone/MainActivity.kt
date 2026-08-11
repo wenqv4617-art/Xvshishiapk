@@ -490,8 +490,17 @@ class BgPollReceiver : BroadcastReceiver() {
  */
 class InAppAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
+        // 停止响铃指令（通知上的"停止响铃"按钮触发）
+        if (intent?.action == ACTION_STOP_RINGTONE) {
+            stopRingtone()
+            try {
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                nm.cancel(1007)
+            } catch (e: Exception) { e.printStackTrace() }
+            return
+        }
         val message = intent?.getStringExtra(EXTRA_MESSAGE) ?: "叙事诗闹钟提醒"
-        // 0. ★ Kotlin 原生播放本地闹钟铃声（MediaPlayer，不依赖 JS 环境——退出应用后依然响铃）
+        // 0. ★ Kotlin 原生播放本地闹钟铃声（MediaPlayer 循环播放直到关闭，不依赖 JS 环境）
         playAlarmRingtoneNative(context, message)
         // 1. 三连振动（闹钟提醒强度）
         try {
@@ -569,17 +578,16 @@ class InAppAlarmReceiver : BroadcastReceiver() {
             val file = java.io.File(musicDir, targetName)
             if (!file.exists()) return
 
+            // ★ 循环播放直到用户手动关闭（通知按钮 / MCP 面板"停止响铃"）
+            stopRingtone()
             val player = android.media.MediaPlayer()
             player.setDataSource(file.absolutePath)
             player.isLooping = true
             player.setVolume(1f, 1f)
             player.prepare()
             player.start()
-            android.util.Log.d("InAppAlarmReceiver", "闹钟铃声原生播放中: $targetName")
-            // 20 秒后自动停止（防止无限响铃），用户点击通知进入应用后可手动暂停
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                try { player.stop(); player.release() } catch (e: Exception) {}
-            }, 20_000L)
+            ringtonePlayer = player
+            android.util.Log.d("InAppAlarmReceiver", "闹钟铃声循环播放中: $targetName")
         } catch (e: Exception) {
             android.util.Log.e("InAppAlarmReceiver", "播放闹钟铃声失败: ${e.message}")
         }
@@ -645,6 +653,19 @@ class InAppAlarmReceiver : BroadcastReceiver() {
             .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_SOUND)
             .setAutoCancel(true)
             .setContentIntent(pi)
+            // "停止响铃"按钮：直接广播给本 Receiver，停止循环铃声并关闭通知
+            .addAction(
+                android.R.drawable.ic_menu_close_clear_cancel,
+                "停止响铃",
+                PendingIntent.getBroadcast(
+                    context,
+                    9993,
+                    Intent(context, InAppAlarmReceiver::class.java).apply {
+                        action = ACTION_STOP_RINGTONE
+                    },
+                    flags
+                )
+            )
             .build()
         nm.notify(1007, notification)
     }
@@ -652,6 +673,24 @@ class InAppAlarmReceiver : BroadcastReceiver() {
     companion object {
         private const val EXTRA_MESSAGE = "alarm_message"
         private const val REQUEST_CODE = 9992
+        const val ACTION_STOP_RINGTONE = "com.story.phone.ACTION_STOP_RINGTONE"
+
+        /** 当前循环播放中的闹钟铃声 MediaPlayer（进程级静态持有，供全局停止） */
+        @Volatile private var ringtonePlayer: android.media.MediaPlayer? = null
+
+        /** 停止闹钟铃声（通知按钮 / MCP 面板 / 取消闹钟时调用） */
+        @JvmStatic
+        fun stopRingtone() {
+            try {
+                ringtonePlayer?.stop()
+                ringtonePlayer?.release()
+            } catch (e: Exception) { e.printStackTrace() }
+            ringtonePlayer = null
+        }
+
+        /** 当前是否有闹钟铃声在响 */
+        @JvmStatic
+        fun isRingtonePlaying(): Boolean = ringtonePlayer?.isPlaying == true
 
         // 取消应用内闹钟：用相同 REQUEST_CODE 重建 PendingIntent 并 cancel
         fun cancel(context: Context): Boolean {

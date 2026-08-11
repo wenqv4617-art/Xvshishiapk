@@ -5386,6 +5386,16 @@ function bindChatAppEvents() {
           rawReply = rawReply.replace(playMusicRegex, "").trim();
         }
 
+        // === Char (AI) 停止/暂停音乐指令解析 ===
+        const stopMusicRegex = /[\[【](STOP_MUSIC|停止音乐|暂停音乐|MCP_STOP_MUSIC)[\]】]/i;
+        if (stopMusicRegex.test(rawReply)) {
+          if (window.mcpSystem && typeof window.mcpSystem.stopMusic === 'function') {
+            window.mcpSystem.stopMusic();
+          }
+          // 擦除停止指令，避免污染对话气泡呈现
+          rawReply = rawReply.replace(stopMusicRegex, "").trim();
+        }
+
         // === Char (AI) 自主设闹钟指令解析（容错：JSON 解析失败也能提取 delay 设闹钟）===
         const setAlarmRegex = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
         const setAlarmMatch = rawReply.match(setAlarmRegex);
@@ -7627,6 +7637,15 @@ async function triggerOfflineReply() {
             console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
           }
           rawReply = rawReply.replace(playMusicRegexOffline, "").trim();
+        }
+
+        // === 离线剧场模式：解析并擦除 STOP_MUSIC 停止音乐指令 ===
+        const stopMusicRegexOffline = /[\[【](STOP_MUSIC|停止音乐|暂停音乐|MCP_STOP_MUSIC)[\]】]/i;
+        if (stopMusicRegexOffline.test(rawReply)) {
+          if (window.mcpSystem && typeof window.mcpSystem.stopMusic === 'function') {
+            window.mcpSystem.stopMusic();
+          }
+          rawReply = rawReply.replace(stopMusicRegexOffline, "").trim();
         }
 
         // === 离线剧场模式：解析并擦除 SET_ALARM 设闹钟指令（容错版）===
