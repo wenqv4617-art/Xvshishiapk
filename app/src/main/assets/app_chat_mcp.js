@@ -28,9 +28,23 @@
       }
       document.getElementById("chat-mcp-panel").classList.add("active");
       this.refreshScreentimeDisplay();
-      
+
       // 开启面板时自动扫描本地物理歌单并加载设置 [1]
       this.scanAndSyncLocalMusic();
+      // 同步设备真实电量
+      this.syncBattery();
+      // 自动读取蓝牙设备（无权限时静默失败，不打扰）
+      try {
+        if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothGetDevices === 'function') {
+          const raw = window.AndroidMCP.bluetoothGetDevices();
+          const data = JSON.parse(raw);
+          if (data && data.ok) {
+            this.bluetoothDevices = data.devices || [];
+            this.renderBluetoothDevices();
+            this.syncBluetoothPromptData();
+          }
+        }
+      } catch(e) {}
     },
 
     // 关闭控制面板
@@ -211,6 +225,9 @@
         geoStatus.innerText = "定位失败，未获得 Android 浏览器定位权限";
         showToast("GPS 读取失败，请检查浏览器定位权限开关！");
       }, { enableHighAccuracy: true, timeout: 8000 });
+
+      // 联动：同步读取设备真实电量（与天气一起注入提示词）
+      this.syncBattery();
     },
 
     // 2. 物理马达震动
@@ -421,11 +438,11 @@
       const ok = systemAlarmOk || inAppAlarmOk;
       if (showToastFeedback) {
         if (systemAlarmOk && inAppAlarmOk) {
-          showToast(`双重闹钟已设定：系统时钟 ${hour}:${String(minute).padStart(2, '0')} 响铃 + 应用内 AI 发信（${seconds}秒后，需app存活）`);
-        } else if (systemAlarmOk) {
-          showToast(`已写入系统时钟闹钟，${hour}:${String(minute).padStart(2, '0')} 响铃（app被杀也能响）`);
+          showToast(`双重闹钟已设定：应用内精确闹钟 ${seconds} 秒后响铃+AI发信（退出应用也能响） + 系统时钟 ${hour}:${String(minute).padStart(2, '0')}（部分手机需确认弹窗）`);
         } else if (inAppAlarmOk) {
-          showToast(`应用内闹钟已设定，${seconds} 秒后唤醒（需app存活，被杀则失效）`);
+          showToast(`应用内精确闹钟已设定，${seconds} 秒后响铃（锁屏/退出应用也能响）`);
+        } else if (systemAlarmOk) {
+          showToast(`已写入系统时钟闹钟，${hour}:${String(minute).padStart(2, '0')} 响铃（部分手机需手动确认）`);
         } else {
           showToast(`模拟闹钟已设定，将在 ${seconds} 秒后提醒（请保持页面在前台）`);
         }
@@ -914,6 +931,357 @@
       const mins = Math.floor(activeSeconds / 60);
       const secs = activeSeconds % 60;
       document.getElementById("mcp-screentime-val").innerText = `${mins} 分钟 ${secs} 秒`;
+    },
+
+    // ==========================================
+    //  5.1 真实电量读取（BatteryManager 系统服务）
+    // ==========================================
+    syncBattery: function() {
+      const statusEl = document.getElementById("mcp-battery-status");
+      if (window.AndroidMCP && typeof window.AndroidMCP.getBatteryStatus === 'function') {
+        try {
+          const raw = window.AndroidMCP.getBatteryStatus();
+          const data = JSON.parse(raw);
+          if (data && data.ok) {
+            if (statusEl) statusEl.innerText = `设备真实电量：${data.level}%${data.charging ? "（正在充电）" : ""}`;
+            try {
+              localStorage.setItem("mcp_battery", JSON.stringify({
+                level: data.level, status: data.status || "", timestamp: Date.now()
+              }));
+            } catch(e) {}
+            return;
+          }
+        } catch(e) {
+          console.warn("读取电量失败:", e);
+        }
+      }
+      if (statusEl) statusEl.innerText = "设备真实电量：读取失败（请检查权限）";
+    },
+
+    // ==========================================
+    //  6.0 蓝牙设备管理（真实读取 + AI 控制）
+    // ==========================================
+    bluetoothDevices: [],   // 已连接 + 已配对设备缓存
+    bleDevices: [],         // BLE 扫描结果缓存
+
+    /** 刷新已连接/已配对设备并渲染 */
+    loadBluetoothDevices: function() {
+      const listEl = document.getElementById("mcp-bt-list");
+      if (!listEl) return;
+      if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothGetDevices === 'function') {
+        try {
+          const raw = window.AndroidMCP.bluetoothGetDevices();
+          const data = JSON.parse(raw);
+          if (data && data.ok) {
+            this.bluetoothDevices = data.devices || [];
+            const summaryEl = document.getElementById("mcp-bt-summary");
+            if (summaryEl) summaryEl.innerText = `${this.bluetoothDevices.length} 台设备 ▾`;
+            this.renderBluetoothDevices();
+            this.syncBluetoothPromptData();
+            showToast(`已读取 ${this.bluetoothDevices.length} 台蓝牙设备`);
+            return;
+          }
+          listEl.innerHTML = `<div style="color:#dc2626;">读取失败：${(data && data.error) || "未知错误"}</div>`;
+          return;
+        } catch(e) {
+          console.error("读取蓝牙设备失败:", e);
+        }
+      }
+      listEl.innerHTML = `<div>当前环境不支持原生蓝牙读取，请在 APK 壳中运行。</div>`;
+    },
+
+    /** 渲染设备列表（每个设备独立注入开关 + SPP 发送） */
+    renderBluetoothDevices: function() {
+      const listEl = document.getElementById("mcp-bt-list");
+      if (!listEl) return;
+      if (this.bluetoothDevices.length === 0) {
+        listEl.innerHTML = `<div>未发现设备。请先在系统设置中配对蓝牙设备，再点"刷新"。</div>`;
+        return;
+      }
+      const rows = this.bluetoothDevices.map((dev) => {
+        const addrKey = String(dev.address).replace(/[^a-zA-Z0-9]/g, "_");
+        const isConnected = !!dev.isConnected;
+        const tag = isConnected
+          ? `<span style="color:#16a34a; font-weight:700;">已连接</span>`
+          : `<span style="color:#9ca3af;">已配对</span>`;
+        const profile = dev.profileName ? `<span style="color:#6366f1; font-size:10px;">${this._escapeHtml(dev.profileName)}</span>` : "";
+        // 每设备独立注入开关（持久化）
+        const injectOn = localStorage.getItem(`mcp_bt_inject_${dev.address}`) === "1";
+        const switchHtml = `<label style="display:flex; align-items:center; gap:4px; cursor:pointer; flex-shrink:0;">
+          <input type="checkbox" ${injectOn ? "checked" : ""} onchange="mcpSystem.toggleBtInject('${this._escapeHtml(dev.address)}', this.checked)">
+          <span style="font-size:10px; color:var(--text-secondary);">注入</span>
+        </label>`;
+        return `<div style="border:1px solid var(--border); border-radius:8px; padding:8px; margin-bottom:6px; background:#fcfcfd;">
+          <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+            <span style="font-weight:700; color:var(--text-primary); font-size:12px; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this._escapeHtml(dev.name)}</span>
+            ${profile}
+            <span style="font-size:9px; color:#9ca3af;">${this._escapeHtml(dev.address)}</span>
+            <span style="margin-left:auto; display:flex; align-items:center; gap:6px;">${tag} ${switchHtml}</span>
+          </div>
+          <div style="display:flex; gap:4px; margin-top:6px; align-items:center;">
+            <input id="bt-spp-${addrKey}" placeholder="发送数据到设备（如:ON / #LED1#）" style="flex:1; min-width:0; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
+            <button onclick="mcpSystem.sendSppToDevice('${this._escapeHtml(dev.address)}')" style="flex-shrink:0; padding:5px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #6366f1; background:#eef2ff; color:#4338ca; cursor:pointer;">串口发送</button>
+            <button onclick="mcpSystem.disconnectSpp()" style="flex-shrink:0; padding:5px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1px solid #d1d5db; background:#f9fafb; color:#6b7280; cursor:pointer;">断开</button>
+          </div>
+        </div>`;
+      }).join("");
+      listEl.innerHTML = `<div style="display:flex; flex-direction:column; gap:2px;">${rows}</div>`;
+    },
+
+    /** 每设备独立注入开关 */
+    toggleBtInject: function(address, checked) {
+      try {
+        if (checked) localStorage.setItem(`mcp_bt_inject_${address}`, "1");
+        else localStorage.removeItem(`mcp_bt_inject_${address}`);
+      } catch(e) {}
+      this.syncBluetoothPromptData();
+      showToast(checked ? "该设备已注入 AI 提示词，AI 可感知并控制它" : "已取消该设备的 AI 控制注入");
+    },
+
+    /** 汇总注入设备到 localStorage（供 app_prompts.js 拼提示词） */
+    syncBluetoothPromptData: function() {
+      try {
+        const injected = this.bluetoothDevices.filter(dev =>
+          localStorage.getItem(`mcp_bt_inject_${dev.address}`) === "1"
+        ).map(dev => ({
+          name: dev.name,
+          address: dev.address,
+          isConnected: !!dev.isConnected,
+          profileName: dev.profileName || ""
+        }));
+        localStorage.setItem("mcp_bluetooth_devices", JSON.stringify(injected));
+        localStorage.setItem("mcp_bluetooth_all", JSON.stringify(this.bluetoothDevices.map(d => ({
+          name: d.name, address: d.address, isConnected: !!d.isConnected, profileName: d.profileName || ""
+        }))));
+      } catch(e) { console.warn("同步蓝牙注入数据失败:", e); }
+    },
+
+    /** 跳转系统蓝牙设置（添加/配对设备） */
+    openBluetoothSettings: function() {
+      if (window.AndroidMCP && typeof window.AndroidMCP.openBluetoothSettings === 'function') {
+        window.AndroidMCP.openBluetoothSettings();
+        showToast("已打开系统蓝牙设置，请配对设备后返回");
+      } else {
+        showToast("当前环境不支持跳转系统设置");
+      }
+    },
+
+    /** 经典蓝牙 SPP 串口发送 */
+    sendSppToDevice: function(address) {
+      const addrKey = String(address).replace(/[^a-zA-Z0-9]/g, "_");
+      const input = document.getElementById(`bt-spp-${addrKey}`);
+      if (!input) return;
+      const data = input.value;
+      if (!data.trim()) { showToast("请先输入要发送的数据"); return; }
+      if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothSendSpp === 'function') {
+        const ok = window.AndroidMCP.bluetoothSendSpp(address, data);
+        if (ok) {
+          showToast(`已通过蓝牙串口发送：${data}`);
+          input.value = "";
+        } else {
+          showToast("发送失败：请检查设备连接与蓝牙权限");
+        }
+      } else {
+        showToast("当前环境不支持原生蓝牙控制");
+      }
+    },
+
+    disconnectSpp: function() {
+      if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothDisconnectSpp === 'function') {
+        window.AndroidMCP.bluetoothDisconnectSpp();
+        showToast("已断开蓝牙串口连接");
+      }
+    },
+
+    /** BLE 扫描并轮询结果 */
+    scanBle: function() {
+      const listEl = document.getElementById("mcp-ble-list");
+      if (!listEl) return;
+      if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothScanBle === 'function') {
+        listEl.innerHTML = `<div>正在扫描周围 BLE 设备（8 秒）...</div>`;
+        try {
+          const startRaw = window.AndroidMCP.bluetoothScanBle(8000);
+          const start = JSON.parse(startRaw);
+          if (!start.ok) {
+            listEl.innerHTML = `<div style="color:#dc2626;">扫描启动失败：${start.error || ""}</div>`;
+            return;
+          }
+        } catch(e) {}
+        setTimeout(() => {
+          try {
+            const raw = window.AndroidMCP.bluetoothGetBleResults();
+            const data = JSON.parse(raw);
+            this.bleDevices = (data && data.devices) || [];
+            this.renderBleDevices();
+          } catch(e) {
+            listEl.innerHTML = `<div>扫描结果读取失败</div>`;
+          }
+        }, 8500);
+      } else {
+        listEl.innerHTML = `<div>当前环境不支持 BLE 扫描</div>`;
+      }
+    },
+
+    /** 渲染 BLE 扫描结果（每设备可写特征值） */
+    renderBleDevices: function() {
+      const listEl = document.getElementById("mcp-ble-list");
+      if (!listEl) return;
+      if (this.bleDevices.length === 0) {
+        listEl.innerHTML = `<div>未扫描到 BLE 设备（请确认设备处于可广播状态）</div>`;
+        return;
+      }
+      const rows = this.bleDevices.map((dev) => {
+        const addrKey = String(dev.address).replace(/[^a-zA-Z0-9]/g, "_");
+        return `<div style="border:1px solid var(--border); border-radius:8px; padding:6px; margin-bottom:5px; background:#fcfcfd;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span style="font-weight:700; color:var(--text-primary); font-size:11px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this._escapeHtml(dev.name)}</span>
+            <span style="font-size:9px; color:#9ca3af;">${this._escapeHtml(dev.address)}</span>
+            <span style="font-size:9px; color:#16a34a;">RSSI: ${dev.rssi}</span>
+            <button onclick="mcpSystem.toggleBleWritePanel('${this._escapeHtml(dev.address)}')" style="margin-left:auto; flex-shrink:0; padding:4px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">写入特征值</button>
+          </div>
+          <div id="ble-write-${addrKey}" style="display:none; margin-top:6px; flex-direction:column; gap:4px;">
+            <input id="ble-svc-${addrKey}" placeholder="Service UUID（如 0000ffe0-0000-1000-8000-00805f9b34fb）" style="width:100%; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
+            <input id="ble-char-${addrKey}" placeholder="Characteristic UUID（如 0000ffe1-0000-1000-8000-00805f9b34fb）" style="width:100%; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
+            <div style="display:flex; gap:4px;">
+              <input id="ble-data-${addrKey}" placeholder="数据（hex: 01A2 或 文本）" style="flex:1; min-width:0; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
+              <button onclick="mcpSystem.bleWriteToDevice('${this._escapeHtml(dev.address)}')" style="flex-shrink:0; padding:5px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#cffafe; color:#155e75; cursor:pointer;">发送</button>
+            </div>
+            <div id="ble-result-${addrKey}" style="font-size:10px; color:var(--text-secondary);"></div>
+          </div>
+        </div>`;
+      }).join("");
+      listEl.innerHTML = rows;
+    },
+
+    /** 展开/收起 BLE 写入面板 */
+    toggleBleWritePanel: function(address) {
+      const addrKey = String(address).replace(/[^a-zA-Z0-9]/g, "_");
+      const panel = document.getElementById(`ble-write-${addrKey}`);
+      if (panel) {
+        const willShow = panel.style.display !== "flex";
+        panel.style.display = willShow ? "flex" : "none";
+        if (willShow) document.getElementById(`ble-data-${addrKey}`)?.focus();
+      }
+    },
+
+    /** BLE 特征值写入 */
+    bleWriteToDevice: function(address) {
+      const addrKey = String(address).replace(/[^a-zA-Z0-9]/g, "_");
+      const service = document.getElementById(`ble-svc-${addrKey}`)?.value.trim();
+      const char = document.getElementById(`ble-char-${addrKey}`)?.value.trim();
+      const data = document.getElementById(`ble-data-${addrKey}`)?.value.trim();
+      const resultEl = document.getElementById(`ble-result-${addrKey}`);
+      if (!service || !char || !data) {
+        if (resultEl) resultEl.innerText = "请填写 Service / Characteristic / 数据";
+        return;
+      }
+      if (resultEl) resultEl.innerText = "正在连接设备并写入...";
+      if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothBleWrite === 'function') {
+        try {
+          const startRaw = window.AndroidMCP.bluetoothBleWrite(address, service, char, data);
+          const start = JSON.parse(startRaw);
+          if (!start.ok) {
+            if (resultEl) resultEl.innerText = "写入失败：" + (start.error || "");
+            return;
+          }
+        } catch(e) {}
+        // 轮询写入结果
+        setTimeout(() => {
+          try {
+            const raw = window.AndroidMCP.bluetoothGetBleWriteResult();
+            const res = JSON.parse(raw);
+            if (res && res.ok) {
+              if (resultEl) resultEl.innerText = `写入成功（${res.bytes || 0} 字节）`;
+              showToast("BLE 特征值写入成功");
+            } else {
+              if (resultEl) resultEl.innerText = "写入失败：" + ((res && res.error) || "");
+            }
+          } catch(e) {}
+        }, 6000);
+      } else {
+        if (resultEl) resultEl.innerText = "当前环境不支持 BLE 写入";
+      }
+    },
+
+    /**
+     * AI [BLUETOOTH_CMD] 指令解析分发（由 app_chat.js 在解析 AI 回复时调用）。
+     * 支持的 action：
+     * - info        读取当前设备列表（返回给 AI）
+     * - send        经典蓝牙 SPP 发送 {"device":"名称或地址","data":"..."}
+     * - disconnect  断开串口
+     * - toggle      开关系统蓝牙 {"on":true|false}
+     * - scan        BLE 扫描
+     * - ble_write   BLE 写特征值 {"device":"地址","service":"UUID","char":"UUID","data":"..."}
+     */
+    handleBluetoothCommand: function(jsonStr) {
+      let opts = null;
+      try { opts = JSON.parse(jsonStr); } catch(e) {
+        console.warn("BLUETOOTH_CMD JSON 解析失败:", e);
+        return false;
+      }
+      const action = (opts.action || "info").toLowerCase();
+      if (action === "info") {
+        this.loadBluetoothDevices();
+        if (window.desktopPetSystem && typeof window.desktopPetSystem.popBubble === 'function') {
+          const names = this.bluetoothDevices.map(d => d.name).join("、") || "无设备";
+          window.desktopPetSystem.popBubble(`已连接蓝牙：${names}`);
+        }
+        return true;
+      }
+      if (action === "send") {
+        const device = opts.device || "";
+        const data = opts.data || "";
+        if (!device || !data) return false;
+        // 支持按名称或地址匹配
+        let target = device;
+        const found = this.bluetoothDevices.find(d => d.name === device || d.address === device);
+        if (found) target = found.address;
+        if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothSendSpp === 'function') {
+          const ok = window.AndroidMCP.bluetoothSendSpp(target, data);
+          if (ok) showToast(`AI 已控制蓝牙设备发送：${data}`);
+          return ok;
+        }
+        return false;
+      }
+      if (action === "disconnect") {
+        this.disconnectSpp();
+        return true;
+      }
+      if (action === "toggle") {
+        if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothSetEnabled === 'function') {
+          const raw = window.AndroidMCP.bluetoothSetEnabled(!!opts.on);
+          try {
+            const res = JSON.parse(raw);
+            if (!res.ok && res.error) showToast(res.error);
+          } catch(e) {}
+          return true;
+        }
+        return false;
+      }
+      if (action === "scan") {
+        this.scanBle();
+        return true;
+      }
+      if (action === "ble_write") {
+        if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothBleWrite === 'function') {
+          const device = opts.device || "";
+          const service = opts.service || "";
+          const char = opts.char || "";
+          const data = opts.data || "";
+          if (!device || !service || !char || !data) return false;
+          window.AndroidMCP.bluetoothBleWrite(device, service, char, data);
+          setTimeout(() => {
+            try {
+              const raw = window.AndroidMCP.bluetoothGetBleWriteResult();
+              const res = JSON.parse(raw);
+              if (res && res.ok) showToast("AI BLE 写入成功");
+            } catch(e) {}
+          }, 6000);
+          return true;
+        }
+        return false;
+      }
+      return false;
     },
 
     // ==========================================

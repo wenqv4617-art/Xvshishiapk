@@ -46,6 +46,11 @@ class AndroidMcp private constructor(private val context: Context) {
         fun releaseWakeLockIfHeld() {
             try { instance?.releaseWakeLockSafe() } catch (e: Exception) { e.printStackTrace() }
         }
+
+        /** 兜底释放蓝牙 SPP/GATT 连接资源 */
+        fun releaseBluetoothIfHeld() {
+            try { instance?.bluetoothMcp?.onDestroy() } catch (e: Exception) { e.printStackTrace() }
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
@@ -404,6 +409,64 @@ class AndroidMcp private constructor(private val context: Context) {
             e.printStackTrace()
         }
         return jsonArray.toString()
+    }
+
+    // ============================================================
+    //  蓝牙管理桥接（真实读取/控制 + 电量）
+    // ============================================================
+    private val bluetoothMcp: BluetoothMcp by lazy { BluetoothMcp(context) }
+
+    /** 读取已连接 + 已配对设备列表 */
+    @JavascriptInterface
+    fun bluetoothGetDevices(): String = bluetoothMcp.getDevicesJson()
+
+    /** 经典蓝牙 SPP 串口发送（真实控制 ESP32/Arduino/智能硬件） */
+    @JavascriptInterface
+    fun bluetoothSendSpp(deviceAddress: String, data: String): Boolean = bluetoothMcp.sendSppData(deviceAddress, data)
+
+    @JavascriptInterface
+    fun bluetoothDisconnectSpp(): Boolean = bluetoothMcp.disconnectSpp()
+
+    @JavascriptInterface
+    fun bluetoothIsSppConnected(): Boolean = bluetoothMcp.isSppConnected()
+
+    /** 系统蓝牙开关（Android 13+ 受限会返回提示） */
+    @JavascriptInterface
+    fun bluetoothSetEnabled(on: Boolean): String = bluetoothMcp.setBluetoothEnabled(on)
+
+    @JavascriptInterface
+    fun bluetoothIsEnabled(): Boolean = bluetoothMcp.isBluetoothEnabled()
+
+    /** 启动 BLE 扫描（timeoutMs 后自动停止），结果通过 bluetoothGetBleResults 拉取 */
+    @JavascriptInterface
+    fun bluetoothScanBle(timeoutMs: Long): String = bluetoothMcp.scanBleDevices(timeoutMs)
+
+    @JavascriptInterface
+    fun bluetoothGetBleResults(): String = bluetoothMcp.getBleScanResults()
+
+    /** BLE 特征值写入（真实控制 BLE 智能设备） */
+    @JavascriptInterface
+    fun bluetoothBleWrite(deviceAddress: String, serviceUuid: String, charUuid: String, dataHex: String): String =
+        bluetoothMcp.bleConnectAndWrite(deviceAddress, serviceUuid, charUuid, dataHex)
+
+    @JavascriptInterface
+    fun bluetoothGetBleWriteResult(): String = bluetoothMcp.getBleWriteResult()
+
+    /** 真实电量 + 充电状态（BatteryManager 系统服务） */
+    @JavascriptInterface
+    fun getBatteryStatus(): String = bluetoothMcp.getBatteryStatusJson()
+
+    /** 打开系统蓝牙设置页（添加/配对设备入口） */
+    @JavascriptInterface
+    fun openBluetoothSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun registerMediaReceiver() {

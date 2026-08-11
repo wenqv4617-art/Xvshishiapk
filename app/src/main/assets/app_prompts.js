@@ -290,6 +290,17 @@ async function buildGlobalSystemPrompt(sessionId) {
       } catch(e) {}
     }
 
+    // 真实电量注入（BatteryManager 系统服务读取）
+    const mcpBattery = localStorage.getItem("mcp_battery");
+    if (mcpBattery) {
+      try {
+        const bat = JSON.parse(mcpBattery);
+        if (bat && typeof bat.level === 'number') {
+          mcpPrompt += `- 用户手机当前真实电量: ${bat.level}%（${bat.status || "未充电"}）\n`;
+        }
+      } catch(e) {}
+    }
+
     // 将用户导入的本地 MP3/WAV 音乐列表同步喂给大模型！
     // 优先读取合并后的歌单信息（本地+乐库），降级读取仅本地的歌单信息
     const mcpMergedSongs = localStorage.getItem("mcp_merged_playlist_info");
@@ -332,6 +343,33 @@ async function buildGlobalSystemPrompt(sessionId) {
 [SET_ALARM]{"delay": "10秒", "title": "测试一下闹钟"}
 [SET_ALARM]{"delay": 600, "title": "十分钟到了"}
 警告：输出指令时 JSON 必须完全合法——字符串值必须用双引号包裹，数字不要加引号，字段之间用英文逗号分隔。设定闹钟后请在正文中自然告知用户（如"好，我给你设了半小时后的闹钟"）。`;
+
+    // 蓝牙设备注入（仅注入用户手动开启"注入"开关的设备，每个设备独立控制）
+    const mcpBtDevices = localStorage.getItem("mcp_bluetooth_devices");
+    if (mcpBtDevices) {
+      try {
+        const btDevices = JSON.parse(mcpBtDevices);
+        if (Array.isArray(btDevices) && btDevices.length > 0) {
+          mcpPrompt += `\n【已接入的蓝牙设备（AI 可控）】以下蓝牙设备已接入用户手机，你可以感知并控制它们：\n`;
+          btDevices.forEach((d, i) => {
+            mcpPrompt += `  * [蓝牙设备${i + 1}] ${d.name}（${d.address}）${d.isConnected ? "· 已连接" : "· 已配对"}${d.profileName ? " · " + d.profileName : ""}\n`;
+          });
+          mcpPrompt += `\n【核心交互指令三 · 蓝牙控制】：当用户请求你控制蓝牙设备（如开灯、发指令、控制智能硬件），或你基于语境判断需要操作时，请在你的回复文本最末尾追加以下格式的指令（必须单独占一行，JSON 必须完全合法）：
+[BLUETOOTH_CMD]{"action":"send","device":"设备名称或地址","data":"要发送的数据"}
+支持的 action：
+- send：通过经典蓝牙串口（SPP）发送文本数据到设备（用于 ESP32/Arduino/智能硬件等，如 data:"ON"、data:"#LED1#"）。device 填上面列表中的设备名称或 MAC 地址。
+- disconnect：断开当前串口连接 → [BLUETOOTH_CMD]{"action":"disconnect"}
+- toggle：开关系统蓝牙（Android 13+ 受限时 App 会提示）→ [BLUETOOTH_CMD]{"action":"toggle","on":true}
+- scan：扫描周围 BLE 设备 → [BLUETOOTH_CMD]{"action":"scan"}
+- ble_write：向 BLE 设备写入特征值（控制 BLE 智能硬件）→ [BLUETOOTH_CMD]{"action":"ble_write","device":"设备地址","service":"Service UUID","char":"Characteristic UUID","data":"十六进制如 01A2 或文本"}
+- info：查看当前蓝牙设备列表 → [BLUETOOTH_CMD]{"action":"info"}
+合法示例：
+[BLUETOOTH_CMD]{"action":"send","device":"ESP32-Test","data":"ON"}
+[BLUETOOTH_CMD]{"action":"ble_write","device":"AA:BB:CC:DD:EE:FF","service":"0000ffe0-0000-1000-8000-00805f9b34fb","char":"0000ffe1-0000-1000-8000-00805f9b34fb","data":"0100"}
+警告：只可控制用户已开启"注入"开关并出现在上面列表中的设备。执行后请在正文中自然告知用户操作结果。`;
+        }
+      } catch(e) {}
+    }
 
     mcpPrompt += `\n请你在后续的对白或动作白描中，极其自然地融入当前的天气气温或所处地理特征，或根据歌单里的歌名展开讨论，在对白中进行合乎人设的引导！`;
 

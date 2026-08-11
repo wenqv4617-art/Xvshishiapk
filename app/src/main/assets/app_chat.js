@@ -5397,6 +5397,17 @@ function bindChatAppEvents() {
           rawReply = rawReply.replace(setAlarmRegex, "").trim();
         }
 
+        // === Char (AI) 蓝牙设备控制指令解析 ===
+        const btCmdRegex = /[\[【](BLUETOOTH_CMD|蓝牙控制|MCP_BLUETOOTH)[\]】]\s*(\{[\s\S]*?\})/i;
+        const btCmdMatch = rawReply.match(btCmdRegex);
+        if (btCmdMatch) {
+          if (window.mcpSystem && typeof window.mcpSystem.handleBluetoothCommand === 'function') {
+            window.mcpSystem.handleBluetoothCommand(btCmdMatch[2]);
+          }
+          // 擦除蓝牙指令，避免污染对话气泡
+          rawReply = rawReply.replace(btCmdRegex, "").trim();
+        }
+
         // === Char (AI) 表情反应处理 ===
         const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
         const reactMatch = rawReply.match(reactRegex);

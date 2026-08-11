@@ -143,6 +143,11 @@ class MainActivity : AppCompatActivity() {
             @Suppress("DEPRECATION")
             permissions.add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
+        // 蓝牙管理：Android 12+ 读取/连接蓝牙设备所需运行时权限
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+        }
 
         val listToRequest = permissions.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
@@ -219,6 +224,12 @@ class McpForegroundService : Service() {
         // 兜底释放 AndroidMcp 持有的后台 WakeLock，防止服务被回收后 WakeLock 仍占用
         try {
             AndroidMcp.releaseWakeLockIfHeld()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        // 释放蓝牙 SPP/GATT 连接资源
+        try {
+            AndroidMcp.releaseBluetoothIfHeld()
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -480,15 +491,18 @@ class BgPollReceiver : BroadcastReceiver() {
 class InAppAlarmReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val message = intent?.getStringExtra(EXTRA_MESSAGE) ?: "叙事诗闹钟提醒"
-        // 1. 振动
+        // 0. ★ Kotlin 原生播放本地闹钟铃声（MediaPlayer，不依赖 JS 环境——退出应用后依然响铃）
+        playAlarmRingtoneNative(context, message)
+        // 1. 三连振动（闹钟提醒强度）
         try {
+            val pattern = longArrayOf(0, 500, 200, 500, 200, 900)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
-                vm.defaultVibrator.vibrate(android.os.VibrationEffect.createOneShot(1000L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                vm.defaultVibrator.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
             } else {
                 @Suppress("DEPRECATION")
                 val v = context.getSystemService(Context.VIBRATOR_SERVICE) as android.os.Vibrator
-                v.vibrate(android.os.VibrationEffect.createOneShot(1000L, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                v.vibrate(android.os.VibrationEffect.createWaveform(pattern, -1))
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -515,6 +529,76 @@ class InAppAlarmReceiver : BroadcastReceiver() {
                 }
             }
         }
+    }
+
+    /**
+     * Kotlin 原生播放闹钟铃声：解析 message JSON 中的 ringtone 字段，
+     * 匹配 /Music/Storypoem 目录下的本地歌曲用 MediaPlayer 循环播放 20 秒。
+     * 完全不依赖 WebView JS 环境，退出应用后依然能响铃。
+     * 支持 "local:N" / 纯数字索引 / 歌曲标题模糊匹配。
+     */
+    private fun playAlarmRingtoneNative(context: Context, message: String) {
+        try {
+            var ringtone: Any? = null
+            try {
+                val obj = org.json.JSONObject(message)
+                if (obj.has("ringtone") && !obj.isNull("ringtone")) ringtone = obj.get("ringtone")
+            } catch (e: Exception) { return }
+            if (ringtone == null) return
+            val raw = ringtone.toString().trim()
+            if (raw.isEmpty() || raw == "default") return
+
+            val musicFiles = listMusicFiles(context)
+            var targetName: String? = null
+            if (raw.contains(":")) {
+                // "local:3" 本地歌曲索引（library 在线歌曲无法原生播放，忽略）
+                val parts = raw.split(":")
+                if (parts.size == 2 && parts[0] == "local") {
+                    val idx = parts[1].toIntOrNull() ?: return
+                    if (idx in musicFiles.indices) targetName = musicFiles[idx]
+                }
+            } else if (raw.matches(Regex("\\d+"))) {
+                val idx = raw.toInt()
+                if (idx in musicFiles.indices) targetName = musicFiles[idx]
+            } else {
+                targetName = musicFiles.firstOrNull { it.contains(raw, ignoreCase = true) }
+            }
+            if (targetName == null) return
+
+            val musicDir = getAlarmMusicDir(context)
+            val file = java.io.File(musicDir, targetName)
+            if (!file.exists()) return
+
+            val player = android.media.MediaPlayer()
+            player.setDataSource(file.absolutePath)
+            player.isLooping = true
+            player.setVolume(1f, 1f)
+            player.prepare()
+            player.start()
+            android.util.Log.d("InAppAlarmReceiver", "闹钟铃声原生播放中: $targetName")
+            // 20 秒后自动停止（防止无限响铃），用户点击通知进入应用后可手动暂停
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try { player.stop(); player.release() } catch (e: Exception) {}
+            }, 20_000L)
+        } catch (e: Exception) {
+            android.util.Log.e("InAppAlarmReceiver", "播放闹钟铃声失败: ${e.message}")
+        }
+    }
+
+    private fun listMusicFiles(context: Context): List<String> {
+        return getAlarmMusicDir(context).listFiles { _, name ->
+            name.endsWith(".mp3", true) || name.endsWith(".wav", true) || name.endsWith(".m4a", true)
+        }?.map { it.name } ?: emptyList()
+    }
+
+    private fun getAlarmMusicDir(context: Context): java.io.File {
+        @Suppress("DEPRECATION")
+        val dir = java.io.File(
+            android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_MUSIC),
+            "Storypoem"
+        )
+        if (!dir.exists()) dir.mkdirs()
+        return dir
     }
 
     private fun showAlarmNotification(context: Context, message: String) {
@@ -603,15 +687,23 @@ class InAppAlarmReceiver : BroadcastReceiver() {
                     android.app.PendingIntent.FLAG_UPDATE_CURRENT
                 }
                 val pi = android.app.PendingIntent.getBroadcast(context, REQUEST_CODE, intent, flags)
-                // 优先精确闹钟（需 SCHEDULE_EXACT_ALARM），无权限则降级 setAndAllowWhileIdle
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    if (am.canScheduleExactAlarms()) {
-                        am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                // ★ 首选 setAlarmClock：闹钟标准 API，无需 SCHEDULE_EXACT_ALARM 权限，
+                //   系统保证精确触发（锁屏/Doze 下同样准时），并在状态栏显示闹钟图标
+                try {
+                    val alarmInfo = android.app.AlarmManager.AlarmClockInfo(triggerAtMillis, null)
+                    am.setAlarmClock(alarmInfo, pi)
+                } catch (e1: Exception) {
+                    e1.printStackTrace()
+                    // 降级 1：精确闹钟（需 SCHEDULE_EXACT_ALARM 权限）
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        if (am.canScheduleExactAlarms()) {
+                            am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                        } else {
+                            am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                        }
                     } else {
-                        am.setAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
+                        am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
                     }
-                } else {
-                    am.setExactAndAllowWhileIdle(android.app.AlarmManager.RTC_WAKEUP, triggerAtMillis, pi)
                 }
                 true
             } catch (e: Exception) {
