@@ -1929,6 +1929,23 @@
                 <span class="slider"></span>
               </label>
             </div>
+
+            <!-- 新增：群聊线下赴约记录拼入线上上下文开关 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px;">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; font-size:12px; font-weight:700; color:var(--text-secondary);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#ec4899;">
+                  <path d="M12 21s-7-4.35-7-10a7 7 0 0 1 14 0c0 5.65-7 10-7 10z"/>
+                  <circle cx="12" cy="11" r="2.5"/>
+                </svg>
+                线下赴约记录拼入线上上下文
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="group-details-merge-offline-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div style="font-size:10px; color:var(--text-secondary); padding: 0 2px; margin-top: -8px;">开启后，本群赴约模式未总结的对话记录将按时间线拼入线上群聊上下文，并参与自动总结轮数统计与向量搜索原文召回。</div>
+
             <!-- 新增：群专属个性化聊天美化入口 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px; cursor:pointer;" onclick="chatBeautifySystem.openPanel()">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; font-weight:700; color:var(--text-secondary);">
@@ -2278,18 +2295,18 @@
               </div>
             </div>
 
-            <!-- 邀请成员专属多选浮层 -->
+            <!-- 邀请新成员入群浮层（三段式 flex 布局：标题固定 / 列表滚动区严格夹在中间 / 按钮固定底部，杜绝遮挡） -->
             <div id="group-invite-overlay" class="modal-overlay" style="z-index: 1200;">
-              <div class="modal" style="max-height: 85%;">
-                <header class="modal-header">
+              <div class="modal" style="max-height: 85%; display: flex; flex-direction: column; overflow: hidden;">
+                <header class="modal-header" style="flex-shrink: 0;">
                   <h4>邀请新成员入群</h4>
                   <button class="btn-icon" onclick="document.getElementById('group-invite-overlay').classList.remove('active')">
                     <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
                   </button>
                 </header>
-                <div class="win-body" style="padding: 16px; display: flex; flex-direction: column; overflow: hidden;">
-                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; max-height: 55vh; overflow-y: auto; padding: 4px 2px; margin-bottom: 14px;"></div>
-                  <div style="position: sticky; bottom: 0; padding-top: 12px; border-top: 1px solid var(--border); background: var(--bg);">
+                <div class="win-body" style="padding: 12px 16px; display: flex; flex-direction: column; overflow: hidden; flex: 1; min-height: 0;">
+                  <div id="group-invite-members-list" style="display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; overflow-y: auto; padding: 4px 2px; margin-bottom: 10px;"></div>
+                  <div style="flex-shrink: 0; padding-top: 10px; border-top: 1px solid var(--border); background: var(--bg);">
                     <button class="btn btn-outline" onclick="if(window.groupChatSystem){window.groupChatSystem.submitGroupInvitation();}" style="width:100%; font-weight:700; background:transparent !important; border:1.5px solid var(--primary); color:var(--primary); border-radius:8px; padding:10px 0; cursor:pointer;">确认邀请加入</button>
                   </div>
                 </div>
@@ -2462,6 +2479,21 @@
                 <span class="slider"></span>
               </label>
             </div>
+
+            <!-- 线下赴约记录拼入线上上下文：开启后赴约模式下未总结的对话记录按时间线拼入线上对话上下文，参与自动总结轮数统计与向量检索 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <path d="M12 21s-7-4.35-7-10a7 7 0 0 1 14 0c0 5.65-7 10-7 10z"/>
+                  <circle cx="12" cy="11" r="2.5"/>
+                </svg> 线下赴约记录拼入线上上下文
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-merge-offline-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div style="font-size:10px; color:var(--text-secondary); padding: 0 0 6px 0; margin-top: -6px;">开启后，赴约模式未总结的对话记录将按时间线拼入线上对话上下文，并参与自动总结轮数统计与向量搜索原文召回（线下记录会以【线下赴约】标签隔离，避免与线上微信格式混淆）。</div>
 
             <!-- 新增：允许AI发送语音与图片开关 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
@@ -5965,6 +5997,23 @@
         <rect width="180" height="6" rx="3" fill="rgba(0,0,0,0.08)"></rect>
         <rect height="6" rx="3" fill="#07c160">
           <animate attributeName="width" from="20" to="165" dur="22.5s" repeatCount="indefinite"/>
+        </rect>
+      </svg>
+    </div>
+  </div>
+
+  <!-- 清空记录进度遮罩（与删除对话同款过渡卡片，琥珀色主题） -->
+  <div id="clear-progress-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:16px; padding:28px 32px; display:flex; flex-direction:column; align-items:center; gap:14px; min-width:220px; box-shadow:0 8px 32px rgba(0,0,0,0.2);">
+      <svg viewBox="0 0 24 24" width="32" height="32" style="color:#b45309;" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M9 14l2 2 4-4"/>
+      </svg>
+      <div id="clear-progress-text" style="font-size:14px; font-weight:700; color:var(--text-primary); text-align:center;">正在清空记录...</div>
+      <div id="clear-progress-sub" style="font-size:11px; color:var(--text-secondary); text-align:center;">请稍候，正在抹除所有对话数据</div>
+      <svg width="180" height="6" viewBox="0 0 180 6" style="margin-top:2px;">
+        <rect width="180" height="6" rx="3" fill="rgba(0,0,0,0.08)"></rect>
+        <rect height="6" rx="3" fill="#f59e0b">
+          <animate attributeName="width" from="20" to="165" dur="12s" repeatCount="indefinite"/>
         </rect>
       </svg>
     </div>

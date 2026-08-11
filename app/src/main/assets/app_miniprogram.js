@@ -5,10 +5,13 @@
  * 职责：
  *   1. 下拉手势：在聊天-对话页顶部下拉进入小程序页面（仿微信）；
  *   2. 小程序运行时：全屏容器 + 右上角半透明胶囊按钮（退出 / 分享）；
- *   3. 小程序注册表：内置小程序 + GitHub raw 链接拉取的外部小程序；
- *   4. 暴露 MiniProgramAPI：让小程序能调用小手机里的每一个接口
- *      （单聊/群聊/档案馆 char、主记忆、上下文、关系网、apikey、直接调用 LLM）；
- *   5. 分享卡片：把小程序分享卡片发送给 char，单聊/群聊后台开关控制 prompt 注入与解析。
+ *   3. 小程序注册表：内置小程序 + 链接安装（.js 直链 / 应用商店 store.json）+ 本地上传/粘贴；
+ *   4. 应用商店：store.json 批量导入、商店源持久化、一键更新全部应用；
+ *   5. 权限声明式安全模型：manifest.permissions 白名单裁剪 API，密钥不暴露，
+ *      MCP 工具由宿主代理（api.mcp.invoke），getApiConfig 脱敏；
+ *   6. 暴露 MiniProgramAPI：让小程序能调用小手机里的每一个接口
+ *      （单聊/群聊/档案馆 char、主记忆、上下文、关系网、MCP、直接调用 LLM）；
+ *   7. 分享卡片：把小程序分享卡片发送给 char，单聊/群聊后台开关控制 prompt 注入与解析。
  *
  * 设计原则：无损加入。所有逻辑均挂在新容器与新开关之下，关闭开关即完全不影响现有功能。
  * UI 规范：禁止新增任何 emoji，所有按钮使用纯矢量 SVG 图标。
@@ -21,6 +24,8 @@
   const REGISTRY_KEY = "miniprogram_registry";       // localStorage 注册表
   const STATE_PREFIX = "miniprogram_state_";          // 小程序状态持久化前缀
   const CODE_PREFIX = "miniprogram_code_";            // 本地小程序源码持久化前缀
+  const STORE_KEY = "miniprogram_store_sources";      // 应用商店源列表（链接安装持久化）
+  const PERM_APPROVED_PREFIX = "miniprogram_perm_ok_"; // 权限已批准标记前缀（首次运行确认一次）
 
   // 注册表：[{ id, name, description, iconSvg, version, author, type, source, githubUrl, builtinKey, installedAt }]
   let registry = [];
@@ -55,6 +60,63 @@
     return "mp_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 7);
   }
 
+  // ============================================================
+  //  权限声明模型（应用商店式安全模型）
+  //  manifest.permissions: 可选字段，白名单数组。
+  //  - 未声明（旧版/内置）→ 视为全权限，行为完全不变（向后兼容）；
+  //  - 已声明 → 未列入白名单的 API 会被裁剪（方法不存在），
+  //    且 getApiConfig 不再返回明文 key，密钥永远留在宿主侧。
+  //  可取值见 PERM_META（"*" 表示全部授权）。
+  // ============================================================
+  const PERM_META = {
+    llm:      "调用大模型生成回复",
+    api:      "读取模型配置（不含密钥）",
+    memory:   "读写会话记忆 / 总结 / 上下文",
+    chat:     "读取与发送聊天消息",
+    archive:  "读写角色档案 / 档案馆",
+    worldbook: "读取世界书条目",
+    network:  "读取关系网",
+    storage:  "本地状态持久化",
+    files:    "文件读写 / 上传 / 导出",
+    share:    "分享 / 邀请 / 房间成员",
+    mcp:      "调用 MCP 工具（宿主代理，密钥不暴露）",
+    user:     "读取当前用户信息"
+  };
+  // 读取条目的权限声明：返回数组；未声明返回 null（= 全权限）
+  function permsOf(entry) {
+    if (!entry || !Array.isArray(entry.permissions) || !entry.permissions.length) return null;
+    return entry.permissions;
+  }
+  // 检查是否持有某权限（未声明 → 全通过）
+  function hasPerm(entry, perm) {
+    const p = permsOf(entry);
+    if (p === null) return true;
+    return p.indexOf("*") >= 0 || p.indexOf(perm) >= 0;
+  }
+
+  // 统一拉取远程文本：优先 Android 原生 HTTP 桥（规避跨域），失败回退 fetch
+  async function fetchUrlText(url) {
+    let text = null;
+    if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === "function") {
+      try {
+        const resStr = window.AndroidMCP.sendNativeHttpRequest(url, "GET", JSON.stringify({}), "");
+        const resObj = JSON.parse(resStr);
+        if (resObj && resObj.status >= 200 && resObj.status < 300) text = resObj.body;
+      } catch (e) {}
+    }
+    if (text === null) {
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      text = await resp.text();
+    }
+    if (!text || text.length < 20) throw new Error("拉取到的内容为空");
+    return text;
+  }
+  // 解析相对链接（商店清单里的 app.url 可能是相对路径）
+  function resolveUrl(maybeRelative, base) {
+    try { return new URL(maybeRelative, base).href; } catch (e) { return maybeRelative; }
+  }
+
   // ---------- 内置 SVG 图标集 ----------
   const ICONS = {
     grid: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>',
@@ -87,7 +149,8 @@
     } catch (e) { return null; }
   }
 
-  function buildAPI() {
+  function buildAPI(entry) {
+    entry = entry || null;
     const api = {
       // --- 会话与角色 ---
       getActiveSessionId() { return typeof activeSessionId !== "undefined" ? activeSessionId : null; },
@@ -117,19 +180,27 @@
         const members = await db.group_members.where("groupId").equals(gid).toArray();
         const result = [];
         for (const m of members) {
-          if (m.memberType === "char") {
-            const arch = await db.archives.get(m.memberId);
-            result.push({ id: m.memberId, type: "char", name: arch ? arch.name : "角色", avatar: arch ? arch.avatar : "", persona: arch ? arch.persona : "" });
-          } else {
-            const arch = await db.archives.get(m.memberId);
-            result.push({ id: m.memberId, type: "user", name: arch ? arch.name : "我", avatar: arch ? arch.avatar : "", persona: arch ? arch.persona : "" });
-          }
+          const arch = await db.archives.get(m.memberId);
+          const isSnapshot = !!m.isSnapshot;
+          // 支线人物（对话快照分支）使用群成员唯一行 id 派生独立标识，避免与同名主线人物混淆
+          result.push({
+            id: isSnapshot ? ("snap_" + m.id) : m.memberId,
+            memberId: m.memberId,
+            type: m.memberType === "char" ? "char" : "user",
+            name: m.displayName || (arch ? arch.name : (m.memberType === "char" ? "角色" : "我")),
+            baseName: arch ? arch.name : "",
+            avatar: arch ? arch.avatar : "",
+            persona: arch ? arch.persona : "",
+            isSnapshot: isSnapshot,
+            snapshotLabel: m.snapshotLabel || "",
+            sourceArchiveId: m.sourceArchiveId || 0
+          });
         }
         return result;
       },
       // 档案馆：所有角色档案
       async getArchives(filter) {
-        let list = await db.archives.toArray();
+        let list = (await db.archives.toArray()).filter(a => !a.isSnapshot);
         if (filter && filter.type) list = list.filter(a => a.type === filter.type);
         return list.map(a => ({ id: a.id, type: a.type, name: a.name, avatar: a.avatar, persona: a.persona, remark: a.remark, group: a.group }));
       },
@@ -205,24 +276,56 @@
       },
       // 一站式获取某角色的完整上下文：人设 + 主记忆 + 关系网 + 最近对话 + 最新总结
       // 供真心话大冒险等多人小程序拼接详细 prompt 用
+      // 支持两种入参：主线人物传档案 id（数字）；支线人物（对话快照分支）传 'snap_<群成员行id>'，
+      // 此时返回该分支快照里独有的记忆与对话片段，绝不用主线人物或其它分支的记忆串台。
       async getCharRichContext(charId) {
-        const cid = Number(charId) || 0;
+        // 1. 解析身份：支线人物（对话快照分支）从群成员行 id 定位
+        let snapMember = null;
+        if (typeof charId === "string" && charId.indexOf("snap_") === 0) {
+          try { snapMember = await db.group_members.get(Number(charId.slice(5))); } catch (e) { snapMember = null; }
+          if (!snapMember) return null;
+        }
+        const cid = snapMember ? Number(snapMember.memberId) : (Number(charId) || 0);
         if (!cid) return null;
         let char = null;
         try { char = await db.archives.get(cid); } catch (e) { char = null; }
         const persona = (char && char.persona) ? char.persona : "";
-        const name = (char && char.name) ? char.name : "角色";
-        const sess = await api.findSessionByCharId(cid);
+        const name = snapMember ? (snapMember.displayName || (char ? char.name : "角色")) : ((char && char.name) ? char.name : "角色");
         let memory = null, recentContext = [];
-        if (sess) {
-          try { memory = await api.getMainMemory(sess.id); } catch (e) { memory = null; }
-          try { recentContext = await api.getRecentContext(sess.id, 12); } catch (e) { recentContext = []; }
+        // 2. 支线人物：读取其对话快照里独有的总结与最近对话，作为该分支的专属记忆
+        if (snapMember && snapMember.sourceArchiveId) {
+          try {
+            const archive = await db.chat_archives.get(snapMember.sourceArchiveId);
+            if (archive) {
+              const sd = deserializeRecord(archive.snapshotData) || {};
+              const sums = Array.isArray(sd.summaries) ? sd.summaries : [];
+              const msgs = Array.isArray(sd.messages) ? sd.messages : [];
+              memory = {
+                coreSelfStatus: "", coreSelfPurpose: "", coreSelfChanges: "",
+                coreRelationship: "", coreUserInEyes: "",
+                latestSummary: sums.length ? { content: sums[sums.length - 1].content || "", keywords: "", timestamp: 0 } : null,
+                branchLabel: archive.customLabel || snapMember.snapshotLabel || "",
+                isSnapshot: true
+              };
+              recentContext = msgs.slice(-12).map(x => ({
+                senderType: x.senderType, senderId: x.senderId,
+                contentType: x.contentType, content: x.content, timestamp: x.timestamp
+              }));
+            }
+          } catch (e) {}
+        } else {
+          const sess = await api.findSessionByCharId(cid);
+          if (sess) {
+            try { memory = await api.getMainMemory(sess.id); } catch (e) { memory = null; }
+            try { recentContext = await api.getRecentContext(sess.id, 12); } catch (e) { recentContext = []; }
+          }
         }
         let network = [];
         try { network = await api.getRelationshipNetwork(cid); } catch (e) { network = []; }
         return {
           charId: cid, name: name, persona: persona,
-          memory: memory, recentContext: recentContext, network: network
+          memory: memory, recentContext: recentContext, network: network,
+          isSnapshot: !!snapMember, snapshotLabel: snapMember ? (snapMember.snapshotLabel || "") : ""
         };
       },
 
@@ -290,7 +393,15 @@
       },
 
       // --- API Key 与直接调用 LLM ---
-      async getApiConfig() { return await getApiConfig(); },
+      // 安全模型：声明了 permissions 的小程序只能拿到 {url, model, temperature}，
+      // 拿不到明文 key（密钥永远留在宿主闭包，仅供 callLLM 内部使用）；
+      // 未声明权限（旧版小程序）保持返回 key，向后兼容。
+      async getApiConfig() {
+        const cfg = await getApiConfig();
+        if (!cfg) return null;
+        if (permsOf(entry) === null) return cfg;
+        return { url: cfg.url, model: cfg.model, temperature: cfg.temperature, hasKey: !!cfg.key };
+      },
       async callLLM(opts) {
         const cfg = await getApiConfig();
         if (!cfg) { const e = new Error("未配置全局 API 预设"); try { if (typeof window.fwTrackError === "function") window.fwTrackError(e); } catch (_) {} throw e; }
@@ -568,7 +679,68 @@
         return true;
       }
     };
+    // 声明了 mcp 权限时，挂载由宿主代理的 MCP 桥（服务器 url/headers/密钥全部留在宿主侧）
+    if (hasPerm(entry, "mcp") && window.mcpClientSystem) {
+      api.mcp = {
+        // 列出可用 MCP 服务器（仅名称/分组/工具数，不含 url 与 headers）
+        async listServers() {
+          try {
+            const servers = await db.mcp_servers.toArray();
+            return servers.filter(s => s.enabled).map(s => ({
+              name: s.name, group: s.group || "默认",
+              toolCount: (Array.isArray(s.tools) ? s.tools.filter(t => t.enabled).length : 0)
+            }));
+          } catch (e) { return []; }
+        },
+        // 列出某服务器的可用工具（名称/描述/参数 schema）
+        async listTools(serverName) {
+          try {
+            const servers = await db.mcp_servers.toArray();
+            const server = servers.find(s => s.name === serverName);
+            if (!server || !Array.isArray(server.tools)) return [];
+            return server.tools.filter(t => t.enabled).map(t => ({
+              name: t.name, description: t.description || "", inputSchema: t.inputSchema || {}
+            }));
+          } catch (e) { return []; }
+        },
+        // 调用 MCP 工具：完全由宿主 mcpClientSystem 执行（含握手/鉴权），密钥不经过小程序
+        async invoke(serverName, toolName, args) {
+          if (typeof window.mcpClientSystem.callMcpTool !== "function") throw new Error("宿主 MCP 客户端未就绪");
+          const result = await window.mcpClientSystem.callMcpTool(serverName, toolName, args || {});
+          return result; // 原样返回（含 content / structuredContent 等）
+        }
+      };
+    }
+    applyPermFilter(api, entry);
     return api;
+  }
+
+  // 权限裁剪：已声明 permissions 的条目，未列入白名单的 API 一律删除（方法不存在，
+  // 小程序调用时自然报错，且拿不到任何越权数据）
+  function applyPermFilter(api, entry) {
+    const perms = permsOf(entry);
+    if (perms === null || perms.indexOf("*") >= 0) return;
+    const has = p => perms.indexOf(p) >= 0;
+    const map = {
+      llm:       ["callLLM", "getCharReply"],
+      api:       ["getApiConfig"],
+      memory:    ["getMainMemory", "getRecentContext", "saveSummary", "updateMainMemory"],
+      chat:      ["getSession", "getSessions", "getMessages", "sendMessage", "getGroupMembers", "findSessionByCharId"],
+      archive:   ["getActiveChar", "getChar", "getArchives", "saveArchive"],
+      worldbook: ["getWorldBookEntries"],
+      network:   ["getRelationshipNetwork", "getAllRelations"],
+      storage:   ["saveState", "loadState", "clearState", "resetState"],
+      files:     ["writeFile", "readFile", "listFiles", "deleteFile", "exportFile", "pickFile"],
+      share:     ["shareCardBack", "getRoomMembers", "share"],
+      user:      ["getActiveUser"],
+      mcp:       ["mcp"]
+    };
+    for (const perm in map) {
+      if (has(perm)) continue;
+      for (const name of map[perm]) { try { delete api[name]; } catch (e) {} }
+    }
+    // 复合权限：getCharRichContext 需要 memory 或 archive 任一
+    if (!(has("memory") || has("archive"))) { try { delete api.getCharRichContext; } catch (e) {} }
   }
 
   // ============================================================
@@ -598,7 +770,8 @@
     }
   }
 
-  // GitHub 小程序在自身脚本内调用此方法注册
+  // GitHub/链接小程序在自身脚本内调用此方法注册
+  // manifest 额外支持：permissions（权限白名单数组）、manifestUrl（所属商店清单链接）
   function registerGithub(manifest, mountFn) {
     // manifest 必须含 id（或由 githubUrl 派生）
     const id = manifest.id || ("mp_github_" + hashStr(manifest.name + (manifest.githubUrl || "")));
@@ -611,13 +784,18 @@
         iconSvg: manifest.iconSvg || ICONS.puzzle,
         version: manifest.version || "1.0.0", author: manifest.author || "社区",
         type: manifest.type || "game", source: "github",
-        githubUrl: manifest.githubUrl || "", installedAt: Date.now()
+        githubUrl: manifest.githubUrl || "",
+        permissions: Array.isArray(manifest.permissions) ? manifest.permissions.slice() : null,
+        manifestUrl: manifest.manifestUrl || "",
+        installedAt: Date.now()
       };
       registry.push(entry);
     } else {
       entry.name = manifest.name; entry.description = manifest.description;
       entry.iconSvg = manifest.iconSvg || entry.iconSvg; entry.version = manifest.version || entry.version;
       entry.githubUrl = manifest.githubUrl || entry.githubUrl;
+      if (Array.isArray(manifest.permissions)) entry.permissions = manifest.permissions.slice();
+      if (manifest.manifestUrl) entry.manifestUrl = manifest.manifestUrl;
     }
     saveRegistry();
     return id;
@@ -628,55 +806,192 @@
     return (h >>> 0).toString(36);
   }
 
-  // 从 GitHub raw 链接拉取并安装/更新小程序
-  async function installFromGithub(url) {
+  // ============================================================
+  //  链接安装 / 应用商店（统一 URL 导入）
+  //  支持两种链接：
+  //    1) 单文件小程序 .js 直链 → 直接安装；
+  //    2) 应用商店 manifest（JSON，含 store 与 apps 数组）→ 一次性导入商店内全部应用。
+  //  商店 manifest 格式：
+  //  {
+  //    "type": "miniprogram-store",
+  //    "name": "商店名", "iconSvg": "<svg>…</svg>", "description": "…",
+  //    "apps": [{
+  //      "id": "mp_store_xxx", "name": "应用名", "description": "…",
+  //      "version": "1.0.0", "author": "作者", "type": "tool",
+  //      "iconSvg": "<svg>…</svg>",
+  //      "url": "https://…/app.js",              // 必填：应用代码直链（支持相对路径）
+  //      "permissions": ["llm","mcp","storage"]   // 权限白名单（见 PERM_META）
+  //    }]
+  //  }
+  // ============================================================
+  async function installFromUrl(url, overrides) {
     url = (url || "").trim();
-    if (!url) { showToast("请输入 GitHub raw 链接"); return false; }
-    if (!/^https?:\/\//i.test(url)) { showToast("请输入以 https:// 开头的 raw 链接"); return false; }
-    showToast("正在拉取小程序…");
+    if (!url) { showToast("请输入链接"); return false; }
+    if (!/^https?:\/\//i.test(url)) { showToast("请输入以 https:// 开头的链接"); return false; }
+    showToast("正在拉取…");
     try {
-      let code = null;
-      // 优先尝试原生 HTTP 桥（APK 内可用，规避跨域）
-      if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === "function") {
-        const resStr = window.AndroidMCP.sendNativeHttpRequest(url, "GET", JSON.stringify({}), "");
+      const text = await fetchUrlText(url);
+      const trimmed = text.trim();
+      // 尝试解析为商店 manifest（JSON 且含 type=miniprogram-store 或 apps 数组）
+      let storeObj = null;
+      if (trimmed.charAt(0) === "{") {
         try {
-          const resObj = JSON.parse(resStr);
-          if (resObj && resObj.status >= 200 && resObj.status < 300) code = resObj.body;
+          const j = JSON.parse(trimmed);
+          if (j && (j.type === "miniprogram-store" || Array.isArray(j.apps))) storeObj = j;
         } catch (e) {}
       }
-      if (!code) {
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
-        code = await resp.text();
-      }
-      if (!code || code.length < 20) throw new Error("拉取到的内容为空");
+      if (storeObj) return await installStore(storeObj, url, overrides);
+      return await installSingleFromUrl(url, text, overrides);
+    } catch (e) {
+      console.error("[MiniProgram] 链接拉取失败", e);
+      showToast("拉取失败: " + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
 
-      // 在受控作用域内执行，注入注册方法
-      const sandbox = {
-        registerMiniProgram: function (manifest, mountFn) {
-          if (!manifest) manifest = {};
-          manifest.githubUrl = url;
-          return registerGithub(manifest, mountFn);
-        },
-        MiniProgramAPI: null, // 运行时才注入真实 api
-        console: console
-      };
+  // 安装单个远程小程序（.js 直链）
+  // overrides: { appId, forcePermissions, manifestUrl, name, author, iconSvg, description, version, type }
+  //   - appId: 锁定 id（商店应用更新时复用同一记录）
+  //   - forcePermissions: 商店清单声明的权限，优先于代码自带 manifest.permissions
+  async function installSingleFromUrl(url, code, overrides) {
+    const ov = overrides || {};
+    let registered = null;
+    const sandbox = {
+      registerMiniProgram: function (manifest, mountFn) {
+        if (!manifest) manifest = {};
+        manifest.githubUrl = url;
+        if (ov.appId) manifest.id = ov.appId;                       // 锁定 id
+        if (ov.forcePermissions) manifest.permissions = ov.forcePermissions; // 商店声明优先
+        if (ov.manifestUrl) manifest.manifestUrl = ov.manifestUrl;   // 记录所属商店
+        if (ov.type) manifest.type = ov.type;
+        if (ov.version) manifest.version = ov.version;
+        registered = registerGithub(manifest, mountFn);
+        return registered;
+      },
+      MiniProgramAPI: null,
+      console: console
+    };
+    try {
       const wrapper = new Function("registerMiniProgram", "MiniProgramAPI", "console", code);
       wrapper(sandbox.registerMiniProgram, null, console);
-
+      if (!registered) throw new Error("代码未调用 registerMiniProgram(manifest, mountFn)");
       loadRegistry();
       showToast("小程序安装成功");
-      // 若小程序页面（Hub）处于打开状态，立即刷新让新装小程序可见
       try {
         const hubOverlay = document.getElementById("miniprogram-hub-overlay");
         if (hubOverlay && hubOverlay.classList.contains("active")) renderHub();
       } catch (e) {}
       return true;
     } catch (e) {
-      console.error("[MiniProgram] 拉取失败", e);
-      showToast("拉取失败: " + (e && e.message ? e.message : e));
+      console.error("[MiniProgram] 链接安装失败", e);
+      showToast("安装失败: " + (e && e.message ? e.message : e));
       return false;
     }
+  }
+
+  // ---- 应用商店：源管理 ----
+  function loadStores() {
+    try { return JSON.parse(localStorage.getItem(STORE_KEY)) || []; }
+    catch (e) { return []; }
+  }
+  function saveStores(stores) {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(stores)); } catch (e) {}
+  }
+  function addStoreSource(storeInfo) {
+    const stores = loadStores();
+    if (!stores.some(s => s.url === storeInfo.url)) {
+      stores.unshift(Object.assign({ installedAt: Date.now() }, storeInfo));
+      saveStores(stores);
+    }
+    return stores;
+  }
+  function listStores() { return loadStores(); }
+  function removeStore(url) {
+    const stores = loadStores().filter(s => s.url !== url);
+    saveStores(stores);
+    return true;
+  }
+
+  // 导入整个应用商店：逐应用拉取安装 + 记录商店源
+  async function installStore(storeObj, url, overrides) {
+    const apps = Array.isArray(storeObj.apps) ? storeObj.apps : [];
+    if (!apps.length) { showToast("商店清单中没有应用"); return false; }
+    addStoreSource({
+      url: url,
+      name: storeObj.name || "应用商店",
+      iconSvg: storeObj.iconSvg || ICONS.puzzle,
+      description: storeObj.description || ""
+    });
+    let okCount = 0, failCount = 0;
+    for (const app of apps) {
+      const appUrl = resolveUrl(app.url, url);
+      if (!appUrl) { failCount++; continue; }
+      const appId = app.id || ("mp_store_" + hashStr(app.name + "|" + appUrl));
+      try {
+        const code = await fetchUrlText(appUrl);
+        const ok = await installSingleFromUrl(appUrl, code, {
+          appId: appId, forcePermissions: app.permissions,
+          manifestUrl: url,
+          name: app.name, author: app.author, iconSvg: app.iconSvg,
+          description: app.description, version: app.version, type: app.type
+        });
+        if (ok) okCount++; else failCount++;
+      } catch (e) {
+        failCount++;
+        console.error("[MiniProgram] 商店应用安装失败", appUrl, e);
+      }
+    }
+    showToast("商店导入完成：成功 " + okCount + " 个" + (failCount ? "，失败 " + failCount + " 个" : ""));
+    try {
+      const hubOverlay = document.getElementById("miniprogram-hub-overlay");
+      if (hubOverlay && hubOverlay.classList.contains("active")) renderHub();
+    } catch (e) {}
+    return okCount > 0;
+  }
+
+  // 更新某商店下所有已安装的应用（重新拉取清单 + 逐个覆盖，id 保持不变）
+  async function updateStoreApps(url) {
+    try {
+      const text = await fetchUrlText(url);
+      const store = JSON.parse(text);
+      if (!store || !Array.isArray(store.apps)) throw new Error("不是有效的商店清单");
+      addStoreSource({
+        url: url, name: store.name || "应用商店",
+        iconSvg: store.iconSvg || ICONS.puzzle, description: store.description || ""
+      });
+      let updated = 0;
+      for (const app of store.apps) {
+        loadRegistry();
+        const appUrl = resolveUrl(app.url, url);
+        const appId = app.id || ("mp_store_" + hashStr(app.name + "|" + appUrl));
+        const exist = registry.find(r => r.id === appId);
+        if (!exist) continue; // 未安装的应用跳过
+        try {
+          const code = await fetchUrlText(appUrl);
+          const ok = await installSingleFromUrl(appUrl, code, {
+            appId: appId, forcePermissions: app.permissions, manifestUrl: url,
+            name: app.name, author: app.author, iconSvg: app.iconSvg,
+            description: app.description, version: app.version, type: app.type
+          });
+          if (ok) updated++;
+        } catch (e) { console.error("[MiniProgram] 更新失败", appUrl, e); }
+      }
+      showToast(updated ? "已更新 " + updated + " 个应用" : "没有需要更新的应用");
+      try {
+        const hubOverlay = document.getElementById("miniprogram-hub-overlay");
+        if (hubOverlay && hubOverlay.classList.contains("active")) renderHub();
+      } catch (e) {}
+      return updated > 0;
+    } catch (e) {
+      console.error("[MiniProgram] 商店更新失败", e);
+      showToast("商店更新失败: " + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
+
+  // 兼容旧接口：GitHub raw 链接安装 = 链接安装
+  async function installFromGithub(url) {
+    return await installFromUrl(url);
   }
 
   // 本地小程序（上传文件 / 粘贴代码）在自身脚本内调用此方法注册
@@ -834,6 +1149,25 @@
 
   function listRegistry() { loadRegistry(); return registry.slice(); }
 
+  // 安装商店清单中的单个应用（保持 appId / 权限 / 所属商店信息）
+  async function installStoreApp(storeUrl, app) {
+    try {
+      const appUrl = resolveUrl(app.url, storeUrl);
+      const appId = app.id || ("mp_store_" + hashStr(app.name + "|" + appUrl));
+      const code = await fetchUrlText(appUrl);
+      const ok = await installSingleFromUrl(appUrl, code, {
+        appId: appId, forcePermissions: app.permissions, manifestUrl: storeUrl,
+        name: app.name, author: app.author, iconSvg: app.iconSvg,
+        description: app.description, version: app.version, type: app.type
+      });
+      return ok;
+    } catch (e) {
+      console.error("[MiniProgram] 商店应用安装失败", e);
+      showToast("安装失败: " + (e && e.message ? e.message : e));
+      return false;
+    }
+  }
+
   // ============================================================
   //  Hub（小程序页面）：下拉进入
   // ============================================================
@@ -926,6 +1260,10 @@
     if (typeof mountFn !== "function") { showToast("小程序入口无效"); return; }
 
     closeHub();
+
+    // 权限确认：声明了 permissions 的小程序，首次运行需用户确认（仿应用商店权限弹窗）
+    if (!(await ensurePermApproved(entry))) { showToast("已取消授权，未启动"); return; }
+
     ensureRuntime();
     const runtime = document.getElementById("miniprogram-runtime-overlay");
     const container = document.getElementById("mp-runtime-content");
@@ -935,7 +1273,7 @@
     const titleEl = document.getElementById("mp-runtime-title");
     if (titleEl) titleEl.textContent = entry.name || "小程序";
 
-    const api = buildAPI();
+    const api = buildAPI(entry);
     currentRunning = { entry: entry, api: api, cleanup: null };
     // 初始化房间成员表：先把「我」放进去，后续分享拉入的 char 会追加进来
     currentRoomMembers = [];
@@ -1093,10 +1431,23 @@
       if (sess.isGroup === 1 && sess.groupId) {
         const members = await db.group_members.where("groupId").equals(sess.groupId).toArray();
         for (const m of members) {
-          if (m.memberType === "char") {
-            const arch = await db.archives.get(m.memberId);
-            if (arch) participants.push({ id: arch.id, name: arch.name, avatar: arch.avatar || "", isMe: false, type: "char", persona: followPersona ? (arch.persona || "") : "" });
-          }
+          if (m.memberType !== "char") continue;
+          const arch = await db.archives.get(m.memberId);
+          const isSnapshot = !!m.isSnapshot;
+          // 支线人物（对话快照分支）使用群成员唯一行 id 派生独立标识，避免与同名主线人物相互覆盖/混淆
+          participants.push({
+            id: isSnapshot ? ("snap_" + m.id) : m.memberId,
+            memberId: m.memberId,
+            name: m.displayName || (arch ? arch.name : "角色"),
+            baseName: arch ? arch.name : "",
+            avatar: arch ? (arch.avatar || "") : "",
+            isMe: false,
+            type: "char",
+            isSnapshot: isSnapshot,
+            snapshotLabel: m.snapshotLabel || "",
+            sourceArchiveId: m.sourceArchiveId || 0,
+            persona: followPersona ? (arch ? (arch.persona || "") : "") : ""
+          });
         }
       } else {
         let ch = sess.charId ? await db.archives.get(sess.charId) : null;
@@ -1192,6 +1543,7 @@
   [MP_INVITE]{ "mpName": "小程序名称", "inviteText": "你的邀请话术" }
   系统会自动把它转为一张小程序分享卡片发送给用户，用户点击即可加入。
 - ${isGroup ? "当前是群聊，邀请可面向全体成员。" : "当前是单聊。"}
+- ${isGroup ? "若群内存在主线人物与支线人物（对话快照分支）：支线人物是某个主线人物在历史某时刻的独立分支个体，显示名带存档标签（如「角色名（存档）」）或标注「支线」。它们是完全不同的人，各自拥有专属记忆与进度；在小程序内参与时，必须使用各自完整带标记的名字区分身份，绝不能用主线本名替代，也绝不互相串台、把对方当作自己的过去。" : ""}
 - 仅在确实想发起小游戏时才使用 [MP_INVITE] 指令，平时正常对话即可。`;
   }
 
@@ -1364,14 +1716,38 @@
     return true;
   }
 
+  // 权限确认（仿应用商店权限弹窗）：
+  // 声明了 permissions 的小程序首次运行弹窗列出权限清单；用户确认后标记一次，之后不再打扰。
+  function ensurePermApproved(entry) {
+    const perms = permsOf(entry);
+    if (perms === null || perms.indexOf("*") >= 0) return Promise.resolve(true);
+    try { if (localStorage.getItem(PERM_APPROVED_PREFIX + entry.id) === "1") return Promise.resolve(true); } catch (e) {}
+    const labels = perms.map(p => (PERM_META[p] || p)).join("\n");
+    const title = "权限确认";
+    const message = "小程序「" + entry.name + "」申请以下权限：\n" + labels +
+      "\n\n请确认来源可信后再授权。密钥由系统保管，小程序无法直接读取；MCP 调用由系统代理执行。";
+    const onOk = () => { try { localStorage.setItem(PERM_APPROVED_PREFIX + entry.id, "1"); } catch (e) {} return true; };
+    return new Promise((resolve) => {
+      try {
+        if (typeof window.showCustomConfirm === "function") {
+          window.showCustomConfirm(title, message, () => resolve(onOk()), () => resolve(false));
+        } else if (window.confirm) {
+          const ok = window.confirm(title + "\n" + message);
+          resolve(ok ? onOk() : false);
+        } else { resolve(true); }
+      } catch (e) { resolve(true); }
+    });
+  }
+
   // ============================================================
   //  导出
   // ============================================================
   window.miniProgramSystem = {
-    init, registerBuiltin, registerGithub, installFromGithub, installFromCode, updateFromGithub, uninstall,
+    init, registerBuiltin, registerGithub, installFromGithub, installFromUrl, installStore, installStoreApp, updateStoreApps,
+    listStores, removeStore, installFromCode, updateFromGithub, uninstall,
     listRegistry, openHub, closeHub, launch, close, renderHub, renderShareCardHtml, bindShareCardClicks,
     buildSharePrompt, parseAndApplyInvite, openSharePicker, ICONS,
-    getLocalCode, updateLocalCode, resetStateById,
+    getLocalCode, updateLocalCode, resetStateById, PERM_META, fetchUrlText,
     _sendShareCardFromUser: _sendShareCardToSession
   };
 

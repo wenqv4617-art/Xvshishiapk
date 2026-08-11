@@ -623,21 +623,22 @@ async function renderFileMgrCharList() {
 async function renderFileMgrInviteSection(listContainer, currentGroupMemberIds) {
   const allArchives = await db.chat_archives.toArray();
 
-  // 一级：文件管理折叠面板
+  // 一级：文件管理折叠面板（默认展开，确保用户能看到对话快照列表）
+  // 注意：不使用 overflow:hidden，否则在 flex 容器中会裁剪子内容导致快照列表不可见
   const section = document.createElement("div");
-  section.style.cssText = "margin-bottom:12px; border:1px solid var(--border); border-radius:10px; overflow:hidden;";
+  section.style.cssText = "margin-top:16px; margin-bottom:12px; border:2px solid #6366f1; border-radius:10px; flex-shrink:0;";
 
   const header = document.createElement("div");
-  header.style.cssText = "display:flex; align-items:center; gap:8px; padding:10px 12px; cursor:pointer; background:var(--primary-light);";
+  header.style.cssText = "display:flex; align-items:center; gap:8px; padding:10px 12px; cursor:pointer; background:#eef2ff;";
   header.innerHTML = `
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--primary)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-    <span style="font-size:13px; font-weight:700; color:var(--primary); flex:1;">文件管理</span>
-    <span style="font-size:10px; color:var(--text-secondary); font-weight:600;">${allArchives.length} 个存档</span>
-    <svg class="fm-chevron" viewBox="0 0 24 24" width="16" height="16" style="color:var(--primary); transition:transform 0.2s;"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+    <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#6366f1" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+    <span style="font-size:13px; font-weight:700; color:#4338ca; flex:1;">文件管理 · 对话快照</span>
+    <span style="font-size:10px; color:#6366f1; font-weight:600; background:#fff; padding:2px 8px; border-radius:10px;">${allArchives.length} 个存档</span>
+    <svg class="fm-chevron" viewBox="0 0 24 24" width="16" height="16" style="color:#6366f1; transition:transform 0.2s; transform:rotate(90deg);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
   `;
 
   const body = document.createElement("div");
-  body.style.cssText = "display:none; padding:8px;";
+  body.style.cssText = "display:block; padding:8px;";
 
   header.onclick = () => {
     const isHidden = body.style.display === "none";
@@ -645,15 +646,15 @@ async function renderFileMgrInviteSection(listContainer, currentGroupMemberIds) 
     header.querySelector(".fm-chevron").style.transform = isHidden ? "rotate(90deg)" : "rotate(0deg)";
   };
 
-  // 二级：按 user 面具分组
-  const userIds = [...new Set(allArchives.map(a => a.userId).filter(id => id > 0))];
+  // 二级：按 user 面具分组（不再过滤 userId>0，防止缺失 userId 的快照被隐藏）
+  const userIds = [...new Set(allArchives.map(a => a.userId || 0))];
   for (const uid of userIds) {
-    const user = await db.archives.get(uid);
-    const userName = user?.name || `面具${uid}`;
-    const userArchives = allArchives.filter(a => a.userId === uid);
+    const user = uid > 0 ? await db.archives.get(uid) : null;
+    const userName = user?.name || (uid > 0 ? `面具${uid}` : '未分组存档');
+    const userArchives = allArchives.filter(a => (a.userId || 0) === uid);
 
     const userSection = document.createElement("div");
-    userSection.style.cssText = "margin-bottom:6px; border:1px solid var(--border); border-radius:8px; overflow:hidden;";
+    userSection.style.cssText = "margin-bottom:6px; border:1px solid var(--border); border-radius:8px;";
 
     const userHeader = document.createElement("div");
     userHeader.style.cssText = "display:flex; align-items:center; gap:6px; padding:8px 10px; cursor:pointer; background:var(--surface-hover);";
@@ -661,11 +662,12 @@ async function renderFileMgrInviteSection(listContainer, currentGroupMemberIds) 
       <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="var(--text-secondary)" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
       <span style="font-size:12px; font-weight:600; color:var(--text-primary); flex:1;">${escapeHtmlBasic(userName)}</span>
       <span style="font-size:10px; color:var(--text-secondary);">${userArchives.length} 个存档</span>
-      <svg class="user-chevron" viewBox="0 0 24 24" width="14" height="14" style="color:var(--text-secondary); transition:transform 0.2s;"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+      <svg class="user-chevron" viewBox="0 0 24 24" width="14" height="14" style="color:var(--text-secondary); transition:transform 0.2s; transform:rotate(90deg);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
     `;
 
+    // 默认展开二级面板，确保快照列表一眼可见
     const userBody = document.createElement("div");
-    userBody.style.cssText = "display:none; padding:6px;";
+    userBody.style.cssText = "display:block; padding:6px;";
 
     userHeader.onclick = () => {
       const isHidden = userBody.style.display === "none";
@@ -750,22 +752,51 @@ async function submitFileMgrGroupInvitation(groupId) {
       .first();
     if (dup) continue;
 
-    // 解析快照内的角色名（冗余存储优先，其次从快照数据提取）
+    // 解析快照内的角色名与人设（冗余存储优先，其次从快照数据提取）
     let charName = archive.charName;
-    if (!charName) {
-      try {
-        const sd = deserializeRecord(archive.snapshotData);
-        charName = (sd && sd.charArchive && sd.charArchive.name) || '未知角色';
-      } catch (e) { charName = '未知角色'; }
+    let snapPersona = '';
+    let snapAvatar = '';
+    let mainChar = null;
+    try { mainChar = await db.archives.get(charId); } catch (e) {}
+    try {
+      const sd = deserializeRecord(archive.snapshotData);
+      if (sd && sd.charArchive) {
+        if (!charName) charName = sd.charArchive.name || '未知角色';
+        snapPersona = sd.charArchive.persona || (mainChar ? mainChar.persona : '') || '';
+        snapAvatar = sd.charArchive.avatar || (mainChar ? mainChar.avatar : '') || '';
+      }
+    } catch (e) {
+      if (!charName) charName = (mainChar ? mainChar.name : '未知角色');
+      snapPersona = (mainChar ? mainChar.persona : '') || '';
+      snapAvatar = (mainChar ? mainChar.avatar : '') || '';
     }
     const snapshotLabel = archive.customLabel || '';
     // 群内显示名：基础角色名 + 分支标记，用于区分同名角色的不同对话分支
     const displayName = snapshotLabel ? `${charName}（${snapshotLabel}）` : charName;
 
-    // 添加群成员：标记为「对话快照分支」，携带独立来源标记
+    // === 支线人物落库：在 archives 表创建/复用独立档案记录 ===
+    // 支线人物与主线人物一同存储，但通过 isSnapshot=true 在档案库列表中隐藏；
+    // 名字沿用本体名，分组追加「·支线」后缀以区分，parentId 指向主线本体
+    let snapArchive = await db.archives.where('sourceArchiveId').equals(archiveId).first();
+    if (!snapArchive) {
+      const snapId = await db.archives.add({
+        type: 'char',
+        name: charName,
+        avatar: snapAvatar,
+        persona: snapPersona,
+        group: (mainChar && mainChar.group) ? (mainChar.group + '·支线') : '支线人物',
+        remark: '',                  // 留空：消息渲染时回退到 name，避免 remark 覆盖角色名
+        parentId: charId,            // 指向主线人物本体
+        isSnapshot: true,
+        sourceArchiveId: archiveId   // 指向 chat_archives 记录
+      });
+      snapArchive = await db.archives.get(snapId);
+    }
+
+    // 添加群成员：memberId 指向支线人物档案（落库后的独立实体），携带来源标记
     await db.group_members.add({
       groupId: groupId,
-      memberId: charId,
+      memberId: snapArchive.id,      // 指向支线人物档案记录（落库实体）
       memberType: 'char',
       role: 'member',
       muteUntil: 0,
@@ -773,7 +804,7 @@ async function submitFileMgrGroupInvitation(groupId) {
       syncFromSingle: 1,
       syncToSingle: 1,
       sourceArchiveId: archiveId,   // 标记来源存档（对话快照）
-      isSnapshot: true,             // 额外标记：此为文件管理对话快照分支
+      isSnapshot: true,             // 标记：此为对话快照分支
       snapshotLabel: snapshotLabel, // 分支标签
       displayName: displayName      // 群内显示名（含分支标记，区分同名角色）
     });
@@ -926,11 +957,11 @@ async function buildGroupMemorySyncPrompt(groupId, members) {
             return `${who}：${(x.content || '').toString().slice(0, 200)}`;
           }).filter(Boolean);
           if (recentSums.length || recentMsgs.length) {
-            syncPrompt += `\n【${charName} 的对话快照专属记忆（来自存档「${archive.customLabel || ''}」，仅属于该分支个体）】\n`;
-            if (recentSums.length) syncPrompt += `- 该分支的历史总结：${recentSums.join(" | ")}\n`;
-            if (recentMsgs.length) syncPrompt += `- 该分支的最近对话片段：\n${recentMsgs.join("\n")}\n`;
-            syncPrompt += `注：以上记忆仅属于分支「${charName}」自身，请严格按其自身上下文发言，不要与同名其他分支或单聊本体混淆。\n`;
-            continue; // 快照分支使用自身记忆，不再叠加通用单聊同步
+            syncPrompt += `\n【${charName} 的专属记忆（来自时间线存档「${archive.customLabel || ''}」，仅属于该个体自身）】\n`;
+            if (recentSums.length) syncPrompt += `- 自身的历史总结：${recentSums.join(" | ")}\n`;
+            if (recentMsgs.length) syncPrompt += `- 自身的最近对话片段：\n${recentMsgs.join("\n")}\n`;
+            syncPrompt += `注：以上记忆仅属于「${charName}」自身，请严格按其自身上下文发言，不要与同名其他时间线个体混淆。\n`;
+            continue; // 时间线个体使用自身记忆，不再叠加通用单聊同步
           }
         }
       } catch (e) { console.warn("快照记忆注入失败:", e); }

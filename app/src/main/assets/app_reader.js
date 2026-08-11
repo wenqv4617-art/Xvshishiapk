@@ -34,7 +34,8 @@ function resolveAvatar(avatar, name) {
 }
 
 function escapeHtml(str) {
-  if (!str) return '';
+  if (str == null) return '';
+  if (typeof str !== 'string') str = String(str);
   return str.replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;')

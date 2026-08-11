@@ -124,6 +124,140 @@ function getRoundsList(messages) {
   return rounds;
 }
 
+// 1.5 线下赴约记录轮次提取（带 offline_messages.id 标记，用于向量嵌入）
+// 赴约记录与线上消息共用轮次分组算法（user 连续发言 + char 连续回复 = 一轮），
+// 每轮额外记录其覆盖的 offline_messages 主键 id。（embedOfflineAppointmentRounds 使用）
+function getOfflineRoundsWithIds(offlineMsgs) {
+  let rounds = [];
+  let currentRound = { userMsgContent: "", charMsgContent: "", timestamp: 0, ids: [], _isOffline: true };
+  for (let m of offlineMsgs) {
+    if (m.senderType === 'user') {
+      if (currentRound.userMsgContent && currentRound.charMsgContent) {
+        rounds.push(currentRound);
+        currentRound = { userMsgContent: "", charMsgContent: "", timestamp: 0, ids: [], _isOffline: true };
+      }
+      currentRound.userMsgContent = currentRound.userMsgContent
+        ? currentRound.userMsgContent + "\n" + m.content
+        : m.content;
+      currentRound.timestamp = m.timestamp;
+      currentRound.ids.push(m.id);
+    } else if (m.senderType === 'char') {
+      if (currentRound.userMsgContent) {
+        currentRound.charMsgContent = currentRound.charMsgContent
+          ? currentRound.charMsgContent + "\n" + m.content
+          : m.content;
+      }
+      currentRound.ids.push(m.id);
+    }
+  }
+  if (currentRound.userMsgContent && currentRound.charMsgContent) {
+    rounds.push(currentRound);
+  }
+  return rounds;
+}
+
+// 1.6 从"统一消息流"构建轮次（严格按时间线，线上线下同一算法）
+// stream 元素: { senderType, content, timestamp, id, _src: 'online'|'offline', _done?: boolean }
+// 每轮返回: { userMsgContent, charMsgContent, timestamp, ids[], srcs[], _isOffline, _doneAll }
+// - ids/srcs 与消息一一对应，供总结成功后精确标记进度（线上 summarized / 线下 mergedArchived）
+// - _doneAll：该轮所有消息均已总结/存档（仅当 stream 元素携带 _done 时有效，用于统计展示）
+function buildRoundsFromStream(stream) {
+  let rounds = [];
+  let cur = { userMsgContent: "", charMsgContent: "", timestamp: 0, ids: [], srcs: [], _isOffline: false, _doneAll: true };
+  const flush = () => {
+    if (cur.userMsgContent && cur.charMsgContent) rounds.push(cur);
+    cur = { userMsgContent: "", charMsgContent: "", timestamp: 0, ids: [], srcs: [], _isOffline: false, _doneAll: true };
+  };
+  for (const m of stream) {
+    if (m.senderType === 'user') {
+      if (cur.userMsgContent && cur.charMsgContent) flush();
+      cur.userMsgContent = cur.userMsgContent ? cur.userMsgContent + "\n" + m.content : m.content;
+      cur.timestamp = m.timestamp || cur.timestamp;
+      cur.ids.push(m.id);
+      cur.srcs.push(m._src);
+      if (m._src === 'offline') cur._isOffline = true;
+      if (m._done !== true) cur._doneAll = false;
+    } else if (m.senderType === 'char') {
+      if (cur.userMsgContent) {
+        cur.charMsgContent = cur.charMsgContent ? cur.charMsgContent + "\n" + m.content : m.content;
+      }
+      cur.ids.push(m.id);
+      cur.srcs.push(m._src);
+      if (m._src === 'offline') cur._isOffline = true;
+      if (m._done !== true) cur._doneAll = false;
+    } else if (m.senderType === 'system' && m.contentType === 'call') {
+      // 通话记录计入轮次（与 getRoundsList 对齐）：解析 summary 作为对话内容
+      try {
+        const callData = JSON.parse(m.content);
+        const callSummary = callData.summary || `${callData.type === 'video' ? '视频' : '语音'}通话 ${callData.durationSec || 0}秒`;
+        if (cur.userMsgContent && cur.charMsgContent) flush();
+        cur.userMsgContent = cur.userMsgContent ? cur.userMsgContent + "\n[" + callSummary + "]" : "[" + callSummary + "]";
+        if (!cur.timestamp) cur.timestamp = m.timestamp;
+        cur.ids.push(m.id);
+        cur.srcs.push(m._src);
+        if (m._done !== true) cur._doneAll = false;
+      } catch(e) {}
+    }
+  }
+  flush();
+  return rounds;
+}
+
+// 1.7 获取"待总结统一消息流"：线上未总结消息 + 未存档线下赴约记录（开关开启时），按时间戳严格排序
+// 进度判定基于消息级标记（线上 messages.summarized !== 1 / 线下 mergedArchived !== 1），
+// 与轮次索引无关 —— 线上线下任意来回切换、多次穿插，都不会产生索引漂移或漏总结。
+async function getTimelineStream(sessionId) {
+  const sess = await db.sessions.get(sessionId);
+  const onlineMsgs = await db.messages
+    .where('sessionId').equals(sessionId)
+    .and(m => m.summarized !== 1)
+    .sortBy('timestamp');
+  const stream = onlineMsgs.map(m => ({ ...m, _src: 'online' }));
+  if (sess && sess.mergeOfflineIntoContext === 1) {
+    try {
+      const offlineMsgs = await db.offline_messages
+        .where('sessionId').equals(sessionId)
+        .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
+        .sortBy('timestamp');
+      offlineMsgs.forEach(m => stream.push({ ...m, _src: 'offline' }));
+    } catch (e) {
+      console.warn("读取未存档赴约记录失败:", e);
+    }
+  }
+  stream.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  return stream;
+}
+
+// 1.8 获取待总结轮次（严格时间线合并，供自动总结 / 手动总结 / 记忆面板使用）
+async function getPendingSummaryRounds(sessionId) {
+  const stream = await getTimelineStream(sessionId);
+  if (stream.length === 0) return [];
+  return buildRoundsFromStream(stream);
+}
+
+// 1.9 全量时间线统计（记忆面板展示）：全部轮次 / 已总结轮次 / 待总结轮次
+async function getFullTimelineStats(sessionId) {
+  const sess = await db.sessions.get(sessionId);
+  const onlineMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
+  const stream = onlineMsgs.map(m => ({ ...m, _src: 'online', _done: m.summarized === 1 }));
+  if (sess && sess.mergeOfflineIntoContext === 1) {
+    try {
+      const offlineMsgs = await db.offline_messages
+        .where('sessionId').equals(sessionId)
+        .and(m => m.isTheater === 0)
+        .sortBy('timestamp');
+      offlineMsgs.forEach(m => stream.push({ ...m, _src: 'offline', _done: m.mergedArchived === 1 }));
+    } catch (e) {}
+  }
+  stream.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+  const rounds = buildRoundsFromStream(stream);
+  let done = 0;
+  for (const r of rounds) {
+    if (r.ids.length > 0 && r._doneAll) done++;
+  }
+  return { total: rounds.length, done, pending: rounds.length - done };
+}
+
 // 2. 核心：检索召回机制 (支持传统关键词匹配，以及升级后的本地向量高精检索及衰减时间 λ) [1]
 async function retrieveSummaries(sessionId, latestUserMessageText) {
   const allSummaries = await db.summaries.where('sessionId').equals(sessionId).sortBy('startRound');
@@ -288,6 +422,61 @@ async function embedAndStoreDialogueRound(sessionId, roundIndex, userText, charT
   }
 }
 
+// 线下赴约记录向量预嵌入：将"未存档"的赴约轮次按时间线嵌入 dialogue_vectors
+// 设计要点：
+// - roundIndex 使用负数（-1, -2, ...）与线上轮次索引(0,1,2,...)物理隔离，绝不冲突；
+//   升序排序后线下记录整体位于线上之前，天然作为"历史"参与检索，不会被 recentSkip 剔除。
+// - 嵌入文本加【线下赴约】前缀，增强向量语义区分度；记录 isOfflineRound=1 供检索输出标注。
+// - 用 offlineContentKey（时间戳+内容指纹）幂等去重，避免同一轮次重复嵌入。
+async function embedOfflineAppointmentRounds(sessionId) {
+  if (!sessionId) return;
+  const vectorEnabled = localStorage.getItem("settings-vector-enabled") === "true";
+  if (!vectorEnabled) return;
+  const sess = await db.sessions.get(sessionId);
+  if (!sess || sess.mergeOfflineIntoContext !== 1) return;
+
+  const offlineMsgs = await db.offline_messages
+    .where('sessionId').equals(sessionId)
+    .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
+    .sortBy('timestamp');
+  if (offlineMsgs.length === 0) return;
+
+  const rounds = getOfflineRoundsWithIds(offlineMsgs);
+
+  // 已有线下向量（roundIndex<0），用于去重与负数索引分配
+  const existing = await db.dialogue_vectors
+    .where('sessionId').equals(sessionId)
+    .and(d => d.roundIndex < 0)
+    .toArray();
+  const existingKeys = new Set((existing || []).map(e => e.offlineContentKey).filter(Boolean));
+  let nextNegative = -((existing ? existing.length : 0) + 1);
+
+  for (let i = 0; i < rounds.length; i++) {
+    const r = rounds[i];
+    const contentKey = `${r.timestamp || 0}|${r.userMsgContent || ""}|${r.charMsgContent || ""}`;
+    if (existingKeys.has(contentKey)) continue;
+
+    const truncatedUser = truncateForVector(r.userMsgContent, 100);
+    const truncatedChar = truncateForVector(r.charMsgContent, 200);
+    const combinedText = `【线下赴约记录】\n${truncatedUser}\n${truncatedChar}`;
+    const vector = await safeGetEmbedding(combinedText);
+    if (!vector) continue;
+
+    await db.dialogue_vectors.add({
+      sessionId,
+      roundIndex: nextNegative--,
+      userText: truncatedUser,
+      charText: truncatedChar,
+      combinedText,
+      vector,
+      timestamp: r.timestamp || Date.now(),
+      offlineContentKey: contentKey,
+      isOfflineRound: 1
+    });
+    existingKeys.add(contentKey);
+  }
+}
+
 // 原始对话向量检索：用当前用户消息检索最相似的历史原始对话轮次 [3]
 // 独立于 retrieveSummaries 的三角形机制，作为第二召回维度
 async function retrieveRawDialogues(sessionId, latestUserMessageText, excludeRanges) {
@@ -398,6 +587,15 @@ async function rebuildDialogueVectors(sessionId, progressCb) {
     built++;
     if (progressCb) progressCb(i + 1, rounds.length);
   }
+
+  // 一键补建同时覆盖"线下赴约记录"（开关开启且向量启用时，自动按时间线嵌入）
+  try {
+    if (typeof embedOfflineAppointmentRounds === 'function') {
+      await embedOfflineAppointmentRounds(sessionId);
+    }
+  } catch (e) {
+    console.warn("补建线下赴约向量失败:", e);
+  }
   return built;
 }
 async function generateSummaryForRounds(sessionId, startRound, endRound, customPrompt) {
@@ -405,14 +603,19 @@ async function generateSummaryForRounds(sessionId, startRound, endRound, customP
   const api = await db.api_presets.get(Number(presetId));
   if (!api) throw new Error("无法加载 API 配置，总结失败。");
 
-  const rawMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
-  const rounds = getRoundsList(rawMsgs);
+  // 严格时间线合并：线上未总结消息 + 未存档线下赴约记录（开关开启时），按时间戳排序分组为轮次。
+  // 进度判定基于消息级标记（summarized / mergedArchived），startRound/endRound 仅表示本次总结在
+  // "当前待总结轮次列表"中的区间，线上线下任意穿插都不会产生索引漂移或漏总结。
+  const rounds = await getPendingSummaryRounds(sessionId);
 
   if (rounds.length < endRound) return;
 
   let dialogText = "";
   for (let i = startRound - 1; i < endRound; i++) {
-    dialogText += `[轮次 ${i+1}]\n用户: ${rounds[i].userMsgContent}\n对方: ${rounds[i].charMsgContent}\n\n`;
+    const r = rounds[i];
+    if (!r) continue; // 防御：区间越界时跳过，避免访问 undefined 崩溃
+    const offlineTag = r._isOffline ? "[线下赴约]" : "";
+    dialogText += `[轮次 ${i+1}]${offlineTag}\n用户: ${r.userMsgContent}\n对方: ${r.charMsgContent}\n\n`;
   }
 
   const formatChoice = localStorage.getItem("summary-format-choice") || "json";
@@ -577,6 +780,34 @@ ${dialogText}`;
           vector: vector
         });
       }
+
+      // === 消息级进度标记（核心）：总结成功后，把本区间内线上消息标记 summarized=1，线下赴约记录标记 mergedArchived=1 ===
+      // 标记后这些内容不再参与后续总结统计 / 上下文拼入 / 向量嵌入，实现"被跟随线上对话总结后自动存档"。
+      // 之前已通过结束赴约手动存档（已删除）的记录不受影响；已存档（mergedArchived=1）的线下记录也不再重复总结。
+      try {
+        const onlineIdsToMark = [];
+        const offlineIdsToArchive = [];
+        for (let i = startRound - 1; i < endRound && i < rounds.length; i++) {
+          const r = rounds[i];
+          if (!r || !Array.isArray(r.ids) || !Array.isArray(r.srcs)) continue;
+          r.ids.forEach((id, idx) => {
+            if (r.srcs[idx] === 'offline') offlineIdsToArchive.push(id);
+            else onlineIdsToMark.push(id);
+          });
+        }
+        if (onlineIdsToMark.length > 0) {
+          await db.messages.bulkUpdate(
+            onlineIdsToMark.map(id => ({ key: id, changes: { summarized: 1 } }))
+          );
+        }
+        if (offlineIdsToArchive.length > 0) {
+          await db.offline_messages.bulkUpdate(
+            offlineIdsToArchive.map(id => ({ key: id, changes: { mergedArchived: 1 } }))
+          );
+        }
+      } catch (e) {
+        console.warn("总结进度标记失败:", e);
+      }
 }
 
 // 4. 自动总结拦截触发器 (在每次 AI 回复完成后，若符合条件且出了缓冲区则自动执行总结)
@@ -587,19 +818,18 @@ async function checkAndTriggerAutoSummary(sessionId) {
   const interval = sess.autoSummaryInterval || 10;
   const buffer = sess.bufferRounds || 5;
 
-  const rawMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
-  const rounds = getRoundsList(rawMsgs);
-  const totalRounds = rounds.length;
+  // 严格时间线合并轮次（线上未总结消息 + 未存档线下赴约记录），消息级进度标记保证任意穿插安全
+  const pendingRounds = await getPendingSummaryRounds(sessionId);
+  const totalPending = pendingRounds.length;
 
-  const existingSummaries = await db.summaries.where('sessionId').equals(sessionId).toArray();
-  const maxEndRound = existingSummaries.reduce((max, s) => Math.max(max, s.endRound || 0), 0);
-
-  const startRound = maxEndRound + 1;
-  const endRound = totalRounds - buffer;
-
-  if (endRound - startRound + 1 >= interval && startRound <= endRound) {
-    try {
-      await generateSummaryForRounds(sessionId, startRound, endRound, sess.summarySystemPrompt);
+  // 触发条件：待总结轮数扣除缓冲区后仍达到 interval
+  if (totalPending > 0 && (totalPending - buffer) >= interval) {
+    const startRound = 1;
+    // 保护：单次自动总结最多 100 轮，防止历史积压导致 token 爆炸（未覆盖的待总结轮次会在后续触发中继续消化）
+    const endRound = Math.min(totalPending - buffer, 100);
+    if (startRound <= endRound) {
+      try {
+        await generateSummaryForRounds(sessionId, startRound, endRound, sess.summarySystemPrompt);
 
       // 群聊记忆双向同步：群聊产生新总结后，回写到开启了同步的角色单聊会话
       if (sess.isGroup === 1 && sess.groupId && window.chatArchiveSystem && window.chatArchiveSystem.syncGroupMemoryToSingleChat) {
@@ -618,21 +848,49 @@ async function checkAndTriggerAutoSummary(sessionId) {
       console.error("对话自动后台总结失败:", e);
     }
   }
+}
 
   // 原始对话向量预嵌入：每轮 AI 回复完成后，将该轮 user+char 文本嵌入并存入 dialogue_vectors [3]
   // 与总结独立运行——即使总结未达触发条件，原始对话向量仍会逐轮积累
-  if (totalRounds > 0 && typeof embedAndStoreDialogueRound === 'function') {
+  if (totalPending > 0 && typeof embedAndStoreDialogueRound === 'function') {
     try {
-      const latestRound = rounds[totalRounds - 1];
-      await embedAndStoreDialogueRound(
-        sessionId,
-        totalRounds - 1,
-        latestRound.userMsgContent,
-        latestRound.charMsgContent,
-        latestRound.timestamp
-      );
+      // 从末尾向前定位最后一个线上轮次（严格时间线下，线下赴约记录可能穿插在末尾任意位置）
+      let lastOnlineIdx = -1;
+      for (let i = totalPending - 1; i >= 0; i--) {
+        if (pendingRounds[i].srcs && pendingRounds[i].srcs.includes('online')) { lastOnlineIdx = i; break; }
+      }
+      if (lastOnlineIdx >= 0) {
+        const round = pendingRounds[lastOnlineIdx];
+        // 计算该线上轮次在"纯线上轮次列表"中的序号（dialogue_vectors 的 roundIndex 语义：0..N-1）
+        const firstOnlineMsgIdx = round.srcs.indexOf('online');
+        const firstOnlineId = round.ids[firstOnlineMsgIdx];
+        const onlineMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
+        const onlineRounds = buildRoundsFromStream(onlineMsgs.map(m => ({ ...m, _src: 'online' })));
+        let onlineIdx = -1;
+        for (let i = 0; i < onlineRounds.length; i++) {
+          if (onlineRounds[i].ids.includes(firstOnlineId)) { onlineIdx = i; break; }
+        }
+        if (onlineIdx >= 0) {
+          await embedAndStoreDialogueRound(
+            sessionId,
+            onlineIdx,
+            round.userMsgContent,
+            round.charMsgContent,
+            round.timestamp
+          );
+        }
+      }
     } catch(e) {
       console.warn("原始对话向量预嵌入失败:", e);
+    }
+  }
+
+  // 线下赴约记录向量预嵌入：开关开启时，将未存档赴约轮次按时间线嵌入 dialogue_vectors（roundIndex 用负数隔离）
+  if (typeof embedOfflineAppointmentRounds === 'function') {
+    try {
+      await embedOfflineAppointmentRounds(sessionId);
+    } catch(e) {
+      console.warn("线下赴约记录向量预嵌入失败:", e);
     }
   }
 }
@@ -652,14 +910,18 @@ async function loadSummarySettings(sessionId) {
   const choiceEl = document.getElementById("summary-format-choice");
   if (choiceEl) choiceEl.value = formatChoice;
 
-  const rawMsgs = await db.messages.where('sessionId').equals(Number(sessionId)).sortBy('timestamp');
-  const rounds = getRoundsList(rawMsgs);
+  // 统计：全量时间线（线上全部消息 + 线下全部赴约记录，含已总结/已存档），按消息级标记判定进度
+  // 线上线下严格按时间线合并，任意穿插切换都不会影响统计口径
+  const stats = await getFullTimelineStats(Number(sessionId));
+  document.getElementById("summary-stat-summarized").innerText = stats.done;
+  document.getElementById("summary-stat-total").innerText = stats.total;
 
-  const existingSummaries = await db.summaries.where('sessionId').equals(Number(sessionId)).toArray();
-  const maxEndRound = existingSummaries.reduce((max, s) => Math.max(max, s.endRound || 0), 0);
-
-  document.getElementById("summary-stat-summarized").innerText = maxEndRound;
-  document.getElementById("summary-stat-total").innerText = rounds.length;
+  // 手动总结默认值：自动填充为"待总结区间 [1, pending]"（严格时间线下的未总结轮次）
+  const pendingRounds = await getPendingSummaryRounds(Number(sessionId));
+  const manualStartEl = document.getElementById("summary-manual-start");
+  const manualEndEl = document.getElementById("summary-manual-end");
+  if (manualStartEl) manualStartEl.value = pendingRounds.length > 0 ? "1" : "";
+  if (manualEndEl) manualEndEl.value = pendingRounds.length > 0 ? String(pendingRounds.length) : "";
 }
 
 async function saveSummarySettings(sessionId) {

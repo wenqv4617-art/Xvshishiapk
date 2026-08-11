@@ -1417,3 +1417,20 @@ function closeReaderRoom() {
     window.readerSystem.exitReadingRoom();
   }
 }
+
+// ============================================================
+//  修复：编辑组件文字（contenteditable，如拍立得标题）时，
+//  浏览器会自动滚动焦点元素到可见位置，导致 #desktop 向上抬起且无法恢复。
+//  在聚焦后立即恢复桌面滚动位置，保证桌面纹丝不动。
+// ============================================================
+document.addEventListener("focusin", (e) => {
+  const t = e.target;
+  if (!t || !t.isContentEditable) return;
+  const scroller = document.getElementById("desktop");
+  if (!scroller) return;
+  const saved = scroller.scrollTop;
+  // 浏览器在聚焦默认动作阶段才会执行自动滚动，故在下一帧（滚动完成后）恢复原位
+  requestAnimationFrame(() => {
+    if (scroller.scrollTop !== saved) scroller.scrollTop = saved;
+  });
+});

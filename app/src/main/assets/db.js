@@ -356,3 +356,14 @@ db.version(35).stores({
 db.version(36).stores({
   chat_archives: 'id++, userId, charId, customLabel, createdAt'
 });
+
+// ============================================
+// 🎯 Version 37：支线人物落库 + sessions.groupId 索引
+// - sessions: 补建 groupId 索引，修复 "KeyPath groupId on object store sessions is not indexed" SchemaError
+// - archives: 新增 isSnapshot / sourceArchiveId 索引，支线人物（对话快照分支）作为独立档案落库，
+//   通过 isSnapshot=true 在档案库列表中过滤隐藏，名字/分组/备注区分，parentId 指向主线人物本体
+// ============================================
+db.version(37).stores({
+  sessions: 'id++, userId, charId, isGroup, groupId, customCharName, customCharAvatar, customCharPersona, customUserAvatar, customUserPersona, lastMessageTime, mountedEntryIds, offlineMinWordCount, offlineMaxWordCount, offlineAutoSummaryCount, offlineMountedEntryIds, stickerMountedGroupIds, autoSummaryToggle, autoSummaryInterval, bufferRounds, summarySystemPrompt, coreSelfStatus, coreSelfPurpose, coreSelfChanges, coreRelationship, coreUserInEyes',
+  archives: 'id++, type, name, avatar, remark, group, persona, parentId, isSnapshot, sourceArchiveId'
+});

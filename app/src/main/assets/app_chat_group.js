@@ -67,7 +67,7 @@
 
       try {
         const allArchives = await db.archives.toArray();
-        const chars = allArchives.filter(c => c.type === 'character' || c.type === 'npc');
+        const chars = allArchives.filter(c => (c.type === 'character' || c.type === 'npc') && !c.isSnapshot);
         chars.forEach(c => {
           const row = document.createElement("div");
           row.className = "menu-item";
@@ -99,7 +99,7 @@
 
       try {
         const allArchives = await db.archives.toArray();
-        const chars = allArchives.filter(c => c.type === 'character' || c.type === 'npc');
+        const chars = allArchives.filter(c => (c.type === 'character' || c.type === 'npc') && !c.isSnapshot);
 
         chars.forEach(c => {
           const opt = document.createElement("option");
@@ -1185,6 +1185,10 @@
       const groupMpShareToggle = document.getElementById("group-details-allow-miniprogram-share");
       if (groupMpShareToggle) groupMpShareToggle.checked = !!sess.allowMiniprogramShare;
 
+      // 渲染"线下赴约记录拼入线上上下文"开关
+      const groupMergeOfflineToggle = document.getElementById("group-details-merge-offline-toggle");
+      if (groupMergeOfflineToggle) groupMergeOfflineToggle.checked = sess.mergeOfflineIntoContext === 1;
+
       // 渲染群聊专属世界书手风琴选择器
       const containerEl = document.getElementById("group-details-wb-mounted-accordion");
       if (containerEl && typeof renderWbMountedAccordion === 'function') {
@@ -1300,6 +1304,10 @@
       const groupMpShareToggleEl = document.getElementById("group-details-allow-miniprogram-share");
       const allowMiniprogramShare = groupMpShareToggleEl ? (groupMpShareToggleEl.checked ? 1 : 0) : 0;
 
+      // 读取"线下赴约记录拼入线上上下文"开关
+      const groupMergeOfflineToggleEl = document.getElementById("group-details-merge-offline-toggle");
+      const mergeOfflineIntoContext = groupMergeOfflineToggleEl ? (groupMergeOfflineToggleEl.checked ? 1 : 0) : 0;
+
       const memberUser = await db.group_members.where('[groupId+memberId+memberType]').equals([group.id, Number(activeUserPersonaId), 'user']).first();
       if (memberUser) {
         await db.group_members.update(memberUser.id, { syncFromSingle, syncToSingle });
@@ -1314,7 +1322,8 @@
       await db.sessions.update(activeSessionId, {
         customCharName: name,
         customCharAvatar: avatar,
-        allowMiniprogramShare: allowMiniprogramShare
+        allowMiniprogramShare: allowMiniprogramShare,
+        mergeOfflineIntoContext: mergeOfflineIntoContext
       });
 
       showToast("群配置保存成功！");
@@ -1863,8 +1872,8 @@
 
       try {
         const allArchives = await db.archives.toArray();
-        // 筛选出不在群里的 Character 与 NPC
-        const chars = allArchives.filter(c => (c.type === 'character' || c.type === 'npc') && !currentIds.includes(c.id));
+        // 筛选出不在群里的 Character 与 NPC（支线人物档案不在此选择）
+        const chars = allArchives.filter(c => (c.type === 'character' || c.type === 'npc') && !c.isSnapshot && !currentIds.includes(c.id));
 
         if (chars.length === 0) {
           listContainer.innerHTML = `<p style="font-size:12px; color:var(--text-secondary); text-align:center; padding:20px 0;">档案馆的所有角色都已在此群聊中啦。</p>`;
@@ -1872,7 +1881,7 @@
           chars.forEach(c => {
             const card = document.createElement("div");
             card.className = "candidate-persona-card";
-            card.style.cssText = "background:#ffffff; border:1.5px solid var(--border); border-radius:10px; padding:8px; display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;";
+            card.style.cssText = "background:#ffffff; border:1.5px solid var(--border); border-radius:10px; padding:8px; display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px; flex-shrink:0;";
             card.innerHTML = `
               <input type="checkbox" class="cb-group-invite-member" value="${c.id}" style="width:16px; height:16px; cursor:pointer;">
               <img src="${resolveAvatar(c.avatar, c.name)}" style="width:34px; height:34px; border-radius:50%; object-fit:cover;">

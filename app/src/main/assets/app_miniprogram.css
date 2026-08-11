@@ -821,3 +821,34 @@
   background: #fff;
   line-height: 1.6;
 }
+
+/* ---------- 链接安装 ---------- */
+.mp-ws-link-row {
+  display: flex; gap: 8px; align-items: stretch;
+  margin-top: 10px;
+}
+.mp-ws-link-row input {
+  flex: 1; min-width: 0;
+  padding: 9px 10px;
+  font-size: 12px;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fafafa;
+  outline: none;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.mp-ws-link-row input:focus { border-color: #07c160; background: #fff; }
+.mp-ws-link-row .mp-ws-btn { flex-shrink: 0; }
+
+/* 权限标签（应用商店式安全模型） */
+.mp-ws-perm-row {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin-top: 4px;
+}
+.mp-ws-perm-tag {
+  font-size: 10px; padding: 1px 6px;
+  background: #eef2ff; color: #4f46e5;
+  border-radius: 4px; font-weight: 600;
+  line-height: 1.5;
+}

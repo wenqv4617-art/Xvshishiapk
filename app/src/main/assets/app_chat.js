@@ -2152,6 +2152,8 @@ function updateChatInputLockState(sess) {
 
 async function openWeChatDialog(sessionId) {
   activeSessionId = sessionId;
+  // 持久化当前会话：供后台 Headless 中枢（initBackgroundCenter）退出后恢复
+  try { localStorage.setItem("mcp_active_session_id", String(sessionId)); } catch(e) {}
 
   // 会话隔离：清除上一个会话遗留的 typing 标题样式，避免新会话显示"正在输入"
   const oldHeader = document.getElementById("dialog-header-title");
@@ -2989,6 +2991,7 @@ async function renderDialogMessages(isInitial = true) {
     // 强制转型 Number 防止 Dexie 主键查询类型冲突失效
     let finalAvatarUrl = m.senderType === 'user' ? (user ? resolveAvatar(user.avatar, user.name) : userAvatarUrl) : charAvatarUrl;
     let roleTitleHtml = "";
+    let snapshotBadgeHtml = "";
 
     if (sess.isGroup === 1) {
       if (Number(m.senderId) === 99999) {
@@ -3020,6 +3023,8 @@ async function renderDialogMessages(isInitial = true) {
                 const parts = srcArchive.customLabel.split('-');
                 const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
                 finalSenderName = `${finalSenderName}（${tag}）`;
+                // 根据标记分别渲染：快照分支成员额外挂载视觉徽章，与同名本体一眼可辨
+                snapshotBadgeHtml = `<span style="font-size:9px; background-color:#6366f1; color:#fff; padding:1px 4px; border-radius:4px; margin-right:4px; font-weight:700;">对话分支</span>`;
               }
             } catch(e) {}
           }
@@ -3048,7 +3053,7 @@ async function renderDialogMessages(isInitial = true) {
 
     // 群聊时气泡上方显示发送人名称 (己方也显示)
     const showSenderNameHtml = (sess.isGroup === 1) ? `
-      <div class="group-sender-name">${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
+      <div class="group-sender-name">${snapshotBadgeHtml}${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
     ` : "";
 
     // 投票卡片内容定制拦截
@@ -3709,6 +3714,7 @@ async function appendMessageToDOM(msg) {
       let finalSenderName = "";
       let finalAvatarUrl = msg.senderType === 'user' ? (user ? resolveAvatar(user.avatar, user.name) : userAvatarUrl) : charAvatarUrl;
       let roleTitleHtml = "";
+      let snapshotBadgeHtml = "";
 
       if (sess && sess.isGroup === 1) {
         if (Number(msg.senderId) === 99999) {
@@ -3738,6 +3744,8 @@ async function appendMessageToDOM(msg) {
                   const parts = srcArchive.customLabel.split('-');
                   const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
                   finalSenderName = `${finalSenderName}（${tag}）`;
+                  // 根据标记分别渲染：快照分支成员额外挂载视觉徽章，与同名本体一眼可辨
+                  snapshotBadgeHtml = `<span style="font-size:9px; background-color:#6366f1; color:#fff; padding:1px 4px; border-radius:4px; margin-right:4px; font-weight:700;">对话分支</span>`;
                 }
               } catch(e) {}
             }
@@ -3779,7 +3787,7 @@ async function appendMessageToDOM(msg) {
   ` : "";
 
   const showSenderNameHtml = (sess && sess.isGroup === 1) ? `
-        <div class="group-sender-name">${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
+        <div class="group-sender-name">${snapshotBadgeHtml}${roleTitleHtml}${escapeHtml(finalSenderName)}</div>
       ` : "";
 
       // 核心自愈：包裹 msg-content-col 垂直列容器，彻底解决 CoT 与气泡横向挤压排列的 BUG
@@ -4288,26 +4296,78 @@ function bindChatAppEvents() {
   if (btnDetailsClearRecords) {
     btnDetailsClearRecords.onclick = () => {
       showCustomConfirm("清空记录", "确定要清空该对话下的所有内容吗？\n\n这将彻底抹除本单聊下的所有线上消息、线下对白、阶段总结、历史约会存档，操作不可恢复！", async () => {
-        await db.messages.where('sessionId').equals(activeSessionId).delete();
-        await db.offline_messages.where('sessionId').equals(activeSessionId).delete();
-        await db.summaries.where('sessionId').equals(activeSessionId).delete();
-        await db.sessions.update(activeSessionId, {
-          coreSelfStatus: "",
-          coreSelfPurpose: "",
-          coreSelfChanges: "",
-          coreRelationship: "",
-          coreUserInEyes: "",
-          isBlockedByUser: 0,
-          blockByUserReason: "",
-          isBlockedByChar: 0,
-          blockByCharReason: ""
-        });
-        
-        showToast("该会话下的所有物理关联数据已彻底抹除");
-        closeChatDetails();
-        renderDialogMessages();
-        const updatedSess = await db.sessions.get(activeSessionId);
-        updateChatInputLockState(updatedSess);
+        const sid = Number(activeSessionId);
+        if (!sid || isNaN(sid)) {
+          showToast("无法确定要清空的对话");
+          return;
+        }
+
+        // 显示清空记录进度遮罩（与删除对话同款过渡卡片）
+        const progOverlay = document.getElementById("clear-progress-overlay");
+        const progText = document.getElementById("clear-progress-text");
+        const progSub = document.getElementById("clear-progress-sub");
+        if (progOverlay) {
+          progOverlay.style.display = "flex";
+          if (progText) progText.innerText = "正在清空记录...";
+          if (progSub) progSub.innerText = "请稍候，正在抹除所有对话数据";
+        }
+
+        // 让 UI 有机会渲染遮罩再开始清空
+        await new Promise(r => setTimeout(r, 50));
+
+        try {
+          if (progSub) progSub.innerText = "正在清理线上消息...";
+          try { await db.messages.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("清messages失败:", e); }
+
+          if (progSub) progSub.innerText = "正在清理线下对白...";
+          try { await db.offline_messages.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("清offline_messages失败:", e); }
+
+          // 线下剧场关联数据（约会存档）
+          try {
+            const theaters = await db.theaters.where('sessionId').equals(sid).toArray();
+            for (const t of theaters) {
+              try { await db.offline_messages.where('theaterId').equals(t.id).delete(); } catch(e) {}
+              try { await db.status_history.where('theaterId').equals(t.id).delete(); } catch(e) {}
+            }
+            try { await db.theaters.where('sessionId').equals(sid).delete(); } catch(e) {}
+          } catch(e) { console.warn("清剧场关联失败:", e); }
+
+          if (progSub) progSub.innerText = "正在清理总结与心声...";
+          try { await db.summaries.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("清summaries失败:", e); }
+          try { await db.status_history.where('sessionId').equals(sid).delete(); } catch(e) { console.warn("清status_history失败:", e); }
+
+          if (progSub) progSub.innerText = "正在重置会话状态...";
+          try {
+            await db.sessions.update(sid, {
+              coreSelfStatus: "",
+              coreSelfPurpose: "",
+              coreSelfChanges: "",
+              coreRelationship: "",
+              coreUserInEyes: "",
+              isBlockedByUser: 0,
+              blockByUserReason: "",
+              isBlockedByChar: 0,
+              blockByCharReason: ""
+            });
+          } catch(e) { console.warn("重置会话状态失败:", e); }
+
+          if (progText) progText.innerText = "清空成功";
+          if (progSub) progSub.innerText = "正在刷新对话...";
+
+          // 短暂展示成功状态后关闭遮罩
+          await new Promise(r => setTimeout(r, 400));
+
+          if (progOverlay) progOverlay.style.display = "none";
+          showToast("该会话下的所有物理关联数据已彻底抹除");
+          closeChatDetails();
+          renderDialogMessages();
+          const updatedSess = await db.sessions.get(sid);
+          updateChatInputLockState(updatedSess);
+        } catch (err) {
+          console.error("清空记录异常:", err);
+          if (progOverlay) progOverlay.style.display = "none";
+          showToast("清空记录失败: " + (err.message || "未知错误"));
+        }
       });
     };
   }
@@ -4381,6 +4441,7 @@ function bindChatAppEvents() {
 
           // 重置 activeSessionId，防止后续代码引用已删除的会话
           activeSessionId = null;
+          try { localStorage.removeItem("mcp_active_session_id"); } catch(e) {}
 
           if (progText) progText.innerText = "删除成功";
           if (progSub) progSub.innerText = "正在返回对话列表...";
@@ -4671,7 +4732,27 @@ function bindChatAppEvents() {
 
         const history = await db.messages.where('sessionId').equals(activeSessionId).reverse().limit(10).toArray();
         history.reverse();
-        
+
+        // === 线下赴约记录拼入线上上下文（对话详情开关"线下赴约记录拼入线上上下文"开启时生效）===
+        // 核心隔离：赴约模式的记录是小说白描式线下对白，与线上微信短句格式完全不同。
+        // 拼入时必须做标签清洗（剥离 CoT/心声/翻译等随动标签）与场景隔离（【线下赴约】前缀 + 场景切换 system 提示），
+        // 防止 AI 混淆线上线下格式。已被跟随线上对话总结并自动存档的记录（mergedArchived===1）不再拼入。
+        let offlineMergeHistory = [];
+        const mergeCtxSess = await db.sessions.get(activeSessionId);
+        if (mergeCtxSess && mergeCtxSess.mergeOfflineIntoContext === 1) {
+          offlineMergeHistory = await db.offline_messages
+            .where('sessionId').equals(activeSessionId)
+            .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
+            .sortBy('timestamp');
+        }
+        // 线上消息 + 线下赴约记录按时间线合并排序（线下记录内部同样按时间戳递增）
+        const mergedTimeline = history.map(h => ({ type: 'online', ts: h.timestamp || 0, h }));
+        offlineMergeHistory.forEach(m => {
+          mergedTimeline.push({ type: 'offline', ts: m.timestamp || 0, m });
+        });
+        mergedTimeline.sort((a, b) => a.ts - b.ts);
+        let offlineSceneHintPushed = false;
+
         const systemPrompt = await buildSystemPrompt(activeSessionId);
 
         // 检查"心声随动生产"开关状态
@@ -4761,7 +4842,51 @@ function bindChatAppEvents() {
         // 异步映射历史记录，智能计算设定/真实时间流逝，插入带精准场景虚拟时间的系统标块
         const simNow = getSimulatedNow(sessObj);
         let prevTime = null;
-        for (let h of history) {
+        // 角色交替守卫：部分 API 严格要求 user/assistant 交替，连续同角色消息自动合并，防止请求被拒
+        const pushMergedMessage = (role, content) => {
+          const lastMsg = messagesToSend[messagesToSend.length - 1];
+          if (lastMsg && lastMsg.role === role && typeof lastMsg.content === 'string') {
+            lastMsg.content += "\n" + content;
+          } else {
+            messagesToSend.push({ role, content });
+          }
+        };
+        for (const tl of mergedTimeline) {
+          // === 线下赴约记录分支：标签清洗 + 场景隔离，防止线上线下格式混淆 ===
+          if (tl.type === 'offline') {
+            const om = tl.m;
+            // 场景隔离提示：仅在第一条线下记录出现前注入一次
+            if (!offlineSceneHintPushed) {
+              offlineSceneHintPushed = true;
+              messagesToSend.push({
+                role: "system",
+                content: "【场景切换提示（重要）】\n下方以【线下赴约】标签开头的对话记录，是你们此前在线下真实见面（面对面，非手机微信聊天）时发生的小说白描式对白。它们仅作为背景记忆供你回忆当时发生的事，请不要把它们当作当前的聊天格式。\n现在你们已经回到线上微信聊天场景，你接下来的回复必须立刻回归线上微信短句聊天的格式与口吻，绝对禁止继续使用线下白描/小说式描写格式，也禁止输出任何【线下赴约】标签！"
+              });
+            }
+            // 标签清洗：剥离线下白描中的思维链 / 心声随动 / 翻译随动 / 引用 / MSG_ID 等标签，防止污染线上格式
+            let offlineClean = om.content;
+            if (typeof offlineClean === 'string') {
+              offlineClean = offlineClean
+                .replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "")
+                .replace(/\n?\s*\[STATUS\]\s*\{[\s\S]*?\}\s*/gi, "")
+                .replace(/\n?\s*【心声】\s*\{[\s\S]*?\}\s*/gi, "")
+                .replace(/\n?\s*\[TRANSLATE\]\s*[\s\S]*$/gi, "")
+                .replace(/[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/gi, "")
+                .replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "")
+                .trim();
+            }
+            if (offlineClean) {
+              const offlineSender = om.senderType === 'user' ? _chatMyName : _chatCharName;
+              pushMergedMessage(
+                om.senderType === 'user' ? 'user' : 'assistant',
+                `【线下赴约·${offlineSender}】${offlineClean}`
+              );
+            }
+            // 线下记录同样推进时间线，保持后续时间流逝计算连续
+            prevTime = om.timestamp || prevTime;
+            continue;
+          }
+          const h = tl.h;
           const simDate = getMessageDisplayDate(h, sessObj);
           // 智能计算时间间隔插入系统标块 (超过15分钟自动提示时间流逝并附带当时虚拟场景时刻)
           if (prevTime !== null && h.timestamp) {
@@ -5450,6 +5575,17 @@ function bindChatAppEvents() {
           }
         }
 
+        // === 无条件兜底标签清洗（极其重要）===
+        // 设计原则：心声/翻译随动开关只控制【是否注入 prompt】与【是否解析入库】，
+        // 标签清洗必须【始终执行】。即便用户关闭了开关，AI 若误打误撞输出了 [STATUS]/[TRANSLATE]，
+        // 也必须从展示文本中彻底擦除，绝不能让原始标签泄漏到聊天气泡（中英文括号兼容）。
+        // 这与 [MSG_ID] 的无条件擦除策略一致，避免"关闭开关却仍出现心声/翻译"的泄漏。
+        textReply = textReply
+          .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
+          .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
+          .replace(/[\[【]STATUS[\]】][\s\S]*$/gi, '')
+          .trim();
+
         // 小程序分享：解析 AI 回复中的 [MP_INVITE] 指令 → 转为 char 发出的分享卡片（无损，未开启开关则无效）
         if (window.miniProgramSystem && typeof window.miniProgramSystem.parseAndApplyInvite === "function") {
           try {
@@ -5501,8 +5637,17 @@ function bindChatAppEvents() {
 
         const splitTextIntoBubbles = (text, minCount = minSentences, maxCount = maxSentences) => {
           if (!text || typeof text !== 'string') return [];
-          
-          let initialParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => p.trim()).filter(Boolean);
+
+          // 第一步：按 [SPLIT] / 【SPLIT】 / 换行 粗切成大段（不使用捕获组，避免 undefined）
+          let coarseParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => (p || '').trim()).filter(Boolean);
+
+          // 第二步：从每段中分离出表情包标签，使其作为独立分句依据
+          let initialParts = [];
+          coarseParts.forEach(part => {
+            const subParts = part.split(/(【表情包：[^】]+】)/).map(p => (p || '').trim()).filter(Boolean);
+            initialParts.push(...subParts);
+          });
+
           let rawBubbles = [];
 
           initialParts.forEach(part => {
@@ -5515,9 +5660,33 @@ function bindChatAppEvents() {
               barePart = part.substring(quoteMatch[0].length).trim();
             }
 
-            // 按句末标点 (。！？!?) 拆分句项列表
+            // 表情包格式标签：作为独立分句依据，单独成为一个气泡
+            if (/^【表情包：[^】]+】$/.test(barePart)) {
+              let bubbleText = barePart;
+              if (rawBubbles.length === 0 && quotePrefix) {
+                bubbleText = quotePrefix + bubbleText;
+              }
+              if (bubbleText) rawBubbles.push(bubbleText);
+              return;
+            }
+
+            // 按句末标点 (。！？!? 中英文) 拆分句项列表
             const sentenceRegex = /([^。！？!?]+[。！？!?]+)/g;
             let subSentences = barePart.match(sentenceRegex);
+
+            // 加强约束：若句末标点拆出的句数不足 minCount（模型只返回 1-2 句），
+            // 用弱标点（逗号/分号/顿号/省略号 中英文）尝试再拆出更多句，强化时序级联效果
+            if ((!subSentences || subSentences.length < minCount) && barePart.length > 0) {
+              const weakRegex = /([^，；、,;…]+[，；、,;…]+)/g;
+              const weakParts = barePart.match(weakRegex);
+              if (weakParts && weakParts.length > (subSentences ? subSentences.length : 1)) {
+                let weakLen = 0;
+                weakParts.forEach(w => weakLen += w.length);
+                const weakLeftover = barePart.substring(weakLen).trim();
+                subSentences = weakParts;
+                if (weakLeftover) subSentences.push(weakLeftover);
+              }
+            }
 
             if (subSentences && subSentences.length > 0) {
               let reassembledLen = 0;
@@ -6187,6 +6356,10 @@ if (btnDialogDetails) {
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
       document.getElementById("details-allow-char-block").checked = !!sess.allowCharToBlock;
 
+      // 渲染"线下赴约记录拼入线上上下文"开关
+      const detailsMergeOfflineToggle = document.getElementById("details-merge-offline-toggle");
+      if (detailsMergeOfflineToggle) detailsMergeOfflineToggle.checked = sess.mergeOfflineIntoContext === 1;
+
       // 渲染小程序分享开关（无损：未开启即不注入任何 prompt）
       const mpShareToggle = document.getElementById("details-allow-miniprogram-share");
       if (mpShareToggle) mpShareToggle.checked = !!sess.allowMiniprogramShare;
@@ -6347,6 +6520,10 @@ if (btnSaveDetails) {
     const allowCharReaction = document.getElementById("details-allow-reaction-toggle").checked;
     const allowCharToBlock = document.getElementById("details-allow-char-block").checked;
 
+    // 读取"线下赴约记录拼入线上上下文"开关
+    const mergeOfflineToggleEl = document.getElementById("details-merge-offline-toggle");
+    const mergeOfflineIntoContext = mergeOfflineToggleEl ? (mergeOfflineToggleEl.checked ? 1 : 0) : 0;
+
     // 读取小程序分享开关（无损：默认关闭，不影响现有功能）
     const mpShareToggleEl = document.getElementById("details-allow-miniprogram-share");
     const allowMiniprogramShare = mpShareToggleEl ? (mpShareToggleEl.checked ? 1 : 0) : 0;
@@ -6406,6 +6583,7 @@ if (btnSaveDetails) {
       allowCharAutoMoment: allowCharAutoMoment,
       allowCharForumRoam: allowCharForumRoam,
       allowCharForumAltAccount: allowCharForumAltAccount,
+      mergeOfflineIntoContext: mergeOfflineIntoContext,
       minSentenceCount: minSentenceCount,
       maxSentenceCount: maxSentenceCount,
       customTimeData: JSON.stringify(timeData),
@@ -6590,8 +6768,31 @@ async function refreshTheaterAttendeeUI() {
   for (const m of members) {
     if (m.memberType === 'char') {
       const c = await db.archives.get(m.memberId);
-      if (c) theaterAttendeeMembers.push({ memberId: m.memberId, name: c.name, avatar: c.avatar });
+      // 使用群成员唯一行 id 作为出席标识：主线人物与其「对话快照分支」（支线人物）各自独立，可被分别选择
+      theaterAttendeeMembers.push({
+        memberId: m.id,
+        legacyCharId: m.memberId,
+        name: m.displayName || (c ? c.name : '未命名角色'),
+        baseName: c ? c.name : (m.displayName ? m.displayName : '未命名角色'),
+        avatar: c ? c.avatar : null,
+        isSnapshot: !!m.isSnapshot,
+        snapshotLabel: m.snapshotLabel || ''
+      });
     }
+  }
+
+  // 旧版兼容：历史剧场以 charId 保存出席名单，将其映射为群成员唯一行 id
+  if (theaterAttendeeIds.length) {
+    const mapped = [];
+    for (const id of theaterAttendeeIds) {
+      const idStr = String(id);
+      if (idStr.startsWith('user_')) { mapped.push(id); continue; }
+      if (theaterAttendeeMembers.some(x => String(x.memberId) === idStr)) { mapped.push(id); continue; } // 已是行 id
+      const byChar = theaterAttendeeMembers.filter(x => String(x.legacyCharId) === idStr);
+      if (byChar.length === 1) mapped.push(byChar[0].memberId);
+      else if (byChar.length > 1) mapped.push(...byChar.map(x => x.memberId)); // 同名分支全部保留，保守不漏选
+    }
+    theaterAttendeeIds = mapped;
   }
   renderTheaterAttendeeChips();
   renderTheaterAttendeeList();
@@ -6625,8 +6826,11 @@ function renderTheaterAttendeeChips() {
     const chip = document.createElement("div");
     chip.style.cssText = "display:flex; align-items:center; gap:4px; background:var(--bg-main); border:1px solid var(--border); border-radius:14px; padding:3px 8px 3px 4px; font-size:11px;";
     if (m.avatar) chip.innerHTML = '<img src="' + m.avatar + '" style="width:18px; height:18px; border-radius:50%; object-fit:cover;">';
-    else chip.innerHTML = '<div style="width:18px; height:18px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:9px;">' + escapeHtml((m.name || '?').charAt(0)) + '</div>';
+    else chip.innerHTML = '<div style="width:18px; height:18px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:9px;">' + escapeHtml((m.baseName || m.name || '?').charAt(0)) + '</div>';
     chip.innerHTML += '<span>' + escapeHtml(m.name || '未命名') + '</span>';
+    if (m.isSnapshot) {
+      chip.innerHTML += '<span style="font-size:8px; line-height:1; padding:1px 4px; border-radius:6px; background:#eef2ff; color:#6366f1; border:1px solid #c7d2fe;">支线</span>';
+    }
     const x = document.createElement("span");
     x.textContent = "×";
     x.style.cssText = "cursor:pointer; color:var(--text-secondary); font-weight:700; margin-left:2px;";
@@ -6653,8 +6857,11 @@ function renderTheaterAttendeeList() {
     row.onmouseenter = () => row.style.background = "var(--bg-card)";
     row.onmouseleave = () => row.style.background = "transparent";
     if (m.avatar) row.innerHTML = '<img src="' + m.avatar + '" style="width:28px; height:28px; border-radius:50%; object-fit:cover;">';
-    else row.innerHTML = '<div style="width:28px; height:28px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px;">' + escapeHtml((m.name || '?').charAt(0)) + '</div>';
+    else row.innerHTML = '<div style="width:28px; height:28px; border-radius:50%; background:var(--primary); display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px;">' + escapeHtml((m.baseName || m.name || '?').charAt(0)) + '</div>';
     row.innerHTML += '<span style="font-size:12px;">' + escapeHtml(m.name || '未命名') + '</span>';
+    if (m.isSnapshot) {
+      row.innerHTML += '<span style="font-size:8px; line-height:1; padding:1px 4px; border-radius:6px; background:#eef2ff; color:#6366f1; border:1px solid #c7d2fe; flex-shrink:0;">支线·' + escapeHtml(m.snapshotLabel || '对话分支') + '</span>';
+    }
     row.onclick = () => { theaterAttendeeIds.push(m.memberId); renderTheaterAttendeeChips(); renderTheaterAttendeeList(); };
     list.appendChild(row);
   });
@@ -7468,6 +7675,15 @@ async function triggerOfflineReply() {
           }
         }
 
+        // === 无条件兜底标签清洗（线上/线下一致原则）===
+        // 开关只控制是否注入 prompt 与是否解析入库；标签清洗始终执行，
+        // 防止 AI 误输出 [STATUS]/[TRANSLATE] 时原始标签泄漏到线下白描卡片（中英文括号兼容）
+        rawReply = rawReply
+          .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
+          .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
+          .replace(/[\[【]STATUS[\]】][\s\S]*$/gi, '')
+          .trim();
+
         if (!rawReply) return;
 
         const msg = {
@@ -7648,13 +7864,15 @@ async function endAppointment() {
       const api = await db.api_presets.get(Number(presetId));
       if (!api) throw new Error("无法加载全局 API 预设，无法同步记忆。");
 
+      // 核心：仅总结"尚未被线上对话跟随总结"的赴约记录（mergedArchived!==1）。
+      // 已随线上自动总结存档的记录不再重复总结，也避免被本次删除（保留为历史回顾）。
       const msgs = await db.offline_messages
         .where('sessionId').equals(activeSessionId)
-        .and(m => m.isTheater === 0)
+        .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
         .sortBy('timestamp');
 
       if (msgs.length === 0) {
-        showCustomAlert("无可总结数据", "暂无对话数据，无需总结记忆。");
+        showCustomAlert("无可总结数据", "暂无未总结的赴约数据（若此前开启过“线下赴约记录拼入线上上下文”，未总结记录可能已随线上对话自动总结存档，无需重复总结）。");
         return;
       }
 
@@ -7780,7 +7998,7 @@ ${dialogText}`;
 
       await db.offline_messages
         .where('sessionId').equals(activeSessionId)
-        .and(m => m.isTheater === 0)
+        .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
         .delete();
 
       showCustomAlert("记忆同步成功", "赴约已圆满结束！多维经历记忆已经同步注入心智，原对白也已成功录入历史回顾舱。");

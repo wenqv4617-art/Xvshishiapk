@@ -532,6 +532,12 @@
         ringtone: ringtone,
         setByAI: !showToastFeedback  // showToastFeedback=true 表示手动按钮路径
       };
+      // 持久化闹钟状态：供后台 Headless 中枢（initBackgroundCenter）退出后恢复
+      try {
+        localStorage.setItem("mcp_active_alarm_state", JSON.stringify({
+          triggerTime: triggerTimeMillis, title: title, ringtone: ringtone
+        }));
+      } catch(e) {}
       this._startAlarmCountdown();
       this._renderAlarmStatus();
     },
@@ -641,6 +647,7 @@
       }
       this._stopAlarmCountdown();
       this.activeAlarm = null;
+      try { localStorage.removeItem("mcp_active_alarm_state"); } catch(e) {}
       this._renderAlarmStatus();
       if (inAppCancelled) {
         showToast("已取消应用内闹钟（系统时钟App的闹钟需手动删除）");
@@ -655,6 +662,7 @@
     clearAlarmStatus: function() {
       this._stopAlarmCountdown();
       this.activeAlarm = null;
+      try { localStorage.removeItem("mcp_active_alarm_state"); } catch(e) {}
       this._renderAlarmStatus();
     },
 
@@ -1095,4 +1103,46 @@
   }
 
   window.mcpSystem = mcpSystem;
+
+  // ==========================================
+  //  后台中枢初始化（由 Kotlin McpForegroundService 的 Headless WebView
+  //  在页面加载完成后通过 evaluateJavascript 注入调用）
+  //  作用：恢复退出前的会话与闹钟状态，使主动发信/闹钟/桌宠
+  //  在 Activity 销毁后（常驻保活通知挂载期间）继续运行。
+  // ==========================================
+  window.initBackgroundCenter = function() {
+    try {
+      // 1. 恢复当前会话 ID（app_chat.js 在 openWeChatDialog 时持久化）
+      const savedSess = localStorage.getItem("mcp_active_session_id");
+      if (savedSess && typeof activeSessionId !== 'undefined' && !activeSessionId) {
+        const id = parseInt(savedSess);
+        if (!isNaN(id)) activeSessionId = id;
+      }
+
+      // 2. 恢复活动闹钟状态（headless 无可见 UI，仅保持状态与到点清理）
+      const alarmRaw = localStorage.getItem("mcp_active_alarm_state");
+      if (alarmRaw) {
+        try {
+          const st = JSON.parse(alarmRaw);
+          if (st && st.triggerTime && st.triggerTime > Date.now()) {
+            mcpSystem.activeAlarm = {
+              triggerTime: st.triggerTime,
+              title: st.title || "",
+              ringtone: st.ringtone || "default",
+              setByAI: true
+            };
+            mcpSystem._startAlarmCountdown();
+          } else {
+            localStorage.removeItem("mcp_active_alarm_state");
+          }
+        } catch(e) { localStorage.removeItem("mcp_active_alarm_state"); }
+      }
+
+      // 3. 标记中枢环境（供 JS 内部分支判断）
+      window.__isBackgroundCenter = true;
+      console.log("[BgCenter] 后台中枢初始化完成, activeSessionId =", activeSessionId);
+    } catch(e) {
+      console.error("[BgCenter] 初始化失败:", e);
+    }
+  };
 })();

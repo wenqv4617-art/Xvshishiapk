@@ -20,12 +20,27 @@ import ai.onnxruntime.OrtSession
 import ai.onnxruntime.OnnxTensor
 import java.nio.LongBuffer
 
-class AndroidMcp(private val context: Context) {
+class AndroidMcp private constructor(private val context: Context) {
 
     companion object {
         private const val TAG = "AndroidMcp"
         var mainActivity: MainActivity? = null
+        /** Service 托管的 Headless 中枢 WebView：Activity 销毁后 JS 中枢的存活载体 */
+        @Volatile var centerWebView: android.webkit.WebView? = null
         @Volatile private var instance: AndroidMcp? = null
+
+        /** 获取进程级单例（使用 applicationContext，脱离 Activity 生命周期） */
+        @Synchronized
+        fun getInstance(context: Context): AndroidMcp {
+            instance?.let { return it }
+            return AndroidMcp(context.applicationContext).also { instance = it }
+        }
+
+        /** 返回当前可用的 JS 执行 WebView：优先 Service Headless 中枢，兜底 Activity WebView */
+        fun getEffectiveWebView(): android.webkit.WebView? {
+            centerWebView?.let { return it }
+            return mainActivity?.findViewById(R.id.webview)
+        }
 
         /** 兜底释放后台 WakeLock，供 McpForegroundService.onDestroy 调用 */
         fun releaseWakeLockIfHeld() {
@@ -739,8 +754,9 @@ class AndroidMcp(private val context: Context) {
         }
     }
 
+    /** 返回当前可用的 JS 执行 WebView（中枢优先，Activity 兜底） */
     private fun getWebView(): android.webkit.WebView? {
-        return (context as? MainActivity)?.findViewById(R.id.webview)
+        return getEffectiveWebView()
     }
 
     private var floatPetView: android.view.View? = null
@@ -1122,8 +1138,9 @@ class AndroidMcp(private val context: Context) {
     private fun onOverlayDoubleClick() {
         Log.d(TAG, "onOverlayDoubleClick() called, executing JS quietly in background")
         try {
-            mainActivity?.runOnUiThread {
-                getWebView()?.evaluateJavascript(
+            val webView = getEffectiveWebView() ?: return
+            webView.post {
+                webView.evaluateJavascript(
                     "javascript:if(window.desktopPetSystem) { window.desktopPetSystem.handleDoubleClickBackground(); }",
                     null
                 )
@@ -1331,11 +1348,10 @@ class AndroidMcp(private val context: Context) {
      * 向前端回传下载进度（通过 evaluateJavascript 调用 window.onEmbeddingModelDownloadProgress）。
      */
     private fun reportDownloadProgress(activity: android.app.Activity?, stage: String, percent: Int, downloaded: Long, total: Long, error: String?) {
-        if (activity == null) return
         try {
-            activity.runOnUiThread {
+            val webView = getEffectiveWebView() ?: return
+            webView.post {
                 try {
-                    val webView = getWebView() ?: return@runOnUiThread
                     val p = if (percent < 0) 0 else percent
                     val errJson = if (error != null) org.json.JSONObject.quote(error) else "null"
                     val js = "javascript:if(window.onEmbeddingModelDownloadProgress){window.onEmbeddingModelDownloadProgress(${org.json.JSONObject.quote(stage)},$p,$downloaded,$total,$errJson);}"

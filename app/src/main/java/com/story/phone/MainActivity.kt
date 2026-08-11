@@ -104,7 +104,7 @@ class MainActivity : AppCompatActivity() {
 
         // 注入 window.AndroidMCP 原生接口并向静态通道注册主 Activity 引用
         AndroidMcp.mainActivity = this
-        androidMcp = AndroidMcp(this)
+        androidMcp = AndroidMcp.getInstance(this)
         webView.addJavascriptInterface(androidMcp, "AndroidMCP")
 
         // 加载 assets 本地打包的前端页面
@@ -164,17 +164,6 @@ class MainActivity : AppCompatActivity() {
             super.onBackPressed()
         }
     }
-
-    override fun onDestroy() {
-        try {
-            // 停止 AlarmManager 后台心跳，并注销媒体控制 Receiver，避免内存泄漏
-            androidMcp.stopBackgroundPolling()
-            androidMcp.unregisterMediaReceiver()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        super.onDestroy()
-    }
 }
 
 /**
@@ -190,6 +179,7 @@ class MainActivity : AppCompatActivity() {
 class McpForegroundService : Service() {
 
     companion object {
+        private const val TAG = "McpForegroundService"
         private const val CHANNEL_ID = "mcp_foreground_service_channel"
         private const val NOTIFICATION_ID = 1005
     }
@@ -206,6 +196,9 @@ class McpForegroundService : Service() {
 
         // 启动静默音频保活，保持 WebView JS 环境活跃
         startKeepAliveAudio()
+
+        // ★ 启动 Headless 后台中枢：即使 Activity 被销毁，JS 中枢（主动发信/闹钟/桌宠）依然存活
+        startHeadlessCenter()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -217,6 +210,12 @@ class McpForegroundService : Service() {
     override fun onDestroy() {
         // 停止静默音频保活
         stopKeepAliveAudio()
+        // 销毁后台中枢 WebView，释放渲染进程
+        try {
+            AndroidMcp.centerWebView?.stopLoading()
+            AndroidMcp.centerWebView?.destroy()
+        } catch (e: Exception) { e.printStackTrace() }
+        AndroidMcp.centerWebView = null
         // 兜底释放 AndroidMcp 持有的后台 WakeLock，防止服务被回收后 WakeLock 仍占用
         try {
             AndroidMcp.releaseWakeLockIfHeld()
@@ -224,6 +223,54 @@ class McpForegroundService : Service() {
             e.printStackTrace()
         }
         super.onDestroy()
+    }
+
+    /**
+     * Headless 后台中枢：创建一个不挂接任何窗口的隐藏 WebView，加载完整 index.html。
+     * Activity 销毁后 JS 引擎随 Activity 的 WebView 一起消亡，但此中枢 WebView 由前台服务托管，
+     * 只要服务存活（常驻保活通知在），JS 中枢就持续运行。
+     * 注入目标策略：AndroidMcp.getEffectiveWebView() 优先返回本中枢，其次才兜底 Activity 的 WebView。
+     */
+    private fun startHeadlessCenter() {
+        try {
+            if (AndroidMcp.centerWebView != null) return
+            val webView = WebView(this)
+            val settings = webView.settings
+            settings.javaScriptEnabled = true
+            settings.domStorageEnabled = true
+            settings.allowFileAccess = true
+            settings.allowContentAccess = true
+            settings.databaseEnabled = true
+            settings.useWideViewPort = true
+            settings.loadWithOverviewMode = true
+            settings.mediaPlaybackRequiresUserGesture = false
+
+            val mcp = AndroidMcp.getInstance(applicationContext)
+            webView.addJavascriptInterface(mcp, "AndroidMCP")
+            webView.webViewClient = object : WebViewClient() {
+                override fun onPageFinished(view: WebView?, url: String?) {
+                    super.onPageFinished(view, url)
+                    try {
+                        // 页面加载完成后注入中枢初始化（恢复会话/闹钟状态等）
+                        view?.evaluateJavascript(
+                            "javascript:if(window.initBackgroundCenter){window.initBackgroundCenter();}",
+                            null
+                        )
+                        android.util.Log.d(TAG, "后台中枢 JS 初始化注入完成")
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+            }
+
+            // 关键：不 addView 到任何窗口 —— Headless 模式只执行 JS，不渲染 UI
+            webView.loadUrl("file:///android_asset/index.html")
+            AndroidMcp.centerWebView = webView
+            android.util.Log.d(TAG, "Headless 后台中枢 WebView 已启动")
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "启动后台中枢 WebView 失败: ${e.message}")
+            e.printStackTrace()
+        }
     }
 
     /**
@@ -365,12 +412,12 @@ class BgPollReceiver : BroadcastReceiver() {
         val intervalMs = intent?.getLongExtra(EXTRA_INTERVAL_MS, DEFAULT_INTERVAL_MS) ?: DEFAULT_INTERVAL_MS
         // 链式重排下一次唤醒
         scheduleNextPoll(context, intervalMs)
-        // 强制在 UI 线程向 WebView 注入心跳 JS
-        val activity = AndroidMcp.mainActivity ?: return
-        activity.runOnUiThread {
+        // 向中枢 WebView 注入心跳 JS（Service Headless 优先，Activity 兜底）
+        // Activity 销毁后，Headless 中枢仍在，心跳照常驱动 JS 发信
+        val webView = AndroidMcp.getEffectiveWebView() ?: return
+        webView.post {
             try {
-                val webView = activity.findViewById<WebView>(R.id.webview)
-                webView?.evaluateJavascript(
+                webView.evaluateJavascript(
                     "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.triggerBackgroundActiveMessageNative === 'function') { window.desktopPetSystem.triggerBackgroundActiveMessageNative(); }",
                     null
                 )
@@ -453,14 +500,13 @@ class InAppAlarmReceiver : BroadcastReceiver() {
             e.printStackTrace()
         }
         // 3. 直接通过 evaluateJavascript 触发 AI 发信
-        //    配合 McpForegroundService 的静默音频保活，WebView JS 环境在后台保持活跃
-        val activity = AndroidMcp.mainActivity
-        if (activity != null) {
-            activity.runOnUiThread {
+        //    注入中枢 WebView（Service Headless 优先，Activity 兜底），Activity 销毁后仍可执行
+        val webView = AndroidMcp.getEffectiveWebView()
+        if (webView != null) {
+            webView.post {
                 try {
-                    val webView = activity.findViewById<WebView>(R.id.webview)
                     val quoted = org.json.JSONObject.quote(message)
-                    webView?.evaluateJavascript(
+                    webView.evaluateJavascript(
                         "javascript:if(window.desktopPetSystem && typeof window.desktopPetSystem.handleInAppAlarm === 'function') { window.desktopPetSystem.handleInAppAlarm($quoted); }",
                         null
                     )

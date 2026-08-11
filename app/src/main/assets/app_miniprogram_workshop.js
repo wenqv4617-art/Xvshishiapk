@@ -3,11 +3,11 @@
  * app_miniprogram_workshop.js - 小程序工坊
  * ------------------------------------------------------------
  * 结构（上 → 中 → 下）：
- *   1. 上方「安装小程序」：点击展开卡片，可上传文件 / 复制粘贴代码；
- *      并可填写小程序名称、作者、SVG 图标（覆盖代码自带 manifest）。
- *   2. 中间「已安装小程序」：列出所有小程序，本地小程序支持「编辑」
- *      （展开大卡片编辑代码并保存）与「删除」。
- *   3. 下方「AI 辅助制作」：一键复制 Prompt，粘贴给任意大模型即可生成小程序。
+ *   1. 上方「安装小程序」：点击展开卡片，可上传文件 / 复制粘贴代码 / 链接安装
+ *      （统一输入框，自动识别 .js 直链 或 应用商店清单 store.json）；并可填写名称、作者、SVG 图标（覆盖代码自带 manifest）。
+ *   2. 中间「已安装小程序」：列出所有小程序，展示权限标签与来源（本地/内置/商店/社区）；
+ *      本地小程序支持「编辑」（展开大卡片编辑代码并保存）与「删除」。
+ *   3. 底部「AI 辅助制作」：一键复制 Prompt，粘贴给任意大模型即可生成小程序（含部署与链接导入教程）。
  * UI 规范：禁止新增任何 emoji，所有按钮使用纯矢量 SVG 图标。
  * 依赖：window.miniProgramSystem
  * ============================================================
@@ -24,10 +24,14 @@
 
   // 默认 SVG 图标（用于安装卡片预览）
   const DEFAULT_ICON_SVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.47 1.229 0 1.698l-2.609 2.61a.75.75 0 0 1-.886.13 3 3 0 0 0-3.488 4.05.75.75 0 0 1-.13.886l-2.61 2.609c-.47.47-1.229.47-1.698 0l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.13.02-.261.029-.391.029a3 3 0 1 1 0-6c.13 0 .261.009.391.029a1.026 1.026 0 0 0 .877-.29l1.568-1.568c.47-.47 1.229-.47 1.698 0l2.61 2.609a.75.75 0 0 0 .886.13 3 3 0 0 0 4.05-3.488z"/></svg>';
+  // 链接图标（宿主 ICONS 未内置）
+  const LINK_ICON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+  // 解析相对链接（商店清单内 app.url 可为相对路径）
+  function resolveRel(u, base) { try { return new URL(u, base).href; } catch (e) { return u; } }
 
   // ============================================================
   //  一键复制 Prompt（极详细）
-  //  注：仅支持「上传文件 / 粘贴代码」两种安装方式，无 GitHub 链接方式
+  //  注：支持「上传文件 / 粘贴代码 / 链接安装（.js 直链或应用商店）」三种安装方式
   // ============================================================
   const WORKSHOP_PROMPT = `你是一名资深前端工程师，正在为「叙事诗小手机」这款本地 AI 角色扮演 App 开发【小程序】。请严格按下方规范一次输出完整可用的文件。
 
@@ -37,9 +41,14 @@
 一、交付物（必须一次性全部输出）
 ═══════════════════════════════
 1. 一个独立的 .js 文件全文（用 \`\`\`javascript 代码块包裹），文件名建议形如 my_miniprogram.js。
-2. 一段「使用说明」，告诉用户两种安装方式任选其一：
+2. 一段「使用说明」，告诉用户三种安装方式任选其一：
    - 方式 A（上传文件）：在小程序工坊「安装小程序」卡片里点击「上传 .js 文件」，直接选择本地 .js 文件即可安装，离线也可用。
    - 方式 B（粘贴代码）：在小程序工坊「安装小程序」卡片里点击「粘贴代码」，把 .js 全文粘进文本框，再点击「安装」即可。
+   - 方式 C（链接安装，唯一的在线分发方式，推荐用于分享）：把 .js 文件部署为一条 https 直链（见下方「七、链接安装规格」），用户在小程序工坊「安装小程序」→ 展开卡片 →「链接安装」输入框粘贴该链接，点击「链接安装」即可，无需复制代码。若要分发多个小程序，可再制作一份「应用商店清单」（store.json，见第六节），把清单链接粘贴到同一个「链接安装」输入框，即可一次性装齐全部应用；再次粘贴同一链接即为「更新」。
+3. 一段「部署与导入教程」（方式 C 专属，务必完整输出，教用户把本 .js 部署为可访问的直链并导入）：
+   - 明确告知本小程序「可接受的链接类型」与「不可用的链接类型」（规格见第七节）；
+   - 至少给出两种具体部署路径（示例：GitHub → 新建/打开仓库 → 上传本文件 → 打开文件点击 Raw 复制 raw.githubusercontent.com 链接；或用 jsDelivr：https://cdn.jsdelivr.net/gh/用户名/仓库名@分支/路径/文件.js；以及 Gitee Pages / 任意静态托管）；
+   - 给出在「叙事诗小手机」内的导入步骤：小程序工坊 →「安装小程序」→ 展开安装卡片 →「链接安装」输入框 → 粘贴链接 → 点击「链接安装」。
 
 ═══════════════════════════════
 二、小程序代码规范（必须遵守）
@@ -56,6 +65,7 @@
     author: "作者",                  // 必填：作者名（也可在工坊安装卡片里手动覆盖）
     type: "game",                   // game | tool
     iconSvg: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">...</svg>'  // 必填：SVG 图标字符串（也可在工坊安装卡片里手动覆盖）
+    permissions: ["llm", "storage"], // 可选：权限白名单（取值见下「权限声明」）。不写 = 默认拥有全部权限（旧版兼容）；写了则只开放声明项，其余 API 会被宿主裁剪，且密钥不可见
   }, function (container, api) {
     // container: DOM 容器，把你的 UI 渲染进去
     // api: MiniProgramAPI，见第三节接口
@@ -73,8 +83,8 @@
 
 硬性要求：
 - 禁止使用任何 emoji 字符，所有按钮、图标必须用纯内联 SVG（<svg>...</svg>）。
-- 单文件、零依赖、零外部网络请求（除通过 api.callLLM 调用大模型外）。
-- 代码在浏览器/Android WebView 中运行，可用原生 DOM API；不得使用 fetch 直接请求外部资源。
+- 单文件、零依赖、零外部网络请求（除通过 api.callLLM 调用大模型、api.mcp.invoke 调用 MCP 工具外）。
+- 代码在浏览器/Android WebView 中运行，可用原生 DOM API；不得使用 fetch 直接请求外部资源（网络能力一律走 api.callLLM / api.mcp.invoke，由宿主代理，密钥不泄露）。
 - 必须对 api 调用做 try/catch 与空值兜底，绝不因接口异常而白屏。
 - 样式尽量自包含（内联 style 或在 container 内注入 <style>），不要污染宿主页面。
 
@@ -127,11 +137,40 @@
 - api.saveSummary({sessionId?, startRound?, endRound?, content, keywords?, category?}) → 向当前会话写入一条「长周期总结」沉淀到小手机主记忆（返回 true/false）。category 可填 "miniprogram" 等。游戏一局结束后建议调用，把本局要点写进记忆。
 - api.updateMainMemory({sessionId?, coreSelfStatus?, coreSelfPurpose?, coreSelfChanges?, coreRelationship?, coreUserInEyes?}) → 直接更新当前会话主记忆的五大核心字段（只传需改的字段，返回 true/false）。用于把小程序里发生的关键变化（如关系升温、心态转变）回写主记忆，让后续对话受其影响。
 
-【调用大模型（用全局配置的 apikey）】
-- api.getApiConfig() → {url, key, model, temperature}（注：apikey 由宿主注入，无需用户再填）
+【权限声明（应用商店式安全模型，可选但强烈推荐）】
+在 manifest 里用 permissions 数组声明小程序需要的权限，白名单外的 API 会被宿主裁剪（调用直接报错），且密钥/服务器地址对小程序不可见：
+- "llm": 调用大模型生成回复（callLLM / getCharReply）
+- "api": 读取模型配置（不含密钥）
+- "memory": 读写会话记忆 / 总结 / 上下文
+- "chat": 读取与发送聊天消息
+- "archive": 读写角色档案 / 档案馆
+- "worldbook": 读取世界书条目
+- "network": 读取关系网
+- "storage": 本地状态持久化
+- "files": 文件读写 / 上传 / 导出
+- "share": 分享 / 邀请 / 房间成员
+- "mcp": 调用 MCP 工具（由宿主代理执行）
+- "user": 读取当前用户信息
+- "*": 全部授权
+不写 permissions 的小程序默认拥有全部权限（旧版兼容）；写了之后，首次运行会弹窗列出权限清单供用户确认。建议声明得尽量精简、够用就好，越克制越容易赢得用户信任。注意：声明了权限后 api.getApiConfig() 不再返回明文 key（见下）。
+
+【调用大模型（用全局配置的 apikey，密钥由宿主保管）】
+- api.getApiConfig() → {url, model, temperature, hasKey}（安全模型：声明了 permissions 的小程序拿不到明文 key，key 仅供宿主内部使用；未声明权限的旧版小程序仍返回 {url, key, model, temperature}，向后兼容）
 - api.callLLM({messages, prompt, temperature?, maxTokens?, model?}) → 直接调用 OpenAI 兼容接口，返回文本。messages 优先；否则用 prompt 构造单条 user 消息。
 - api.getCharReply({charId?, sessionId?, prompt, systemPrompt?, history?, temperature?, maxTokens?}) → 以某角色立场生成回复（自动注入其 persona 为 system）。
 说明：所有个性化发言/行动（提问、回答、大冒险、点评、反应）都必须调用上述 LLM 接口生成，符合人设与当前情景；不要用写死文本或随机题库冒充 AI。每次调用尽量携带至少 20 轮历史上下文（history），让 AI 明白谁提议/谁行动/谁平手。
+
+【调用 MCP 工具（需要权限 "mcp"）】
+小程序可以调用宿主已配置的 MCP 服务器工具（短信验证码、天气、数据库、外部 API、自动化等），全部由宿主代理执行，服务器地址与鉴权密钥绝不经过小程序：
+- api.mcp.listServers() → 列出可用 MCP 服务器 [{name, group, toolCount}]（不含 url / headers）
+- api.mcp.listTools(serverName) → 列出某服务器的可用工具 [{name, description, inputSchema}]
+- api.mcp.invoke(serverName, toolName, args) → 调用某工具，返回宿主透传的原始结果（含 content / structuredContent 等）
+典型用法（短信验证码类应用）：
+\`\`\`javascript
+const result = await api.mcp.invoke("短信网关", "send_code", { phone: "138xxxx", code: "123456" });
+// result.content 通常含服务器返回文本，可用 api.toast 或渲染到页面展示
+\`\`\`
+说明：MCP 服务器需先在宿主「MCP 设置」中配置并启用；服务器/分组总开关关闭时调用会抛错，请务必 try/catch 兜底。
 
 【状态持久化（按小程序隔离）】
 - api.saveState(key, data) / api.loadState(key, default?) → 持久化游戏进度等（同步）
@@ -165,8 +204,8 @@
 \`\`\`javascript
 // 1) 拿到当前房间全量成员（含「我」）
 const members = api.getRoomMembers();
-// 2) 为每个 char 拉取完整背景
-const charPlayers = members.filter(m => !m.isMe && m.id > 0);
+// 2) 为每个 char 拉取完整背景（支线人物 id 为 'snap_*' 字符串，用 isSnapshot 一并识别）
+const charPlayers = members.filter(m => !m.isMe && m.id && (m.id > 0 || m.isSnapshot));
 const ctxBlocks = [];
 for (const p of charPlayers) {
   const ctx = await api.getCharRichContext(p.id);
@@ -237,7 +276,60 @@ api.exportFile("game_record.json", JSON.stringify(record, null, 2), "application
 - 小游戏类小程序要清晰展示「轮次/进度/谁该行动」，并由系统推进流程。
 - 务必在 manifest 里写全 name / author / iconSvg 三个字段；用户也可在工坊安装卡片里手动覆盖。
 
-请现在就根据我接下来给出的具体小程序需求，输出完整的 .js 文件与使用说明。`;
+═══════════════════════════════
+六、应用商店清单（store.json）发布规范（可选，分发多个小程序时用）
+═══════════════════════════════
+应用商店清单是「链接安装」的一种输入形态：把多个 .js 小程序聚合为一份 JSON 清单，托管到任意 https 静态地址，用户把清单链接粘贴进「链接安装」输入框即可一次装齐全部应用；重复粘贴同一链接即为「更新」。格式如下：
+
+\`\`\`json
+{
+  "type": "miniprogram-store",
+  "name": "我的应用商店",
+  "description": "一句话介绍",
+  "iconSvg": "<svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71\"/><path d=\"M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71\"/></svg>",
+  "apps": [
+    {
+      "id": "mp_store_sms_helper",
+      "name": "验证码助手",
+      "description": "通过 MCP 短信网关收发验证码",
+      "version": "1.0.0",
+      "author": "你的名字",
+      "type": "tool",
+      "iconSvg": "<svg viewBox=\"0 0 24 24\" width=\"22\" height=\"22\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"2\" y=\"4\" width=\"20\" height=\"16\" rx=\"2\"/><path d=\"m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7\"/></svg>",
+      "url": "https://your-host.com/apps/sms_helper.js",
+      "permissions": ["mcp", "storage", "toast"]
+    }
+  ]
+}
+\`\`\`
+
+要点：
+- type 固定为 "miniprogram-store"；apps 数组内每个元素对应一个小程序，url 为 .js 直链（可相对 store.json 的路径），permissions 为该应用的权限白名单（会覆盖代码自带 manifest）。
+- app.id 建议固定唯一，便于「更新」时按 id 覆盖升级而不重复安装。
+- 分享方式：把 store.json 的链接发给用户，用户在小程序工坊「安装小程序」→「链接安装」输入框粘贴该链接即可一次性装齐全部应用；再次粘贴同一链接即为「更新」，按 app.id 覆盖升级不重复安装。
+- 托管建议：GitHub Pages、jsDelivr、Gitee Pages、任意静态文件服务器（注意需支持 https 与跨域读取；APK 内置原生 HTTP 桥可绕过跨域限制）。
+
+═══════════════════════════════
+七、链接安装规格（AI 输出部署教程时必须遵守）
+═══════════════════════════════
+「链接安装」统一输入框接受两类链接，系统自动识别：
+
+1. 小程序 .js 直链：链接直接返回 JavaScript 文件文本（包含 registerMiniProgram 调用）。例如：
+   - GitHub raw：https://raw.githubusercontent.com/用户名/仓库名/分支/路径/文件.js
+   - jsDelivr：https://cdn.jsdelivr.net/gh/用户名/仓库名@分支/路径/文件.js
+   - Gitee raw / Gitee Pages / 任意静态托管直链（支持 CORS 或经原生 HTTP 桥拉取）
+2. 应用商店清单（store.json）：JSON 文本，含 type=miniprogram-store 与 apps 数组（格式见第六节）。粘贴后一次性安装清单内全部应用，重复粘贴同一链接即为「更新」。
+
+可接受链接硬性要求：
+- 必须以 https:// 开头（http 亦可，但不推荐）；
+- 必须免登录、可匿名 GET、直接返回文件原文（Content-Type 不限，系统按文本读取）；
+- 浏览器（PWA）直连受跨域 CORS 限制：若托管方不返回 CORS 头，在浏览器中会拉取失败，请优先推荐 GitHub raw / jsDelivr 等自带 CORS 的托管，或在 Android 真机（原生 HTTP 桥自动绕过跨域）中使用。
+
+不可用链接（务必在教程里提醒用户）：
+- 网页型链接：GitHub 仓库/文件浏览页（blob 页面）、需要登录的网盘分享页、带 HTML 包装的页面——系统拉取的是原始文件文本，不是网页；
+- 需要鉴权头的私有链接、签名过期链接。
+
+请现在就根据我接下来给出的具体小程序需求，输出完整的 .js 文件、部署与导入教程、使用说明。`;
 
   // ============================================================
   //  工坊 UI
@@ -257,7 +349,7 @@ api.exportFile("game_record.json", JSON.stringify(record, null, 2), "application
         <!-- 上方：安装小程序（可展开卡片） -->
         <section class="mp-ws-section">
           <div class="mp-ws-section-title">${(ICONS.upload || "")}<span>安装小程序</span></div>
-          <div class="mp-ws-hint">点击展开，上传 .js 文件或粘贴代码即可安装；可一并填写名称 / 作者 / SVG 图标（覆盖代码自带信息）。</div>
+          <div class="mp-ws-hint">点击展开，上传 .js 文件、粘贴代码、或直接粘贴链接（.js 直链 / 应用商店清单）即可安装；可一并填写名称 / 作者 / SVG 图标（覆盖代码自带信息）。</div>
           <button class="mp-ws-btn primary block" id="mp-ws-install-toggle">${(ICONS.plus || "")}<span>展开安装卡片</span></button>
           <div class="mp-ws-install-card" id="mp-ws-install-card" data-shown="">
             <div class="mp-ws-meta-row">
@@ -284,6 +376,10 @@ api.exportFile("game_record.json", JSON.stringify(record, null, 2), "application
             <div class="mp-ws-paste-wrap" id="mp-ws-paste-wrap" data-shown="">
               <textarea id="mp-ws-code" placeholder="粘贴小程序 .js 全文，必须包含 registerMiniProgram(manifest, mountFn) 调用…"></textarea>
               <button class="mp-ws-btn primary block" id="mp-ws-code-install">${(ICONS.puzzle || "")}<span>安装</span></button>
+            </div>
+            <div class="mp-ws-link-row">
+              <input type="text" id="mp-ws-url-input" placeholder="粘贴 .js 直链 或 应用商店清单(store.json) 链接（https://…）">
+              <button class="mp-ws-btn outline" id="mp-ws-url-install">${LINK_ICON}<span>链接安装</span></button>
             </div>
           </div>
         </section>
@@ -313,6 +409,7 @@ api.exportFile("game_record.json", JSON.stringify(record, null, 2), "application
     overlay.querySelector("#mp-ws-file-input").onchange = onFilePicked;
     overlay.querySelector("#mp-ws-paste-toggle").onclick = togglePasteCard;
     overlay.querySelector("#mp-ws-code-install").onclick = onInstallCode;
+    overlay.querySelector("#mp-ws-url-install").onclick = onInstallUrl;
     // SVG 图标实时预览
     const iconInput = overlay.querySelector("#mp-ws-meta-icon");
     if (iconInput) {
@@ -404,21 +501,35 @@ api.exportFile("game_record.json", JSON.stringify(record, null, 2), "application
     }
   }
 
+  // 链接安装：粘贴 .js 直链或应用商店 manifest 链接
+  async function onInstallUrl() {
+    const input = document.getElementById("mp-ws-url-input");
+    const url = input ? input.value.trim() : "";
+    if (!url) { toast("请先粘贴链接"); return; }
+    const sys = window.miniProgramSystem;
+    if (!sys || typeof sys.installFromUrl !== "function") { toast("当前版本不支持链接安装"); return; }
+    const ok = await sys.installFromUrl(url);
+    if (ok) {
+      if (input) input.value = "";
+      renderList();
+    }
+  }
+
   function renderList() {
     const list = document.getElementById("mp-ws-list");
     if (!list) return;
     const items = (window.miniProgramSystem.listRegistry || function () { return []; })();
     if (items.length === 0) {
-      list.innerHTML = `<div class="mp-ws-empty">暂无小程序，可在上方「安装小程序」上传文件或粘贴代码</div>`;
+      list.innerHTML = `<div class="mp-ws-empty">暂无小程序，可在上方「安装小程序」上传文件、粘贴代码或粘贴链接一键安装</div>`;
       return;
     }
     let html = "";
     for (const it of items) {
       const isLocal = it.source === "local";
       const isBuiltin = it.source === "builtin";
-      const tag = isLocal ? "本地" : (isBuiltin ? "内置" : "社区");
+      const tag = isLocal ? "本地" : (isBuiltin ? "内置" : (it.manifestUrl ? "商店" : "社区"));
       const canEdit = isLocal;          // 仅本地小程序可编辑代码
-      const canDelete = isLocal;        // 内置 / 旧社区均不可删（社区入口已移除）
+      const canDelete = isLocal || it.source === "github"; // 内置不可删；本地/链接安装可删
       const editBtn = canEdit
         ? `<button class="mp-ws-icon-btn" data-act="edit" data-id="${esc(it.id)}" title="编辑">${ICONS.code || ""}</button>`
         : `<button class="mp-ws-icon-btn" title="不可编辑" disabled style='opacity:0.35'>${ICONS.code || ""}</button>`;
@@ -428,11 +539,16 @@ api.exportFile("game_record.json", JSON.stringify(record, null, 2), "application
       // 重置按钮：所有小程序（含内置）均可重置存档进度
       const resetBtn = `<button class="mp-ws-icon-btn" data-act="reset" data-id="${esc(it.id)}" title="初始化（清除进度）">${ICONS.refresh || ""}</button>`;
       const authorLine = it.author ? `<div class="mp-ws-author-line">作者：${esc(it.author)}</div>` : "";
+      // 权限标签（应用商店式安全模型）：仅展示声明过权限的小程序
+      const permTags = (Array.isArray(it.permissions) && it.permissions.length)
+        ? '<div class="mp-ws-perm-row">' + it.permissions.map(p => `<span class="mp-ws-perm-tag">${esc(p)}</span>`).join("") + '</div>'
+        : "";
       html += `<div class="mp-ws-item">
         <div class="mp-ws-item-icon">${it.iconSvg || ICONS.puzzle || ""}</div>
         <div class="mp-ws-item-info">
           <div class="mp-ws-item-name">${esc(it.name)} <span class="mp-ws-item-tag${isLocal ? " local" : ""}">${tag}</span></div>
           <div class="mp-ws-item-desc">${esc(it.description || "")} · v${esc(it.version || "1.0.0")}</div>
+          ${permTags}
           ${authorLine}
         </div>
         <div class="mp-ws-item-actions">

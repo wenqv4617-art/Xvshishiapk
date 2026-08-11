@@ -1229,3 +1229,114 @@ if (Date.now() - lastTrigger >= intervalMinutes * 60 * 1000) { ... }
 2. 将版本号升级（如从 `db.version(12)` 升级至 `db.version(13)`），并在 stores 里定义您的新表索引字段。
 3. **防止备份损坏**：任何新增的表，必须手动在 `app_settings.js` 的 `computeStorageUsage()` 记录累加、`exportBackup()` 的导出字段映射、以及 `importBackup()` 还原清空时的事务 RW 锁列表中进行同步声明，否则在进行 PWA 数据大备份还原时会遭遇事务空指针，引发页面假死。
 ```
+
+## 9. 小程序系统：链接安装 / 应用商店 / MCP 安全桥
+
+「叙事诗小手机」内置微信风格小程序系统（`app_miniprogram.js` + `app_miniprogram_workshop.js`）。自本版起支持 **链接安装**、**应用商店（store.json）批量分发** 与 **权限声明式安全模型**，并打通 **MCP 工具安全调用**（密钥不暴露）。
+
+### 9.1 安装方式
+
+| 方式 | 入口 | 适用场景 |
+| :--- | :--- | :--- |
+| 上传文件 / 粘贴代码 | 工坊「安装小程序」卡片 | 本地制作、离线安装、调试 |
+| **链接安装（推荐分发，统一入口）** | 工坊「安装小程序」卡片 →「链接安装」输入框 | 粘贴 `.js` 直链 **或** 应用商店清单 `store.json`，自动识别、一键安装；商店清单可一次装齐多个应用，重复粘贴同一链接即为「更新」 |
+
+链接安装复用宿主 HTTP 通道：Android 真机优先走 `AndroidMCP.sendNativeHttpRequest`（规避跨域），PWA 回退 `fetch`。
+
+#### 9.1.1 可接受的链接与部署指引
+
+「链接安装」输入框接受两类链接（自动识别）：
+
+1. **小程序 .js 直链**：链接直接返回 JS 文件文本（含 `registerMiniProgram` 调用）。推荐托管：
+   - GitHub raw：`https://raw.githubusercontent.com/用户名/仓库名/分支/路径/文件.js`
+   - jsDelivr：`https://cdn.jsdelivr.net/gh/用户名/仓库名@分支/路径/文件.js`
+   - Gitee raw / Gitee Pages / 任意支持 CORS 的静态托管直链
+2. **应用商店清单 store.json**：JSON 文本，格式见 9.2；粘贴后一次性安装全部应用。
+
+硬性要求：以 `https://` 开头；免登录、可匿名 GET、直接返回文件原文；浏览器直连受 CORS 限制（优先 GitHub raw / jsDelivr 等自带 CORS 的服务，或使用 Android 真机原生 HTTP 桥）。
+
+不可用链接：GitHub blob 网页、需登录的网盘分享页、任何返回 HTML 包装的页面、需要鉴权头的私有链接。
+
+部署路径示例（GitHub）：上传 `.js` 到仓库 → 打开文件点 `Raw` 复制 `raw.githubusercontent.com` 链接 → 或改用 jsDelivr 加速域名 → 在工坊「链接安装」粘贴导入。
+
+### 9.2 应用商店清单（store.json）——链接安装的一种输入形态
+
+```json
+{
+  "type": "miniprogram-store",
+  "name": "我的应用商店",
+  "description": "一句话介绍",
+  "iconSvg": "<svg ...>...</svg>",
+  "apps": [
+    {
+      "id": "mp_store_sms_helper",
+      "name": "验证码助手",
+      "description": "通过 MCP 短信网关收发验证码",
+      "version": "1.0.0",
+      "author": "作者",
+      "type": "tool",
+      "iconSvg": "<svg ...>...</svg>",
+      "url": "https://host/apps/sms_helper.js",
+      "permissions": ["mcp", "storage", "llm"]
+    }
+  ]
+}
+```
+
+- `apps[].url` 可为相对路径（相对 store.json）；`permissions` 覆盖代码自带 manifest。
+- `app.id` 建议固定唯一：更新时按 id 覆盖升级，不重复安装。
+- 分享方式：把 store.json 链接发给用户，在工坊「链接安装」输入框粘贴即可一次性装齐全部应用；再次粘贴同一链接即为「更新」。商店源记录保存在 `localStorage[miniprogram_store_sources]`（内部数据，无独立 UI）。
+
+### 9.3 权限声明式安全模型（密钥不暴露）
+
+小程序在 manifest 中声明 `permissions` 白名单，宿主按白名单裁剪 API：
+
+| 权限 | 覆盖能力 |
+| :--- | :--- |
+| `llm` | callLLM / getCharReply（宿主闭包持 key） |
+| `api` | getApiConfig（**声明后不含明文 key**） |
+| `memory` / `chat` / `archive` / `worldbook` / `network` | 记忆、消息、档案、世界书、关系网读写 |
+| `storage` / `files` | 状态持久化、文件读写导出 |
+| `share` / `user` | 房间分享、用户信息 |
+| `mcp` | 调用 MCP 工具（宿主代理） |
+| `*` | 全部授权 |
+
+安全要点：
+1. **密钥留在宿主**：声明过权限的小程序调用 `api.getApiConfig()` 只得到 `{url, model, temperature, hasKey}`，拿不到明文 key；未声明权限的旧版小程序保持原行为（向后兼容）。
+2. **MCP 由宿主代理**：`api.mcp.listServers()` 不返回服务器 url/headers；`api.mcp.invoke()` 内部走 `mcpClientSystem.callMcpTool`（含 initialize 握手与鉴权），密钥与服务器地址永不进入小程序作用域。
+3. **首次运行权限确认**：声明过权限的小程序首次启动弹出权限清单（仿应用商店），用户确认后记录一次。
+4. **API 裁剪**：白名单外的 api 方法直接被删除，小程序调用即报错，拿不到任何越权数据。
+
+### 9.4 MCP 安全调用示例（短信验证码应用）
+
+```javascript
+registerMiniProgram({
+  id: "mp_store_sms_helper",
+  name: "验证码助手",
+  description: "通过 MCP 短信网关收发验证码",
+  version: "1.0.0",
+  author: "作者",
+  type: "tool",
+  iconSvg: "<svg ...>...</svg>",
+  permissions: ["mcp", "storage"]
+}, function (container, api) {
+  container.innerHTML = '<div style="padding:16px;">验证码助手</div>';
+  // 调用宿主配置好的 MCP 短信网关
+  const result = await api.mcp.invoke("短信网关", "send_code", {
+    phone: "138xxxx", code: "123456"
+  });
+  // result.content 含服务器返回文本
+});
+```
+
+前置条件：MCP 服务器需先在宿主「MCP 设置」中配置并启用，工具需处于启用状态；服务器/分组总开关关闭时调用抛错，小程序内必须 try/catch。
+
+### 9.5 涉及文件
+
+| 文件 | 变更 |
+| :--- | :--- |
+| `app_miniprogram.js` | 统一 URL 拉取 `fetchUrlText`；`installFromUrl`（单文件/商店双识别）；`installStore` / `installStoreApp` / `updateStoreApps` / 商店源持久化；`PERM_META` + `applyPermFilter` API 裁剪；`api.mcp` 命名空间；`getApiConfig` 密钥脱敏；`ensurePermApproved` 首次运行权限确认 |
+| `app_miniprogram_workshop.js` | 安装卡片统一入口：「上传文件 / 粘贴代码 / 链接安装」（链接自动识别 `.js` 直链或 store.json 商店清单）；已安装列表权限标签与来源标签；WORKSHOP_PROMPT 同步更新（方式 C 链接安装 + 可接受链接规格 + 部署与导入教程 + 权限声明 + api.mcp + store.json 发布规范） |
+| `app_miniprogram.css` | 链接输入行、权限标签样式 |
+
+

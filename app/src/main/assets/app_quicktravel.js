@@ -1594,7 +1594,7 @@
   // 从档案库选择身份
   async function qtOpenArchiveSelector() {
     let archives = [];
-    try { archives = await db.archives.where('type').anyOf(['user', 'character']).toArray(); } catch (e) {}
+    try { archives = (await db.archives.where('type').anyOf(['user', 'character']).toArray()).filter(a => !a.isSnapshot); } catch (e) {}
     const overlay = document.getElementById('qt-overlay');
     let html = '<div class="qt-overlay-card">';
     html += '<button class="qt-overlay-close" onclick="document.getElementById(\'qt-overlay\').classList.remove(\'active\')">' + QT_ICONS.close + '</button>';
@@ -2284,7 +2284,7 @@
     // 从档案库导入角色
     document.getElementById('qt-wv-import-chars').onclick = async () => {
       let archives = [];
-      try { archives = await db.archives.where('type').anyOf(['character', 'npc']).toArray(); } catch (e) {}
+      try { archives = (await db.archives.where('type').anyOf(['character', 'npc']).toArray()).filter(a => !a.isSnapshot); } catch (e) {}
       if (archives.length === 0) { qtToast('档案库中暂无角色'); return; }
       const charsTextarea = document.getElementById('qt-wv-chars');
       let existing = [];

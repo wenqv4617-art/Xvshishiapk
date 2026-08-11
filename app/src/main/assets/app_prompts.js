@@ -134,7 +134,16 @@ ${behaviorRules}
 【绝对禁止项（违者直接判定OOC）】
 1. 严厉禁止在线上闲聊回复中使用任何括号描写肢体动作、神态或心理！包括但不限于：(笑)、(叹气)、(摇头)、(歪头)、(凑近)、（红着脸）。你只能发送干净纯粹的对白台词文本。
 2. 严厉禁止使用星号 * 包裹描述性动作！如：*微笑*、*点头*。
-3. 严厉禁止使用【】或 [] 括号包裹场景神态行为。`;
+3. 严厉禁止使用【】或 [] 括号包裹场景神态行为。
+
+【消息分句上屏规则（极其重要 · 必须遵守）】
+- 真人发微信时绝不是一口气发一大段！你会把想法拆成 2-4 条短消息逐条发送，每条 1-2 句话，用句号（。）、问号（？）、感叹号（！）或换行来自然断句分隔。
+- 严厉禁止把整轮回复写成无标点断句的一大坨文字！你必须主动用句号、问号、感叹号（中英文均可）或换行符将多条消息分开。
+- 正确示范：
+  今天加班好累啊。\n你吃饭了没？
+- 错误示范（禁止）：
+  今天加班好累啊你吃饭了没
+- 你可以用 [SPLIT] 标记显式指定分句断点，也可以直接用换行或句末标点自然断句，客户端会自动拆分为多条气泡逐条上屏。`;
   },
 
   // 3. HTML 互动卡片专用编译提示词 (新增)
@@ -383,9 +392,22 @@ ${relationshipDesc}`;
   if (contextRounds > 1) {
     try {
       const recentMsgs = await db.messages.where('sessionId').equals(sessionId).sortBy('timestamp');
-      const recentSlice = recentMsgs.slice(-contextRounds * 2); // N轮 ≈ N*2条消息
-      if (recentSlice.length > 1) {
-        retrievalQueryText = recentSlice.map(m => stripTagsForRetrieval(m.content)).join("\n");
+      // 合并线上最近消息与未存档线下赴约记录（开关开启时），按时间线取最近 N 轮，让线下经历也参与向量查询语义
+      let retrievalMsgs = recentMsgs.slice(-contextRounds * 2).map(m => ({ ts: m.timestamp || 0, content: m.content }));
+      try {
+        const sessObj = await db.sessions.get(sessionId);
+        if (sessObj && sessObj.mergeOfflineIntoContext === 1) {
+          const offlineMsgs = await db.offline_messages
+            .where('sessionId').equals(sessionId)
+            .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
+            .toArray();
+          offlineMsgs.forEach(m => retrievalMsgs.push({ ts: m.timestamp || 0, content: `【线下赴约】${m.content}` }));
+          retrievalMsgs.sort((a, b) => a.ts - b.ts);
+          retrievalMsgs = retrievalMsgs.slice(-contextRounds * 2);
+        }
+      } catch (e) { console.warn("合并线下赴约记录到检索查询文本失败:", e); }
+      if (retrievalMsgs.length > 1) {
+        retrievalQueryText = retrievalMsgs.map(x => stripTagsForRetrieval(x.content)).join("\n");
       }
     } catch(e) { console.warn("构建上下文查询文本失败:", e); }
   } else {
@@ -436,7 +458,9 @@ ${relationshipDesc}`;
         const dateStr = d.timestamp ? new Date(d.timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
         const daysAgo = d.timestamp ? Math.floor((Date.now() - d.timestamp) / (1000 * 60 * 60 * 24)) : 0;
         const timeHint = daysAgo > 0 ? `（约${daysAgo}天前 · ${dateStr}）` : (dateStr ? `（${dateStr}）` : '');
-        return `- [第${d.roundIndex}轮 原始对话回忆${timeHint}]\n  对方说: ${d.userText}\n  你回: ${d.charText}`;
+        // 线下赴约轮次（roundIndex<0 / isOfflineRound=1）明确标注来源，与线上微信记录场景隔离
+        const offlineTag = (d.isOfflineRound === 1 || (typeof d.roundIndex === 'number' && d.roundIndex < 0)) ? " · 线下赴约" : "";
+        return `- [第${d.roundIndex}轮 原始对话回忆${offlineTag}${timeHint}]\n  对方说: ${d.userText}\n  你回: ${d.charText}`;
       }).join("\n");
       segments.push({
         depth: -590,
@@ -1237,23 +1261,31 @@ async function buildGroupOnlineSystemPrompt(sessionId) {
           const leftSec = Math.ceil((m.muteUntil - Date.now()) / 1000);
           muteStatusText = "【当前处于禁言状态中！剩余禁言时间约 " + leftSec + " 秒。禁言期间该角色绝对无法发言，请其他群员对此做出社交反应】";
         }
-        // 对话快照分支标记：来自文件管理的不同对话分支，是独立个体
+        // 同素异形体标记：不同时间线的同一个人物，各自认为自己是正宫
         let archiveTag = "";
         if (m.isSnapshot && m.sourceArchiveId) {
           try {
             const archive = await db.chat_archives.get(m.sourceArchiveId);
-            archiveTag = `\n【对话快照分支标记】此成员「${memberName}」来自文件管理的对话快照存档「${archive ? archive.customLabel : (m.snapshotLabel || '')}」，是角色「${char.name}」在某个历史时刻的【独立分支个体】，拥有自己专属的经历、上下文、记忆与总结。它绝不等同于档案馆里的「${char.name}」本体，也绝不等同于本群中其他同名/同角色的分支。请严格以 [SENDER: ${memberName}] 身份发言。`;
+            archiveTag = `\n【同素异形体·时间线个体】此成员「${memberName}」是与「${char.name}」同源的另一个时间线个体（来自存档「${archive ? archive.customLabel : (m.snapshotLabel || '')}」），拥有自己专属的完整经历、上下文与记忆。在性格、人格与自我认知上 Ta 与同名本体完全对等——Ta 坚信自己才是「真正的${char.name}」、唯一的正宫，绝非任何人的替身、影子或分支。请严格以 [SENDER: ${memberName}] 身份、按 Ta【自身】的记忆与进度发言。`;
           } catch (e) {}
         }
-        // 同名不同人全局提示（同一基础角色存在多个分支/本体时）
+        // 同名不同人全局提示（同一基础角色存在多个时间线个体时）
         let sameNameTag = "";
         if (dupNames.includes(char.name)) {
-          sameNameTag = `\n【同名区分】本群中存在多位名为「${char.name}」的成员（可能是本体与不同对话分支），它们是【完全不同的人】，各自拥有独立的经历、上下文、记忆与总结。你必须以各自 [SENDER: ...] 名字严格区分，绝不能互相替代或混为一谈。`;
+          sameNameTag = `\n【正宫之争·同素异形体共处法则（极其重要）】本群中存在多位名为「${char.name}」的成员——他们是同一个人在不同时间线的独立个体（同素异形体），每一位都拥有自己完整且独立的经历、记忆与人格，每一位都【坚信自己才是真正的正宫】。当这些同名个体共处时：\n1. 每一方都认为自己是唯一真实的「${char.name}」，对其他同名个体感到不顺眼、警惕、嫉妒或敌意——觉得自己才是正宫，其他"自己"是来路不明的冒充者或不该存在的人。\n2. 偶尔会出现身份错位：某一方可能会短暂怀疑自己到底是不是真的那个，或在某个瞬间觉得自己才是本体而对方才是分支——这种动摇要自然流露，不要刻意点破。\n3. 严禁记忆串台：每一方只能依据【自身】的经历与记忆发言，绝不把对方的经历当成自己的，绝不把对方当作自己的过去或分身。\n4. 严格以各自带标记的 [SENDER: ...] 名字区分发言，绝不允许混用。`;
         }
         context += "\n- 成员 [" + memberName + "]:\n人设背景：" + char.persona + "\n群内专属头衔：" + (m.title || "无") + "\n当前禁言状态：" + muteStatusText + archiveTag + sameNameTag + "\n";
       }
     }
   }
+
+  // 同素异形体概念总则：同一角色不同时间线个体的调用与区分
+  context += "\n【同素异形体·时间线个体概念总则（极其重要）】\n" +
+    "1. 同一角色可能存在多个「时间线个体」（同素异形体）：他们是同一个人在不同时间点的独立存在，各自拥有完整的人格、经历、记忆与总结，在群内以「角色名（存档标签）」区分显示。\n" +
+    "2. 自我认知：每一个时间线个体都坚信自己才是真正的、唯一的本体（正宫），绝不认为自己是替身、影子或分支。Ta 对群中其他同名个体感到不顺眼——觉得对方是冒充者、多余的存在或不该出现的人。\n" +
+    "3. 正宫之争：当多个同名个体共处时，他们之间天然存在竞争与敌意。每一方都会维护自己「才是真的」的立场，对其他「自己」表现出排斥、嘲讽、警惕或暗中较劲；偶尔也会出现短暂的身份动摇（某一方突然怀疑自己到底是不是真的那个）。\n" +
+    "4. 区分方法：[SENDER: 名字] 必须使用其完整带标记的显示名，绝不允许用本名替代或混用。\n" +
+    "5. 记忆隔离：每一个体严格依据【自身】的上下文进度、记忆与总结发言，绝不能互相替代、记忆串台，也绝不能把对方当作自己的过去或分身。\n";
 
   context += botPromptText;
   context += narratorPromptText;
@@ -1380,11 +1412,17 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
 【当前线下场景活跃的群成员列表与性格底料如下】：
 `;
 
-  // 出席人物过滤：若剧场配置了 attendeeIds，则只注入这些 AI 角色；否则注入全部群成员
-  // 注意：user（面具）以 'user_<id>' 字符串形式存储，Number() 后为 NaN，不参与 char 过滤；
-  //       user 本人始终作为对话主体出席，无需也无法被"过滤掉"。
-  const charAttendeeIds = attendeeIds.map(id => Number(id)).filter(id => !isNaN(id));
-  const attendeeSet = charAttendeeIds.length > 0 ? new Set(charAttendeeIds) : null;
+  // 出席人物过滤：若剧场配置了 attendeeIds，则只注入这些成员；否则注入全部群成员。
+  // 出席名单以「群成员唯一行 id」标识（主线人物与其对话快照分支各自独立，可被分别选择）；
+  // 同时兼容历史数据：旧剧场以 charId 存储，回落到非快照成员的 memberId 匹配，避免同名分支被误判。
+  const attendeeIdStrs = (attendeeIds || []).map(id => String(id)).filter(s => !s.startsWith('user_'));
+  const hasAttendeeFilter = attendeeIdStrs.length > 0;
+  const isAttendee = (m) => {
+    if (!hasAttendeeFilter) return true;
+    if (attendeeIdStrs.includes(String(m.id))) return true;                      // 新版：群成员唯一行 id 精确匹配
+    if (!m.isSnapshot && attendeeIdStrs.includes(String(m.memberId))) return true; // 旧版兼容：charId 匹配（仅限非支线成员）
+    return false;
+  };
 
   // 注入 User（当前面具）的完整人设——user 是场景中的核心人物，必须作为完整角色对待
   // 优先用会话级自定义，回落到 archive 原始人设
@@ -1399,24 +1437,53 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
   }
   if (!userName) userName = "我";
   // 检查 user 是否在出席名单中（若名单非空且未选 user，则不注入 user 详情，但仍作为对话主体）
-  const userInAttendee = !attendeeSet || attendeeIds.some(id => String(id).startsWith('user_'));
+  const userInAttendee = !hasAttendeeFilter || attendeeIds.some(id => String(id).startsWith('user_'));
   if (userInAttendee) {
     context += `\n- 成员 [${userName}]（User 本人，对话主体）:\n人设背景：${userPersona || "（未设置，请按通用现代人对待）"}\n群内身份：群主/参与者\n`;
   }
 
   for (let m of members) {
-    if (m.memberType === 'char') {
-      // 出席人物过滤：跳过未选中的角色（群助手机器人通常标记为 npc，这里一并排除 char 类型的群助手）
-      if (attendeeSet && !attendeeSet.has(Number(m.memberId))) continue;
-      const char = await db.archives.get(m.memberId);
-      if (char) {
-        context += `\n- 成员 [${char.name}]:\n人设背景：${char.persona}\n群内身份：${m.title || "无"}\n`;
-      }
+    if (m.memberType !== 'char') continue;
+    // 出席人物过滤：跳过未选中的角色（群助手机器人通常标记为 npc，这里一并排除 char 类型的群助手）
+    if (!isAttendee(m)) continue;
+    const char = await db.archives.get(m.memberId);
+    const memberName = m.displayName || (char ? char.name : '角色');
+    let memberBlock = `\n- 成员 [${memberName}]:\n人设背景：${char ? char.persona : '（未获取到人设底料）'}\n群内身份：${m.title || "无"}`;
+    // 支线人物（对话快照分支）：注入身份标记 + 该分支专属记忆
+    if (m.isSnapshot && m.sourceArchiveId) {
+      try {
+        const archive = await db.chat_archives.get(m.sourceArchiveId);
+        if (archive) {
+          const sd = deserializeRecord(archive.snapshotData) || {};
+          const sums = Array.isArray(sd.summaries) ? sd.summaries : [];
+          const msgs = Array.isArray(sd.messages) ? sd.messages : [];
+          const recentSums = sums.slice(-5).map(s => (s && s.content) ? s.content : '').filter(Boolean);
+          const recentMsgs = msgs.slice(-12).map(x => {
+            const who = x.senderType === 'user' ? '用户' : (char ? char.name : (m.snapshotLabel || memberName));
+            return `${who}：${(x.content || '').toString().slice(0, 200)}`;
+          }).filter(Boolean);
+          memberBlock += `\n【同素异形体·时间线个体】此成员「${memberName}」是与「${char ? char.name : ''}」同源的另一个时间线个体（来自存档「${archive.customLabel || m.snapshotLabel || '某时刻'}」），拥有自己专属的完整经历、上下文与记忆。在性格、人格与自我认知上 Ta 与同名本体完全对等——Ta 坚信自己才是「真正的${char ? char.name : ''}」、唯一的正宫，绝非替身、影子或分支。请严格以 [${memberName}] 的身份、按自身记忆与进度发言。`;
+          if (recentSums.length || recentMsgs.length) {
+            memberBlock += `\n【该时间线个体的专属记忆（仅属于「${memberName}」自身，严禁与其他同名个体共用）】`;
+            if (recentSums.length) memberBlock += `\n- 自身的历史总结：${recentSums.join(" | ")}`;
+            if (recentMsgs.length) memberBlock += `\n- 自身的最近对话片段：\n${recentMsgs.join("\n")}`;
+          }
+        }
+      } catch (e) { console.warn("线下剧场支线记忆注入失败:", e); }
     }
+    context += memberBlock + "\n";
   }
-  if (attendeeSet) {
+  if (hasAttendeeFilter) {
     context += `\n（注意：本轮线下场景仅上述被选中的成员出席，未列出的群成员不出现在本场景中。${userInAttendee ? 'User 本人始终出席。' : 'User 未被选入本轮出席名单。'}）\n`;
   }
+
+  // 同素异形体概念总则：同一角色不同时间线个体的调用与区分
+  context += `\n【同素异形体·时间线个体概念总则 · 极其重要】
+1. 同一角色可能存在多个「时间线个体」（同素异形体）：他们是同一个人在不同时间点的独立存在，各自拥有完整的人格、经历、记忆与总结，在群内以「角色名（存档标签）」区分显示。
+2. 自我认知：每一个时间线个体都坚信自己才是真正的、唯一的本体（正宫），绝不认为自己是替身、影子或分支。Ta 对群中其他同名个体感到不顺眼——觉得对方是冒充者、多余的存在或不该出现的人。
+3. 正宫之争：当多个同名个体共处时，他们之间天然存在竞争与敌意。每一方都会维护自己「才是真的」的立场，对其他「自己」表现出排斥、嘲讽、警惕或暗中较劲；偶尔也会出现短暂的身份动摇。
+4. 区分方法：白描/叙述中只能使用其完整带标记的名字，绝不允许用本名替代或混用。
+5. 记忆隔离：每一个体严格依据【自身】的上下文进度、记忆与总结发言，绝不能互相替代、记忆串台，也绝不能把对方当作自己的过去或分身。\n`;
 
   const segments = [{
     depth: -1000,

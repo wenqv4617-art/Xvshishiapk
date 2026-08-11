@@ -1611,7 +1611,7 @@ async function forumInitNpcsPage() {
   if (!archiveList || !followsList) return;
 
   // 1. 数据高阶预拉取，杜绝清空 DOM 后的异步等待
-  const chars = await db.archives.where('type').equals('character').toArray();
+  const chars = (await db.archives.where('type').equals('character').toArray()).filter(c => !c.isSnapshot);
   const allNpcs = (await db.forum_npc_accounts.toArray()).filter(n => Number(n.userId) === Number(forumActiveAccountId));
   const allFollows = await db.forum_follows.where('followerId').equals(Number(forumActiveAccountId)).toArray();
 

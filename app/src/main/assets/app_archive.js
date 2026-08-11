@@ -219,7 +219,7 @@ async function loadArchivesData() {
     return;
   }
 
-  const items = await db.archives.where('type').equals(archiveCurrentTab).toArray();
+  const items = (await db.archives.where('type').equals(archiveCurrentTab).toArray()).filter(a => !a.isSnapshot);
   if (items.length === 0) {
     container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">暂无归档记录，请点击右上角添加</p>`;
     return;
@@ -310,7 +310,7 @@ async function openArchiveForm(editId = null) {
 
   if (isNpc) {
     document.getElementById("form-title").innerText = editId ? "编辑 NPC 设定" : "添加新 NPC";
-    const options = await db.archives.where('type').anyOf(['character', 'user']).toArray();
+    const options = (await db.archives.where('type').anyOf(['character', 'user']).toArray()).filter(a => !a.isSnapshot);
     const container = document.getElementById("npc-parent-selector-cards");
     container.innerHTML = "";
 
@@ -861,7 +861,7 @@ async function renderRelCandidateDrawer() {
   const container = document.getElementById("rel-candidate-list");
   container.innerHTML = "";
 
-  const archives = await db.archives.toArray();
+  const archives = (await db.archives.toArray()).filter(a => !a.isSnapshot);
   const addedIds = graphNodes.map(n => n.id);
 
   archives.forEach(arc => {

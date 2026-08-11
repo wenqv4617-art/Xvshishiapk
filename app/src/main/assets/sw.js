@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v26'; // v26：弹幕三态开关 + 世界书分组手风琴 + 帖子评论 + 去掉max_tokens上限
+const CACHE_NAME = 'story-phone-v30'; // v30：小程序系统升级——链接安装/应用商店 store.json/权限声明式安全模型/api.mcp 安全桥，追加小程序工坊与样式缓存
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -34,6 +34,9 @@ const ASSETS = [
   './app_chat_search.js',
   './app_chat_beautify.js',
   './app_auth.js',
+  './app_miniprogram.js',          // 小程序系统核心（链接安装/应用商店/权限模型/MCP 安全桥）
+  './app_miniprogram_workshop.js', // 小程序工坊（链接安装/应用商店 UI）
+  './app_miniprogram.css',         // 小程序系统样式
   './app_chat_couples.js',
   './couples.css',
   './check_phone.css',

@@ -168,7 +168,7 @@
     // 拼成详细 prompt 块注入每次 LLM 调用，让 AI 真正"认识"在场每个人。
     // 结果会缓存到 state._richCtx（按 charId 索引），避免每次调用都重复拉取。
     async function buildRichContextBlock() {
-      const charPlayers = state.players.filter(p => !p.isMe && p.id && p.id > 0);
+      const charPlayers = state.players.filter(p => !p.isMe && p.id && (p.id > 0 || p.isSnapshot));
       if (charPlayers.length === 0) return "";
       if (!state._richCtx) state._richCtx = {};
       const lines = [];
@@ -596,7 +596,7 @@
       try {
         const richCtx = await buildRichContextBlock();
         const reply = await api.getCharReply({
-          charId: state.loser.id > 0 ? state.loser.id : undefined,
+          charId: (state.loser.id > 0 || state.loser.isSnapshot) ? state.loser.id : undefined,
           persona: state.loser.persona || undefined,
           history: buildHistory(),
           prompt: "你是真心话大冒险的输家(" + state.loser.name + ")。赢家依次向你提了以下问题：\n" + questions + "\n\n在场的其他玩家：\n" + playersRoster(state.loser) + (richCtx ? "\n\n" + richCtx : "") + "\n\n请以你自身角色身份，依次如实、生动地回答每个问题。结合你与提问者之间的关系和过往记忆来回答，不要说教，符合你的人设与语气。不要硬性截断，可以尽情展开。",
@@ -680,7 +680,7 @@
       try {
         const richCtx = await buildRichContextBlock();
         const reply = await api.getCharReply({
-          charId: state.loser.id > 0 ? state.loser.id : undefined,
+          charId: (state.loser.id > 0 || state.loser.isSnapshot) ? state.loser.id : undefined,
           persona: state.loser.persona || undefined,
           history: buildHistory(),
           prompt: "你是真心话大冒险的输家(" + state.loser.name + ")。赢家(" + picked.from.name + ")提出的行动被随机抽中，你必须执行：「" + picked.text + "」\n\n在场的其他玩家：\n" + playersRoster(state.loser) + (richCtx ? "\n\n" + richCtx : "") + "\n\n请以你自身角色身份，生动、细致地描写你执行这个大冒险的过程。结合你与提议者及在场各位的关系和过往记忆，包含动作、神态、对白与心理。不要说教，符合人设。不要硬性截断，可以尽情展开。",
