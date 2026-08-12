@@ -32,6 +32,12 @@ jobs:
         with:
           gradle-version: 8.5 # 自动在云端加载 Gradle 8.5，免去本地 wrapper.jar 二进制文件的依赖
 
+      # ★ 生成内置网易云 API 的依赖（assets/nodejs-project/node_modules）
+      #   使用国内镜像源加速；产物由构建机生成，不入仓库（见 .gitignore）
+      - name: Install embedded NCM API dependencies
+        run: |
+          npm install --prefix app/src/main/assets/nodejs-project --registry=https://registry.npmmirror.com --no-audit --no-fund
+
       - name: Build APK with Gradle
         run: gradle assembleDebug
 

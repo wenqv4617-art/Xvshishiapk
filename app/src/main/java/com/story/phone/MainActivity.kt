@@ -110,6 +110,10 @@ class MainActivity : AppCompatActivity() {
         // 加载 assets 本地打包的前端页面
         webView.loadUrl("file:///android_asset/index.html")
 
+        // ★ 启动内置 Node.js 运行时（网易云音乐 API 服务 localhost:3000，幂等）
+        //   与前台服务共同保证：App 存活期间 API 一直可用，无需外部服务
+        NodeRunner.ensureStarted(this)
+
         // 自动申请 Android 定位与通知的系统级运行时权限
         requestAppPermissions()
     }
@@ -201,6 +205,9 @@ class McpForegroundService : Service() {
 
         // 启动静默音频保活，保持 WebView JS 环境活跃
         startKeepAliveAudio()
+
+        // ★ 启动内置 Node.js 运行时（网易云 API，幂等——若 Activity 已启动则跳过）
+        NodeRunner.ensureStarted(this)
 
         // ★ 启动 Headless 后台中枢：即使 Activity 被销毁，JS 中枢（主动发信/闹钟/桌宠）依然存活
         startHeadlessCenter()

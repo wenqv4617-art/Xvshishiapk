@@ -1,0 +1,19 @@
+# 构建产物
+*.apk
+*.aab
+build/
+app/build/
+.cxx/
+
+# 本地/签名配置
+local.properties
+*.jks
+
+# 内置网易云 API 依赖（由 GitHub Actions 构建时生成，勿提交，避免仓库过大）
+app/src/main/assets/nodejs-project/node_modules/
+app/src/main/assets/nodejs-project/package-lock.json
+
+# IDE
+.idea/
+*.iml
+.DS_Store

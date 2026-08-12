@@ -55,4 +55,7 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.webkit:webkit:1.10.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:latest.release")
+    // ★ 内置 Node.js 运行时：在 App 进程内直接跑网易云音乐 API（免 Termux / 免外挂服务）
+    //   0.4.x 通过 JitPack 提供 .aar（自带 libnode.so 等，无需 NDK/CMake）
+    implementation("com.github.nodejs-mobile:nodejs-mobile:0.4.4")
 }

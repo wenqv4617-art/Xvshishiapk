@@ -5735,14 +5735,8 @@
           </div>
         </div>
 
-        <!-- 4. 角色陪听选择器 Modal (层级拉高至 100005 避免压在听歌卡片下方) -->
-        <div id="ncm-companion-selector-overlay" class="modal-overlay" style="z-index:100005; align-items:center !important; justify-content:center !important;">
-          <div class="modal" style="max-width:320px; padding:16px; border-radius:16px; background:#fff;">
-            <h4 style="margin:0 0 12px 0; font-size:15px; font-weight:800; color:#1e293b; text-align:center;">选择角色与你一起听歌</h4>
-            <div id="ncm-companion-cards-container" style="max-height:220px; overflow-y:auto; margin-bottom:12px;"></div>
-            <button class="btn btn-outline" onclick="musicSystem.closeCompanionSelector()" style="width:100%; padding:10px; font-size:12px; border-radius:8px;">取消</button>
-          </div>
-        </div>
+        <!-- 4. 角色陪听选择器 Modal 已移至全局层（见 win-music 结束标签之后），
+             使"一起听"角色选择器在任意页面都能唤出 -->
 
         <!-- 新建/导入歌单分组 Modal -->
         <div id="ncm-playlist-create-overlay" class="modal-overlay" style="z-index:1550; align-items:center !important; justify-content:center !important;">
@@ -5776,6 +5770,17 @@
         </div>
 
         </div> <!-- 听歌应用(win-music)结束 -->
+
+        <!-- ========================================== -->
+        <!-- 全局层：角色陪听选择器（已从 win-music 解救，灵动岛/聊天等任意页面可唤出） -->
+        <!-- ========================================== -->
+        <div id="ncm-companion-selector-overlay" class="modal-overlay" style="z-index:100005; align-items:center !important; justify-content:center !important;">
+          <div class="modal" style="max-width:320px; padding:16px; border-radius:16px; background:#fff;">
+            <h4 style="margin:0 0 12px 0; font-size:15px; font-weight:800; color:#1e293b; text-align:center;">选择角色与你一起听歌</h4>
+            <div id="ncm-companion-cards-container" style="max-height:220px; overflow-y:auto; margin-bottom:12px;"></div>
+            <button class="btn btn-outline" onclick="musicSystem.closeCompanionSelector()" style="width:100%; padding:10px; font-size:12px; border-radius:8px;">取消</button>
+          </div>
+        </div>
 
         <!-- ========================================== -->
         <!--           购物应用 (win-shopping)           -->

@@ -25,6 +25,29 @@
     qrPollTimer: null,
     pendingLocalMusicFiles: [], // onchange 时缓存的待导入本地音频（规避部分 WebView 点击保存按钮时 input.files 丢失）
 
+    /**
+     * 统一网易云 API 请求（核心修复）：
+     * NeteaseCloudMusicApi 在业务失败时（验证码错误/风控等）返回 HTTP 503 + body code 503，
+     * 若用 res.ok（HTTP 200）判断会把业务失败误判为"API 连接失败"。
+     * 这里统一解析 body，以 body.code === 200 判定业务成功。
+     */
+    async ncmRequest(url) {
+      let res = null;
+      try { res = await fetch(url).catch(() => null); } catch(e) { return null; }
+      if (!res) return null;
+      try { return await res.json(); } catch(e) { return null; }
+    },
+
+    /** 从网易云响应提取完整 cookie（兼容字符串 / 数组两种格式） */
+    extractNcmCookie(cookieField) {
+      if (!cookieField) return "";
+      if (typeof cookieField === 'string') return cookieField;
+      if (Array.isArray(cookieField)) {
+        return cookieField.map(c => c.split(';')[0]).join('; ');
+      }
+      return "";
+    },
+
     async init() {
       this.bindAudioEvents();
       this.initIndexedDBStorage();
@@ -1521,24 +1544,21 @@
       await this.checkNcmApiConnectivity();
     },
 
-    // 检测 API 后端是否可用
+    // 检测 API 后端是否可用（按 body code 判断，不依赖 HTTP 状态码）
     async checkNcmApiConnectivity() {
       const statusEl = document.getElementById("ncm-api-status");
       if (statusEl) statusEl.innerText = "检测中...";
       try {
-        const res = await fetch(`${this.ncmApiBase}/search?keywords=test&limit=1`).catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data && data.code === 200) {
-            if (statusEl) {
-              statusEl.innerText = "✓ API 连通正常";
-              statusEl.style.color = "#22c55e";
-            }
-            return true;
+        const data = await this.ncmRequest(`${this.ncmApiBase}/search?keywords=test&limit=1`);
+        if (data && data.code === 200) {
+          if (statusEl) {
+            statusEl.innerText = "✓ API 连通正常";
+            statusEl.style.color = "#22c55e";
           }
+          return true;
         }
         if (statusEl) {
-          statusEl.innerText = "✗ API 返回异常，请检查地址";
+          statusEl.innerText = "✗ API 返回异常，请检查地址" + (data && data.message ? "：" + data.message : "");
           statusEl.style.color = "#ef4444";
         }
       } catch(e) {
@@ -1567,14 +1587,10 @@
         // 先匿名注册获取设备 cookie（绕过风控的关键步骤）
         if (!this.ncmAnonCookie) {
           if (statusText) statusText.innerText = "正在建立设备通道...";
-          const anonRes = await fetch(`${this.ncmApiBase}/register/anonimous`).catch(() => null);
-          if (anonRes && anonRes.ok) {
-            const anonData = await anonRes.json();
-            // 从响应头 Set-Cookie 中提取 cookie（浏览器 fetch 可能无法读取 Set-Cookie，
-            // NeteaseCloudMusicApi 会把 cookie 数组放在响应体里）
-            if (anonData.cookie && Array.isArray(anonData.cookie)) {
-              this.ncmAnonCookie = anonData.cookie.map(c => c.split(';')[0]).join('; ');
-            }
+          const anonData = await this.ncmRequest(`${this.ncmApiBase}/register/anonimous`);
+          if (anonData && anonData.code === 200 && anonData.cookie) {
+            // 兼容 cookie 为字符串（新版 API）或数组（旧版 API）
+            this.ncmAnonCookie = this.extractNcmCookie(anonData.cookie);
           }
           if (!this.ncmAnonCookie) {
             // 即使匿名注册失败也继续，部分情况下仍可发送验证码
@@ -1582,37 +1598,32 @@
           }
         }
 
-        // 发送验证码
+        // 发送验证码（按 body code 判断，业务失败时 HTTP 可能 503）
         if (statusText) statusText.innerText = "正在发送验证码...";
         const captchaUrl = `${this.ncmApiBase}/captcha/sent?phone=${phone}` + (this.ncmAnonCookie ? `&cookie=${encodeURIComponent(this.ncmAnonCookie)}` : "");
-        const res = await fetch(captchaUrl).catch(() => null);
+        const data = await this.ncmRequest(captchaUrl);
 
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data.code === 200) {
-            if (statusText) statusText.innerText = "验证码已发送至手机，请查收";
-            if (typeof showToast === 'function') showToast("验证码已发送！");
-            // 开始倒计时
-            this.ncmCaptchaCooldown = 60;
-            this.captchaCooldownTimer = setInterval(() => {
-              this.ncmCaptchaCooldown--;
-              if (sendBtn) {
-                if (this.ncmCaptchaCooldown > 0) {
-                  sendBtn.innerText = `${this.ncmCaptchaCooldown}s`;
-                  sendBtn.disabled = true;
-                } else {
-                  sendBtn.innerText = "重新发送";
-                  sendBtn.disabled = false;
-                  clearInterval(this.captchaCooldownTimer);
-                }
+        if (data && data.code === 200) {
+          if (statusText) statusText.innerText = "验证码已发送至手机，请查收";
+          if (typeof showToast === 'function') showToast("验证码已发送！");
+          // 开始倒计时
+          this.ncmCaptchaCooldown = 60;
+          this.captchaCooldownTimer = setInterval(() => {
+            this.ncmCaptchaCooldown--;
+            if (sendBtn) {
+              if (this.ncmCaptchaCooldown > 0) {
+                sendBtn.innerText = `${this.ncmCaptchaCooldown}s`;
+                sendBtn.disabled = true;
+              } else {
+                sendBtn.innerText = "重新发送";
+                sendBtn.disabled = false;
+                clearInterval(this.captchaCooldownTimer);
               }
-            }, 1000);
-          } else {
-            if (statusText) statusText.innerText = "发送失败: " + (data.message || "未知错误");
-            if (sendBtn) { sendBtn.disabled = false; sendBtn.innerText = "发送验证码"; }
-          }
+            }
+          }, 1000);
         } else {
-          if (statusText) statusText.innerText = "API 连接失败，请检查 API 地址设置";
+          const reason = data && data.message ? data.message : "无法连接服务器，请检查 API 地址";
+          if (statusText) statusText.innerText = "发送失败: " + reason;
           if (sendBtn) { sendBtn.disabled = false; sendBtn.innerText = "发送验证码"; }
         }
       } catch(e) {
@@ -1644,39 +1655,34 @@
 
       try {
         const loginUrl = `${this.ncmApiBase}/login/cellphone?phone=${phone}&captcha=${captcha}` + (this.ncmAnonCookie ? `&cookie=${encodeURIComponent(this.ncmAnonCookie)}` : "");
-        const res = await fetch(loginUrl).catch(() => null);
+        // ★ 核心修复：登录业务失败时服务端返回 HTTP 503（code 503），
+        //   必须按 body.code 判断成功与否，否则会误报"API 连接失败"
+        const data = await this.ncmRequest(loginUrl);
 
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data.code === 200) {
-            // 提取 cookie
-            let authCookie = "";
-            if (data.cookie && Array.isArray(data.cookie)) {
-              authCookie = data.cookie.map(c => c.split(';')[0]).join('; ');
-            }
-            if (!authCookie) {
-              // 如果 cookie 在 body 里
-              const musicU = (data.cookie || []).find(c => c.startsWith('MUSIC_U='));
-              if (musicU) authCookie = musicU;
-            }
-
-            localStorage.setItem("ncm_user_cookie", authCookie);
-            this.ncmCookie = authCookie;
-            this.isVip = data.account && data.account.vipType > 0;
-
-            if (statusText) statusText.innerText = "登录成功！正在同步红心歌单...";
-            if (loginBtn) { loginBtn.innerText = "登录成功 ✓"; loginBtn.style.background = "#22c55e"; }
-            if (typeof showToast === 'function') showToast("登录成功！同步红心歌单中...");
-
-            // 同步用户数据
-            await this.syncNcmUserData(authCookie);
-            setTimeout(() => this.closeNcmLoginModal(), 1500);
-          } else {
-            if (statusText) statusText.innerText = "登录失败: " + (data.message || "验证码错误或已过期");
+        if (data && data.code === 200) {
+          // 提取 cookie（兼容字符串 / 数组格式）
+          const authCookie = this.extractNcmCookie(data.cookie);
+          if (!authCookie) {
+            if (statusText) statusText.innerText = "登录成功但未获取到 Cookie，请重试";
             if (loginBtn) { loginBtn.disabled = false; loginBtn.innerText = "登录并同步"; }
+            return;
           }
+
+          localStorage.setItem("ncm_user_cookie", authCookie);
+          this.ncmCookie = authCookie;
+          this.isVip = data.account && data.account.vipType > 0;
+
+          if (statusText) statusText.innerText = "登录成功！正在同步红心歌单...";
+          if (loginBtn) { loginBtn.innerText = "登录成功 ✓"; loginBtn.style.background = "#22c55e"; }
+          if (typeof showToast === 'function') showToast("登录成功！同步红心歌单中...");
+
+          // 同步用户数据
+          await this.syncNcmUserData(authCookie);
+          setTimeout(() => this.closeNcmLoginModal(), 1500);
         } else {
-          if (statusText) statusText.innerText = "API 连接失败";
+          // 业务失败：显示服务端真实原因（验证码错误/过期/风控等）
+          const reason = data && data.message ? data.message : (data && data.msg ? data.msg : "验证码错误或已过期");
+          if (statusText) statusText.innerText = "登录失败: " + reason;
           if (loginBtn) { loginBtn.disabled = false; loginBtn.innerText = "登录并同步"; }
         }
       } catch(e) {
@@ -1707,17 +1713,14 @@
       if (typeof showToast === 'function') showToast("正在向网易云检索该账号的红心歌单...");
 
       try {
-        const res = await fetch(`${this.ncmApiBase}/user/playlist?uid=${uidOrPlaylistId}`).catch(() => null);
-        if (res && res.ok) {
-          const data = await res.json();
-          if (data && data.playlist && data.playlist.length > 0) {
-            const likedPl = data.playlist[0];
-            
-            const trackRes = await fetch(`${this.ncmApiBase}/playlist/track/all?id=${likedPl.id}&limit=50`).catch(() => null);
-            if (trackRes && trackRes.ok) {
-              const trackData = await trackRes.json();
-              if (trackData && trackData.songs) {
-                let existingPl = this.playlists.find(p => p.id === "ncm_liked");
+        // ★ 同步接口同样按 body.code 判断（业务失败时 HTTP 可能 503）
+        const data = await this.ncmRequest(`${this.ncmApiBase}/user/playlist?uid=${uidOrPlaylistId}`);
+        if (data && data.code === 200 && data.playlist && data.playlist.length > 0) {
+          const likedPl = data.playlist[0];
+
+          const trackData = await this.ncmRequest(`${this.ncmApiBase}/playlist/track/all?id=${likedPl.id}&limit=50`);
+          if (trackData && trackData.code === 200 && trackData.songs) {
+            let existingPl = this.playlists.find(p => p.id === "ncm_liked");
                 if (!existingPl) {
                   existingPl = { id: "ncm_liked", name: "我喜欢的音乐 (网易云)", coverUrl: likedPl.coverImgUrl || "", songIds: [] };
                   this.playlists.unshift(existingPl);
@@ -1748,8 +1751,6 @@
                 return;
               }
             }
-          }
-        }
         throw new Error("无法读取该 UID 的公开歌单");
       } catch(e) {
         if (typeof showToast === 'function') showToast("UID 导入失败: " + e.message);
@@ -1761,20 +1762,18 @@
       if (typeof showToast === 'function') showToast("正在同步网易云个人资料与红心歌单...");
 
       try {
-        const accRes = await fetch(`${this.ncmApiBase}/user/account?cookie=${encodeURIComponent(cookieStr)}`).catch(() => null);
+        // ★ 同样按 body code 判断
+        const accData = await this.ncmRequest(`${this.ncmApiBase}/user/account?cookie=${encodeURIComponent(cookieStr)}`);
         let uid = null;
         let nickname = "";
         let avatarUrl = "";
         let isVip = false;
 
-        if (accRes && accRes.ok) {
-          const accData = await accRes.json();
-          if (accData && accData.profile) {
-            uid = accData.profile.userId;
-            nickname = accData.profile.nickname;
-            avatarUrl = accData.profile.avatarUrl;
-            isVip = accData.account && accData.account.vipType > 0;
-          }
+        if (accData && accData.code === 200 && accData.profile) {
+          uid = accData.profile.userId;
+          nickname = accData.profile.nickname;
+          avatarUrl = accData.profile.avatarUrl;
+          isVip = accData.account && accData.account.vipType > 0;
         }
 
         if (uid) {
@@ -2240,20 +2239,17 @@
       // 通道二：Vercel 代理 API（原通道，作为兜底）
       if (onlineSongs.length === 0) {
         try {
-          const res = await Promise.race([
-            fetch(`${this.ncmApiBase}/search?keywords=${encKw}`).catch(() => null),
+          const data = await Promise.race([
+            this.ncmRequest(`${this.ncmApiBase}/search?keywords=${encKw}`),
             new Promise(resolve => setTimeout(() => resolve(null), 5000))
           ]);
-          if (res && res.ok) {
-            const data = await res.json();
-            if (data && data.result && Array.isArray(data.result.songs)) {
-              onlineSongs = data.result.songs.map(song => ({
-                id: song.id,
-                name: song.name,
-                artist: song.artists ? song.artists.map(a => a.name).join("/") : "未知歌手",
-                fee: song.fee || 0
-              }));
-            }
+          if (data && data.code === 200 && data.result && Array.isArray(data.result.songs)) {
+            onlineSongs = data.result.songs.map(song => ({
+              id: song.id,
+              name: song.name,
+              artist: song.artists ? song.artists.map(a => a.name).join("/") : "未知歌手",
+              fee: song.fee || 0
+            }));
           }
         } catch(e) { /* 通道二失败，继续尝试通道三 */ }
       }
