@@ -13,6 +13,9 @@ local.properties
 app/src/main/assets/nodejs-project/node_modules/
 app/src/main/assets/nodejs-project/package-lock.json
 
+# nodejs-mobile AAR（由 GitHub Actions 下载并缓存到 app/libs，不入库）
+app/libs/
+
 # IDE
 .idea/
 *.iml

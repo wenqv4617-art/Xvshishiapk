@@ -56,6 +56,12 @@ dependencies {
     implementation("androidx.webkit:webkit:1.10.0")
     implementation("com.microsoft.onnxruntime:onnxruntime-android:latest.release")
     // ★ 内置 Node.js 运行时：在 App 进程内直接跑网易云音乐 API（免 Termux / 免外挂服务）
-    //   0.4.x 通过 JitPack 提供 .aar（自带 libnode.so 等，无需 NDK/CMake）
-    implementation("com.github.nodejs-mobile:nodejs-mobile:0.4.4")
+    //   优先使用本地 AAR（CI 已用 curl 下载到 app/libs，见 .github/workflows/build-apk.yml），
+    //   本地构建没有该文件时回退到 JitPack（0.4.x 通过 JitPack 提供 .aar，自带 libnode.so 等）
+    val nodejsMobileAar = file("libs/nodejs-mobile-0.4.4.aar")
+    if (nodejsMobileAar.exists()) {
+        implementation(files(nodejsMobileAar))
+    } else {
+        implementation("com.github.nodejs-mobile:nodejs-mobile:0.4.4")
+    }
 }
