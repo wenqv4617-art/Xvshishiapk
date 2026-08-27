@@ -771,21 +771,3 @@ class BootReceiver : BroadcastReceiver() {
         }
     }
 }
-ES.O) {
-                context.startForegroundService(serviceIntent)
-            } else {
-                context.startService(serviceIntent)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-}
-{
-                context.startService(serviceIntent)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-}
