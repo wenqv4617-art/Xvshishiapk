@@ -31,36 +31,6 @@ jobs:
         with:
           gradle-version: 8.5
 
-      # ★ 缓存 nodejs-mobile AAR，避免每次构建都重新下载（AAR 有几十 MB）
-      - name: Cache nodejs-mobile AAR
-        uses: actions/cache@v4
-        with:
-          path: app/libs
-          key: nodejs-mobile-aar-0.4.4
-
-      # ★ 直接用 curl 耐心拉取 nodejs-mobile AAR（带重试、超时 15 分钟/次）。
-      - name: Fetch nodejs-mobile AAR
-        run: |
-          set -e
-          mkdir -p app/libs
-          AAR_URL="https://www.jitpack.io/com/github/nodejs-mobile/nodejs-mobile/0.4.4/nodejs-mobile-0.4.4.aar"
-          if [ -s app/libs/nodejs-mobile-0.4.4.aar ]; then
-            echo "nodejs-mobile AAR 已缓存，跳过下载。"
-          else
-            for i in 1 2 3 4 5; do
-              echo "=== 下载 nodejs-mobile AAR（第 $i 次尝试）==="
-              if curl -fL --retry 3 --connect-timeout 60 --max-time 900 \
-                   -o app/libs/nodejs-mobile-0.4.4.aar "$AAR_URL"; then
-                echo "下载成功。"
-                break
-              fi
-              echo "第 $i 次下载失败，60 秒后重试..."
-              sleep 60
-            done
-            test -s app/libs/nodejs-mobile-0.4.4.aar
-            ls -lh app/libs/
-          fi
-
       - name: Build APK with Gradle
         run: |
           for i in 1 2 3; do
