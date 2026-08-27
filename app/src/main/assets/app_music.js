@@ -15,6 +15,7 @@
     mountedCompanion: null,
     ncmCookie: localStorage.getItem("ncm_user_cookie") || "",
     ncmApiBase: localStorage.getItem("ncm_api_base") || "http://localhost:3000",
+    ncmUid: localStorage.getItem("ncm_uid") || "",
     ncmAnonCookie: "", // 匿名注册获取的设备 cookie，用于绕过登录风控
     ncmCaptchaCooldown: 0,
     isVip: false,
@@ -1034,6 +1035,7 @@
         } catch(e) {}
       }
 
+      this.renderNcmSyncBar();
       await this.renderPlaylistsUI();
       await this.renderSongsUI();
     },
@@ -1045,6 +1047,142 @@
         if (firstSong && firstSong.cover) return firstSong.cover;
       }
       return "";
+    },
+
+    // ============ 网易云一键全量同步条 ============
+    renderNcmSyncBar() {
+      const container = document.getElementById("ncm-sync-bar");
+      if (!container) return;
+      const hasCookie = !!this.ncmCookie;
+      const ncmNick = localStorage.getItem("ncm_user_nickname") || "";
+      const syncedKey = localStorage.getItem("ncm_synced_playlists") === "1";
+      let html = `
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:10px 12px; border-radius:12px; background:${hasCookie ? "#f0fdf4" : "#fef2f2"}; border:1px solid ${hasCookie ? "#bbf7d0" : "#fecaca"}; margin-bottom:12px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:12px; font-weight:800; color:var(--text-primary);">网易云一键同步</div>
+            <div style="font-size:10px; color:var(--text-secondary); line-height:1.5; margin-top:2px;">
+              ${hasCookie ? (ncmNick ? `已登录 ${ncmNick}，可一键拉取歌单 / 红心收藏 / 听歌记录` : "已登录，可一键拉取歌单 / 红心收藏 / 听歌记录") : "未登录，先完成网易云登录后再同步"}
+            </div>
+          </div>
+          <button class="btn btn-primary" style="padding:7px 12px; font-size:11px; flex-shrink:0; ${hasCookie ? "" : "opacity:0.5; pointer-events:none;"}" onclick="musicSystem.syncAllNcmData()">${syncedKey ? "重新同步" : "一键同步"}</button>
+        </div>
+      `;
+      container.innerHTML = html;
+    },
+
+    // 一键同步：歌单 + 红心收藏 + 听歌记录
+    async syncAllNcmData() {
+      if (!this.ncmCookie) {
+        if (typeof showToast === 'function') showToast("请先完成网易云登录");
+        return;
+      }
+      if (typeof showToast === 'function') showToast("开始同步网易云数据…");
+
+      // 1. 拉取用户歌单列表（复用 ncmApiBase 接口）
+      let playlistsData = null;
+      try {
+        const res = await this.ncmRequest(`${this.ncmApiBase}/user/playlist?uid=${this.ncmUid || ""}`);
+        if (res && res.code === 200 && res.playlist) playlistsData = res;
+      } catch(e) {}
+
+      // 需要 UID：优先从登录信息里读
+      if (!this.ncmUid) {
+        try {
+          const profileRes = await this.ncmRequest(`${this.ncmApiBase}/user/account?cookie=${encodeURIComponent(this.ncmCookie)}`);
+          if (profileRes && profileRes.code === 200 && profileRes.profile) {
+            this.ncmUid = profileRes.profile.userId;
+            localStorage.setItem("ncm_uid", String(this.ncmUid));
+          }
+        } catch(e) {}
+      }
+
+      // 2. 拉取红心收藏（likeList）：user/playlist 返回的第一个通常就是红心歌单
+      let likedIds = [];
+      try {
+        if (playlistsData && playlistsData.playlist && playlistsData.playlist[0]) {
+          const likedPl = playlistsData.playlist[0];
+          const likeRes = await this.ncmRequest(`${this.ncmApiBase}/playlist/track/all?id=${likedPl.id}&limit=1000`);
+          if (likeRes && likeRes.code === 200 && likeRes.songs) {
+            likedIds = likeRes.songs.map(s => s.id);
+          }
+        }
+      } catch(e) {}
+
+      let successCount = 0;
+      let failCount = 0;
+
+      // 3. 合并：用户歌单 + 红心收藏（红心放入专属歌单）
+      if (playlistsData && Array.isArray(playlistsData.playlist)) {
+        for (const plInfo of playlistsData.playlist) {
+          try {
+            const detail = await this.fetchNcmPlaylistDetail(plInfo.id);
+            if (detail && detail.tracks && detail.tracks.length > 0) {
+              const newPl = {
+                id: "pl_ncm_" + plInfo.id,
+                name: plInfo.name || "网易云歌单",
+                coverUrl: detail.coverUrl || plInfo.coverImgUrl || "",
+                songIds: []
+              };
+              for (const track of detail.tracks) {
+                const songId = "ncm_" + track.id;
+                const songObj = {
+                  id: songId,
+                  title: track.name,
+                  artist: track.artist || "网易云歌手",
+                  cover: track.cover || newPl.coverUrl || "",
+                  url: `https://music.163.com/song/media/outer/url?id=${track.id}.mp3`,
+                  lyrics: "[00:00.00]点击播放拉取歌词",
+                  isVip: track.fee === 1,
+                  isFavorite: false
+                };
+                await this.saveSongToIndexedDB(songObj);
+                if (!newPl.songIds.includes(songId)) newPl.songIds.push(songId);
+                successCount++;
+              }
+              const existingIdx = this.playlists.findIndex(p => p.id === newPl.id);
+              if (existingIdx !== -1) this.playlists[existingIdx] = newPl;
+              else this.playlists.push(newPl);
+            }
+          } catch(e) { failCount++; }
+        }
+      }
+
+      // 4. 红心收藏歌单（id: ncm_liked）
+      if (likedIds.length > 0) {
+        const likedPl = {
+          id: "ncm_liked",
+          name: "❤ 我的红心收藏",
+          coverUrl: "",
+          songIds: []
+        };
+        for (const sid of likedIds) {
+          try {
+            const meta = await this.fetchNcmSongDetail(sid).catch(() => null);
+            const songId = "ncm_" + sid;
+            const songObj = {
+              id: songId,
+              title: meta && meta.title ? meta.title : "歌曲 " + sid,
+              artist: meta && meta.artist ? meta.artist : "网易云歌手",
+              cover: meta && meta.cover ? meta.cover : "",
+              url: `https://music.163.com/song/media/outer/url?id=${sid}.mp3`,
+              lyrics: meta && meta.lyrics ? meta.lyrics : "[00:00.00]暂无歌词",
+              isVip: false,
+              isFavorite: true
+            };
+            await this.saveSongToIndexedDB(songObj);
+            if (!likedPl.songIds.includes(songId)) likedPl.songIds.push(songId);
+            successCount++;
+          } catch(e) { failCount++; }
+        }
+        const likedIdx = this.playlists.findIndex(p => p.id === "ncm_liked");
+        if (likedIdx !== -1) this.playlists[likedIdx] = likedPl;
+        else this.playlists.push(likedPl);
+      }
+
+      await this.savePlaylistsToStorage();
+      localStorage.setItem("ncm_synced_playlists", "1");
+      if (typeof showToast === 'function') showToast(`同步完成！共 ${successCount} 首${failCount > 0 ? `，失败 ${failCount} 首` : ""}`);
+      this.renderMine();
     },
 
     async renderPlaylistsUI() {
@@ -2231,7 +2369,8 @@
             id: song.id,
             name: song.name,
             artist: song.artists ? song.artists.map(a => a.name).join("/") : "未知歌手",
-            fee: song.fee || 0
+            fee: song.fee || 0,
+            cover: song.album ? (song.album.picUrl || "") : (song.al ? song.al.picUrl : "")
           }));
         }
       } catch(e) { /* 通道一失败，继续尝试通道二 */ }
@@ -2248,7 +2387,8 @@
               id: song.id,
               name: song.name,
               artist: song.artists ? song.artists.map(a => a.name).join("/") : "未知歌手",
-              fee: song.fee || 0
+              fee: song.fee || 0,
+              cover: song.album ? (song.album.picUrl || "") : (song.al ? song.al.picUrl : "")
             }));
           }
         } catch(e) { /* 通道二失败，继续尝试通道三 */ }
@@ -2268,7 +2408,8 @@
                 id: t.id || t.song_id,
                 name: t.name || t.title || "未知歌曲",
                 artist: t.artist || t.author || "网易云歌手",
-                fee: 0
+                fee: 0,
+                cover: t.pic || t.cover || ""
               }));
             }
           }
@@ -2281,9 +2422,13 @@
           const songId = song.id;
           const title = String(song.name).replace(/'/g, "\\'");
           const artist = String(song.artist).replace(/'/g, "\\'");
+          const cover = String(song.cover || "").replace(/'/g, "\\'");
           const isVip = song.fee === 1;
           html += `
             <div class="ncm-song-item" style="margin-bottom:8px; display:flex; align-items:center;">
+              <div style="width:40px; height:40px; border-radius:8px; overflow:hidden; flex-shrink:0; margin-right:10px; background:#f1f5f9; ${cover ? `background-image:url('${cover}'); background-size:cover; background-position:center;` : ""}">
+                ${cover ? "" : '<svg viewBox="0 0 24 24" width="20" height="20" style="margin:10px;color:#cbd5e1;" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>'}
+              </div>
               <div class="ncm-song-info" style="flex:1;" onclick="musicSystem.playOnlineNcmSong('${songId}', '${title}', '${artist}', ${isVip})">
                 <div class="ncm-song-title">
                   ${song.name}
@@ -2311,7 +2456,7 @@
       }
     },
 
-    // 将搜索结果导入到歌单（可选择目标歌单）
+    // 将搜索结果导入到歌单（可选择目标歌单），自动补全封面与歌词
     async importSearchResult(songId, title, artist, isVip) {
       const playlists = this.playlists.filter(p => !p.id.startsWith("ncm_liked"));
       if (playlists.length === 0) {
@@ -2328,6 +2473,12 @@
         isVip: isVip,
         isFavorite: false
       };
+      // 自动补全封面与歌词
+      const meta = await this.fetchNcmSongDetail(songId).catch(() => null);
+      if (meta) {
+        if (meta.cover) songObj.cover = meta.cover;
+        if (meta.lyrics && meta.lyrics !== "[00:00.00]暂无歌词") songObj.lyrics = meta.lyrics;
+      }
       await this.saveSongToIndexedDB(songObj);
       let targetPl = playlists[0];
       if (playlists.length > 1) {
@@ -2360,6 +2511,13 @@
         isVip: isVip,
         isFavorite: false
       };
+
+      // 自动补全封面与歌词后播放
+      const meta = await this.fetchNcmSongDetail(songId).catch(() => null);
+      if (meta) {
+        if (meta.cover) songObj.cover = meta.cover;
+        if (meta.lyrics && meta.lyrics !== "[00:00.00]暂无歌词") songObj.lyrics = meta.lyrics;
+      }
 
       await this.saveSongToIndexedDB(songObj);
       const songs = await this.getAllSongsFromIndexedDB();
