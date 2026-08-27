@@ -111,7 +111,126 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); }
 .btn-outline { background-color: transparent; border: 1.5px solid var(--primary); color: var(--primary); }
 .btn-danger-outline { background-color: transparent; border: 1.5px solid var(--danger); color: var(--danger); }
 
-/* 档案卡与折叠机制 */
+  .resource-downloads-intro-card {
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 14px;
+  }
+  .resource-downloads-intro-title {
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: 6px;
+  }
+  .resource-downloads-intro-desc {
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+  }
+  .resource-download-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    box-shadow: var(--shadow-sm);
+    margin-bottom: 12px;
+    overflow: hidden;
+  }
+  .resource-download-summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px;
+    cursor: pointer;
+  }
+  .resource-download-summary::-webkit-details-marker {
+    display: none;
+  }
+  .resource-download-title {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .resource-download-subtitle {
+    font-size: 10px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+  }
+  .resource-download-badge {
+    flex-shrink: 0;
+    padding: 5px 10px;
+    border-radius: 999px;
+    background: #fee2e2;
+    color: #b91c1c;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .resource-download-body {
+    padding: 0 14px 14px 14px;
+    border-top: 1px solid var(--border);
+  }
+  .resource-download-meta {
+    display: grid;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .resource-download-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11px;
+    color: var(--text-secondary);
+  }
+  .resource-download-row b {
+    color: var(--text-primary);
+    font-size: 11px;
+  }
+  .resource-download-note {
+    margin-top: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+  }
+  .resource-download-script-box {
+    margin-top: 12px;
+    border-radius: 12px;
+    background: #0f172a;
+    color: #e2e8f0;
+    overflow: hidden;
+  }
+  .resource-download-script-title {
+    padding: 10px 12px;
+    font-size: 11px;
+    font-weight: 700;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+  }
+  #resource-nodejs-script-preview {
+    margin: 0;
+    padding: 12px;
+    font-size: 10px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: "SFMono-Regular", Consolas, monospace;
+  }
+  .resource-download-status {
+    margin-top: 12px;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+  }
+
+  /* 档案卡与折叠机制 */
 .archive-group-wrapper {
   margin-bottom: 12px;
 }

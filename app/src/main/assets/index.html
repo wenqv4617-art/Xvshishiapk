@@ -86,6 +86,7 @@
     window.libSupabase = supabase;
   </script>
   <script src="./app_auth.js" defer></script>
+  <script src="./app_resource_downloads.js" defer></script>
 </head>
 <body>
   <!-- 全局 PWA 自研毛玻璃防绕过登录系统遮罩层 -->
@@ -398,6 +399,11 @@
               <!-- 新增：向量化记忆设置入口（二级面板由 app_router.js 懒注入） -->
               <div class="menu-item" onclick="openSettingsLv2('vector-memory')">
                 <span>向量化记忆设置</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <!-- 新增：资源下载入口（二级面板由 app_router.js 懒注入） -->
+              <div class="menu-item" onclick="openSettingsLv2('resource-downloads')">
+                <span>资源下载</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
               <div class="menu-item" onclick="openSettingsLv2('beautify')">

@@ -1,0 +1,57 @@
+package com.story.phone
+
+import android.content.Context
+import android.util.Log
+
+/**
+ * NodeRunner 已退役：当前版本不再默认内置或启动 nodejs-mobile。
+ * 保留同名对象仅为避免旧代码引用时报错；实际不执行任何逻辑。
+ */
+object NodeRunner {
+    private const val TAG = "NodeRunner"
+
+    @Synchronized
+    fun ensureStarted(context: Context) {
+        Log.d(TAG, "NodeRunner disabled: embedded node runtime removed from default build")
+    }
+}
+                        Log.d(TAG, "内置网易云 API 已运行: http://localhost:3000")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "启动内置 API 失败: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+
+                override fun onError(error: Throwable?) {
+                    Log.e(TAG, "Node 运行时启动错误: ${error?.message}")
+                    error?.printStackTrace()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "NodeJS 初始化失败: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+}
+时启动成功，正在拉起内置网易云 API...")
+                    try {
+                        // 执行 assets/nodejs-project/index.js
+                        nodeJS.runScript("require('./index.js')", null)
+                        Log.d(TAG, "内置网易云 API 已运行: http://localhost:3000")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "启动内置 API 失败: ${e.message}")
+                        e.printStackTrace()
+                    }
+                }
+
+                override fun onError(error: Throwable?) {
+                    Log.e(TAG, "Node 运行时启动错误: ${error?.message}")
+                    error?.printStackTrace()
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "NodeJS 初始化失败: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+}

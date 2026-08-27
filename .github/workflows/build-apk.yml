@@ -20,7 +20,6 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      # 核心升级：通过锁定并持久化缓存 ~/.android 密钥目录，确保后续编译的所有 APK 共享同一个数字证书，完美自愈签名冲突
       - name: Cache Android Keystore
         uses: actions/cache@v4
         with:
@@ -30,13 +29,29 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 8.5 # 自动在云端加载 Gradle 8.5，免去本地 wrapper.jar 二进制文件的依赖
+          gradle-version: 8.5
 
-      # ★ 生成内置网易云 API 的依赖（assets/nodejs-project/node_modules）
-      #   使用国内镜像源加速；产物由构建机生成，不入仓库（见 .gitignore）
-      - name: Install embedded NCM API dependencies
+      - name: Build APK with Gradle
         run: |
-          npm install --prefix app/src/main/assets/nodejs-project --registry=https://registry.npmmirror.com --no-audit --no-fund
+          for i in 1 2 3; do
+            echo "=== gradle assembleDebug（第 $i 次尝试）==="
+            if gradle assembleDebug; then
+              exit 0
+            fi
+            if [ "$i" -lt 3 ]; then
+              echo "第 $i 次构建失败，60 秒后重试..."
+              sleep 60
+            fi
+          done
+          exit 1
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: StoryPhone-Android-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 1
+pmmirror.com --no-audit --no-fund
 
       # ★ 缓存 nodejs-mobile AAR，避免每次构建都重新下载（AAR 有几十 MB）
       - name: Cache nodejs-mobile AAR
