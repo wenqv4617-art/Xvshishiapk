@@ -24,6 +24,8 @@
     tempCropCoverBase64: "",
     unikey: "",
     qrPollTimer: null,
+    searchResultSongs: [], // 网易云在线搜索结果（搜索页点播专用，不写入 IndexedDB）
+    _searchPlayMode: false, // 标记当前播放列表是否处于"搜索结果"模式
     pendingLocalMusicFiles: [], // onchange 时缓存的待导入本地音频（规避部分 WebView 点击保存按钮时 input.files 丢失）
 
     /**
@@ -34,7 +36,34 @@
      */
     async ncmRequest(url) {
       let res = null;
-      try { res = await fetch(url).catch(() => null); } catch(e) { return null; }
+      // APK 内优先走原生壳（绕过 CORS / 混合内容限制，能直连 Termux localhost）
+      if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === 'function') {
+        try {
+          const resStr = window.AndroidMCP.sendNativeHttpRequest(url, "GET", "{}", "");
+          const resObj = JSON.parse(resStr);
+          if (resObj.status === 500 && resObj.body) {
+            // 原生壳请求失败时回退到 fetch（例如本地服务未启动）
+            return null;
+          }
+          let bodyData = null;
+          try {
+            bodyData = typeof resObj.body === 'string' ? JSON.parse(resObj.body) : resObj.body;
+          } catch(e) {
+            bodyData = resObj.body;
+          }
+          return bodyData;
+        } catch(e) {
+          return null;
+        }
+      }
+      // 网页版降级 fetch（若配置了本地 CORS 中转 3001 则优先走中转）
+      try {
+        const proxyBase = localStorage.getItem("ncm_cors_proxy") || "";
+        const finalUrl = (proxyBase && url.indexOf("localhost") === -1)
+          ? proxyBase + "/proxy?url=" + encodeURIComponent(url)
+          : url;
+        res = await fetch(finalUrl).catch(() => null);
+      } catch(e) { return null; }
       if (!res) return null;
       try { return await res.json(); } catch(e) { return null; }
     },
@@ -55,6 +84,11 @@
       await this.loadPlaylistsFromStorage();
       this.renderMine();
       this.updateIslandCompanionUI();
+      // 恢复登录态：已有 Cookie 则自动回填用户信息与红心歌单（无需再次登录）
+      if (this.ncmCookie && !localStorage.getItem("ncm_session_restored")) {
+        localStorage.setItem("ncm_session_restored", "1");
+        this.syncNcmUserData(this.ncmCookie).catch(function () {});
+      }
     },
 
     cleanCotText(text) {
@@ -606,6 +640,9 @@
       if (targetTab) targetTab.classList.add("active");
 
       if (tab === 'mine') this.renderMine();
+      if (tab === 'search') {
+        this._searchPlayMode = false; // 切到搜索页时退出搜索结果播放模式标记
+      }
     },
 
     openImportChoiceModal() {
@@ -1285,17 +1322,23 @@
     // 若 currentPlaylistId 已设置，则播放范围限定为该歌单内的歌曲（顺序/循环/随机只在此歌单里）
     async playSongFromList(index) {
       let songs;
-      if (this.currentPlaylistId) {
-        // 歌单范围：只取该歌单的 songIds 对应歌曲，保持歌单内顺序
-        const allSongs = await this.getAllSongsFromIndexedDB();
-        const pl = this.playlists.find(p => p.id === this.currentPlaylistId);
-        if (pl && pl.songIds && pl.songIds.length > 0) {
-          songs = (pl.songIds || []).map(sid => allSongs.find(s => s.id === sid)).filter(Boolean);
-        } else {
-          songs = allSongs;
-        }
+      // 搜索页点播：在线搜索歌曲（未持久化到曲库）直接在当前搜索结果列表中播放，不污染"我的"曲库
+      if (this.searchResultSongs && this.searchResultSongs.length > 0 && index < this.searchResultSongs.length && this._searchPlayMode) {
+        songs = this.searchResultSongs;
       } else {
-        songs = await this.getAllSongsFromIndexedDB();
+        this._searchPlayMode = false;
+        if (this.currentPlaylistId) {
+          // 歌单范围：只取该歌单的 songIds 对应歌曲，保持歌单内顺序
+          const allSongs = await this.getAllSongsFromIndexedDB();
+          const pl = this.playlists.find(p => p.id === this.currentPlaylistId);
+          if (pl && pl.songIds && pl.songIds.length > 0) {
+            songs = (pl.songIds || []).map(sid => allSongs.find(s => s.id === sid)).filter(Boolean);
+          } else {
+            songs = allSongs;
+          }
+        } else {
+          songs = await this.getAllSongsFromIndexedDB();
+        }
       }
       if (!songs[index]) return;
 
@@ -2356,6 +2399,7 @@
       // 2. 网易云在线搜索：多通道容错竞速
       let onlineSongs = [];
       const encKw = encodeURIComponent(keyword);
+      this.searchResultSongs = []; // 记录本次在线搜索结果（供搜索页点播，不写入曲库）
 
       // 通道一：官方搜索 API（走 ncmNativeFetch，含 allorigins 代理兜底）
       try {
@@ -2417,6 +2461,7 @@
       }
 
       if (onlineSongs.length > 0) {
+        this.searchResultSongs = onlineSongs; // 记录搜索结果供点播
         html += `<div style="font-size:11px; font-weight:800; color:#0284c7; margin:10px 0 6px 0;">-- 网易云在线曲库 --</div>`;
         onlineSongs.forEach(song => {
           const songId = song.id;
@@ -2519,11 +2564,26 @@
         if (meta.lyrics && meta.lyrics !== "[00:00.00]暂无歌词") songObj.lyrics = meta.lyrics;
       }
 
-      await this.saveSongToIndexedDB(songObj);
-      const songs = await this.getAllSongsFromIndexedDB();
-      const idx = songs.findIndex(s => s.id === songObj.id);
-      if (idx !== -1) {
-        this.playSongFromList(idx);
+      // ★ 修复音源不匹配：在线搜索歌曲只在"搜索结果"列表内播放，不写入 IndexedDB、不污染"我的"曲库
+      // 搜索前先记录当前搜索结果（searchNcmMusic 里已填充 searchResultSongs）
+      if (!this.searchResultSongs || this.searchResultSongs.length === 0) {
+        this.searchResultSongs = [];
+        this._searchPlayMode = false;
+      }
+      // 找到当前歌曲在搜索结果列表中的位置（若存在）则按搜索结果播放；否则作为临时歌曲追加播放
+      const sIdx = this.searchResultSongs.findIndex(s => String(s.id) === String(songObj.id));
+      if (sIdx !== -1) {
+        this._searchPlayMode = true;
+        this.playSongFromList(sIdx);
+      } else {
+        // 不在当前搜索结果中（例如从历史进入），退回旧行为：临时保存后播放
+        await this.saveSongToIndexedDB(songObj);
+        const songs = await this.getAllSongsFromIndexedDB();
+        const idx = songs.findIndex(s => s.id === songObj.id);
+        if (idx !== -1) {
+          this._searchPlayMode = false;
+          this.playSongFromList(idx);
+        }
       }
     }
   };
