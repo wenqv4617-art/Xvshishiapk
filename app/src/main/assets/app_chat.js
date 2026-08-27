@@ -4786,14 +4786,15 @@ function bindChatAppEvents() {
         // 翻译随动生成：要求 AI 在回复末尾追加 [TRANSLATE] 标签包裹的中文翻译
         if (isTranslateAutoOn) {
           finalSystemPrompt += `\n\n【翻译随动指令（重要）】
-你需要在回复正常对话内容之后（如有心声则在心声之后），额外输出本次回复内容的中文翻译。
-如果回复本身已是中文，则翻译为英文；如果回复包含非中文（如日语、英语、法语等），则翻译为简体中文。
-请严格按照以下格式输出：
+当你输出外语（包括英语、日语、法语等非中文语言）时，必须提供对应的简体中文翻译。
+如果你的一段话包含多句外语且被中文字幕/旁白/动作描写隔开，请不要把翻译全堆在文末！
+请在**每一句外语**后面，立刻换行并使用 [TRANSLATE]翻译内容[/TRANSLATE] 格式提供该句的翻译。
 
-正常对话内容...
-
-[TRANSLATE]
-本次回复的完整翻译内容`;
+示例：
+*他看着你，轻声说道* "I will always protect you." 
+[TRANSLATE]我会永远保护你。[/TRANSLATE]
+*然后他握住了你的手* "No matter what happens."
+[TRANSLATE]无论发生什么。[/TRANSLATE]`;
         }
 
         // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
@@ -5584,28 +5585,34 @@ function bindChatAppEvents() {
         }
 
         // 尝试解析翻译随动 [TRANSLATE] 格式
-        // 关键修复：上方 [STATUS] 解析已把 textReply 截断到 [STATUS] 之前，
-        // 而 prompt 要求翻译位于心声之后（即 [STATUS] 之后），此时 textReply 已不含 [TRANSLATE]，
-        // 导致翻译永远解析不到。这里必须从原始 rawReply 提取，再从 textReply 中擦除。
         let translationText = null;
         if (isTranslateAutoOn) {
-          const translateMatch = rawReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
-          if (translateMatch) {
-            translationText = translateMatch[1].trim();
+          // 这里将保留支持旧的全局 [TRANSLATE]xxx 格式，但重点支持新的分段解析。
+          // 因为在 chat_html_widget 渲染层面，我们希望把翻译嵌入到气泡文字中，
+          // 所以在数据层，我们不再将其抽取到 translationText 字段，而是将其直接保留在 textReply 中，
+          // 并通过替换为特定的 HTML 标签以便在渲染时识别，或者在渲染时直接解析 [TRANSLATE]...[/TRANSLATE] 标签。
+          // 这里的处理简化为：如果是旧格式（只有一个 [TRANSLATE] 且到末尾），则抽取出来；
+          // 如果是新格式，就不做处理，直接留给渲染层去处理。
+          const oldTranslateMatch = rawReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
+          const newTranslateMatch = rawReply.match(/\[TRANSLATE\][\s\S]*?\[\/TRANSLATE\]/);
+          if (oldTranslateMatch && !newTranslateMatch) {
+            translationText = oldTranslateMatch[1].trim();
             textReply = textReply.replace(/\[TRANSLATE\]\s*[\s\S]*?(?=\[STATUS\]|$)/, '').trim();
           }
         }
 
         // === 无条件兜底标签清洗（极其重要）===
-        // 设计原则：心声/翻译随动开关只控制【是否注入 prompt】与【是否解析入库】，
-        // 标签清洗必须【始终执行】。即便用户关闭了开关，AI 若误打误撞输出了 [STATUS]/[TRANSLATE]，
-        // 也必须从展示文本中彻底擦除，绝不能让原始标签泄漏到聊天气泡（中英文括号兼容）。
-        // 这与 [MSG_ID] 的无条件擦除策略一致，避免"关闭开关却仍出现心声/翻译"的泄漏。
+        // 修改这里的清洗，仅清洗没有闭合标签的旧版全局翻译，
+        // 含有闭合标签 [/TRANSLATE] 的新版分段翻译予以保留，交由前端渲染组件处理。
         textReply = textReply
-          .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
-          .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
           .replace(/[\[【]STATUS[\]】][\s\S]*$/gi, '')
           .trim();
+        if(!textReply.includes('[/TRANSLATE]')) {
+            textReply = textReply
+              .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
+              .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
+              .trim();
+        }
 
         // 小程序分享：解析 AI 回复中的 [MP_INVITE] 指令 → 转为 char 发出的分享卡片（无损，未开启开关则无效）
         if (window.miniProgramSystem && typeof window.miniProgramSystem.parseAndApplyInvite === "function") {
@@ -5658,29 +5665,33 @@ function bindChatAppEvents() {
 
         const splitTextIntoBubbles = (text, minCount = minSentences, maxCount = maxSentences) => {
           if (!text || typeof text !== 'string') return [];
+          
+          // 预处理：提取并保护新版翻译标签，防止被拆分
+          let transMap = {};
+          let tIdx = 0;
+          text = text.replace(/(?:[\n\r\s]*)\[TRANSLATE\]([\s\S]*?)\[\/TRANSLATE\]/gi, (m, content) => {
+            let key = `__TR${tIdx++}__`;
+            transMap[key] = `\n[TRANSLATE]${content.trim()}[/TRANSLATE]`;
+            return key;
+          });
 
           // 第一步：按 [SPLIT] / 【SPLIT】 / 换行 粗切成大段（不使用捕获组，避免 undefined）
           let coarseParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => (p || '').trim()).filter(Boolean);
-
           // 第二步：从每段中分离出表情包标签，使其作为独立分句依据
           let initialParts = [];
           coarseParts.forEach(part => {
             const subParts = part.split(/(【表情包：[^】]+】)/).map(p => (p || '').trim()).filter(Boolean);
             initialParts.push(...subParts);
           });
-
           let rawBubbles = [];
-
           initialParts.forEach(part => {
             const quoteMatch = part.match(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i);
             let quotePrefix = "";
             let barePart = part;
-
             if (quoteMatch) {
               quotePrefix = quoteMatch[0];
               barePart = part.substring(quoteMatch[0].length).trim();
             }
-
             // 表情包格式标签：作为独立分句依据，单独成为一个气泡
             if (/^【表情包：[^】]+】$/.test(barePart)) {
               let bubbleText = barePart;
@@ -5690,15 +5701,13 @@ function bindChatAppEvents() {
               if (bubbleText) rawBubbles.push(bubbleText);
               return;
             }
-
             // 按句末标点 (。！？!? 中英文) 拆分句项列表
-            const sentenceRegex = /([^。！？!?]+[。！？!?]+)/g;
+            const sentenceRegex = /([^。！？!?]+[。！？!?]+(?:__TR\d+__)*)/g;
             let subSentences = barePart.match(sentenceRegex);
-
             // 加强约束：若句末标点拆出的句数不足 minCount（模型只返回 1-2 句），
             // 用弱标点（逗号/分号/顿号/省略号 中英文）尝试再拆出更多句，强化时序级联效果
             if ((!subSentences || subSentences.length < minCount) && barePart.length > 0) {
-              const weakRegex = /([^，；、,;…]+[，；、,;…]+)/g;
+              const weakRegex = /([^，；、,;…]+[，；、,;…]+(?:__TR\d+__)*)/g;
               const weakParts = barePart.match(weakRegex);
               if (weakParts && weakParts.length > (subSentences ? subSentences.length : 1)) {
                 let weakLen = 0;
@@ -5708,29 +5717,23 @@ function bindChatAppEvents() {
                 if (weakLeftover) subSentences.push(weakLeftover);
               }
             }
-
             if (subSentences && subSentences.length > 0) {
               let reassembledLen = 0;
               let currentChunk = [];
-
               subSentences.forEach((s, sIdx) => {
                 currentChunk.push(s.trim());
                 reassembledLen += s.length;
-
                 // 只有合并句数达到最少句数 minCount，或是最后一个标点句时，才打包为一个独立的组合气泡
                 if (currentChunk.length >= minCount || sIdx === subSentences.length - 1) {
                   let chunkText = currentChunk.join("");
                   currentChunk = [];
-
                   if (rawBubbles.length === 0 && quotePrefix) {
                     chunkText = quotePrefix + chunkText;
                     quotePrefix = "";
                   }
-
                   if (chunkText) rawBubbles.push(chunkText);
                 }
               });
-
               // 补全末尾未带句末标点的残余尾巴
               const leftover = barePart.substring(reassembledLen).trim();
               if (leftover) {
@@ -5748,7 +5751,10 @@ function bindChatAppEvents() {
               rawBubbles.push(singleText);
             }
           });
-
+          
+          // 还原翻译标签
+          rawBubbles = rawBubbles.map(bubble => bubble.replace(/__TR\d+__/g, m => transMap[m] || m));
+          
           // 核心上限管控：如果拆出的气泡数超过上限 maxCount，把溢出的气泡全部合拢合并到最后一个气泡中
           if (rawBubbles.length > maxCount) {
             const allowedBubbles = rawBubbles.slice(0, maxCount - 1);
@@ -5756,7 +5762,6 @@ function bindChatAppEvents() {
             allowedBubbles.push(overflowText);
             return allowedBubbles.filter(Boolean);
           }
-
           return rawBubbles.filter(Boolean);
         };
 
@@ -7538,14 +7543,15 @@ async function triggerOfflineReply() {
         // 翻译随动：附加在心声之后（若开启）
         if (offlineTranslateAutoOn) {
           finalOfflineSystemPrompt += `\n\n【翻译随动指令（重要）】
-你需要在回复正常白描内容之后（如有心声则在心声之后），额外输出本次回复内容的中文翻译。
-如果回复本身已是中文，则翻译为英文；如果回复包含非中文（如日语、英语、法语等），则翻译为简体中文。
-请严格按照以下格式输出：
+当你输出外语（包括英语、日语、法语等非中文语言）时，必须提供对应的简体中文翻译。
+如果你的一段话包含多句外语且被中文字幕/旁白/动作描写隔开，请不要把翻译全堆在文末！
+请在**每一句外语**后面，立刻换行并使用 [TRANSLATE]翻译内容[/TRANSLATE] 格式提供该句的翻译。
 
-线下白描内容...
-
-[TRANSLATE]
-本次回复的完整翻译内容`;
+示例：
+*他看着你，轻声说道* "I will always protect you." 
+[TRANSLATE]我会永远保护你。[/TRANSLATE]
+*然后他握住了你的手* "No matter what happens."
+[TRANSLATE]无论发生什么。[/TRANSLATE]`;
         }
 
         messagesToSend.push({ role: "system", content: finalOfflineSystemPrompt });
@@ -7693,26 +7699,29 @@ async function triggerOfflineReply() {
           }
         }
 
-        // 解析线下翻译随动 [TRANSLATE]
-        // 关键修复：必须从 [STATUS] 截断前的完整回复中查找，否则翻译（位于心声之后）会被丢失。
+// 解析线下翻译随动 [TRANSLATE]
         let offlineTranslationText = null;
         if (offlineTranslateAutoOn) {
-          const translateMatch = offlineFullReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
-          if (translateMatch) {
-            offlineTranslationText = translateMatch[1].trim();
+          const oldTranslateMatch = offlineFullReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
+          const newTranslateMatch = offlineFullReply.match(/\[TRANSLATE\][\s\S]*?\[\/TRANSLATE\]/);
+          if (oldTranslateMatch && !newTranslateMatch) {
+            offlineTranslationText = oldTranslateMatch[1].trim();
             // 若 [TRANSLATE] 残留在截断后的 rawReply 中（即无心声或翻译在心声前），一并擦除
             rawReply = rawReply.replace(/\[TRANSLATE\][\s\S]*$/,'').trim();
           }
         }
-
         // === 无条件兜底标签清洗（线上/线下一致原则）===
         // 开关只控制是否注入 prompt 与是否解析入库；标签清洗始终执行，
         // 防止 AI 误输出 [STATUS]/[TRANSLATE] 时原始标签泄漏到线下白描卡片（中英文括号兼容）
         rawReply = rawReply
-          .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
-          .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
           .replace(/[\[【]STATUS[\]】][\s\S]*$/gi, '')
           .trim();
+        if(!rawReply.includes('[/TRANSLATE]')) {
+             rawReply = rawReply
+                 .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
+                 .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
+                 .trim();
+        }
 
         if (!rawReply) return;
 
