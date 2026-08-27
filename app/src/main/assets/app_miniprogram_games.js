@@ -229,7 +229,7 @@
     function renderSetup() {
       roomEl.innerHTML = `
         <div class="mp-game-wrap">
-          <div class="mp-game-statusbar">${SVG.book}<span>真心话大冒险 · 聊天室</span></div>
+          <div class="mp-game-statusbar" style="padding-top: env(safe-area-inset-top, 24px);">${SVG.book}<span>真心话大冒险 · 聊天室</span></div>
           <div class="mp-game-room" id="tod-room">
             <div class="mp-game-msg system">玩法：你默认是玩家之一。点击右上角胶囊「分享」拉入一个或多个 char 作为对手。每人掷骰判输赢，点数最小者为输家。</div>
             <div class="mp-game-msg system">真心话：赢家依次提问，输家回答；大冒险：赢家各提议一个，随机抽中后输家执行。行动完成后其余玩家会依次点评。退出可随时回来继续，点「结束本局」才会清掉当前进度。</div>

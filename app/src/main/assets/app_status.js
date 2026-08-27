@@ -343,7 +343,17 @@ async function openStatusHistory() {
 
       const timeStr = new Date(item.timestamp).toLocaleString();
       card.innerHTML = `
-        <div class="history-time-badge">🕒 记录时间：${timeStr}</div>
+        <div class="history-time-badge" style="display: flex; justify-content: space-between; align-items: center;">
+          <span>🕒 记录时间：${timeStr}</span>
+          <button class="delete-status-btn" style="background: none; border: none; color: #ff4d4f; cursor: pointer; padding: 4px; border-radius: 4px;" aria-label="删除记录">
+            <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"></polyline>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+              <line x1="10" y1="11" x2="10" y2="17"></line>
+              <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+          </button>
+        </div>
         <div class="status-attribute-row" style="margin-bottom: 8px; padding: 10px;">
           <div class="attr-label">👚 穿着</div>
           <div class="attr-value" style="font-size:13px;">${item.attire}</div>
@@ -367,6 +377,38 @@ async function openStatusHistory() {
           <div class="attr-value" style="font-size:13px;">${item.hiddenCorners}</div>
         </div>
       `;
+      
+      const delBtn = card.querySelector('.delete-status-btn');
+      if (delBtn) {
+        delBtn.onclick = async (e) => {
+          e.stopPropagation();
+          if (confirm('确定要删除这条同频记录吗？')) {
+            try {
+              if (item.id) {
+                await db.status_history.delete(item.id);
+                card.style.opacity = '0';
+                card.style.transform = 'scale(0.95)';
+                setTimeout(() => card.remove(), 200);
+                
+                // 如果删除后列表空了，显示无数据提示
+                if (container.querySelectorAll('.history-item-card').length <= 1) {
+                  setTimeout(() => {
+                    container.innerHTML = \`<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该场景暂无心声同频历史</p>\`;
+                  }, 250);
+                }
+              }
+            } catch (err) {
+              console.error('删除心声记录失败:', err);
+              if (typeof showToast === 'function') {
+                showToast('删除失败: ' + err.message);
+              } else {
+                alert('删除失败: ' + err.message);
+              }
+            }
+          }
+        };
+      }
+      
       container.appendChild(card);
     });
   } catch (err) {
