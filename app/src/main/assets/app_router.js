@@ -143,15 +143,15 @@
         history.push({ type: "settings-lv2", id: subTab });
         return;
       }
-      if (subTab === "resource-downloads") {
-        this._ensureResourceDownloadsPanel();
+      if (subTab === "local-deploy") {
+        this._ensureLocalDeployPanel();
         if (typeof window._origOpenSettingsLv2 === "function") {
           window._origOpenSettingsLv2(subTab);
         }
-        const titleElResource = document.getElementById("settings-title");
-        if (titleElResource) titleElResource.innerText = "资源下载";
-        if (typeof window.resourceDownloadSystem !== "undefined" && typeof window.resourceDownloadSystem.initPanel === "function") {
-          window.resourceDownloadSystem.initPanel();
+        const titleElLocal = document.getElementById("settings-title");
+        if (titleElLocal) titleElLocal.innerText = "本地部署";
+        if (typeof window.localDeploySystem !== "undefined" && typeof window.localDeploySystem.initPanel === "function") {
+          window.localDeploySystem.initPanel();
         }
         history.push({ type: "settings-lv2", id: subTab });
         return;
@@ -215,11 +215,11 @@
       }
     },
 
-    _ensureResourceDownloadsPanel: function () {
-      if (document.getElementById("settings-lv2-resource-downloads")) return;
-      const html = (typeof window.resourceDownloadSystem !== "undefined" && typeof window.resourceDownloadSystem.getPanelHTML === "function")
-        ? window.resourceDownloadSystem.getPanelHTML()
-        : '<div id="settings-lv2-resource-downloads" class="settings-lv2-panel" style="display:none;"><div class="form-group">资源下载模块加载中…</div></div>';
+    _ensureLocalDeployPanel: function () {
+      if (document.getElementById("settings-lv2-local-deploy")) return;
+      const html = (typeof window.localDeploySystem !== "undefined" && typeof window.localDeploySystem.getPanelHTML === "function")
+        ? window.localDeploySystem.getPanelHTML()
+        : '<div id="settings-lv2-local-deploy" class="settings-lv2-panel" style="display:none;"><div class="form-group">本地部署模块加载中…</div></div>';
       const vectorPanel = document.getElementById("settings-lv2-vector-memory");
       const ttsPanel = document.getElementById("settings-lv2-tts");
       const apiPanel = document.getElementById("settings-lv2-api");
@@ -244,11 +244,11 @@
         : '<div id="settings-lv2-floating-widget" class="settings-lv2-panel" style="display:none;"><div class="form-group">悬浮窗模块加载中…</div></div>';
       // 优先插入到数据管理面板之后；否则回退到向量化记忆 / TTS / API 之后
       const dataPanel = document.getElementById("settings-lv2-data");
-      const resourcePanel = document.getElementById("settings-lv2-resource-downloads");
+      const localDeployPanel = document.getElementById("settings-lv2-local-deploy");
       const vectorPanel = document.getElementById("settings-lv2-vector-memory");
       const ttsPanel = document.getElementById("settings-lv2-tts");
       const apiPanel = document.getElementById("settings-lv2-api");
-      const anchor = dataPanel || resourcePanel || vectorPanel || ttsPanel || apiPanel;
+      const anchor = dataPanel || localDeployPanel || vectorPanel || ttsPanel || apiPanel;
       if (anchor && anchor.parentNode) {
         const wrap = document.createElement("div");
         wrap.innerHTML = html.trim();

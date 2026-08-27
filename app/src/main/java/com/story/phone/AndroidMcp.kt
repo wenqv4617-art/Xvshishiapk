@@ -1697,4 +1697,5 @@ class AndroidMcp private constructor(private val context: Context) {
         val fallbackVector = generateDeterministicSemanticVector(text)
         return fallbackVector.toString()
     }
+
 }

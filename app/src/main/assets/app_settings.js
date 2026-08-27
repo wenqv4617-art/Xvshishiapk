@@ -359,7 +359,7 @@ function openSettingsLv2(subTab) {
     deeptalk: '深谈预设设置',
     imagegen: '生图设置',
     data: '数据分区管理',
-    'resource-downloads': '资源下载',
+    'local-deploy': '本地部署',
     'force-update': '系统强更新',
     changelog: '更新日志',
     about: '关于本机'
