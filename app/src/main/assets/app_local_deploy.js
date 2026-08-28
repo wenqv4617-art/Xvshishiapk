@@ -396,12 +396,11 @@
 
       var steps = [
         { title: "第 1 步：安装 Termux", desc: "用 F-Droid 安装（Play 版已停更）：", cmd: "https://f-droid.org/packages/com.termux/" },
-        { title: "第 2 步：下载脚本", desc: "从仓库根目录获取 termux-ncm-api.sh，以及 termux/ 目录下的 xvshishi-services.sh 与 cors-proxy.js，传到手机任意目录。", cmd: "" },
-        { title: "第 3 步：一键部署", desc: "在 Termux 中执行（自动装依赖 + 建立数据目录 + 进入服务管理器）：", cmd: "bash termux-ncm-api.sh" },
-        { title: "第 4 步：启动网易云 API", desc: "在服务管理器菜单按 [1] 启动全部；或单独执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api" },
-        { title: "第 5 步：启动 CORS 中转（网页版需要）", desc: "", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy" },
-        { title: "第 6 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
-        { title: "第 7 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填：", cmd: "http://localhost:3000" }
+        { title: "第 2 步：一键部署", desc: "复制下面这条命令到 Termux 执行（自动下载脚本 + 装依赖 + 建数据目录 + 进服务管理器）：", cmd: "curl -L https://raw.githubusercontent.com/wenqv4617-art/Xvshishiapk/main/termux-ncm-api.sh -o ~/termux-ncm-api.sh && bash ~/termux-ncm-api.sh" },
+        { title: "第 3 步：启动网易云 API", desc: "在服务管理器菜单按 [1] 启动全部；或单独执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api" },
+        { title: "第 4 步：启动 CORS 中转（网页版需要）", desc: "", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy" },
+        { title: "第 5 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
+        { title: "第 6 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填：", cmd: "http://localhost:3000" }
       ];
 
       var html = '<div style="margin-bottom:12px;">' +

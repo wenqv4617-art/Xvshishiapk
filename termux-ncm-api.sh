@@ -5,10 +5,9 @@
 # 用法：
 #   1. 安装 Termux（务必用 F-Droid 版，Play 版已停更）
 #      F-Droid: https://f-droid.org/packages/com.termux/
-#   2. 把整个 termux 目录（xvshishi-services.sh / cors-proxy.js）
-#      与本文件一起传到手机任意目录，然后执行：
-#      bash termux-ncm-api.sh
-#   3. 脚本会自动：安装依赖 → 建立 ~/.xvshishi 数据目录 → 进入交互管理菜单
+#   2. 复制下面这一条命令到 Termux 执行（自动下载脚本 + 装依赖 + 建数据目录 + 进服务管理器）：
+#      curl -L https://raw.githubusercontent.com/wenqv4617-art/Xvshishiapk/main/termux-ncm-api.sh -o ~/termux-ncm-api.sh && bash ~/termux-ncm-api.sh
+#   3. 脚本会自动：安装依赖 → 下载辅助脚本 → 建立 ~/.xvshishi 数据目录 → 进入交互管理菜单
 #
 # 数据目录约定（登录态等数据持久化，重启 Termux 不会丢失）：
 #   ~/.xvshishi/data/    持久化数据（cookie、账号信息等）
@@ -77,23 +76,52 @@ install_deps() {
   fi
 }
 
-# ---------- 3. 部署服务管理器 ----------
+# ---------- 3. 部署服务管理器（自动从 GitHub 下载辅助脚本） ----------
+GITHUB_RAW="https://raw.githubusercontent.com/wenqv4617-art/Xvshishiapk/main"
+
+download_file() {
+  local url="$1" dest="$2"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL "$url" -o "$dest" 2>/dev/null
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q "$url" -O "$dest" 2>/dev/null
+  else
+    return 1
+  fi
+}
+
 install_manager() {
   step "部署服务管理器..."
   local svc="$SCRIPT_SRC/xvshishi-services.sh"
   local proxy="$SCRIPT_SRC/cors-proxy.js"
+  local svc_url="$GITHUB_RAW/termux/xvshishi-services.sh"
+  local proxy_url="$GITHUB_RAW/termux/cors-proxy.js"
+
+  # 优先使用同目录文件，否则自动从 GitHub 下载
   if [ -f "$svc" ]; then
     cp "$svc" "$XSH_DIR/xvshishi-services.sh"
     chmod +x "$XSH_DIR/xvshishi-services.sh"
     ok "服务管理器已安装: $XSH_DIR/xvshishi-services.sh"
   else
-    warn "未找到同目录的 xvshishi-services.sh，请从仓库 termux/ 目录拷贝后重试"
+    warn "同目录未找到 xvshishi-services.sh，尝试从 GitHub 自动下载..."
+    if download_file "$svc_url" "$XSH_DIR/xvshishi-services.sh"; then
+      chmod +x "$XSH_DIR/xvshishi-services.sh"
+      ok "服务管理器已从 GitHub 下载: $XSH_DIR/xvshishi-services.sh"
+    else
+      fail "自动下载失败，请检查网络后重试"
+    fi
   fi
+
   if [ -f "$proxy" ]; then
     cp "$proxy" "$XSH_DIR/cors-proxy.js"
     ok "CORS 跨域中转脚本已安装: $XSH_DIR/cors-proxy.js"
   else
-    warn "未找到同目录的 cors-proxy.js（网页版才需要，可跳过）"
+    warn "同目录未找到 cors-proxy.js，尝试从 GitHub 自动下载..."
+    if download_file "$proxy_url" "$XSH_DIR/cors-proxy.js"; then
+      ok "CORS 跨域中转脚本已从 GitHub 下载: $XSH_DIR/cors-proxy.js"
+    else
+      warn "自动下载失败（网页版才需要 CORS 中转，可跳过）"
+    fi
   fi
 }
 
