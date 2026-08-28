@@ -112,7 +112,7 @@ get_name() {
 
 # ---------- 启动服务 ----------
 start_service() {
-  local id="$1" cmd name logf pf pid
+  local id="$1" cmd name logf pf pid mainfile
   name=$(get_name "$id")
   if is_running "$id"; then
     log "${C_Y}[!]${C_END} $name 已在运行（PID: $(get_pid "$id")）"
@@ -120,6 +120,20 @@ start_service() {
   fi
   cmd=$(get_cmd "$id")
   [ -z "$cmd" ] && { log "${C_R}[x]${C_END} 未知服务: $id"; return 1; }
+
+  # 预检：若命令指向本地脚本文件，先确认文件存在，避免静默失败
+  mainfile=$(echo "$cmd" | sed -n 's/^[^ ]* \([^ ]*\.\(js\|sh\)\).*/\1/p')
+  if [ -n "$mainfile" ]; then
+    # 展开 $HOME 变量
+    mainfile_expanded=$(eval echo "$mainfile")
+    if [ ! -f "$mainfile_expanded" ]; then
+      log "${C_R}[x]${C_END} $name 启动失败：找不到脚本文件 $mainfile_expanded"
+      log "${C_Y}[!]${C_END} 请先运行部署脚本下载辅助文件，或检查该文件是否存在。"
+      write_status "$id" "error" ""
+      return 1
+    fi
+  fi
+
   logf=$(log_file "$id")
   pf=$(pid_file "$id")
   log "${C_B}[*]${C_END} 启动 $name ..."
@@ -133,6 +147,7 @@ start_service() {
   else
     write_status "$id" "error" ""
     log "${C_R}[x]${C_END} $name 启动失败，请查看日志: $logf"
+    log "${C_Y}[!]${C_END} 日志内容: $(tail -5 "$logf" 2>/dev/null | tr '\n' ' ')"
   fi
 }
 
@@ -206,12 +221,14 @@ tui_menu() {
     log "  ${C_C}[5]${C_END} 查看持久化数据文件"
     log "  ${C_C}[0]${C_END} 退出"
     log ""
+    log "  ${C_DIM}—— 单独启停（推荐分开启动，避免相互干扰）——${C_END}"
     local idx entry id
     idx=0
     for entry in "${SERVICES[@]}"; do
       idx=$((idx+1))
       id="${entry%%|*}"
-      log "  ${C_C}[S${idx}]${C_END} 切换 ${id}"
+      log "  ${C_C}[S${idx}]${C_END} 启动 ${id}"
+      log "  ${C_C}[T${idx}]${C_END} 停止 ${id}"
     done
     log ""
     printf "  选择: "
@@ -225,6 +242,8 @@ tui_menu() {
       0) log "再见！"; exit 0;;
       S1|s1) [ -n "${SERVICES[0]}" ] && start_service "${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "${SERVICES[1]}" ] && start_service "${SERVICES[1]%%|*}"; sleep 1;;
+      T1|t1) [ -n "${SERVICES[0]}" ] && stop_service "${SERVICES[0]%%|*}"; sleep 1;;
+      T2|t2) [ -n "${SERVICES[1]}" ] && stop_service "${SERVICES[1]%%|*}"; sleep 1;;
       *) log "无效选项"; sleep 1;;
     esac
   done

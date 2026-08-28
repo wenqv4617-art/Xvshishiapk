@@ -1311,9 +1311,40 @@
       const isEnabled = toggleEl.checked;
       localStorage.setItem("settings-mcp-active-msg-enabled", isEnabled ? "true" : "false");
       
+      // 关键修复：把开关状态同步写入 db.desktop_pets 表（当前编辑角色），
+      // 因为实际发信调度（triggerBackgroundActiveMessageNative / 前台 setInterval）
+      // 扫描的是 db.desktop_pets 中 activeMsgEnabled === true 的角色。
+      // 之前只写 localStorage，导致开关开启后角色根本没被纳入发信调度。
+      const charId = (window.desktopPetSystem && window.desktopPetSystem.editingCharId)
+        ? window.desktopPetSystem.editingCharId
+        : null;
+      const interval = parseInt(document.getElementById("mcp-active-msg-interval").value) || 10;
+      
+      const persistToDb = async () => {
+        if (!charId || typeof db === 'undefined' || !db.desktop_pets) return;
+        try {
+          let pet = await db.desktop_pets.get(charId);
+          if (!pet) {
+            pet = { charId: charId, mode: 'custom', statesConfig: {}, customDialogues: {}, petEnabled: false, petSize: 100, activeMsgEnabled: false, activeMsgInterval: 10 };
+          }
+          pet.activeMsgEnabled = isEnabled;
+          pet.activeMsgInterval = interval;
+          await db.desktop_pets.put(pet);
+          // 同步热内存配置
+          if (window.desktopPetSystem && window.desktopPetSystem.editingPetConfig) {
+            window.desktopPetSystem.editingPetConfig.activeMsgEnabled = isEnabled;
+            window.desktopPetSystem.editingPetConfig.activeMsgInterval = interval;
+          }
+          if (window.desktopPetSystem && window.desktopPetSystem.activePetCharId === charId && window.desktopPetSystem.activePetConfig) {
+            window.desktopPetSystem.activePetConfig.activeMsgEnabled = isEnabled;
+            window.desktopPetSystem.activePetConfig.activeMsgInterval = interval;
+          }
+        } catch(e) {
+          console.error("同步主动发信开关到 db.desktop_pets 失败:", e);
+        }
+      };
+      
       if (isEnabled) {
-        const interval = parseInt(document.getElementById("mcp-active-msg-interval").value) || 10;
-        
         // 开启时：从 IndexedDB 读取当前选中的 API preset，注册到 Kotlin 层
         (async () => {
           try {
@@ -1368,6 +1399,9 @@
         }
         showToast("后台主动发信服务已关闭");
       }
+      
+      // 无论开关状态，都同步到 db.desktop_pets
+      persistToDb();
     },
 
     // 后台主动发信触发器（由 Kotlin 层定时调用）

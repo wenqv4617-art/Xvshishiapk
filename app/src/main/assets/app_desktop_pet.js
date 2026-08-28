@@ -836,15 +836,65 @@
         reply = reply.trim();
         if (!reply) return;  // 若剥除指令后为空，不存空消息
 
-        const newMsg = {
-          sessionId: sess.id,
-          senderType: 'char',
-          senderId: 0,
-          content: reply,
-          contentType: 'text',
-          timestamp: Date.now()
+        // === 主动发信遵守线上聊天格式：按句末标点/换行/[SPLIT] 拆分为多条气泡逐条上屏 ===
+        // 与 app_chat.js 线上回复的分句逻辑保持一致，避免主动发信变成一大坨文字
+        const splitActiveBubbles = (text) => {
+          if (!text || typeof text !== 'string') return [];
+          // 按 [SPLIT] / 【SPLIT】 / 换行 粗切成大段
+          const coarseParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => (p || '').trim()).filter(Boolean);
+          const bubbles = [];
+          coarseParts.forEach(part => {
+            // 按句末标点 (。！？!? 中英文) 拆分句项
+            const sentenceRegex = /([^。！？!?]+[。！？!?]+)/g;
+            const subSentences = part.match(sentenceRegex);
+            if (subSentences && subSentences.length > 0) {
+              let reassembledLen = 0;
+              let currentChunk = [];
+              subSentences.forEach((s, sIdx) => {
+                currentChunk.push(s.trim());
+                reassembledLen += s.length;
+                // 每 1-2 句打包为一个气泡（主动发信通常较短，用 1 句一泡更自然）
+                if (currentChunk.length >= 1 || sIdx === subSentences.length - 1) {
+                  const chunkText = currentChunk.join("");
+                  currentChunk = [];
+                  if (chunkText) bubbles.push(chunkText);
+                }
+              });
+              // 补全末尾未带句末标点的残余尾巴
+              const leftover = part.substring(reassembledLen).trim();
+              if (leftover) {
+                if (bubbles.length > 0) bubbles[bubbles.length - 1] += leftover;
+                else bubbles.push(leftover);
+              }
+            } else {
+              bubbles.push(part);
+            }
+          });
+          return bubbles.filter(Boolean);
         };
-        await db.messages.add(newMsg);
+
+        const activeBubbles = splitActiveBubbles(reply);
+        const bubblesToSave = activeBubbles.length > 0 ? activeBubbles : [reply];
+        // 上限管控：最多 4 条气泡，超出合并到最后一个
+        if (bubblesToSave.length > 4) {
+          const allowed = bubblesToSave.slice(0, 3);
+          allowed.push(bubblesToSave.slice(3).join(""));
+          bubblesToSave.length = 0;
+          bubblesToSave.push(...allowed.filter(Boolean));
+        }
+
+        const baseTime = Date.now();
+        for (let i = 0; i < bubblesToSave.length; i++) {
+          const newMsg = {
+            sessionId: sess.id,
+            senderType: 'char',
+            senderId: 0,
+            content: bubblesToSave[i],
+            contentType: 'text',
+            timestamp: baseTime + i * 1000  // 每条间隔 1 秒，模拟逐条发送
+          };
+          await db.messages.add(newMsg);
+        }
 
         const char = await db.archives.get(charId);
         const charName = sess.customCharName || char?.name || "对方";

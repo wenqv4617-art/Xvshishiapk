@@ -8,17 +8,34 @@ function initStatusApp() {
   if (isStatusInitializing) return;
   isStatusInitializing = true;
 
-  // 绑定在线聊天与线下见面的状态粉色按钮
+  // 事件委托修复：心声按钮可能在动态渲染/切换会话时被重建，
+  // 之前用 btn.onclick 直接绑定，一旦 DOM 被重建绑定就丢失，导致点击无反应。
+  // 改为在 document 上做事件委托，无论按钮何时重建都能响应点击。
+  document.addEventListener("click", function statusBtnHandler(e) {
+    const onlineBtn = e.target.closest("#btn-char-status");
+    if (onlineBtn) {
+      e.preventDefault();
+      openStatusCard(activeSessionId);
+      return;
+    }
+    const offlineBtn = e.target.closest("#btn-offline-char-status");
+    if (offlineBtn) {
+      e.preventDefault();
+      openStatusCard(activeSessionId);
+      return;
+    }
+  });
+
+  // 兼容性兜底：若按钮已存在也直接绑定（旧逻辑保留）
   const btnOnline = document.getElementById("btn-char-status");
-  if (btnOnline) {
+  if (btnOnline && !btnOnline.dataset.statusBound) {
+    btnOnline.dataset.statusBound = "1";
     btnOnline.onclick = () => openStatusCard(activeSessionId);
   }
-
   const btnOffline = document.getElementById("btn-offline-char-status");
-  if (btnOffline) {
-    btnOffline.onclick = () => {
-      openStatusCard(activeSessionId);
-    };
+  if (btnOffline && !btnOffline.dataset.statusBound) {
+    btnOffline.dataset.statusBound = "1";
+    btnOffline.onclick = () => openStatusCard(activeSessionId);
   }
 
   // 关闭主卡片按钮
@@ -393,7 +410,7 @@ async function openStatusHistory() {
                 // 如果删除后列表空了，显示无数据提示
                 if (container.querySelectorAll('.history-item-card').length <= 1) {
                   setTimeout(() => {
-                    container.innerHTML = \`<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该场景暂无心声同频历史</p>\`;
+                    container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该场景暂无心声同频历史</p>`;
                   }, 250);
                 }
               }
