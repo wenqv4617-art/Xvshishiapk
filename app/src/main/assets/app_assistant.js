@@ -24,6 +24,7 @@ const AppAssistant = {
     'settings-desktop': '桌面美化设置',
     'settings-font': '字体管理',
     'settings-floating-widget': '悬浮窗设置',
+    'settings-local-deploy': '本地部署设置',
     'miniprogram': '小程序页面',
     'miniprogram-workshop': '小程序工坊',
     'chat-sessions': '聊天会话列表',
@@ -174,6 +175,7 @@ const AppAssistant = {
 - 生图设置 [跳转:settings-imagegen]
 - 桌面美化设置 [跳转:settings-desktop]: 桌面壁纸/图标/Dock 不透明度/系统内置 UI 预设/**全局字体管理**（上传/预览/切换/删除自定义字体，最大15MB，缺字回退系统字体）[跳转:settings-font]
 - 悬浮窗 [跳转:settings-floating-widget]: 开关悬浮窗/配置图片/透明度/尺寸/快捷入口
+- 本地部署 [跳转:settings-local-deploy]: Termux 本地脚本服务（网易云 API / CORS 跨域中转），部署命令已内置全部脚本内容（详见下方第 17 节）
 - 全局 CSS 注入: 自定义 CSS 代码编辑与预设
 - 组件工坊: 编译/保存自定义桌面小部件
 - 数据分区管理: 导入导出备份、压缩图片体积（7 块隔离）
@@ -330,7 +332,15 @@ const AppAssistant = {
 
 ### 备份类型说明
 - 全部数据(full): 包含所有数据表 + 美化壁纸/图标/CSS/组件等（含图片二进制，体积大）
-- 纯文字(text): 仅包含档案库、关系、会话、消息、离线消息、状态历史（无美化图片，体积小，适合快速备份）`
+- 纯文字(text): 仅包含档案库、关系、会话、消息、离线消息、状态历史（无美化图片，体积小，适合快速备份）
+
+## 17. 本地部署（设置 → 本地部署）[跳转:settings-local-deploy]
+- 通过 Termux 在手机上运行本地脚本服务，App 通过 localhost 访问，无需外部服务器
+- 内置脚本:
+  - 网易云音乐 API: 网易云登录代理/歌单同步/歌词搜索（端口 3000），健康检查 http://localhost:3000
+  - CORS 跨域中转: 为 PWA/网页版打破跨域限制，代理任意 HTTP/HTTPS 请求（端口 3001），健康检查 http://localhost:3001/health
+- 部署方式: 设置 → 本地部署 → 「部署引导」按钮可一键复制部署命令（命令已内置全部脚本内容，直接在 Termux 里创建脚本文件，无需联网下载），复制到 Termux 执行即可
+- 部署完成后: 网易云登录弹窗的 API 地址填 http://localhost:3000；网页版可用 CORS 中转 http://localhost:3001`
 
   // ===== 关于本机知识（写入小助手知识库）=====
   ,
@@ -635,6 +645,7 @@ ${this.cssLibraryText}`;
       'settings-desktop': () => openSettings('beautify'),
       'settings-font': () => openSettings('beautify'),
       'settings-floating-widget': () => openSettings('floating-widget'),
+      'settings-local-deploy': () => openSettings('local-deploy'),
       'miniprogram': () => {
         // 小程序 hub/runtime overlay 是 fixed 高 z-index，能盖住 win-chat；
         // 保留 win-chat active，退出小程序后下方仍是聊天页，避免"卡在主界面"。
@@ -1324,9 +1335,17 @@ ${this.cssLibraryText}`;
       };
     }
 
+    // 本地部署 / Termux
+    if (ql.includes('本地部署') || ql.includes('termux') || ql.includes('跨域') || ql.includes('cors') || (ql.includes('部署') && (ql.includes('网易云') || ql.includes('脚本')))) {
+      return {
+        answer: '## 本地部署（Termux）\n\n**位置**：设置 → **本地部署**\n\n通过 Termux 在手机上运行本地脚本服务：\n\n- **网易云音乐 API**（端口 3000）：网易云登录代理 / 歌单同步 / 歌词搜索\n- **CORS 跨域中转**（端口 3001）：为 PWA/网页版打破跨域限制\n\n「部署引导」按钮里的命令已内置全部脚本内容，复制到 Termux 执行即可直接创建脚本文件，无需联网下载。部署后网易云登录弹窗的 API 地址填 `http://localhost:3000`。',
+        actions: [{ label: '前往本地部署', target: 'settings-local-deploy' }]
+      };
+    }
+
     // 兜底
     return {
-      answer: '抱歉，我没能理解 **"' + escapeHtml(q) + '"**。\n\n你可以试试：\n- "小程序怎么玩？"\n- "字体在哪换？"\n- "悬浮窗在哪管理？"\n- "mcp 在哪？"\n- "api 怎么设置？"\n- "查手机怎么用？"\n- "向量记忆是什么？"\n- "API 报错 401 怎么办？"\n\n或者描述你想要的 CSS 美化效果。',
+      answer: '抱歉，我没能理解 **"' + escapeHtml(q) + '"**。\n\n你可以试试：\n- "小程序怎么玩？"\n- "字体在哪换？"\n- "悬浮窗在哪管理？"\n- "mcp 在哪？"\n- "api 怎么设置？"\n- "查手机怎么用？"\n- "向量记忆是什么？"\n- "本地部署怎么做？"\n- "API 报错 401 怎么办？"\n\n或者描述你想要的 CSS 美化效果。',
       actions: []
     };
   }

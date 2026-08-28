@@ -9,6 +9,10 @@
 #  4. 提供可交互 TUI 菜单（bash 纯终端，无需额外依赖）
 #  5. 提供子命令供外部调用：start|stop|restart|status|list|tui
 # ------------------------------------------------------------
+# 说明：cors-proxy.js 为内置脚本，部署时随本文件一起写入
+#       $XSH_DIR/cors-proxy.js（内容与仓库 termux/cors-proxy.js 一致），
+#       无需联网下载；缺失时重新复制 App「本地部署 → 部署引导」命令即可。
+# ------------------------------------------------------------
 # 用法：
 #   bash xvshishi-services.sh tui      # 进入交互式管理菜单
 #   bash xvshishi-services.sh list     # 列出全部服务与状态
@@ -77,10 +81,20 @@ get_pid() {
 }
 
 is_running() {
-  local id="$1" pid cmd keyword
+  local id="$1" pid cmd keyword mainfile mainfile_expanded
   pid=$(get_pid "$id")
   [ -n "$pid" ] && return 0
   cmd=$(get_cmd "$id")
+  # 若命令指向本地脚本文件，优先用脚本路径精确匹配，
+  # 避免与其它 node 进程（如网易云 API）混淆导致误判已在运行
+  mainfile=$(echo "$cmd" | sed -n 's/^[^ ]* \([^ ]*\.\(js\|sh\)\).*/\1/p')
+  if [ -n "$mainfile" ]; then
+    mainfile_expanded=$(eval echo "$mainfile")
+    if pgrep -f "$mainfile_expanded" >/dev/null 2>&1; then
+      return 0
+    fi
+    return 1
+  fi
   keyword=$(echo "$cmd" | awk '{print $1}')
   if pgrep -f "$keyword" >/dev/null 2>&1; then
     return 0
@@ -153,8 +167,9 @@ start_service() {
 
 # ---------- 停止服务 ----------
 stop_service() {
-  local id="$1" name pid cmd keyword
+  local id="$1" name pid cmd keyword mainfile mainfile_expanded
   name=$(get_name "$id")
+  # 1) 按 PID 文件停止外层包装进程
   pid=$(get_pid "$id")
   if [ -n "$pid" ]; then
     kill "$pid" 2>/dev/null
@@ -162,19 +177,24 @@ stop_service() {
     if kill -0 "$pid" 2>/dev/null; then
       kill -9 "$pid" 2>/dev/null
     fi
-    write_status "$id" "stopped" ""
-    log "${C_G}[✓]${C_END} $name 已停止"
-    return 0
   fi
+  # 2) 再按脚本路径/关键字兜底清理真实进程（包装 shell 退出后子进程可能残留）
   cmd=$(get_cmd "$id")
-  keyword=$(echo "$cmd" | awk '{print $1}')
-  if pkill -f "$keyword" 2>/dev/null; then
-    write_status "$id" "stopped" ""
-    log "${C_G}[✓]${C_END} $name 已停止（关键字匹配）"
-    return 0
+  mainfile=$(echo "$cmd" | sed -n 's/^[^ ]* \([^ ]*\.\(js\|sh\)\).*/\1/p')
+  if [ -n "$mainfile" ]; then
+    mainfile_expanded=$(eval echo "$mainfile")
+    pkill -f "$mainfile_expanded" 2>/dev/null
+  else
+    keyword=$(echo "$cmd" | awk '{print $1}')
+    pkill -f "$keyword" 2>/dev/null
   fi
-  log "${C_Y}[!]${C_END} $name 未在运行"
+  sleep 1
+  if is_running "$id"; then
+    log "${C_R}[x]${C_END} $name 停止失败，进程仍在运行"
+    return 1
+  fi
   write_status "$id" "stopped" ""
+  log "${C_G}[✓]${C_END} $name 已停止"
 }
 
 # ---------- 状态展示 ----------
@@ -282,7 +302,7 @@ tui_repair() {
   log "  1. 更新软件源: pkg update -y"
   log "  2. 安装 nodejs: pkg install -y nodejs-lts"
   log "  3. 安装网易云 API: npm install -g NeteaseCloudMusicApi --registry=https://registry.npmmirror.com"
-  log "  4. 安装 CORS 代理: npm install -g local-cors-proxy --registry=https://registry.npmmirror.com"
+  log "  4. 重建脚本文件: 重新复制 App「本地部署 → 部署引导」的部署命令执行即可（已内置脚本内容，无需下载）"
   printf "  立即执行? (y/N): "
   read -r yn
   case "$yn" in
@@ -290,8 +310,8 @@ tui_repair() {
       pkg update -y || true
       pkg install -y nodejs-lts || true
       npm install -g NeteaseCloudMusicApi --registry=https://registry.npmmirror.com || true
-      npm install -g local-cors-proxy --registry=https://registry.npmmirror.com || true
       log "${C_G}[✓]${C_END} 依赖部署完成"
+      log "${C_Y}[!]${C_END} 若 cors-proxy.js / xvshishi-services.sh 缺失，请重新复制 App 部署引导命令"
       ;;
     *) log "已取消";;
   esac
