@@ -340,6 +340,7 @@ const AppAssistant = {
   - 网易云音乐 API: 网易云登录代理/歌单同步/歌词搜索（端口 3000），健康检查 http://localhost:3000
   - CORS 跨域中转: 为 PWA/网页版打破跨域限制，代理任意 HTTP/HTTPS 请求（端口 3001），健康检查 http://localhost:3001/health
 - 部署方式: 设置 → 本地部署 → 「部署引导」按钮可一键复制部署命令（命令已内置全部脚本内容，直接在 Termux 里创建脚本文件，无需联网下载），复制到 Termux 执行即可
+- 随时唤出: 部署完成后，退出 Termux 再进入时直接输入 xvshishi 即可唤出脚本交互页面
 - 部署完成后: 网易云登录弹窗的 API 地址填 http://localhost:3000；网页版可用 CORS 中转 http://localhost:3001`
 
   // ===== 关于本机知识（写入小助手知识库）=====

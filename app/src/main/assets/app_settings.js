@@ -392,7 +392,12 @@ async function loadAccountSettingsInfo() {
     const user = session.user;
     emailEl.innerText = user.email || "无";
     
-    const cachedPass = localStorage.getItem("cached_user_password") || "******";
+    // 密码缓存为加密存储（app_auth.js 写入时加密）；此处解密显示，兼容旧版明文缓存
+    const rawCachedPass = localStorage.getItem("cached_user_password");
+    let cachedPass = "******";
+    if (rawCachedPass) {
+      cachedPass = (window.xvshishiCrypto && window.xvshishiCrypto.decrypt(rawCachedPass)) || rawCachedPass;
+    }
     passEl.innerText = cachedPass;
 
     const { data: devices, error: devErr } = await supabaseClient
@@ -564,6 +569,11 @@ document.getElementById("btn-save-preset").onclick = async () => {
     return;
   }
   
+  // URL 禁止列表拦截：命中则弹窗卡片并中止保存
+  if (url && window.urlBan && !window.urlBan.guard(url)) {
+    return;
+  }
+  
   const presetData = { name, protocol, url, key, model, temperature };
   
   if (idVal) {
@@ -612,6 +622,11 @@ document.getElementById("btn-fetch-models").onclick = async () => {
   
   if (!url) {
     alert("请先填写 API 终结点 URL");
+    return;
+  }
+  
+  // URL 禁止列表拦截
+  if (window.urlBan && !window.urlBan.guard(url)) {
     return;
   }
   
@@ -666,6 +681,11 @@ document.getElementById("btn-test-api").onclick = async () => {
   
   if (!url) {
     alert("请先填写 API 终结点 URL");
+    return;
+  }
+  
+  // URL 禁止列表拦截
+  if (window.urlBan && !window.urlBan.guard(url)) {
     return;
   }
   

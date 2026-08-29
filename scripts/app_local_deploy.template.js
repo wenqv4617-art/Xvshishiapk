@@ -61,6 +61,7 @@
   // ============ 内置脚本文件内容（由 scripts/sync-embedded-assets.js 同步，勿手改）============
   var CORS_PROXY_SOURCE = `__CORS_PROXY_SOURCE__`;
   var SERVICES_MANAGER_SOURCE = `__SERVICES_MANAGER_SOURCE__`;
+  var XSHISHI_LAUNCHER_SOURCE = `__XSHISHI_LAUNCHER_SOURCE__`;
 
   var BUILTIN_SCRIPTS = [
     { id: "ncm-api", name: "网易云音乐 API", desc: "网易云登录代理 / 歌单同步 / 歌词搜索（端口 3000）", port: 3000, healthUrl: "http://localhost:3000/search?keywords=test&limit=1", termuxCmd: "NeteaseCloudMusicApi -p 3000", fileContent: "", isBuiltin: true },
@@ -341,6 +342,11 @@
       L.push("cat > ~/.xvshishi/xvshishi-services.sh <<'XSH_EOF'");
       L.push(SERVICES_MANAGER_SOURCE.replace(/\n$/, ""));
       L.push("XSH_EOF");
+      L.push("mkdir -p $PREFIX/bin");
+      L.push("cat > $PREFIX/bin/xvshishi <<'XSH_EOF'");
+      L.push(XSHISHI_LAUNCHER_SOURCE.replace(/\n$/, ""));
+      L.push("XSH_EOF");
+      L.push("chmod +x $PREFIX/bin/xvshishi");
       L.push("chmod +x ~/.xvshishi/xvshishi-services.sh");
       L.push("pkg update -y");
       L.push("pkg install -y nodejs-lts");
@@ -356,10 +362,11 @@
 
       var steps = [
         { title: "第 1 步：安装 Termux", desc: "务必用 F-Droid 版（Play 版已停更）：https://f-droid.org/packages/com.termux/", cmd: "" },
-        { title: "第 2 步：一键部署", desc: "复制下面整条命令到 Termux 执行。命令已内置全部脚本内容，会自动创建 CORS 中转脚本与服务管理器、安装依赖并进入服务管理器，全程无需联网下载：", cmd: this.buildDeployCommand() },
+        { title: "第 2 步：一键部署", desc: "复制下面整条命令到 Termux 执行。命令已内置全部脚本内容，会自动创建 CORS 中转脚本、服务管理器与唤出命令 xvshishi，并安装依赖、进入服务管理器，全程无需联网下载：", cmd: this.buildDeployCommand() },
         { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy" },
-        { title: "第 4 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
-        { title: "第 5 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填（网页版跨域中转为 3001 端口）：", cmd: "http://localhost:3000" }
+        { title: "第 4 步：随时唤出脚本页面", desc: "退出 Termux 后再进入时，直接输入下面的命令即可再次进入脚本交互页面：", cmd: "xvshishi" },
+        { title: "第 5 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
+        { title: "第 6 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填（网页版跨域中转为 3001 端口）：", cmd: "http://localhost:3000" }
       ];
 
       var html = '<div style="margin-bottom:12px;">' +

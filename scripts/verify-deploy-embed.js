@@ -27,7 +27,8 @@ for (const f of ['app/src/main/assets/app_local_deploy.js', 'app/src/main/assets
   };
   const cors = readf('termux/cors-proxy.js');
   const svc = readf('termux/xvshishi-services.sh');
-  if (extract('CORS_PROXY_SOURCE') === cors && extract('SERVICES_MANAGER_SOURCE') === svc) {
+  const launcher = readf('termux/xvshishi');
+  if (extract('CORS_PROXY_SOURCE') === cors && extract('SERVICES_MANAGER_SOURCE') === svc && extract('XSHISHI_LAUNCHER_SOURCE') === launcher) {
     ok('app_local_deploy.js 内嵌常量与 termux/ 一致');
   } else {
     fail('app_local_deploy.js 内嵌常量与 termux/ 不一致，请运行 node scripts/sync-embedded-assets.js');
@@ -48,6 +49,8 @@ for (const f of ['app/src/main/assets/app_local_deploy.js', 'app/src/main/assets
   else fail('termux-ncm-api.sh 内嵌 cors-proxy.js 不一致');
   if (heredoc('XSH_SVC_EOF') === readf('termux/xvshishi-services.sh')) ok('termux-ncm-api.sh 内嵌 xvshishi-services.sh 一致');
   else fail('termux-ncm-api.sh 内嵌 xvshishi-services.sh 不一致');
+  if (heredoc('XSH_LAUNCHER_EOF') === readf('termux/xvshishi')) ok('termux-ncm-api.sh 内嵌 xvshishi 唤出命令一致');
+  else fail('termux-ncm-api.sh 内嵌 xvshishi 唤出命令不一致');
 }
 
 // 4. 残留下载地址
@@ -59,7 +62,7 @@ for (const f of ['app/src/main/assets/app_local_deploy.js', 'app/src/main/assets
 }
 
 // 5. 行尾一致性
-for (const f of ['termux/cors-proxy.js', 'termux/xvshishi-services.sh', 'termux-ncm-api.sh']) {
+for (const f of ['termux/cors-proxy.js', 'termux/xvshishi-services.sh', 'termux/xvshishi', 'termux-ncm-api.sh']) {
   if (readf(f).includes('\r')) fail(f + ' 仍有 CRLF');
   else ok(f + ' 为 LF 行尾');
 }

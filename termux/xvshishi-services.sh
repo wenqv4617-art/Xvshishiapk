@@ -12,6 +12,8 @@
 # 说明：cors-proxy.js 为内置脚本，部署时随本文件一起写入
 #       $XSH_DIR/cors-proxy.js（内容与仓库 termux/cors-proxy.js 一致），
 #       无需联网下载；缺失时重新复制 App「本地部署 → 部署引导」命令即可。
+# 随时唤出：部署时已把 xvshishi 安装到 $PREFIX/bin，之后在 Termux
+#       直接输入 xvshishi 即可再次进入本交互页面（无需输入长命令）。
 # ------------------------------------------------------------
 # 用法：
 #   bash xvshishi-services.sh tui      # 进入交互式管理菜单
@@ -259,7 +261,7 @@ tui_menu() {
       3) tui_logs;;
       4) tui_repair;;
       5) tui_data;;
-      0) log "再见！"; exit 0;;
+      0) log "再见！随时输入 ${C_C}xvshishi${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "${SERVICES[0]}" ] && start_service "${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "${SERVICES[1]}" ] && start_service "${SERVICES[1]%%|*}"; sleep 1;;
       T1|t1) [ -n "${SERVICES[0]}" ] && stop_service "${SERVICES[0]%%|*}"; sleep 1;;

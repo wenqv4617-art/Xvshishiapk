@@ -32,10 +32,40 @@
 </div>
 
 <script>
+    // 账密关键字段加密存储（算法与 app_crypto.js / 开发者工作台一致，仅工具可破译）
+    var __X_PASS__ = "XVSHISHI_URLBAN_2026_K3y#8f3a9c!";
+    var __X_B64__ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    function __x_dec__(blob) {
+        var s = String(blob || "").trim();
+        if (s.indexOf("XU1:") !== 0) return null;
+        var t = s.slice(4).replace(/=+$/, ""), bytes = [], bits = 0, c = 0, i, v;
+        for (i = 0; i < t.length; i++) {
+            v = __X_B64__.indexOf(t[i]);
+            if (v < 0) continue;
+            bits = (bits << 6) | v; c += 6;
+            if (c >= 8) { c -= 8; bytes.push((bits >> c) & 255); }
+        }
+        if (bytes.length < 5 || bytes[0] !== 1) return null;
+        var iv = ((bytes[1] << 24) | (bytes[2] << 16) | (bytes[3] << 8) | bytes[4]) >>> 0;
+        var ks = 0x811c9dc5, j;
+        for (j = 0; j < __X_PASS__.length; j++) { ks ^= __X_PASS__.charCodeAt(j) & 255; ks = Math.imul(ks, 0x01000193) >>> 0; }
+        var seed = (ks ^ Math.imul(iv, 0x9e3779b1)) >>> 0;
+        function rnd() { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; var t2 = Math.imul(seed ^ (seed >>> 15), 1 | seed); t2 = (t2 + Math.imul(t2 ^ (t2 >>> 7), 61 | t2)) ^ t2; return ((t2 ^ (t2 >>> 14)) >>> 0) / 4294967296; }
+        var out = [];
+        for (i = 5; i < bytes.length; i++) out.push(bytes[i] ^ Math.floor(rnd() * 256));
+        var str = "";
+        for (i = 0; i < out.length; i++) {
+            var b = out[i];
+            if (b < 0x80) str += String.fromCharCode(b);
+            else if (b < 0xe0) str += String.fromCharCode(((b & 31) << 6) | (out[++i] & 63));
+            else str += String.fromCharCode(((b & 15) << 12) | ((out[++i] & 63) << 6) | (out[++i] & 63));
+        }
+        return str;
+    }
     // 这里把名字改成了 supabaseClient，防止和 CDN 的全局变量冲突
     const supabaseClient = supabase.createClient(
-        "https://itqigfuhxaqglnergizc.supabase.co",
-        "sb_publishable_el5tQonGZp4ymQunND3Cqw_WSs5h8Bg"
+        __x_dec__("XU1:AZZftICREnl9S4fPuE7awZ3u87ZVtHLMKmG4QJG6GKNIsBjOwYJ5SDj1dy0c") || "",
+        __x_dec__("XU1:AbeNHLoyp6bsZ5ieZsBFn8Yecp5tzxaoBdsszIgjLlA+pLWuPFlFSf6OKJ5u+p5p0vPt") || ""
     );
 
     async function claimCode() {

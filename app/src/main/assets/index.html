@@ -85,6 +85,8 @@
     // 由于 CDN 导出的默认对象名为 supabase，为了防止命名空间冲突，重命名为全局变量
     window.libSupabase = supabase;
   </script>
+  <!-- 全局加密/解密共享模块（登录账密字段与 URL 禁止列表共用；须在 app_auth.js / app_url_ban.js 之前加载） -->
+  <script src="./app_crypto.js"></script>
   <script src="./app_auth.js" defer></script>
   <script src="./app_local_deploy.js" defer></script>
 </head>
@@ -5945,6 +5947,9 @@
       </div> <!-- phone-container 结束 -->
 
   <script src="db.js"></script>
+  <!-- URL 禁止列表（加密，勿手改；由 scripts/urlban-tool.js 生成/维护）与前端拦截模块 -->
+  <script src="url_ban_list.js"></script>
+  <script src="app_url_ban.js"></script>
   <script src="app_prompts.js"></script>
   <script src="app_desktop.js"></script>
   <script src="app_settings.js"></script>

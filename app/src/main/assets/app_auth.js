@@ -2,9 +2,14 @@
  * app_auth.js - Supabase 账号管理、无感持久化与 2 台设备 Limit-2 FIFO 挤占中枢
  */
 
-// 1. 初始化 Supabase 客户端
-const SUPABASE_URL = "https://itqigfuhxaqglnergizc.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_el5tQonGZp4ymQunND3Cqw_WSs5h8Bg";
+// 1. 初始化 Supabase 客户端（关键字段整体加密，文件内不出现明文；
+//    运行时由 app_crypto.js 解密；如需更换请用 scripts/urlban-tool.js 或
+//    开发者工作台 tools/dev-workbench/index.html 生成新密文替换下方常量）
+const SUPABASE_URL = window.xvshishiCrypto ? window.xvshishiCrypto.decrypt("XU1:AZZftICREnl9S4fPuE7awZ3u87ZVtHLMKmG4QJG6GKNIsBjOwYJ5SDj1dy0c") : "";
+const SUPABASE_ANON_KEY = window.xvshishiCrypto ? window.xvshishiCrypto.decrypt("XU1:AbeNHLoyp6bsZ5ieZsBFn8Yecp5tzxaoBdsszIgjLlA+pLWuPFlFSf6OKJ5u+p5p0vPt") : "";
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error("[auth] 账密字段解密失败：app_crypto.js 未加载或口令不匹配，请检查脚本顺序与密钥配置");
+}
 const supabaseClient = libSupabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // 获取或在当前浏览器本地持久化生成唯一的设备客户端 Token
@@ -190,9 +195,10 @@ async function handleUserLogin(email, password) {
 
     if (error) throw error;
 
-    // 记录永久登录与密码缓存
+    // 记录永久登录与密码缓存（密码缓存加密后落盘，读取处见 app_settings.js）
     localStorage.setItem("auth_logged_in", "true");
-    localStorage.setItem("cached_user_password", password);
+    localStorage.setItem("cached_user_password",
+      (window.xvshishiCrypto && window.xvshishiCrypto.encrypt(password)) || password);
 
     showToast("登录成功！已成功解锁并建立安全神经连接");
     hideLoginScreen();

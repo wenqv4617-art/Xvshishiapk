@@ -246,6 +246,10 @@
         showToast("请先填写接口 URL 与 API Key");
         return;
       }
+      // URL 禁止列表拦截
+      if (window.urlBan && !window.urlBan.guard(baseUrl)) {
+        return;
+      }
       const sel = document.getElementById("vm-model-select");
       if (sel) sel.innerHTML = `<option value="">拉取中…</option>`;
       try {
@@ -288,6 +292,10 @@
         showToast("请先填写接口 URL 与 API Key");
         return;
       }
+      // URL 禁止列表拦截
+      if (window.urlBan && !window.urlBan.guard(baseUrl)) {
+        return;
+      }
       if (!model) {
         showToast("请先拉取并选择一个模型");
         return;
@@ -321,6 +329,10 @@
       cfg.apiUrl = document.getElementById("vm-api-url").value.trim();
       cfg.apiKey = document.getElementById("vm-api-key").value.trim();
       cfg.model = document.getElementById("vm-model-select").value;
+      // URL 禁止列表拦截
+      if (cfg.apiUrl && window.urlBan && !window.urlBan.guard(cfg.apiUrl)) {
+        return;
+      }
       saveConfig(cfg);
       // 同步来源下拉
       const sourceSel = document.getElementById("vm-source-select");

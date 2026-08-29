@@ -145,6 +145,8 @@ server.listen(PORT, '0.0.0.0', () => {
 # 说明：cors-proxy.js 为内置脚本，部署时随本文件一起写入
 #       $XSH_DIR/cors-proxy.js（内容与仓库 termux/cors-proxy.js 一致），
 #       无需联网下载；缺失时重新复制 App「本地部署 → 部署引导」命令即可。
+# 随时唤出：部署时已把 xvshishi 安装到 $PREFIX/bin，之后在 Termux
+#       直接输入 xvshishi 即可再次进入本交互页面（无需输入长命令）。
 # ------------------------------------------------------------
 # 用法：
 #   bash xvshishi-services.sh tui      # 进入交互式管理菜单
@@ -392,7 +394,7 @@ tui_menu() {
       3) tui_logs;;
       4) tui_repair;;
       5) tui_data;;
-      0) log "再见！"; exit 0;;
+      0) log "再见！随时输入 \${C_C}xvshishi\${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "\${SERVICES[0]}" ] && start_service "\${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "\${SERVICES[1]}" ] && start_service "\${SERVICES[1]%%|*}"; sleep 1;;
       T1|t1) [ -n "\${SERVICES[0]}" ] && stop_service "\${SERVICES[0]%%|*}"; sleep 1;;
@@ -470,6 +472,17 @@ case "\${1:-tui}" in
   tui)     tui_menu ;;
   *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]}";;
 esac
+`;
+  var XSHISHI_LAUNCHER_SOURCE = `#!/data/data/com.termux/files/usr/bin/bash
+# ============================================================
+# 叙事诗小手机 - 脚本交互页面唤出命令
+# ------------------------------------------------------------
+# 部署（一键部署命令）时本文件会被安装到 $PREFIX/bin/xvshishi，
+# 之后在 Termux 任意位置直接输入：
+#     xvshishi
+# 即可立刻唤出脚本交互页面（服务管理器 TUI），无需再输入长命令。
+# ============================================================
+exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
 `;
 
   var BUILTIN_SCRIPTS = [
@@ -751,6 +764,11 @@ esac
       L.push("cat > ~/.xvshishi/xvshishi-services.sh <<'XSH_EOF'");
       L.push(SERVICES_MANAGER_SOURCE.replace(/\n$/, ""));
       L.push("XSH_EOF");
+      L.push("mkdir -p $PREFIX/bin");
+      L.push("cat > $PREFIX/bin/xvshishi <<'XSH_EOF'");
+      L.push(XSHISHI_LAUNCHER_SOURCE.replace(/\n$/, ""));
+      L.push("XSH_EOF");
+      L.push("chmod +x $PREFIX/bin/xvshishi");
       L.push("chmod +x ~/.xvshishi/xvshishi-services.sh");
       L.push("pkg update -y");
       L.push("pkg install -y nodejs-lts");
@@ -766,10 +784,11 @@ esac
 
       var steps = [
         { title: "第 1 步：安装 Termux", desc: "务必用 F-Droid 版（Play 版已停更）：https://f-droid.org/packages/com.termux/", cmd: "" },
-        { title: "第 2 步：一键部署", desc: "复制下面整条命令到 Termux 执行。命令已内置全部脚本内容，会自动创建 CORS 中转脚本与服务管理器、安装依赖并进入服务管理器，全程无需联网下载：", cmd: this.buildDeployCommand() },
+        { title: "第 2 步：一键部署", desc: "复制下面整条命令到 Termux 执行。命令已内置全部脚本内容，会自动创建 CORS 中转脚本、服务管理器与唤出命令 xvshishi，并安装依赖、进入服务管理器，全程无需联网下载：", cmd: this.buildDeployCommand() },
         { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy" },
-        { title: "第 4 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
-        { title: "第 5 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填（网页版跨域中转为 3001 端口）：", cmd: "http://localhost:3000" }
+        { title: "第 4 步：随时唤出脚本页面", desc: "退出 Termux 后再进入时，直接输入下面的命令即可再次进入脚本交互页面：", cmd: "xvshishi" },
+        { title: "第 5 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
+        { title: "第 6 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填（网页版跨域中转为 3001 端口）：", cmd: "http://localhost:3000" }
       ];
 
       var html = '<div style="margin-bottom:12px;">' +
