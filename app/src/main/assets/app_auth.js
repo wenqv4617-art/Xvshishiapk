@@ -3,7 +3,7 @@
  */
 
 // 1. 初始化 Supabase 客户端（关键字段整体加密，文件内不出现明文；
-//    运行时由 app_crypto.js 解密；如需更换请用 scripts/urlban-tool.js 或
+//    运行时由 app_crypto.js 解密；如需更换请用 tools/urlban-tool.js 或
 //    开发者工作台 tools/dev-workbench/index.html 生成新密文替换下方常量）
 const SUPABASE_URL = window.xvshishiCrypto ? window.xvshishiCrypto.decrypt("XU1:AZZftICREnl9S4fPuE7awZ3u87ZVtHLMKmG4QJG6GKNIsBjOwYJ5SDj1dy0c") : "";
 const SUPABASE_ANON_KEY = window.xvshishiCrypto ? window.xvshishiCrypto.decrypt("XU1:AbeNHLoyp6bsZ5ieZsBFn8Yecp5tzxaoBdsszIgjLlA+pLWuPFlFSf6OKJ5u+p5p0vPt") : "";

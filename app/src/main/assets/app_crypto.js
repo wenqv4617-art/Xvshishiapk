@@ -1,5 +1,5 @@
 /**
- * app_crypto.js - 全局加密/解密共享模块（与 scripts/urlban-tool.js 算法完全一致）
+ * app_crypto.js - 全局加密/解密共享模块（与 tools/urlban-tool.js 算法完全一致）
  * ------------------------------------------------------------
  * 用途：
  *   1. URL 禁止列表（app_url_ban.js）解密
@@ -13,7 +13,7 @@
  *   种子 = FNV-1a32(口令) ^ FNV-1a32(明文) * 黄金比例混合
  *   同一明文 + 同一口令 → 同一密文（确定性强，便于核对去重）
  *
- * 注意：口令 PASSPHRASE 是唯一秘密，必须与 scripts/urlban-tool.js
+ * 注意：口令 PASSPHRASE 是唯一秘密，必须与 tools/urlban-tool.js
  *       及 tools/dev-workbench/index.html 保持一致；修改口令后需用工具
  *       重新生成 url_ban_list.js 与登录字段密文。
  */

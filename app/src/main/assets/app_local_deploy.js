@@ -4,10 +4,10 @@
  * 部署引导命令内置全部脚本内容（heredoc 直接在 Termux 创建文件，无需联网下载）；
  * 每个脚本提供「查看 / 编辑 / 删除」，查看可展开面板显示详情与脚本源码。
  *
- * ⚠️ 本文件由 scripts/sync-embedded-assets.js 生成：
+ * ⚠️ 本文件由 tools/sync-embedded-assets.js 生成：
  *    - 修改 termux/cors-proxy.js 或 termux/xvshishi-services.sh 后，运行
- *      node scripts/sync-embedded-assets.js 重新生成本文件；
- *    - 只允许编辑 scripts/app_local_deploy.template.js（文件内两处内嵌常量占位符
+ *      node tools/sync-embedded-assets.js 重新生成本文件；
+ *    - 只允许编辑 tools/app_local_deploy.template.js（文件内两处内嵌常量占位符
  *      会被自动替换为 termux/ 目录下的脚本内容）。
  */
 (function () {
@@ -58,7 +58,7 @@
     }
   }
 
-  // ============ 内置脚本文件内容（由 scripts/sync-embedded-assets.js 同步，勿手改）============
+  // ============ 内置脚本文件内容（由 tools/sync-embedded-assets.js 同步，勿手改）============
   var CORS_PROXY_SOURCE = `// 叙事诗小手机 - 内置 CORS 跨域中转代理（端口 3001）
 // 用途：为 PWA/网页版打破跨域限制，代理任意 HTTP/HTTPS 请求
 // 启动：node cors-proxy.js
