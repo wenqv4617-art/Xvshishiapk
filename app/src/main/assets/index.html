@@ -1,12 +1,12 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <!-- ★ 密钥文件完整性校验（防篡改瘫痪）：由 tools/混淆工具/run-obfuscate.js 生成哈希，
-       app_crypto.js / invite.html 被删除或修改时整个应用停止运行 -->
+  <!-- ★ 密钥文件完整性校验（仅 app_crypto.js）：由 tools/混淆工具/run-obfuscate.js 生成哈希；
+       优先走 Kotlin 原生读取（APK 可靠），失败时展示诊断信息供排查。
+       仅密钥文件参与防篡改；其他文件不混淆、不校验，工作台可自由修改。 -->
   <script>
   window.__APP_INTEGRITY_EXPECTED__ = {
-    'app_crypto.js': 'dae057b29029b6b833978c008e177dc1795826ca74687ab06b593d619a26197a',
-    'invite.html': '2a14863375bd7d5adc4ba895881fa10ef3983c3605d969d5c955b9c04f13c4b0'
+    'app_crypto.js': 'dae057b29029b6b833978c008e177dc1795826ca74687ab06b593d619a26197a'
   };
   (function () {
     function sha256(bytes) {
@@ -50,18 +50,6 @@
       for (i = 0; i < 8; i++) hex += ('00000000' + H[i].toString(16)).slice(-8);
       return hex;
     }
-    function fetchBytes(url) {
-      try {
-        var xhr = new XMLHttpRequest();
-        xhr.open('GET', url, false);
-        xhr.responseType = 'arraybuffer';
-        xhr.send(null);
-        if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 0) {
-          if (xhr.response) return new Uint8Array(xhr.response);
-        }
-        return null;
-      } catch (e) { return null; }
-    }
     // 换行归一化：统一按 LF 计算哈希，避免 git/打包环境 CRLF/LF 差异导致误判篡改
     function normalizeCrlf(bytes) {
       var out = [];
@@ -71,18 +59,65 @@
       }
       return out;
     }
-    var ok = true;
-    var expected = window.__APP_INTEGRITY_EXPECTED__;
-    for (var f in expected) {
-      var bytes = fetchBytes('./' + f);
-      if (!bytes || sha256(normalizeCrlf(bytes)) !== expected[f]) { ok = false; break; }
+    function verifyIntegrity() {
+      var expected = window.__APP_INTEGRITY_EXPECTED__;
+      var files = Object.keys(expected);
+      var allOk = true;
+      var diag = {};
+      for (var fi = 0; fi < files.length; fi++) {
+        var f = files[fi];
+        var d = { file: f, expected: expected[f], actual: null, method: null, bytes: null, error: null };
+        // 1) Kotlin 原生读取（APK 环境最可靠，直接读打包后的真实字节）
+        if (window.AndroidMCP && typeof window.AndroidMCP.integrityGetFileHash === 'function') {
+          try {
+            var raw = window.AndroidMCP.integrityGetFileHash(f);
+            var res = JSON.parse(raw);
+            d.method = 'kotlin';
+            if (res && res.ok) { d.actual = res.sha256; d.bytes = res.bytes; }
+            else d.error = (res && res.error) || '读取失败';
+          } catch (e) { d.method = 'kotlin'; d.error = e.message; }
+        }
+        // 2) 降级：同步 XHR 读取（PWA 网页环境）
+        if (!d.actual) {
+          try {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', './' + f, false);
+            xhr.responseType = 'arraybuffer';
+            xhr.send(null);
+            if ((xhr.status >= 200 && xhr.status < 300) || xhr.status === 0) {
+              if (xhr.response) {
+                d.method = d.method ? (d.method + '->xhr') : 'xhr';
+                d.bytes = xhr.response.byteLength;
+                d.actual = sha256(normalizeCrlf(new Uint8Array(xhr.response)));
+              } else d.error = 'XHR 无响应内容';
+            } else d.error = 'XHR status ' + xhr.status;
+          } catch (e) { d.error = (d.error ? d.error + '; ' : '') + 'XHR: ' + e.message; }
+        }
+        if (!d.actual || d.actual !== d.expected) allOk = false;
+        diag = d;
+      }
+      window.__APP_INTEGRITY_DIAG__ = diag;
+      window.__APP_INTEGRITY_OK__ = allOk;
+      if (!allOk) {
+        var err = (diag.error ? String(diag.error).replace(/</g, '&lt;') : '无');
+        document.open();
+        document.write('<div style="position:fixed;top:0;left:0;right:0;bottom:0;background:#0f172a;color:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:left;padding:24px;font-family:system-ui;z-index:999999;box-sizing:border-box;overflow-y:auto;">' +
+          '<svg viewBox="0 0 24 24" width="40" height="40" fill="none" stroke="#f59e0b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:14px;"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>' +
+          '<div style="font-size:17px;font-weight:700;margin-bottom:10px;">密钥模块校验失败</div>' +
+          '<div style="font-size:12px;color:#94a3b8;line-height:1.7;margin-bottom:16px;">app_crypto.js 未能通过完整性校验，为保护账号与数据安全已停止运行。<br>请截图本页诊断信息发给开发者排查。</div>' +
+          '<div style="font-size:11px;color:#64748b;background:#1e293b;border:1px solid #334155;border-radius:10px;padding:12px;line-height:1.8;max-width:340px;width:100%;box-sizing:border-box;word-break:break-all;">' +
+            '文件: ' + String(diag.file || '') + '<br>' +
+            '读取方式: ' + String(diag.method || '无') + '<br>' +
+            '文件大小: ' + (diag.bytes == null ? '未知' : diag.bytes) + ' 字节<br>' +
+            '期望哈希: ' + String(diag.expected || '') + '<br>' +
+            '实际哈希: ' + String(diag.actual || '无') + '<br>' +
+            '错误: ' + err +
+          '</div>' +
+        '</div>');
+        document.close();
+      }
     }
-    window.__APP_INTEGRITY_OK__ = ok;
-    if (!ok) {
-      document.open();
-      document.write('<div style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:#0f172a;color:#f8fafc;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;font-family:system-ui;z-index:999999;"><div style="font-size:44px;margin-bottom:14px;">🚫</div><div style="font-size:17px;font-weight:700;margin-bottom:10px;">应用完整性校验失败</div><div style="font-size:12px;color:#94a3b8;line-height:1.7;">核心加密模块已被删除或修改，为保护账号与数据安全，应用已停止运行。<br>请重新安装应用或恢复原始文件后再试。</div></div>');
-      document.close();
-    }
+    verifyIntegrity();
   })();
   </script>
   <meta charset="UTF-8">

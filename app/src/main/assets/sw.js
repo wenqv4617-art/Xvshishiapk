@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v34'; // v34：防篡改哈希按 LF 归一化修复（v32/v33 的 index.html 哈希在真机 CRLF/LF 下误判瘫痪，必须换缓存）
+const CACHE_NAME = 'story-phone-v35'; // v35：防篡改机制重设计——仅 app_crypto.js 参与校验，Kotlin 原生读取+诊断卡片
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

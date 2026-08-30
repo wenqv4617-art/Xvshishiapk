@@ -1195,6 +1195,40 @@ class AndroidMcp private constructor(private val context: Context) {
 
     @JavascriptInterface
     fun wbListPublicDir(path: String): String = workbenchFs.listPublicDir(path)
+
+    // 10.1 完整性校验：读取 assets 文件并返回 SHA-256（APK 环境可靠读取，供前端防篡改校验）
+    @JavascriptInterface
+    fun integrityGetFileHash(assetName: String): String {
+        return try {
+            val stream = context.assets.open(assetName)
+            val raw = stream.readBytes()
+            stream.close()
+            // CRLF -> LF 归一化（与前端校验脚本语义一致，避免换行符差异误判）
+            val out = java.io.ByteArrayOutputStream()
+            var i = 0
+            while (i < raw.size) {
+                if (raw[i] == 13.toByte() && i + 1 < raw.size && raw[i + 1] == 10.toByte()) i++
+                else out.write(raw[i].toInt())
+                i++
+            }
+            val bytes = out.toByteArray()
+            val md = java.security.MessageDigest.getInstance("SHA-256")
+            val hex = md.digest(bytes).joinToString("") { "%02x".format(it) }
+            JSONObject().apply {
+                put("ok", true)
+                put("file", assetName)
+                put("bytes", bytes.size)
+                put("sha256", hex)
+            }.toString()
+        } catch (e: Exception) {
+            JSONObject().apply {
+                put("ok", false)
+                put("file", assetName)
+                put("error", e.message ?: "读取失败")
+            }.toString()
+        }
+    }
+
     // 9.1 跳转到系统"通知使用权"设置页，授权后可读取其他 App 的媒体会话（敏感权限，用户主动开启）
     @JavascriptInterface
     fun requestNotificationListenerPermission() {
