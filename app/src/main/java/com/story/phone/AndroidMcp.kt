@@ -1196,6 +1196,31 @@ class AndroidMcp private constructor(private val context: Context) {
     @JavascriptInterface
     fun wbListPublicDir(path: String): String = workbenchFs.listPublicDir(path)
 
+    /** 工作区是否位于公共 Download（前端显示路径/引导授权用） */
+    @JavascriptInterface
+    fun wbIsPublicWorkspace(): Boolean = workbenchFs.isPublicWorkspace()
+
+    /** 引导用户开启「所有文件访问」权限（工作区位于 Download 需要；Android 11+） */
+    @JavascriptInterface
+    fun wbRequestStoragePermission() {
+        try {
+            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                data = android.net.Uri.parse("package:" + context.packageName)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            try {
+                val fallback = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallback)
+            } catch (e2: Exception) {
+                e2.printStackTrace()
+            }
+        }
+    }
+
     // 10.1 完整性校验：读取 assets 文件并返回 SHA-256（APK 环境可靠读取，供前端防篡改校验）
     @JavascriptInterface
     fun integrityGetFileHash(assetName: String): String {

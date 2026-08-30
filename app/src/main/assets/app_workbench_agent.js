@@ -99,10 +99,38 @@
     var el = document.getElementById('wb-msgs');
     if (!el) return null;
     if (role === 'user') {
+      var outer = document.createElement('div');
+      outer.style.cssText = 'align-self:flex-end;display:flex;flex-direction:column;align-items:flex-end;max-width:88%;';
       var wrap = document.createElement('div');
-      wrap.style.cssText = 'align-self:flex-end;background:#f4f1ec;color:#1c1917;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:84%;font-size:13.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;';
+      wrap.style.cssText = 'background:#f4f1ec;color:#1c1917;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:100%;font-size:13.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;';
       wrap.textContent = text || '';
-      el.appendChild(wrap);
+      outer.appendChild(wrap);
+      // 悬停操作条：复制 / 重新发送
+      var actions = document.createElement('div');
+      actions.style.cssText = 'display:none;align-items:center;gap:2px;margin-top:4px;';
+      actions.innerHTML =
+        '<button class="wb-msg-act" data-act="copy" style="border:none;background:none;color:#94a3b8;cursor:pointer;padding:4px;display:flex;align-items:center;gap:3px;font-size:10px;" title="复制">' + this.svg('<path d="M8 8h12v12H8z"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>', 11) + '复制</button>' +
+        '<button class="wb-msg-act" data-act="resend" style="border:none;background:none;color:#94a3b8;cursor:pointer;padding:4px;display:flex;align-items:center;gap:3px;font-size:10px;" title="重新发送">' + this.svg('<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>', 11) + '重新发送</button>';
+      outer.appendChild(actions);
+      el.appendChild(outer);
+      wrap.addEventListener('click', function () {
+        actions.style.display = actions.style.display === 'none' ? 'flex' : 'none';
+      });
+      var actBtns = actions.querySelectorAll('.wb-msg-act');
+      actBtns.forEach(function (b) {
+        var act = b.getAttribute('data-act');
+        b.onclick = function (ev) {
+          ev.stopPropagation();
+          if (act === 'copy') {
+            if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text || '');
+            else { try { var ta = document.createElement('textarea'); ta.value = text || ''; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); } catch (e) {} }
+            if (typeof showToast === 'function') showToast('已复制');
+          } else if (act === 'resend') {
+            var convId = self.state.activeConvId;
+            self.getConv(convId).then(function (conv) { if (conv && !self.state.sending) self.runAgent(conv, text || ''); });
+          }
+        };
+      });
       this.scrollToBottom();
       return { _el: wrap };
     }
@@ -217,6 +245,7 @@
     var aborted = false;
 
     // 无硬性轮数限制：agent 自主决定是否继续调用工具（仅保留 999 安全兜底防死循环）
+    var _lastChunk = 0;
     while (loops < 999 && !aborted) {
       loops++;
       var reply = '';
@@ -232,7 +261,29 @@
           ctrl.signal,
           function (delta, fullText) {
             reply = fullText;
-            if (bubble && bubble._el) bubble._el.textContent = wbStripToolTag(fullText) || '思考中…';
+            // ---- 流式实时渲染（Markdown + 思考中 + 工具调用占位） ----
+            if (!bubble || !bubble._el) return;
+            var s = String(fullText || '');
+            var toolAt = s.indexOf('[WB_TOOL:');
+            var thinkOpen = s.indexOf('<think') >= 0 && s.indexOf('</think>') < 0;
+            var now = Date.now();
+            if (now - _lastChunk < 60 && !thinkOpen) return; // 节流 60ms
+            _lastChunk = now;
+            if (thinkOpen) {
+              // 思考已开始（<think 出现但未闭合）：显示思考中
+              bubble._el.innerHTML = '<div style="display:flex;align-items:center;gap:6px;color:#94a3b8;font-size:12px;">' +
+                '<span style="width:10px;height:10px;border:1.5px solid #d97706;border-top-color:transparent;border-radius:50%;display:inline-block;animation:wbSpin 0.8s linear infinite;"></span>思考中…</div>';
+              return;
+            }
+            // 工具标签未闭合：正文只保留标签前内容，并显示"正在调用工具"占位
+            var bodyText = toolAt >= 0 ? s.slice(0, toolAt) : s;
+            var clean = wbStripToolTag(bodyText);
+            var html = self.renderMarkdown(clean);
+            if (toolAt >= 0) {
+              html += '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#6366f1;font-size:11px;font-weight:600;">' +
+                '<span style="width:10px;height:10px;border:1.5px solid #6366f1;border-top-color:transparent;border-radius:50%;display:inline-block;animation:wbSpin 0.8s linear infinite;"></span>正在调用工具…</div>';
+            }
+            bubble._el.innerHTML = html || '';
           },
           function (u) { usage = u; }
         );
@@ -249,7 +300,12 @@
 
       if (usage && usage.prompt_tokens) turnTokensIn += usage.prompt_tokens;
       if (usage && usage.completion_tokens) turnTokensOut += usage.completion_tokens;
-      if (usage && usage.prompt_cache_hit_tokens) turnCache += usage.prompt_cache_hit_tokens;
+      // 兼容多种 usage 格式：Anthropic prompt_cache_hit_tokens / OpenAI prompt_tokens_details.cached_tokens
+      if (usage) {
+        var hitTk = usage.prompt_cache_hit_tokens;
+        if (!hitTk && usage.prompt_tokens_details && usage.prompt_tokens_details.cached_tokens) hitTk = usage.prompt_tokens_details.cached_tokens;
+        if (hitTk) turnCache += hitTk;
+      }
 
       await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
 
@@ -273,15 +329,17 @@
       var resultText = JSON.stringify(result);
       if (resultText.length > 6000) resultText = resultText.slice(0, 6000) + '...(截断)';
       await self.addMsg({ convId: conv.id, seq: seq++, role: 'tool', content: resultText, createdAt: Date.now() });
+      // 把"已调用 N 步"提示并入 user 消息（保持 system 前缀稳定，利于缓存命中）
       messages = messages.concat([
         { role: 'assistant', content: reply },
-        { role: 'user', content: '[工具结果] ' + resultText }
+        { role: 'user', content: '[工具结果] ' + resultText + '（本轮已调用 ' + steps + ' 步工具。任务完成请直接输出结论，不要继续调用工具）' }
       ]);
-      // 每轮把"已调用 N 步"注入上下文，让 agent 自己判断是否继续
-      messages.push({ role: 'system', content: '（本轮已调用 ' + steps + ' 步工具。任务完成请直接输出结论，不要继续调用工具）' });
       if (messages.length > 40) {
+        // 保留最前面的 system 消息（含 Agent/Skills 注入，前缀稳定 → 缓存命中率高）
+        var keepSys = [];
+        while (messages.length && messages[0].role === 'system') { keepSys.push(messages.shift()); }
         messages = messages.slice(-30);
-        messages.unshift({ role: 'system', content: '（上下文已裁剪，保留最近对话）' });
+        messages = keepSys.concat(messages);
       }
     }
 
@@ -437,7 +495,8 @@
       '<div id="wb-agent-list" style="display:flex;flex-direction:column;gap:8px;max-height:260px;overflow-y:auto;margin-bottom:10px;">加载中...</div>' +
       '<button id="wb-agent-add" style="width:100%;padding:9px;border:1.5px dashed #6366f1;border-radius:10px;background:#eef2ff;font-size:12px;font-weight:700;color:#4338ca;cursor:pointer;margin-bottom:10px;">+ 新建 Agent</button>' +
       '<button id="wb-agent-skills" style="width:100%;padding:9px;border:1.5px solid var(--border);border-radius:10px;background:#fff;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;margin-bottom:6px;">⚙ 管理 Skills</button>' +
-      '<button id="wb-agent-mcp" style="width:100%;padding:9px;border:1.5px solid var(--border);border-radius:10px;background:#fff;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">MCP 服务器配置</button>' +
+      '<button id="wb-agent-mcp" style="width:100%;padding:9px;border:1.5px solid var(--border);border-radius:10px;background:#fff;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;margin-bottom:6px;">MCP 服务器配置</button>' +
+      '<button id="wb-agent-redo" style="width:100%;padding:9px;border:1.5px solid #f59e0b;border-radius:10px;background:#fffbeb;font-size:12px;font-weight:700;color:#b45309;cursor:pointer;">↺ 重回本轮（重新执行上一条消息）</button>' +
       '<div style="display:flex;gap:8px;margin-top:12px;">' +
         '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">关闭</button>' +
       '</div>'
@@ -446,6 +505,21 @@
     dlg.card.querySelector('#wb-agent-add').onclick = function () { self.showAgentEditDialog(null, dlg); };
     dlg.card.querySelector('#wb-agent-skills').onclick = function () { self.showSkillManageDialog(dlg); };
     dlg.card.querySelector('#wb-agent-mcp').onclick = function () { dlg.close(); self.showMcpConfigDialog(); };
+    dlg.card.querySelector('#wb-agent-redo').onclick = function () {
+      if (self.state.sending) { if (typeof showToast === 'function') showToast('当前正在执行，请稍候'); return; }
+      var convId = self.state.activeConvId;
+      self.getConv(convId).then(function (conv) {
+        if (!conv) return;
+        self.msgs(conv.id).then(function (msgs) {
+          // 找最后一条 user 消息
+          var lastUser = null;
+          for (var i = msgs.length - 1; i >= 0; i--) { if (msgs[i].role === 'user') { lastUser = msgs[i].content; break; } }
+          if (!lastUser) { if (typeof showToast === 'function') showToast('暂无可重发的消息'); return; }
+          dlg.close();
+          self.runAgent(conv, lastUser);
+        });
+      });
+    };
     self._renderAgentList(dlg);
   };
 
@@ -846,7 +920,7 @@
     if (this._filePicker) this._filePicker.style.display = 'none';
   };
 
-  // ---- onSendChat 包装：解析 @ 引用文件，读取内容携带给 Agent ----
+  // ---- onSendChat 包装：解析 @ 引用文件——只传路径指导 agent 自行读/写，不把内容塞进上下文 ----
   var origOnSendChat = WB.onSendChat;
   WB.onSendChat = function () {
     var self = this;
@@ -855,36 +929,28 @@
     var text = input.value.trim();
     if (!text || this.state.sending) return;
     var convId = this.state.activeConvId;
-    var fileAttachments = [];
+    // 提取 @引用路径，仅告知 agent 路径，由 agent 决定读取还是修改（节省上下文、避免大文件塞入）
     var refRe = /@([^\s@]+)/g;
     var mm;
-    var replaced = text;
+    var refs = [];
     var used = {};
     while ((mm = refRe.exec(text)) !== null) {
       var refPath = mm[1].replace(/\/$/, '');
       if (used[refPath]) continue;
       used[refPath] = true;
-      if (this.fs && this.fs._guard && this.fs._guard()) {
-        var fr = this.fs.readFile(refPath);
-        if (fr && fr.ok && fr.content !== undefined) {
-          fileAttachments.push({ path: refPath, content: String(fr.content) });
-          replaced = replaced.replace('@' + mm[1], '[@' + refPath + ']');
-        }
-      }
+      refs.push(refPath);
     }
     input.value = '';
     this._resizeInput();
-    var finalText = replaced;
+    var finalText = text;
     var convIdNum = convId;
     this.getConv(convIdNum).then(function (conv) {
       if (!conv) return;
-      // 若携带文件，把文件内容作为附加上下文
-      if (fileAttachments.length) {
-        var attachText = '\n\n【用户通过 @ 引用的工作区文件内容】\n' +
-          fileAttachments.map(function (fa) {
-            return '--- 文件: ' + fa.path + ' ---\n' + fa.content.slice(0, 4000) + (fa.content.length > 4000 ? '\n...(截断)' : '');
-          }).join('\n\n');
-        finalText = finalText + attachText;
+      // 把 @路径 转成"引用指引"：告诉 agent 这些文件路径，让它按需自行 read_file / write_file
+      if (refs.length) {
+        finalText = finalText + '\n\n【工作区文件引用】以下路径是用户通过 @ 引用的工作区文件（相对工作区根）：\n' +
+          refs.map(function (rp) { return '- ' + rp; }).join('\n') +
+          '\n请根据需要自行调用 read_file 读取内容、或 write_file 修改它们，不要假设内容。';
       }
       self.runAgent(conv, finalText);
     });
@@ -975,6 +1041,82 @@
     };
   };
 })();
+
+// ============ 工作区存储权限引导（Download 工作区，Android 11+ 需「所有文件访问」） ============
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB) return;
+
+  /** 检查工作区是否位于公共 Download；未授权时弹窗引导去系统设置开启 */
+  WB.ensurePublicWorkspace = function (silent) {
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.wbIsPublicWorkspace === 'function') {
+        var isPub = !!window.AndroidMCP.wbIsPublicWorkspace();
+        if (isPub) return true;
+        if (silent) return false;
+        var dlg = WB.overlay(
+          '<div style="font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:10px;">需要「所有文件访问」权限</div>' +
+          '<div style="font-size:12px;color:var(--text-secondary);line-height:1.7;margin-bottom:14px;">工作区已迁移到公共目录 <b>Download/workbench</b>（方便你用文件管理器直接查看/修改）。' +
+          'Android 11+ 需要在系统设置中开启「所有文件访问」权限才能读写该目录。<br><br>' +
+          '点击下方按钮前往系统设置开启，返回后重新进入即可生效。</div>' +
+          '<button class="wb-dlg-perm" style="width:100%;padding:10px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;margin-bottom:8px;">前往设置开启权限</button>' +
+          '<button class="wb-dlg-skip" style="width:100%;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">暂不（继续用 App 私有目录）</button>'
+        );
+        dlg.card.querySelector('.wb-dlg-perm').onclick = function () {
+          try { if (window.AndroidMCP && window.AndroidMCP.wbRequestStoragePermission) window.AndroidMCP.wbRequestStoragePermission(); } catch (e) {}
+        };
+        dlg.card.querySelector('.wb-dlg-skip').onclick = function () { dlg.close(); };
+        return false;
+      }
+      return true;
+    } catch (e) { return true; }
+  };
+
+  // 包装工作区切换按钮：点击时若未授权公共工作区则引导
+  var _origWsPick = WB.onWsPick;
+  if (typeof _origWsPick === 'function') {
+    WB.onWsPick = function () {
+      if (!this.ensurePublicWorkspace()) return;
+      return _origWsPick.apply(this, arguments);
+    };
+  }
+
+  // 输入区工作区标签点击也可触发引导（若显示为"未授权"）
+  var _origEnhance = WB._enhanceInputArea;
+  if (typeof _origEnhance === 'function') {
+    WB._enhanceInputArea = function (conv) {
+      var ret = _origEnhance.apply(this, arguments);
+      var self = this;
+      // 若工作区未授权，把标签改为可点击提示
+      try {
+        if (window.AndroidMCP && typeof window.AndroidMCP.wbIsPublicWorkspace === 'function' && !window.AndroidMCP.wbIsPublicWorkspace()) {
+          var wsTxt = document.querySelector('#wb-msgs') ? null : null;
+          var btn = document.querySelector('.wb-ws-pick');
+          if (btn) {
+            btn.onclick = function () { self.ensurePublicWorkspace(); };
+          }
+        }
+      } catch (e) {}
+      return ret;
+    };
+  }
+
+  // 工作区信息展示：标记公共/私有
+  var _origWorkspaceInfo = WB.tools && WB.tools.workspace_info;
+  if (WB.tools && WB.tools.workspace_info) {
+    var _origWsInfo = WB.tools.workspace_info;
+    WB.tools.workspace_info = function (args, conv) {
+      var r = _origWsInfo ? _origWsInfo(args, conv) : { ok: true };
+      try {
+        if (window.AndroidMCP && typeof window.AndroidMCP.wbIsPublicWorkspace === 'function') {
+          r.publicWorkspace = !!window.AndroidMCP.wbIsPublicWorkspace();
+        }
+      } catch (e) {}
+      return r;
+    };
+  }
+})();
+
 
 
 

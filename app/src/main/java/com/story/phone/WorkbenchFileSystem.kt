@@ -31,14 +31,38 @@ class WorkbenchFileSystem(private val context: Context) {
         private const val MAX_READ_BYTES = 512 * 1024 // 512KB 读取上限
     }
 
-    /** 私有工作区根（所有相对路径的基准）。
-     *  优先使用外部存储（/storage/emulated/0/Android/data/<pkg>/files/workbench），
-     *  用户可通过文件管理器直接查看；外部存储不可用时回退内部目录。 */
+    /** 工作区根（所有相对路径的基准）。
+     *  默认使用公共 Download 目录（/storage/emulated/0/Download/workbench），
+     *  用户可用文件管理器直接查看/修改，无需 root 或 adb。
+     *  需要「所有文件访问」权限（MANAGE_EXTERNAL_STORAGE，Android 11+ 分区存储限制）：
+     *  未授权时返回错误提示，前端可调用 AndroidMCP.wbRequestStoragePermission() 引导授权；
+     *  授权前回退到 App 私有目录（不影响使用，但用户不可见）。 */
     private fun workspaceRoot(): File {
-        val base = context.getExternalFilesDir(null) ?: context.filesDir
-        val dir = File(base, "workbench")
+        // 检查「所有文件访问」权限：有则用 Download，无则回退私有目录
+        val hasAllFiles = if (android.os.Build.VERSION.SDK_INT >= 30) {
+            Environment.isExternalStorageManager()
+        } else {
+            true // API 29 及以下允许直接写公共存储（配合 WRITE_EXTERNAL_STORAGE）
+        }
+        if (hasAllFiles) {
+            val base = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val dir = File(base, "workbench")
+            try { if (!dir.exists()) dir.mkdirs() } catch (e: Exception) {}
+            return dir
+        }
+        val fallback = context.getExternalFilesDir(null) ?: context.filesDir
+        val dir = File(fallback, "workbench")
         if (!dir.exists()) dir.mkdirs()
         return dir
+    }
+
+    /** 当前是否可用公共 Download 工作区（供前端显示状态/引导授权） */
+    fun isPublicWorkspace(): Boolean {
+        return if (android.os.Build.VERSION.SDK_INT >= 30) {
+            Environment.isExternalStorageManager()
+        } else {
+            true
+        }
     }
 
     /** 把用户传入的相对路径安全解析为绝对路径；越界返回 null */
@@ -150,11 +174,14 @@ class WorkbenchFileSystem(private val context: Context) {
         return try {
             val roots = JSONArray()
             val wb = workspaceRoot()
+            val public = isPublicWorkspace()
             roots.put(JSONObject().apply {
-                put("name", "工作台私有区")
+                put("name", if (public) "工作区（Download/workbench）" else "工作区（App 私有，未授权公共存储）")
                 put("path", ".")
                 put("absolute", wb.absolutePath)
                 put("writable", true)
+                put("publicWorkspace", public)
+                put("needStoragePermission", !public)
             })
             // 公共存储：有权限才列出
             val pub = Environment.getExternalStorageDirectory()

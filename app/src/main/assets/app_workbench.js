@@ -1247,7 +1247,7 @@
       var item = { id: Date.now() + Math.random(), title: 'output.' + (lang || 'txt'), lang: lang || '', code: code, ts: Date.now() };
       this.items.push(item);
       this.activeIndex = this.items.length - 1;
-      return item;
+      return this.items.length - 1; // 返回索引（调用处 data-idx 需要数字索引）
     },
     open: function (idx) { this.activeIndex = idx; this.panelOpen = true; this.viewMode = 'code'; this.renderPanel(); },
     close: function () { this.panelOpen = false; this.renderPanel(); },
@@ -1492,12 +1492,18 @@
     if (!main) return;
     var ghDot = conv.github ? '<span title="GitHub" style="width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0;"></span>' : '';
     var wsTxt = conv.workspaceLabel || '工作台私有区';
+    var wsLabel = wsTxt;
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.wbIsPublicWorkspace === 'function' && !window.AndroidMCP.wbIsPublicWorkspace()) {
+        wsLabel = wsTxt + ' ⚠未授权';
+      }
+    } catch (e) {}
     main.innerHTML =
       '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #f1f5f9;">' +
         '<button class="wb-menu-btn" style="border:none;background:none;color:#475569;cursor:pointer;padding:4px;">' + this.svg('<path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>', 18) + '</button>' +
         '<span style="font-size:13px;font-weight:700;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:42%;">' + this.esc(conv.title) + '</span>' +
         ghDot +
-        '<span style="font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:26%;">' + this.esc(wsTxt) + '</span>' +
+        '<span id="wb-ws-label" style="font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:26%;cursor:pointer;">' + this.esc(wsLabel) + '</span>' +
         '<span style="flex:1;"></span>' +
         '<span id="wb-usage" style="font-size:9px;color:#94a3b8;">' + (self._usageText ? self._usageText(conv) : ('↑' + (conv.totalTokensIn || 0) + ' ↓' + (conv.totalTokensOut || 0))) + '</span>' +
         '<button id="wb-conv-menu" style="border:none;background:none;color:#64748b;cursor:pointer;padding:4px;">' + this.svg('<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>', 16) + '</button>' +
@@ -1525,6 +1531,8 @@
     document.getElementById('wb-input').addEventListener('input', function () { self._resizeInput(); });
     document.getElementById('wb-model-pill').onclick = function () { self.showModelPicker(); };
     document.getElementById('wb-conv-menu').onclick = function () { self.showConvMenu(conv); };
+    var wsLabelEl = document.getElementById('wb-ws-label');
+    if (wsLabelEl) wsLabelEl.onclick = function () { self.ensurePublicWorkspace(); };
     if (this.state.sending) {
       document.getElementById('wb-send-btn').style.display = 'none';
       document.getElementById('wb-stop-btn').style.display = 'flex';

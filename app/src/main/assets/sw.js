@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v39'; // v39：工作台 Agent 标准化——Skill/Agent 配置/MCP http+sse/@引用文件/无次数限制+轮步统计/按钮中断
+const CACHE_NAME = 'story-phone-v40'; // v40：工作台细节打磨——流式实时识别+Markdown实时渲染/artifacts索引修复/工作区迁Download/用户气泡操作/缓存优化
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

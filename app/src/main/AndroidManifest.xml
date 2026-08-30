@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
 <!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒等安卓硬件权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -25,6 +26,8 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- 工作台工作区位于公共 Download：Android 11+ 需「所有文件访问」权限（用户在系统设置手动开启） -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" tools:ignore="ScopedStorage" />
 
     <!-- 蓝牙管理：读取已连接/已配对设备、SPP 串口控制、BLE 扫描与写入 -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
