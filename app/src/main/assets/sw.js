@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v38'; // v38：工作台 Agent 成熟模式——思考折叠块/工具卡片状态机/缓存命中率/Markdown 完成渲染
+const CACHE_NAME = 'story-phone-v39'; // v39：工作台 Agent 标准化——Skill/Agent 配置/MCP http+sse/@引用文件/无次数限制+轮步统计/按钮中断
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -10,6 +10,7 @@ const ASSETS = [
   './sticker.css',
   './app_quicktravel.js',
   './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
+  './app_workbench_agent.js', // 工作台 Agent 引擎（Skill/Agent 配置 + MCP http+sse + @引用 + 成熟模式渲染）
   './workbench.css',      // 工作台样式
   './db.js',
   './app_prompts.js',

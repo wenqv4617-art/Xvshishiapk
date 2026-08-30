@@ -385,3 +385,13 @@ db.version(38).stores({
 db.version(39).stores({
   wb_mcp_servers: 'id++, name, group, type, url, headers, enabled, tools, updatedAt'
 });
+
+// ============================================
+// Version 40：工作台 Agent 标准化配置
+// - wb_agents: Agent（角色/描述/系统提示/建议模型/启用 Skills）
+// - wb_skills: Skill（标准化能力指令集，名称/描述/指令/内置标记）
+// ============================================
+db.version(40).stores({
+  wb_agents: 'id++, name, description, systemPrompt, model, skills, builtin, enabled, updatedAt',
+  wb_skills: 'id++, name, description, instructions, builtin, enabled, updatedAt'
+});
