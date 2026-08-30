@@ -377,3 +377,11 @@ db.version(38).stores({
   wb_conversations: 'id++, title, workspace, workspaceLabel, github, systemPrompt, summary, createdAt, updatedAt, totalTokensIn, totalTokensOut, cacheHits',
   wb_messages: 'id++, convId, seq, role, content, createdAt'
 });
+
+// ============================================
+// Version 39：工作台独立 MCP 服务器配置（不依赖原有 MCP 客户端）
+// - wb_mcp_servers: 工作台自己的 MCP 服务器（名称/分组/类型/URL/Headers/工具列表/开关）
+// ============================================
+db.version(39).stores({
+  wb_mcp_servers: 'id++, name, group, type, url, headers, enabled, tools, updatedAt'
+});

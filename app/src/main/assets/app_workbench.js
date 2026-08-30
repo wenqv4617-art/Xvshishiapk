@@ -869,7 +869,7 @@
             '<button id="wb-new-ws" style="width:100%;display:flex;align-items:center;gap:6px;padding:9px;border:1.5px dashed var(--border);border-radius:10px;background:#f8fafc;font-size:12px;color:#0e7490;cursor:pointer;margin-bottom:10px;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 14) + '<span id="wb-new-ws-label" style="flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + this.esc(wsLabel) + '</span>' + this.svg('<path d="M9 18l6-6-6-6"/>', 14) + '</button>'
           : '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:10px;background:#f8fafc;border:1.5px dashed var(--border);border-radius:10px;padding:9px;">链接版（网页/PWA）无本地文件系统，本会话仅支持 GitHub 连接工作。</div>') +
         '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px;border:1.5px solid var(--border);border-radius:10px;background:#fff;margin-bottom:10px;">' +
-          '<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary);">' + this.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 15, "color:#16a34a;") + '连接 GitHub' +
+          '<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary);">' + this.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 15, 'color:#16a34a;') + '连接 GitHub' +
           '</div>' +
           '<label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="wb-new-gh" style="width:16px;height:16px;accent-color:var(--primary);"><span style="font-size:11px;color:var(--text-secondary);">推送/拉取仓库文件</span></label>' +
         '</div>' +
@@ -880,77 +880,68 @@
           '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">创建并开始</button>' +
         '</div>'
       );
-      dlg.card.querySelector(".wb-dlg-cancel").onclick = function () { dlg.close(); };
-      var wsBtn = document.getElementById("wb-new-ws");
+      dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+      var wsBtn = document.getElementById('wb-new-ws');
       if (wsBtn) {
         wsBtn.onclick = function () {
-          self.showWorkspacePicker(function (path, label) {
+          var self2 = this;
+          WB.showWorkspacePicker(function (path, label) {
             wsPath = path; wsLabel = label;
-            var lbl = document.getElementById("wb-new-ws-label");
+            var lbl = document.getElementById('wb-new-ws-label');
             if (lbl) lbl.textContent = label;
           });
         };
       }
-      dlg.card.querySelector(".wb-dlg-ok").onclick = async function () {
-        var title = document.getElementById("wb-new-title").value.trim() || "未命名会话";
-        var gh = document.getElementById("wb-new-gh").checked;
-        var sys = document.getElementById("wb-new-sys").value.trim();
-        var cfg = self.github.config();
-        var id = await self.addConv({ title: title, workspace: wsPath, workspaceLabel: wsLabel, github: gh ? true : null, systemPrompt: sys });
+      dlg.card.querySelector('.wb-dlg-ok').onclick = async function () {
+        var title = document.getElementById('wb-new-title').value.trim() || '未命名会话';
+        var gh = document.getElementById('wb-new-gh').checked;
+        var sys = document.getElementById('wb-new-sys').value.trim();
+        var id = await WB.addConv({ title: title, workspace: wsPath, workspaceLabel: wsLabel, github: gh ? true : null, systemPrompt: sys });
         dlg.close();
-        self.showChat(id);
+        WB.showChat(id);
       };
     },
 
     // ============ GitHub 配置 ============
     showGithubConfigDialog: function () {
-      var self = this;
       var cfg = this.github.config() || {};
       var dlg = this.overlay(
-        '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 18, "color:#16a34a;") + 'GitHub 连接配置</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 18, 'color:#16a34a;') + 'GitHub 连接配置</div>' +
         '<div style="font-size:11px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px;">配置后 Agent 可通过 github_push 工具把工作区文件推送到你的仓库。Token 需具备 repo 权限（Fine-grained token 请勾选 Contents: Read and write）。Token 仅保存在本机。</div>' +
         '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">GitHub 用户名</div>' +
-        '<input id="wb-gh-user" type="text" value="' + this.esc(cfg.username || "") + '" placeholder="例如: island-glitch" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:10px;">' +
+        '<input id="wb-gh-user" type="text" value="' + this.esc(cfg.username || '') + '" placeholder="例如: island-glitch" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:10px;">' +
         '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">Personal Access Token</div>' +
-        '<input id="wb-gh-token" type="password" value="' + this.esc(cfg.token || "") + '" placeholder="ghp_xxx / ghp_xxx" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:10px;">' +
+        '<input id="wb-gh-token" type="password" value="' + this.esc(cfg.token || '') + '" placeholder="ghp_xxx" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:10px;">' +
         '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">默认仓库（可选，owner/repo 格式）</div>' +
-        '<input id="wb-gh-repo" type="text" value="' + this.esc(cfg.repo || "") + '" placeholder="例如: island-glitch/poemnarapk" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:14px;">' +
+        '<input id="wb-gh-repo" type="text" value="' + this.esc(cfg.repo || '') + '" placeholder="例如: island-glitch/poemnarapk" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:14px;">' +
         '<div style="display:flex;gap:8px;">' +
           '<button class="wb-dlg-clear" style="flex:1;padding:9px;border:1.5px solid #fecaca;background:#fef2f2;border-radius:10px;font-size:12px;font-weight:700;color:#dc2626;cursor:pointer;">清除配置</button>' +
           '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">取消</button>' +
           '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">保存</button>' +
         '</div>'
       );
-      dlg.card.querySelector(".wb-dlg-cancel").onclick = function () { dlg.close(); };
-      dlg.card.querySelector(".wb-dlg-clear").onclick = function () {
-        self.github.clearConfig();
+      dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+      dlg.card.querySelector('.wb-dlg-clear').onclick = function () { this.github.clearConfig(); dlg.close(); WB.renderList(); if (typeof showToast === 'function') showToast('GitHub 配置已清除'); };
+      dlg.card.querySelector('.wb-dlg-ok').onclick = function () {
+        var username = document.getElementById('wb-gh-user').value.trim();
+        var token = document.getElementById('wb-gh-token').value.trim();
+        var repo = document.getElementById('wb-gh-repo').value.trim();
+        if (!username || !token) { if (typeof showToast === 'function') showToast('请填写用户名与 Token'); return; }
+        WB.github.saveConfig({ username: username, token: token, repo: repo });
         dlg.close();
-        self.renderList();
-        if (typeof showToast === "function") showToast("GitHub 配置已清除");
-      };
-      dlg.card.querySelector(".wb-dlg-ok").onclick = function () {
-        var username = document.getElementById("wb-gh-user").value.trim();
-        var token = document.getElementById("wb-gh-token").value.trim();
-        var repo = document.getElementById("wb-gh-repo").value.trim();
-        if (!username || !token) {
-          if (typeof showToast === "function") showToast("请填写用户名与 Token");
-          return;
-        }
-        self.github.saveConfig({ username: username, token: token, repo: repo });
-        dlg.close();
-        self.renderList();
-        if (typeof showToast === "function") showToast("GitHub 配置已保存");
+        WB.renderList();
+        if (typeof showToast === 'function') showToast('GitHub 配置已保存');
       };
     },
 
-    // ============ 工作区选择器（目录树浏览） ============
+    // ============ 工作区选择器（目录树浏览 + 手动路径） ============
     showWorkspacePicker: function (onPick) {
       var self = this;
       var dlg = this.overlay(
-        '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 18, "color:#0e7490;") + '选择工作区文件夹</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 18, 'color:#0e7490;') + '选择工作区文件夹</div>' +
         '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6;">工作区位于手机存储 <b style="color:#0e7490;">Android/data/com.story.phone/files/workbench</b><br>可用文件管理器直接查看；免存储权限、天然隔离。公共存储仅可浏览。</div>' +
         '<div id="wb-pick-breadcrumb" style="font-size:11px;color:#0e7490;margin-bottom:8px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;"></div>' +
-        '<div id="wb-pick-list" style="max-height:300px;overflow-y:auto;border:1.5px solid var(--border);border-radius:10px;padding:6px;background:#f8fafc;min-height:80px;"></div>' +
+        '<div id="wb-pick-list" style="max-height:280px;overflow-y:auto;border:1.5px solid var(--border);border-radius:10px;padding:6px;background:#f8fafc;min-height:80px;"></div>' +
         '<div style="display:flex;gap:6px;margin-top:10px;">' +
           '<input id="wb-pick-path-input" type="text" placeholder="或手动输入相对路径，如: my-project/src" style="flex:1;min-width:0;padding:8px;border:1.5px solid var(--border);border-radius:10px;font-size:11px;outline:none;">' +
           '<button id="wb-pick-path-btn" style="flex-shrink:0;padding:8px 12px;border:1.5px solid #0e7490;background:#ecfeff;border-radius:10px;font-size:11px;font-weight:700;color:#0e7490;cursor:pointer;">绑定路径</button>' +
@@ -960,162 +951,999 @@
           '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">选择此目录</button>' +
         '</div>'
       );
-      var curPath = ".";
-      var curLabel = "工作台私有区";
-
+      var curPath = '.';
+      var curLabel = '工作台私有区';
       function render() {
-        var bc = document.getElementById("wb-pick-breadcrumb");
-        var list = document.getElementById("wb-pick-list");
-        bc.innerHTML = "";
-        var segs = curPath === "." ? [] : curPath.split("/");
-        var acc = "";
-        var homeBtn = document.createElement("span");
-        homeBtn.style.cssText = "cursor:pointer;font-weight:700;padding:2px 4px;border-radius:4px;";
-        homeBtn.textContent = "工作台私有区";
-        homeBtn.onclick = function () { curPath = "."; render(); };
+        var bc = document.getElementById('wb-pick-breadcrumb');
+        var list = document.getElementById('wb-pick-list');
+        if (!bc || !list) return;
+        bc.innerHTML = '';
+        var segs = curPath === '.' ? [] : curPath.split('/');
+        var acc = '';
+        var homeBtn = document.createElement('span');
+        homeBtn.style.cssText = 'cursor:pointer;font-weight:700;padding:2px 4px;border-radius:4px;';
+        homeBtn.textContent = '工作台私有区';
+        homeBtn.onclick = function () { curPath = '.'; render(); };
         bc.appendChild(homeBtn);
         segs.forEach(function (seg, idx) {
-          acc = acc ? acc + "/" + seg : seg;
-          var arrow = document.createElement("span");
-          arrow.textContent = " / ";
-          arrow.style.color = "#cbd5e1";
+          acc = acc ? acc + '/' + seg : seg;
+          var arrow = document.createElement('span');
+          arrow.textContent = ' / ';
+          arrow.style.color = '#cbd5e1';
           bc.appendChild(arrow);
-          var sp = document.createElement("span");
+          var sp = document.createElement('span');
           sp.textContent = seg;
-          sp.style.cssText = "cursor:pointer;padding:2px 4px;border-radius:4px;";
+          sp.style.cssText = 'cursor:pointer;padding:2px 4px;border-radius:4px;';
           sp.onclick = function () { curPath = acc; render(); };
           bc.appendChild(sp);
         });
         list.innerHTML = '<div style="font-size:11px;color:#94a3b8;padding:10px;text-align:center;">加载中...</div>';
-        var res = self.fs.listDir(curPath);
-        if (!res.ok) {
-          list.innerHTML = '<div style="font-size:11px;color:#dc2626;padding:10px;">' + self.esc(res.error || "读取失败") + '</div>';
-          return;
-        }
-        var entries = (res.entries || []).filter(function (en) { return en.type === "dir"; });
-        var files = (res.entries || []).filter(function (en) { return en.type === "file"; });
-        list.innerHTML = "";
-        if (curPath !== ".") {
-          var up = document.createElement("div");
-          up.style.cssText = "display:flex;align-items:center;gap:6px;padding:8px;cursor:pointer;border-radius:8px;font-size:12px;color:#64748b;";
-          up.innerHTML = self.svg('<path d="M5 12h14"/><path d="M12 5l-7 7 7 7"/>', 14) + '返回上级';
-          up.onclick = function () {
-            var parts = curPath.split("/");
-            parts.pop();
-            curPath = parts.length ? parts.join("/") : ".";
-            render();
-          };
+        var res = WB.fs.listDir(curPath);
+        if (!res.ok) { list.innerHTML = '<div style="font-size:11px;color:#dc2626;padding:10px;">' + WB.esc(res.error || '读取失败') + '</div>'; return; }
+        var entries = (res.entries || []).filter(function (en) { return en.type === 'dir'; });
+        var files = (res.entries || []).filter(function (en) { return en.type === 'file'; });
+        list.innerHTML = '';
+        if (curPath !== '.') {
+          var up = document.createElement('div');
+          up.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px;cursor:pointer;border-radius:8px;font-size:12px;color:#64748b;';
+          up.innerHTML = WB.svg('<path d="M5 12h14"/><path d="M12 5l-7 7 7 7"/>', 14) + '返回上级';
+          up.onclick = function () { var parts = curPath.split('/'); parts.pop(); curPath = parts.length ? parts.join('/') : '.'; render(); };
           list.appendChild(up);
         }
         entries.forEach(function (en) {
-          var row = document.createElement("div");
-          row.style.cssText = "display:flex;align-items:center;gap:6px;padding:8px;cursor:pointer;border-radius:8px;font-size:12px;color:var(--text-primary);";
-          row.innerHTML = self.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 14, "color:#f59e0b;") + '<span style="flex:1;">' + self.esc(en.name) + '</span>' + self.svg('<path d="M9 18l6-6-6-6"/>', 12, "color:#cbd5e1;");
-          row.onclick = function () {
-            curPath = curPath === "." ? en.name : curPath + "/" + en.name;
-            render();
-          };
+          var row = document.createElement('div');
+          row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:8px;cursor:pointer;border-radius:8px;font-size:12px;color:var(--text-primary);';
+          row.innerHTML = WB.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 14, 'color:#f59e0b;') + '<span style="flex:1;">' + WB.esc(en.name) + '</span>' + WB.svg('<path d="M9 18l6-6-6-6"/>', 12, 'color:#cbd5e1;');
+          row.onclick = function () { curPath = curPath === '.' ? en.name : curPath + '/' + en.name; render(); };
           list.appendChild(row);
         });
-        if (entries.length === 0 && curPath === ".") {
-          var hint = document.createElement("div");
-          hint.style.cssText = "font-size:11px;color:#94a3b8;padding:12px;line-height:1.7;";
-          hint.textContent = "私有区为空。可先选择此目录作为工作区，Agent 会在此创建项目文件。";
-          list.appendChild(hint);
-        }
         if (files.length > 0) {
-          var fh = document.createElement("div");
-          fh.style.cssText = "font-size:10px;color:#94a3b8;padding:6px 8px 2px;";
-          fh.textContent = "文件 (" + files.length + "): " + files.slice(0, 6).map(function (f) { return f.name; }).join(", ") + (files.length > 6 ? " ..." : "");
+          var fh = document.createElement('div');
+          fh.style.cssText = 'font-size:10px;color:#94a3b8;padding:6px 8px 2px;';
+          fh.textContent = '文件 (' + files.length + '): ' + files.slice(0, 6).map(function (f) { return f.name; }).join(', ') + (files.length > 6 ? ' ...' : '');
           list.appendChild(fh);
         }
       }
       render();
-      var pathBtn = dlg.card.querySelector("#wb-pick-path-btn");
+      var pathBtn = dlg.card.querySelector('#wb-pick-path-btn');
       if (pathBtn) {
         pathBtn.onclick = function () {
-          var raw = dlg.card.querySelector("#wb-pick-path-input").value.trim();
-          if (!raw) { if (typeof showToast === "function") showToast("请输入相对路径"); return; }
-          var clean = raw.replace(/\\/g, "/").replace(/^\.?\//, "");
+          var raw = dlg.card.querySelector('#wb-pick-path-input').value.trim();
+          if (!raw) { if (typeof showToast === 'function') showToast('请输入相对路径'); return; }
+          var clean = raw.replace(/\\\\/g, '/').replace(/^\.?\//, '');
           dlg.close();
-          if (onPick) onPick(clean || ".", "手动路径: " + clean);
+          if (onPick) onPick(clean || '.', '手动路径: ' + clean);
         };
       }
-      dlg.card.querySelector(".wb-dlg-cancel").onclick = function () { dlg.close(); };
-      dlg.card.querySelector(".wb-dlg-ok").onclick = function () {
+      dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+      dlg.card.querySelector('.wb-dlg-ok').onclick = function () {
         dlg.close();
-        if (onPick) onPick(curPath, curLabel + (curPath === "." ? "" : " / " + curPath));
+        if (onPick) onPick(curPath, curLabel + (curPath === '.' ? '' : ' / ' + curPath));
       };
     },
 
-    // ============ 数据清理（设置-数据管理 入口） ============
+    // ============ 数据清理 ============
     showClearDataDialog: function () {
       var self = this;
       var dlg = this.overlay(
-        '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">' + this.svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 18, "color:#ef4444;") + '清空工作台数据</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">' + this.svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 18, 'color:#ef4444;') + '清空工作台数据</div>' +
         '<div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px;">工作台的对话记录、产物文件与配置说明：</div>' +
         '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">' +
-          '<button class="wb-clear-opt" data-mode="chat" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;background:#fff;font-size:12px;color:var(--text-primary);cursor:pointer;text-align:left;">' + this.svg('<path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 0 1-4-.86L3 21l1.2-4.6A7.97 7.97 0 0 1 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>', 14, "color:#6366f1;") + ' 仅清空全部对话记录（保留 GitHub 配置与工作区文件）</button>' +
-          '<button class="wb-clear-opt" data-mode="all" style="padding:10px;border:1.5px solid #fecaca;border-radius:10px;background:#fef2f2;font-size:12px;color:#b91c1c;cursor:pointer;text-align:left;">' + this.svg('<path d="M12 9v2m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>', 14, "color:#dc2626;") + ' 对话 + GitHub 配置 + 工作区文件 一并清空</button>' +
+          '<button class="wb-clear-opt" data-mode="chat" style="padding:10px;border:1.5px solid var(--border);border-radius:10px;background:#fff;font-size:12px;color:var(--text-primary);cursor:pointer;text-align:left;">' + this.svg('<path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 0 1-4-.86L3 21l1.2-4.6A7.97 7.97 0 0 1 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>', 14, 'color:#6366f1;') + ' 仅清空全部对话记录（保留 GitHub 配置与工作区文件）</button>' +
+          '<button class="wb-clear-opt" data-mode="all" style="padding:10px;border:1.5px solid #fecaca;border-radius:10px;background:#fef2f2;font-size:12px;color:#b91c1c;cursor:pointer;text-align:left;">' + this.svg('<path d="M12 9v2m0 4h.01M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>', 14, 'color:#dc2626;') + ' 对话 + GitHub 配置 + 工作区文件 一并清空</button>' +
         '</div>' +
-        '<div style="display:flex;gap:8px;">' +
-          '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">取消</button>' +
-        '</div>'
+        '<div style="display:flex;gap:8px;"><button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">取消</button></div>'
       );
-      dlg.card.querySelector(".wb-dlg-cancel").onclick = function () { dlg.close(); };
-      dlg.card.querySelectorAll(".wb-clear-opt").forEach(function (btn) {
+      dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+      dlg.card.querySelectorAll('.wb-clear-opt').forEach(function (btn) {
         btn.onclick = function () {
-          var mode = btn.getAttribute("data-mode");
+          var mode = btn.getAttribute('data-mode');
           dlg.close();
-          self.confirmDialog("确认清空", mode === "all" ? "将清空全部工作台对话，并删除 GitHub 配置与工作区文件。此操作不可恢复，确定继续吗？" : "将清空全部工作台对话记录（保留 GitHub 配置与工作区文件）。确定继续吗？", async function () {
+          WB.confirmDialog('确认清空', mode === 'all' ? '将清空全部工作台对话，并删除 GitHub 配置与工作区文件。此操作不可恢复，确定继续吗？' : '将清空全部工作台对话记录（保留 GitHub 配置与工作区文件）。确定继续吗？', async function () {
             try {
               await db.wb_conversations.clear();
               await db.wb_messages.clear();
-              if (mode === "all") {
-                self.github.clearConfig();
-                if (self.fs._guard()) { self.fs.del("."); }
+              if (mode === 'all') {
+                WB.github.clearConfig();
+                if (WB.fs._guard()) WB.fs.del('.');
               }
-              if (typeof showToast === "function") showToast("工作台数据已清空");
-              self.renderList();
-            } catch (e) {
-              if (typeof showToast === "function") showToast("清空失败: " + e.message);
-            }
+              if (typeof showToast === 'function') showToast('工作台数据已清空');
+              WB.renderList();
+            } catch (e) { if (typeof showToast === 'function') showToast('清空失败: ' + e.message); }
           });
         };
       });
     },
 
-    // ==================== 工具函数 ====================
+    // ============ 工具函数 ============
     esc: function (s) {
-      return String(s == null ? "" : s)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#39;");
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     },
     fmtTime: function (ts) {
-      try {
-        var d = new Date(ts);
-        return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
-      } catch (e) { return ""; }
+      try { var d = new Date(ts); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); } catch (e) { return ''; }
     },
     fmtDate: function (ts) {
-      try {
-        var d = new Date(ts);
-        var now = new Date();
-        if (d.toDateString() === now.toDateString()) return "今天";
-        return (d.getMonth() + 1) + "月" + d.getDate() + "日";
-      } catch (e) { return ""; }
+      try { var d = new Date(ts); var now = new Date(); if (d.toDateString() === now.toDateString()) return '今天'; return (d.getMonth() + 1) + '月' + d.getDate() + '日'; } catch (e) { return ''; }
     }
   };
 
   // ==================== 全局导出 ====================
   window.workbenchSystem = WB;
-  window.initWorkbenchApp = function () {
-    WB.init();
+  window.initWorkbenchApp = function () { WB.init(); };
+  window.clearWorkbenchData = function () { if (WB && typeof WB.showClearDataDialog === 'function') WB.showClearDataDialog(); };
+})();
+// ============================================================
+//  Claude 化重设计层（覆盖渲染 + 独立 MCP + Artifacts）
+// ============================================================
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB) return;
+
+  // ---------- 轻量 Markdown 渲染 ----------
+  WB.renderMarkdown = function (text) {
+    if (!text) return '';
+    var s = String(text);
+    var out = '';
+    var lines = s.split('\n');
+    var i = 0;
+    var inCode = false;
+    var codeLang = '';
+    var codeBuf = [];
+    var tableRows = [];
+    function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function inline(t) {
+      var rr = esc(t);
+      rr = rr.replace(/\x60([^\x60]+)\x60/g, '<code style="background:#f1f5f9;border-radius:4px;padding:1px 5px;font-size:0.85em;color:#be123c;">$1</code>');
+      rr = rr.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+      rr = rr.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      return rr;
+    }
+    function closeTable() {
+      if (!tableRows.length) return;
+      var head = tableRows[0].split('|').map(function (c) { return c.trim(); }).filter(Boolean);
+      var body = tableRows.slice(1);
+      var h = "<table style='border-collapse:collapse;width:100%;margin:10px 0;font-size:12px;'><thead><tr>" +
+        head.map(function (c) { return "<th style='border:1px solid #e2e8f0;background:#f8fafc;padding:6px 10px;text-align:left;'>" + inline(c) + '</th>'; }).join('') +
+        '</tr></thead><tbody>' +
+        body.map(function (row) {
+          var cells = row.split('|').map(function (c) { return c.trim(); }).filter(Boolean);
+          return '<tr>' + cells.map(function (c) { return "<td style='border:1px solid #e2e8f0;padding:6px 10px;'>" + inline(c) + '</td>'; }).join('') + '</tr>';
+        }).join('') +
+        '</tbody></table>';
+      out += h;
+      tableRows = [];
+    }
+    while (i < lines.length) {
+      var line = lines[i];
+      var trimmed = line.trim();
+      if (/^\x60\x60\x60/.test(trimmed)) {
+        if (!inCode) {
+          closeTable();
+          inCode = true;
+          codeLang = trimmed.slice(3).trim() || '';
+          codeBuf = [];
+        } else {
+          var codeHtml = codeBuf.map(function (c) { return esc(c); }).join('\n');
+          out += '<div style="margin:10px 0;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;background:#0f172a;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:#1e293b;">' +
+              '<span style="font-size:10px;color:#64748b;font-family:monospace;">' + esc(codeLang || 'code') + '</span>' +
+              '<button class="wb-code-copy" data-code="' + esc(codeBuf.join('\n')) + '" style="border:none;background:transparent;color:#94a3b8;cursor:pointer;font-size:10px;display:flex;align-items:center;gap:4px;">' +
+                '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>复制</button>' +
+            '</div>' +
+            '<pre style="margin:0;padding:12px;overflow-x:auto;font-size:12px;line-height:1.6;color:#e2e8f0;"><code style="font-family:ui-monospace,monospace;">' + codeHtml + '</code></pre>' +
+          '</div>';
+          inCode = false;
+        }
+        i++;
+        continue;
+      }
+      if (inCode) { codeBuf.push(line); i++; continue; }
+      if (/^\|/.test(trimmed) && /\|/.test(trimmed.slice(1))) {
+        if (line.indexOf('---') >= 0) { i++; continue; }
+        tableRows.push(trimmed);
+        i++;
+        continue;
+      }
+      closeTable();
+      var hm = line.match(/^(#{1,4})\s+(.*)/);
+      if (hm) {
+        var lvl = hm[1].length;
+        out += '<h' + lvl + ' style="margin:14px 0 6px;font-size:' + (lvl === 1 ? 17 : lvl === 2 ? 15 : 13.5) + 'px;font-weight:700;color:var(--text-primary);">' + inline(hm[2]) + '</h' + lvl + '>';
+        i++;
+        continue;
+      }
+      var lm = line.match(/^[-*]\s+(.*)/);
+      if (lm) {
+        out += '<div style="display:flex;gap:8px;margin:3px 0;font-size:13px;line-height:1.7;color:var(--text-primary);"><span style="color:#94a3b8;">•</span><span style="flex:1;">' + inline(lm[1]) + '</span></div>';
+        i++;
+        continue;
+      }
+      var nm = line.match(/^\d+\.\s+(.*)/);
+      if (nm) {
+        out += '<div style="display:flex;gap:8px;margin:3px 0;font-size:13px;line-height:1.7;color:var(--text-primary);"><span style="color:#94a3b8;min-width:16px;text-align:right;">' + nm[0].split('.')[0] + '.</span><span style="flex:1;">' + inline(nm[1]) + '</span></div>';
+        i++;
+        continue;
+      }
+      if (!trimmed) { out += '<div style="height:8px;"></div>'; i++; continue; }
+      out += '<p style="margin:4px 0;font-size:13px;line-height:1.75;color:var(--text-primary);word-break:break-word;">' + inline(line) + '</p>';
+      i++;
+    }
+    closeTable();
+    return out;
   };
-  window.clearWorkbenchData = function () {
-    if (WB && typeof WB.showClearDataDialog === "function") WB.showClearDataDialog();
+
+  // ---------- 工作台独立 MCP 配置 ----------
+  WB.wbMCP = {
+    list: async function () { try { return (await db.wb_mcp_servers.orderBy('updatedAt').reverse().toArray()) || []; } catch (e) { return []; } },
+    save: async function (data) {
+      if (data.id) { await db.wb_mcp_servers.update(Number(data.id), data); return data.id; }
+      return await db.wb_mcp_servers.add(Object.assign({ group: '默认', type: 'streamable_http', enabled: true, tools: [], updatedAt: Date.now() }, data));
+    },
+    remove: async function (id) { await db.wb_mcp_servers.delete(Number(id)); },
+    rpc: async function (server, method, params) {
+      var url = String(server.url || '').replace(/\/+$/, '');
+      var headers = Object.assign({ 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' }, server.headers || {});
+      var res = await fetch(url, { method: 'POST', headers: headers, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: method, params: params || {} }) });
+      if (!res.ok) throw new Error('HTTP ' + res.status + ' ' + String(await res.text()).slice(0, 200));
+      var data = await res.json();
+      if (data.error) throw new Error(data.error.message || 'JSON-RPC 错误 ' + data.error.code);
+      return data.result;
+    },
+    fetchTools: async function (server) {
+      try { await this.rpc(server, 'initialize', { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'XvshishiWorkbench', version: '1.0' } }); } catch (e) {}
+      var result = await this.rpc(server, 'tools/list', {});
+      return (result && Array.isArray(result.tools)) ? result.tools : [];
+    },
+    callTool: async function (server, toolName, args) {
+      var result = await this.rpc(server, 'tools/call', { name: toolName, arguments: args || {} });
+      if (result && Array.isArray(result.content)) {
+        var texts = result.content.map(function (c) { return (c && (c.text || JSON.stringify(c))) || ''; }).join('\n');
+        return { ok: true, result: texts };
+      }
+      return { ok: true, result: JSON.stringify(result) };
+    },
+    promptTools: async function () {
+      var servers = await this.list();
+      var out = [];
+      for (var i = 0; i < servers.length; i++) {
+        var s = servers[i];
+        if (!s.enabled) continue;
+        var tools = s.tools || [];
+        for (var j = 0; j < tools.length; j++) {
+          var t = tools[j];
+          if (t.enabled !== false) out.push({ server: s.name, tool: t.name, description: t.description || '' });
+        }
+      }
+      return out;
+    }
+  };
+  WB.tools.mcp_tool = async function (args) {
+    var servers = await WB.wbMCP.list();
+    var srv = null;
+    for (var i = 0; i < servers.length; i++) {
+      if (servers[i].name === args.server && servers[i].enabled) { srv = servers[i]; break; }
+    }
+    if (!srv) return { ok: false, error: '工作台未找到已启用的 MCP 服务器: ' + (args.server || '') + '（请先在工作台设置-MCP 中配置并启用）' };
+    try { return await WB.wbMCP.callTool(srv, args.tool, args.arguments || {}); }
+    catch (e) { return { ok: false, error: 'MCP 调用失败: ' + e.message }; }
+  };
+  WB.tools.mcp_servers = async function () {
+    var servers = await WB.wbMCP.list();
+    return { ok: true, servers: servers.map(function (s) { return { name: s.name, enabled: s.enabled, tools: (s.tools || []).filter(function (t) { return t.enabled !== false; }).map(function (t) { return t.name; }) }; }) };
+  };
+
+  // ---------- Artifacts ----------
+  WB.artifacts = {
+    items: [],
+    activeIndex: -1,
+    panelOpen: false,
+    viewMode: 'code',
+    push: function (lang, code) {
+      var item = { id: Date.now() + Math.random(), title: 'output.' + (lang || 'txt'), lang: lang || '', code: code, ts: Date.now() };
+      this.items.push(item);
+      this.activeIndex = this.items.length - 1;
+      return item;
+    },
+    open: function (idx) { this.activeIndex = idx; this.panelOpen = true; this.viewMode = 'code'; this.renderPanel(); },
+    close: function () { this.panelOpen = false; this.renderPanel(); },
+    toggleView: function (mode) { this.viewMode = mode; this.renderPanel(); },
+    renderPanel: function () {
+      var panel = document.getElementById('wb-artifacts-panel');
+      if (!panel) return;
+      if (!this.panelOpen) { panel.style.display = 'none'; return; }
+      var self = this;
+      var item = this.items[this.activeIndex];
+      if (!item) return;
+      panel.style.display = 'flex';
+      var canPreview = item.lang === 'html' || item.lang === 'svg';
+      var viewSwitch = canPreview
+        ? '<div style="display:flex;background:#f1f5f9;border-radius:8px;padding:2px;">' +
+            '<button class="wb-art-view" data-mode="code" style="border:none;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;' + (this.viewMode === 'code' ? 'background:#fff;color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,0.08);' : 'background:transparent;color:#64748b;') + '">Code</button>' +
+            '<button class="wb-art-view" data-mode="preview" style="border:none;padding:4px 12px;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;' + (this.viewMode === 'preview' ? 'background:#fff;color:var(--text-primary);box-shadow:0 1px 3px rgba(0,0,0,0.08);' : 'background:transparent;color:#64748b;') + '">Preview</button>' +
+          '</div>'
+        : '';
+      panel.innerHTML =
+        '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);">' +
+          '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' +
+          '<span style="font-size:13px;font-weight:700;color:var(--text-primary);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + WB.esc(item.title) + '</span>' +
+          viewSwitch +
+          '<button class="wb-art-close" style="border:none;background:none;color:#94a3b8;cursor:pointer;padding:4px;">' + WB.svg('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>', 15) + '</button>' +
+        '</div>' +
+        '<div class="wb-art-body" style="flex:1;overflow:auto;background:#0f172a;font-family:ui-monospace,monospace;font-size:12px;line-height:1.6;color:#e2e8f0;padding:12px;white-space:pre-wrap;word-break:break-word;"></div>';
+      var body = panel.querySelector('.wb-art-body');
+      if (this.viewMode === 'preview' && canPreview) {
+        var iframe = document.createElement('iframe');
+        iframe.style.cssText = 'width:100%;height:100%;border:none;background:#fff;';
+        iframe.sandbox = 'allow-scripts allow-same-origin';
+        iframe.srcdoc = item.code;
+        body.style.cssText = 'flex:1;overflow:auto;background:#fff;padding:0;';
+        body.innerHTML = '';
+        body.appendChild(iframe);
+      } else {
+        body.textContent = item.code;
+      }
+      panel.querySelectorAll('.wb-art-view').forEach(function (b) {
+        b.onclick = function () { self.toggleView(b.getAttribute('data-mode')); };
+      });
+      var close = panel.querySelector('.wb-art-close');
+      if (close) close.onclick = function () { self.close(); };
+    }
+  };
+
+
+  // ============ Claude 化渲染：主框架 + 侧边栏 + 空态 ============
+  WB._shellBuilt = false;
+  WB._sidebarOpen = false;
+  WB.toggleSidebar = function (force) {
+    var sb = document.getElementById('wb-sidebar');
+    var mask = document.getElementById('wb-sidebar-mask');
+    if (!sb) return;
+    this._sidebarOpen = (force !== undefined) ? force : !this._sidebarOpen;
+    sb.style.transform = this._sidebarOpen ? 'translateX(0)' : 'translateX(-100%)';
+    if (mask) mask.style.display = this._sidebarOpen ? 'block' : 'none';
+  },
+  WB.timeGroup = function (ts) {
+    var d = new Date(ts);
+    var now = new Date();
+    var startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    if (ts >= startToday) return '今天 Today';
+    if (ts >= startToday - 86400000) return '昨天 Yesterday';
+    if (ts >= startToday - 7 * 86400000) return '最近 7 天 Previous 7 days';
+    return '更早 Earlier';
+  },
+  WB.renderList = function () {
+    var self = this;
+    this.state.view = 'list';
+    this.state.activeConvId = null;
+    var body = document.getElementById('wb-body');
+    if (!body) return;
+    this.convs().then(function (convs) {
+      body.innerHTML =
+        '<div id="wb-shell" style="position:absolute;inset:0;display:flex;overflow:hidden;background:#fff;">' +
+          '<div id="wb-sidebar-mask" style="position:fixed;inset:0;background:rgba(15,23,42,0.4);z-index:99990;display:none;"></div>' +
+          '<aside id="wb-sidebar" style="position:fixed;top:0;left:0;bottom:0;width:252px;background:#faf9f7;z-index:99991;transform:translateX(-100%);transition:transform .25s ease;display:flex;flex-direction:column;box-shadow:2px 0 24px rgba(0,0,0,0.1);">' +
+            '<div style="padding:14px 12px 8px;display:flex;align-items:center;gap:8px;">' +
+              '<button class="wb-side-collapse" style="border:none;background:none;color:#64748b;cursor:pointer;padding:6px;">' + self.svg('<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>', 17) + '</button>' +
+              '<div style="flex:1;"></div>' +
+              '<button class="wb-gh-quick" title="GitHub 连接" style="border:none;background:none;color:#94a3b8;cursor:pointer;padding:6px;">' + self.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 16) + '</button>' +
+            '</div>' +
+            '<div style="padding:0 10px 10px;">' +
+              '<button class="wb-new-chat" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:11px;border:1px solid #e2e8f0;border-radius:999px;background:#fff;font-size:13px;font-weight:700;color:#c2410c;cursor:pointer;box-shadow:0 1px 4px rgba(0,0,0,0.04);">' +
+                '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8m0 0 4-4m-4 4-4-4"/><path d="M12 10v12"/><path d="M20 15a8 8 0 0 1-16 0"/></svg>开启新对话</button>' +
+            '</div>' +
+            '<div style="flex:1;overflow-y:auto;padding:0 8px 8px;" id="wb-side-records"></div>' +
+            '<div style="padding:10px;border-top:1px solid #ece8e3;">' +
+              '<button class="wb-user-pill" style="width:100%;display:flex;align-items:center;gap:10px;padding:8px;border:none;background:transparent;border-radius:10px;cursor:pointer;">' +
+                '<span style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#f59e0b,#c2410c);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;">叙</span>' +
+                '<span style="flex:1;text-align:left;"><span style="display:block;font-size:12px;font-weight:700;color:var(--text-primary);">叙事诗小手机</span><span style="display:block;font-size:10px;color:#94a3b8;">工作台 Agent</span></span>' +
+                '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>' +
+              '</button>' +
+            '</div>' +
+          '</aside>' +
+          '<main id="wb-main" style="flex:1;display:flex;flex-direction:column;min-width:0;position:relative;"></main>' +
+        '</div>' +
+        '<div id="wb-artifacts-panel" style="position:fixed;top:0;right:0;bottom:0;width:88%;max-width:520px;background:#fff;z-index:99992;display:none;flex-direction:column;box-shadow:-4px 0 24px rgba(0,0,0,0.14);"></div>';
+      self.renderSidebar(convs);
+      self.renderLanding();
+      document.querySelector('.wb-side-collapse').onclick = function () { self.toggleSidebar(false); };
+      document.getElementById('wb-sidebar-mask').onclick = function () { self.toggleSidebar(false); };
+      document.querySelector('.wb-new-chat').onclick = function () { self.toggleSidebar(false); self.showNewConvDialog(); };
+      document.querySelector('.wb-gh-quick').onclick = function () { self.showGithubConfigDialog(); };
+      document.querySelector('.wb-user-pill').onclick = function () { self.showWbSettings(); };
+      var main = document.getElementById('wb-main');
+      main.addEventListener('click', function (ev) {
+        var cp = ev.target.closest('.wb-code-copy');
+        if (cp) {
+          var code = cp.getAttribute('data-code') || '';
+          var done = function () { cp.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>已复制'; };
+          if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(code).then(done); }
+          else { try { var ta = document.createElement('textarea'); ta.value = code; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done(); } catch (e) {} }
+        }
+        var art = ev.target.closest('.wb-art-open');
+        if (art) {
+          var idx = Number(art.getAttribute('data-idx'));
+          if (!isNaN(idx) && self.artifacts.items[idx]) self.artifacts.open(idx);
+        }
+      });
+    });
+  };
+  WB.renderSidebar = function (convs) {
+    var self = this;
+    var wrap = document.getElementById('wb-side-records');
+    if (!wrap) return;
+    var groups = {};
+    convs.forEach(function (c) {
+      var g = self.timeGroup(c.updatedAt);
+      if (!groups[g]) groups[g] = [];
+      groups[g].push(c);
+    });
+    var order = ['今天 Today', '昨天 Yesterday', '最近 7 天 Previous 7 days', '更早 Earlier'];
+    var html = '<div style="font-size:10px;font-weight:700;letter-spacing:1px;color:#94a3b8;padding:8px 10px 4px;">PROJECTS</div>';
+    order.forEach(function (g) {
+      if (!groups[g] || groups[g].length === 0) return;
+      html += '<div style="font-size:10px;font-weight:600;letter-spacing:0.5px;color:#94a3b8;padding:10px 10px 4px;">' + g + '</div>';
+      groups[g].forEach(function (c) {
+        html += '<div class="wb-side-item" data-id="' + c.id + '" style="display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:12px;color:var(--text-primary);">' +
+          self.svg('<path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.86 9.86 0 0 1-4-.86L3 21l1.2-4.6A7.97 7.97 0 0 1 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>', 13, 'color:#cbd5e1;') +
+          '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.esc(c.title) + '</span>' +
+          (c.github ? '<span style="width:6px;height:6px;border-radius:50%;background:#16a34a;flex-shrink:0;"></span>' : '') +
+          '<button class="wb-side-del" data-id="' + c.id + '" style="border:none;background:none;color:#ef4444;cursor:pointer;padding:2px;opacity:0;">' + self.svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 13) + '</button>' +
+        '</div>';
+      });
+    });
+    if (convs.length === 0) html += '<div style="font-size:11px;color:#94a3b8;padding:20px 12px;text-align:center;line-height:1.7;">还没有历史会话<br>点击上方开启新对话</div>';
+    wrap.innerHTML = html;
+    wrap.querySelectorAll('.wb-side-item').forEach(function (el) {
+      el.addEventListener('mouseenter', function () { el.style.background = '#f1ede9'; var d = el.querySelector('.wb-side-del'); if (d) d.style.opacity = '1'; });
+      el.addEventListener('mouseleave', function () { el.style.background = 'transparent'; var d = el.querySelector('.wb-side-del'); if (d) d.style.opacity = '0'; });
+      el.addEventListener('click', function (ev) {
+        if (ev.target.closest('.wb-side-del')) return;
+        self.toggleSidebar(false);
+        self.showChat(Number(el.getAttribute('data-id')));
+      });
+    });
+    wrap.querySelectorAll('.wb-side-del').forEach(function (btn) {
+      btn.onclick = function (ev) {
+        ev.stopPropagation();
+        var id = Number(btn.getAttribute('data-id'));
+        self.confirmDialog('删除会话', '确定删除该会话及全部记录吗？', function () { self.delConv(id).then(function () { self.renderList(); }); });
+      };
+    });
+  };
+  WB.renderLanding = function () {
+    var self = this;
+    var main = document.getElementById('wb-main');
+    if (!main) return;
+    var hour = new Date().getHours();
+    var greet = hour < 6 ? '夜深了' : hour < 12 ? '早上好' : hour < 18 ? '下午好' : '晚上好';
+    var suggestions = [
+      '在工作区创建一个项目并写入示例代码',
+      '把一段文本整理成规范的 Markdown 文档',
+      '写一个 HTML 天气卡片并在预览中打开'
+    ];
+    main.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;padding:10px 14px;">' +
+        '<button class="wb-menu-btn" style="border:1px solid var(--border);background:#fff;border-radius:10px;padding:7px;cursor:pointer;color:#475569;">' + self.svg('<path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>', 17) + '</button>' +
+        '<div style="flex:1;"></div>' +
+        '<span style="font-size:11px;color:#94a3b8;display:flex;align-items:center;gap:4px;">' + self.svg('<path d="m7 8 3 3-3 3"/><path d="M12 16h5"/><rect x="3" y="4" width="18" height="16" rx="2"/>', 12) + '工作台</span>' +
+      '</div>' +
+      '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 20px;overflow-y:auto;">' +
+        '<div style="font-size:26px;font-weight:400;color:var(--text-primary);font-family:Georgia,"Times New Roman",serif;letter-spacing:0.5px;margin-bottom:24px;">' + greet + '，我是你的工作台助手</div>' +
+        '<div style="width:100%;max-width:560px;background:#fff;border:1.5px solid #e2e8f0;border-radius:20px;padding:14px;box-shadow:0 8px 30px rgba(15,23,42,0.06);">' +
+          '<textarea id="wb-land-input" rows="3" placeholder="描述你想完成的任务..." style="width:100%;box-sizing:border-box;border:none;outline:none;resize:none;font-size:15px;line-height:1.6;color:var(--text-primary);background:transparent;"></textarea>' +
+          '<div style="display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px solid #f1f5f9;">' +
+            '<span style="flex:1;"></span>' +
+            '<button id="wb-land-send" style="width:38px;height:38px;border-radius:50%;border:none;background:#d97706;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;">' + self.svg('<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>', 17) + '</button>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-top:16px;max-width:560px;">' +
+          suggestions.map(function (s, idx) {
+            return '<button class="wb-sug" data-idx="' + idx + '" style="border:1px solid #e2e8f0;background:#fff;border-radius:999px;padding:8px 14px;font-size:11px;color:#64748b;cursor:pointer;">' + self.esc(s) + '</button>';
+          }).join('') +
+        '</div>' +
+      '</div>';
+    document.querySelector('.wb-menu-btn').onclick = function () { self.toggleSidebar(true); };
+    document.getElementById('wb-land-send').onclick = function () { self._landSend(); };
+    document.getElementById('wb-land-input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); self._landSend(); } });
+    main.querySelectorAll('.wb-sug').forEach(function (b) {
+      b.onclick = function () {
+        var input = document.getElementById('wb-land-input');
+        if (input) input.value = suggestions[Number(b.getAttribute('data-idx'))];
+        input.focus();
+      };
+    });
+  };
+  WB._landSend = function () {
+    var input = document.getElementById('wb-land-input');
+    if (!input) return;
+    var text = input.value.trim();
+    if (!text) return;
+    var self = this;
+    this.addConv({ title: text.slice(0, 18) + (text.length > 18 ? '...' : '') }).then(function (id) {
+      self.showChat(id).then(function () {
+        var chatInput = document.getElementById('wb-input');
+        if (chatInput) chatInput.value = text;
+        self.onSendChat();
+      });
+    });
+  };
+
+  // ============ 对话页（Claude 风格） ============
+  WB.showChat = function (convId) {
+    var self = this;
+    return this.getConv(convId).then(function (conv) {
+      if (!conv) return null;
+      self.state.view = 'chat';
+      self.state.activeConvId = conv.id;
+      return self.msgs(conv.id).then(function (msgs) {
+        self.renderChat(conv, msgs);
+        return conv;
+      });
+    });
+  };
+  WB.renderChat = function (conv, msgs) {
+    var self = this;
+    var main = document.getElementById('wb-main');
+    if (!main) return;
+    var ghDot = conv.github ? '<span title="GitHub" style="width:7px;height:7px;border-radius:50%;background:#16a34a;flex-shrink:0;"></span>' : '';
+    var wsTxt = conv.workspaceLabel || '工作台私有区';
+    main.innerHTML =
+      '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #f1f5f9;">' +
+        '<button class="wb-menu-btn" style="border:none;background:none;color:#475569;cursor:pointer;padding:4px;">' + this.svg('<path d="M3 6h18"/><path d="M3 12h18"/><path d="M3 18h18"/>', 18) + '</button>' +
+        '<span style="font-size:13px;font-weight:700;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:42%;">' + this.esc(conv.title) + '</span>' +
+        ghDot +
+        '<span style="font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:26%;">' + this.esc(wsTxt) + '</span>' +
+        '<span style="flex:1;"></span>' +
+        '<span id="wb-usage" style="font-size:9px;color:#94a3b8;">↑' + (conv.totalTokensIn || 0) + ' ↓' + (conv.totalTokensOut || 0) + (conv.cacheHits ? ' 缓存:' + conv.cacheHits : '') + '</span>' +
+        '<button id="wb-conv-menu" style="border:none;background:none;color:#64748b;cursor:pointer;padding:4px;">' + this.svg('<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>', 16) + '</button>' +
+      '</div>' +
+      '<div id="wb-msgs" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px;width:100%;max-width:760px;margin:0 auto;box-sizing:border-box;"></div>' +
+      '<div style="flex-shrink:0;padding:8px 12px 12px;background:linear-gradient(180deg,rgba(255,255,255,0) 0%,rgba(255,255,255,0.92) 28%);">' +
+        '<div style="max-width:760px;margin:0 auto;background:#fff;border:1.5px solid #e2e8f0;border-radius:18px;padding:10px 12px;box-shadow:0 4px 20px rgba(15,23,42,0.08);">' +
+          '<textarea id="wb-input" rows="2" placeholder="Reply to 工作台 Agent..." style="width:100%;box-sizing:border-box;border:none;outline:none;resize:none;font-size:14px;line-height:1.6;color:var(--text-primary);background:transparent;max-height:120px;"></textarea>' +
+          '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">' +
+            '<button id="wb-model-pill" style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:999px;padding:4px 10px;font-size:10px;font-weight:600;color:#64748b;cursor:pointer;display:flex;align-items:center;gap:4px;">模型 ⌄</button>' +
+            '<span style="flex:1;"></span>' +
+            '<button id="wb-stop-btn" style="display:none;width:36px;height:36px;border-radius:50%;border:none;background:#ef4444;color:#fff;cursor:pointer;align-items:center;justify-content:center;">' + this.svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 14) + '</button>' +
+            '<button id="wb-send-btn" style="width:36px;height:36px;border-radius:50%;border:none;background:#d97706;color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;">' + this.svg('<path d="M12 19V5"/><path d="m5 12 7-7 7 7"/>', 16) + '</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    var msgsEl = document.getElementById('wb-msgs');
+    msgs.forEach(function (m) { self.renderStoredMsg(msgsEl, m); });
+    this.scrollToBottom();
+    this.refreshModelPill();
+    main.querySelector('.wb-menu-btn').onclick = function () { self.toggleSidebar(true); };
+    document.getElementById('wb-send-btn').onclick = function () { self.onSendChat(); };
+    document.getElementById('wb-stop-btn').onclick = function () { self.stopAgent(); };
+    document.getElementById('wb-input').addEventListener('keydown', function (ev) { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); self.onSendChat(); } });
+    document.getElementById('wb-input').addEventListener('input', function () { self._resizeInput(); });
+    document.getElementById('wb-model-pill').onclick = function () { self.showModelPicker(); };
+    document.getElementById('wb-conv-menu').onclick = function () { self.showConvMenu(conv); };
+    if (this.state.sending) {
+      document.getElementById('wb-send-btn').style.display = 'none';
+      document.getElementById('wb-stop-btn').style.display = 'flex';
+    }
+    document.getElementById('wb-input').focus();
+  };
+  WB._resizeInput = function () {
+    var el = document.getElementById('wb-input');
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  };
+  WB.onSendChat = function () {
+    var input = document.getElementById('wb-input');
+    if (!input) return;
+    var text = input.value.trim();
+    if (!text || this.state.sending) return;
+    input.value = '';
+    this._resizeInput();
+    var self = this;
+    this.getConv(this.state.activeConvId).then(function (conv) {
+      if (conv) self.runAgent(conv, text);
+    });
+  };
+  WB.refreshModelPill = function () {
+    var pill = document.getElementById('wb-model-pill');
+    if (!pill) return;
+    var self = this;
+    this.getApiPreset().then(function (p) {
+      if (pill) pill.innerHTML = self.svg('<path d="M12 2v8m0 0 4-4m-4 4-4-4"/><path d="M12 10v12"/><path d="M20 15a8 8 0 0 1-16 0"/>', 11, 'color:#d97706;') + '<span>' + self.esc((p && p.name) || '未配置') + '</span>' + self.svg('<path d="m6 9 6 6 6-6"/>', 10);
+    });
+  };
+  WB.showModelPicker = function () {
+    var self = this;
+    this.getApiPreset().then(function (current) {
+      db.api_presets.toArray().then(function (presets) {
+        if (presets.length === 0) { self.alert('未配置 API', '请先在 设置-API 服务 中配置并启用一个模型服务。'); return; }
+        var dlg = self.overlay(
+          '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + self.svg('<path d="M12 2v8m0 0 4-4m-4 4-4-4"/><path d="M12 10v12"/><path d="M20 15a8 8 0 0 1-16 0"/>', 18, 'color:#d97706;') + '选择模型</div>' +
+          '<div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;">' +
+            presets.map(function (p) {
+              var active = current && current.name === p.name;
+              return '<button class="wb-model-opt" data-name="' + self.esc(p.name) + '" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid ' + (active ? '#d97706' : 'var(--border)') + ';border-radius:12px;background:' + (active ? '#fff7ed' : '#fff') + ';cursor:pointer;text-align:left;">' +
+                '<span style="flex:1;"><span style="display:block;font-size:13px;font-weight:700;color:var(--text-primary);">' + self.esc(p.name || '未命名') + '</span>' +
+                '<span style="display:block;font-size:10px;color:#94a3b8;">' + self.esc(p.model || '') + (p.enabled ? '' : ' (已禁用)') + '</span></span>' +
+                (active ? self.svg('<path d="M20 6 9 17l-5-5"/>', 16, 'color:#d97706;') : '') +
+              '</button>';
+            }).join('') +
+          '</div>'
+        );
+        dlg.card.querySelectorAll('.wb-model-opt').forEach(function (b) {
+          b.onclick = function () {
+            localStorage.setItem('wb_model_name', b.getAttribute('data-name'));
+            dlg.close();
+            self.refreshModelPill();
+          };
+        });
+      });
+    });
+  };
+  WB.getApiPreset = async function () {
+    try {
+      var presets = await db.api_presets.toArray();
+      if (!presets.length) return null;
+      var name = localStorage.getItem('wb_model_name');
+      var found = null;
+      for (var i = 0; i < presets.length; i++) { if (presets[i].name === name) { found = presets[i]; break; } }
+      return found || presets.find(function (p) { return p.enabled; }) || presets[0];
+    } catch (e) { return null; }
+  };
+  WB.renderAssistantContent = function (full, container) {
+    var self = this;
+    var thinks = String(full || '').match(/<think>([\s\S]*?)<\/think>/g) || [];
+    var cleaned = String(full || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    var html = '';
+    thinks.forEach(function (t) {
+      var inner = t.replace(/<\/?think>/g, '').trim();
+      html += '<div style="margin:6px 0;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;padding:8px 12px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;font-size:10px;color:#64748b;">' +
+          '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>思考过程</div>' +
+        '<div style="font-size:11px;color:#64748b;line-height:1.6;margin-top:4px;white-space:pre-wrap;">' + self.esc(inner.slice(0, 400)) + (inner.length > 400 ? '...' : '') + '</div>' +
+      '</div>';
+    });
+    container.innerHTML = html + self.renderMarkdown(cleaned);
+    var codeRe = /\x60\x60\x60([\w-]*)\n([\s\S]*?)\x60\x60\x60/g;
+    var m;
+    while ((m = codeRe.exec(cleaned))) {
+      var lang = (m[1] || 'txt').toLowerCase();
+      var code = m[2].replace(/\n$/, '');
+      var idx = self.artifacts.push(lang, code);
+      var card = document.createElement('div');
+      card.style.cssText = 'display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,0.04);cursor:pointer;';
+      card.innerHTML =
+        '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' +
+        '<span style="flex:1;"><span style="display:block;font-size:12px;font-weight:700;color:var(--text-primary);">' + self.esc('output.' + (lang || 'txt')) + '</span>' +
+        '<span style="display:block;font-size:10px;color:#94a3b8;">' + (lang === 'html' || lang === 'svg' ? '点击打开预览' : '代码产出物') + '</span></span>' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>';
+      card.setAttribute('class', 'wb-art-open');
+      card.setAttribute('data-idx', String(idx));
+      container.appendChild(card);
+    }
+    return container;
+  };
+  WB.appendBubble = function (role, text) {
+    var self = this;
+    var el = document.getElementById('wb-msgs');
+    if (!el) return null;
+    if (role === 'user') {
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'align-self:flex-end;background:#f4f1ec;color:#1c1917;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:84%;font-size:13.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;';
+      wrap.textContent = text || '';
+      el.appendChild(wrap);
+      this.scrollToBottom();
+      return { _el: wrap };
+    }
+    var wrap2 = document.createElement('div');
+    wrap2.style.cssText = 'align-self:stretch;display:flex;flex-direction:column;';
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+    head.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8m0 0 4-4m-4 4-4-4"/><path d="M12 10v12"/><path d="M20 15a8 8 0 0 1-16 0"/></svg><span style="font-size:11px;font-weight:600;color:#64748b;">工作台 Agent</span>';
+    var content = document.createElement('div');
+    content.style.cssText = 'font-size:13.5px;line-height:1.75;color:var(--text-primary);word-break:break-word;';
+    content.textContent = text || '';
+    wrap2.appendChild(head);
+    wrap2.appendChild(content);
+    el.appendChild(wrap2);
+    this.scrollToBottom();
+    return {
+      _el: content,
+      _finalize: function (full) {
+        self.renderAssistantContent(full, content);
+        self.scrollToBottom();
+      }
+    };
+  };
+  WB.renderStoredMsg = function (container, m) {
+    var self = this;
+    if (m.role === 'user') {
+      this.appendBubble('user', m.content);
+    } else if (m.role === 'assistant') {
+      var bubble = this.appendBubble('assistant', '');
+      if (bubble && bubble._finalize) bubble._finalize(m.content);
+    } else if (m.role === 'tool') {
+      var div = document.createElement('div');
+      div.style.cssText = 'align-self:flex-start;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:10px;padding:8px 10px;font-size:10px;color:#64748b;max-width:88%;word-break:break-all;';
+      div.textContent = '[工具结果] ' + String(m.content || '').slice(0, 300) + (m.content && m.content.length > 300 ? '...' : '');
+      container.appendChild(div);
+    } else {
+      var sys = document.createElement('div');
+      sys.style.cssText = 'align-self:center;font-size:10px;color:#94a3b8;background:#f8fafc;border-radius:8px;padding:4px 10px;max-width:80%;';
+      sys.textContent = m.content;
+      container.appendChild(sys);
+    }
+  };
+  WB.appendToolCard = function (tool, args) {
+    var self = this;
+    var el = document.getElementById('wb-msgs');
+    var card = document.createElement('div');
+    card.style.cssText = 'align-self:flex-start;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;padding:8px 12px;width:88%;box-sizing:border-box;';
+    card.innerHTML =
+      '<div style="display:flex;align-items:center;gap:6px;font-size:11px;font-weight:700;color:#334155;">' + this.svg('<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>', 13, 'color:#6366f1;') + '工具: ' + this.esc(tool) +
+        '<span style="margin-left:auto;font-weight:400;color:#94a3b8;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%;">' + this.esc(JSON.stringify(args || {}).slice(0, 60)) + '</span></div>' +
+      '<div class="wb-tool-result" style="margin-top:6px;font-size:10px;color:#475569;white-space:pre-wrap;word-break:break-all;max-height:200px;overflow-y:auto;">运行中...</div>';
+    el.appendChild(card);
+    this.scrollToBottom();
+    return {
+      _render: function (result) {
+        var box = card.querySelector('.wb-tool-result');
+        if (!box) return;
+        if (result && result.ok) {
+          box.style.color = '#15803d';
+          if (result.entries && Array.isArray(result.entries)) box.textContent = '共 ' + result.entries.length + ' 项: ' + result.entries.map(function (en) { return en.name + (en.type === 'dir' ? '/' : ''); }).join(', ').slice(0, 500);
+          else if (result.result !== undefined) box.textContent = String(result.result).slice(0, 2000);
+          else if (result.content !== undefined) box.textContent = String(result.content).slice(0, 2000);
+          else box.textContent = result.message || '执行完成';
+        } else {
+          box.style.color = '#dc2626';
+          box.textContent = '失败: ' + ((result && result.error) || '未知错误');
+        }
+      }
+    };
+  };
+  WB.appendSysMsg = function (text) {
+    var el = document.getElementById('wb-msgs');
+    if (!el) return;
+    var div = document.createElement('div');
+    div.style.cssText = 'align-self:center;font-size:11px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:5px 12px;max-width:85%;';
+    div.textContent = text;
+    el.appendChild(div);
+    this.scrollToBottom();
+  };
+  WB.scrollToBottom = function () {
+    var el = document.getElementById('wb-msgs');
+    if (el) el.scrollTop = el.scrollHeight;
+  };
+  WB.updateChatHeader = function (conv) {
+    var usageEl = document.getElementById('wb-usage');
+    if (usageEl) usageEl.textContent = '↑' + (conv.totalTokensIn || 0) + ' ↓' + (conv.totalTokensOut || 0) + (conv.cacheHits ? ' 缓存:' + conv.cacheHits : '');
+  };
+  // ============ 系统提示词覆盖（工作台 MCP + 自定义指令） ============
+  WB._origBuildSystemPrompt = WB.buildSystemPrompt;
+  WB.buildSystemPrompt = function (conv) {
+    var base = this._origBuildSystemPrompt ? this._origBuildSystemPrompt(conv) : '';
+    var lines = [];
+    // 工作台 MCP 工具（独立配置）
+    var mcpCache = null;
+    try { mcpCache = JSON.parse(localStorage.getItem('wb_mcp_prompt_tools')) || []; } catch (e) { mcpCache = []; }
+    if (mcpCache && mcpCache.length) {
+      lines.push('');
+      lines.push('【工作台 MCP 工具（独立配置，通过 mcp_tool 调用）】');
+      mcpCache.forEach(function (t) { lines.push('- mcp_tool 参数 {server:"' + t.server + '", tool:"' + t.tool + '", arguments:{...}}：' + (t.description || '无描述')); });
+      lines.push('调用示例: [WB_TOOL:{"tool":"mcp_tool","arguments":{"server":"' + mcpCache[0].server + '","tool":"' + mcpCache[0].tool + '","arguments":{}}}]');
+    }
+    // 全局自定义指令
+    var custom = '';
+    try { custom = localStorage.getItem('wb_custom_instructions') || ''; } catch (e) {}
+    if (custom && custom.trim()) {
+      lines.push('');
+      lines.push('【用户全局自定义指令】');
+      lines.push(custom.trim());
+    }
+    return base + lines.join('\n');
+  };
+
+  // ============ 工作台设置弹窗 ============
+  WB.showWbSettings = function () {
+    var self = this;
+    var cfg = this.github.config();
+    var custom = '';
+    try { custom = localStorage.getItem('wb_custom_instructions') || ''; } catch (e) {}
+    var dlg = this.overlay(
+      '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:14px;">' + this.svg('<path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>', 17, 'color:#64748b;') + '工作台设置</div>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;">' +
+        '<button class="wb-set-gh" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border:1.5px solid var(--border);border-radius:12px;background:#fff;cursor:pointer;text-align:left;">' +
+          this.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 17, 'color:#16a34a;') +
+          '<span style="flex:1;"><span style="display:block;font-size:12px;font-weight:700;color:var(--text-primary);">GitHub 连接</span><span style="display:block;font-size:10px;color:#94a3b8;">' + (cfg ? ('已连接: ' + (cfg.username || '')) : '未连接（配置用户名与 Token）') + '</span></span>' +
+          this.svg('<path d="M9 18l6-6-6-6"/>', 14, 'color:#cbd5e1;') +
+        '</button>' +
+        '<button class="wb-set-mcp" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border:1.5px solid var(--border);border-radius:12px;background:#fff;cursor:pointer;text-align:left;">' +
+          this.svg('<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>', 17, 'color:#6366f1;') +
+          '<span style="flex:1;"><span style="display:block;font-size:12px;font-weight:700;color:var(--text-primary);">MCP 服务器</span><span style="display:block;font-size:10px;color:#94a3b8;">工作台独立配置，Agent 可直接调用</span></span>' +
+          this.svg('<path d="M9 18l6-6-6-6"/>', 14, 'color:#cbd5e1;') +
+        '</button>' +
+        '<div style="border:1.5px solid var(--border);border-radius:12px;padding:11px 12px;background:#fff;">' +
+          '<div style="font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">全局自定义指令</div>' +
+          '<textarea id="wb-custom-inst" rows="2" placeholder="你希望 Agent 了解你的哪些背景信息 / 采用什么回复风格？" style="width:100%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:8px;padding:8px;font-size:11px;resize:none;outline:none;">' + self.esc(custom) + '</textarea>' +
+        '</div>' +
+        '<button class="wb-set-clear" style="display:flex;align-items:center;gap:10px;padding:11px 12px;border:1.5px solid #fecaca;border-radius:12px;background:#fef2f2;cursor:pointer;text-align:left;">' +
+          this.svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 16, 'color:#dc2626;') +
+          '<span style="flex:1;font-size:12px;font-weight:700;color:#b91c1c;">清空工作台数据</span>' +
+        '</button>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:14px;">' +
+        '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">关闭</button>' +
+        '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">保存指令</button>' +
+      '</div>'
+    );
+    dlg.card.querySelector('.wb-set-gh').onclick = function () { dlg.close(); self.showGithubConfigDialog(); };
+    dlg.card.querySelector('.wb-set-mcp').onclick = function () { dlg.close(); self.showMcpConfigDialog(); };
+    dlg.card.querySelector('.wb-set-clear').onclick = function () { dlg.close(); self.showClearDataDialog(); };
+    dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+    dlg.card.querySelector('.wb-dlg-ok').onclick = function () {
+      var v = dlg.card.querySelector('#wb-custom-inst').value;
+      try { localStorage.setItem('wb_custom_instructions', v); } catch (e) {}
+      dlg.close();
+      if (typeof showToast === 'function') showToast('自定义指令已保存');
+    };
+  };
+
+  // ============ 工作台 MCP 服务器配置 ============
+  WB.showMcpConfigDialog = function () {
+    var self = this;
+    var dlg = this.overlay(
+      '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>', 17, 'color:#6366f1;') + '工作台 MCP 服务器</div>' +
+      '<div style="font-size:11px;color:var(--text-secondary);line-height:1.6;margin-bottom:12px;">工作台独立维护的 MCP 服务器配置（不依赖原有 MCP 面板）。配置后 Agent 可通过 mcp_tool 直接调用其工具。</div>' +
+      '<div id="wb-mcp-list" style="display:flex;flex-direction:column;gap:8px;max-height:280px;overflow-y:auto;margin-bottom:10px;">加载中...</div>' +
+      '<button id="wb-mcp-add" style="width:100%;padding:9px;border:1.5px dashed #6366f1;border-radius:10px;background:#eef2ff;font-size:12px;font-weight:700;color:#4338ca;cursor:pointer;">+ 添加 MCP 服务器</button>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">关闭</button>' +
+      '</div>'
+    );
+    dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+    dlg.card.querySelector('#wb-mcp-add').onclick = function () { self.showMcpEditDialog(null, dlg); };
+    self._renderMcpList(dlg);
+  };
+
+  WB._renderMcpList = function (dlg) {
+    var self = this;
+    var wrap = dlg.card.querySelector('#wb-mcp-list');
+    if (!wrap) return;
+    this.wbMCP.list().then(function (servers) {
+      if (!servers.length) { wrap.innerHTML = '<div style="font-size:11px;color:#94a3b8;text-align:center;padding:20px 0;">尚未配置 MCP 服务器，点击下方添加</div>'; return; }
+      wrap.innerHTML = servers.map(function (s) {
+        var toolCount = (s.tools || []).filter(function (t) { return t.enabled !== false; }).length;
+        return '<div style="border:1.5px solid var(--border);border-radius:12px;padding:10px 12px;background:#fff;">' +
+          '<div style="display:flex;align-items:center;gap:8px;">' +
+            '<span style="flex:1;font-size:12px;font-weight:700;color:var(--text-primary);">' + self.esc(s.name) + '</span>' +
+            '<span style="font-size:9px;color:#94a3b8;background:#f1f5f9;border-radius:6px;padding:2px 6px;">' + toolCount + ' 工具</span>' +
+            '<button class="wb-mcp-toggle" data-id="' + s.id + '" style="border:none;background:none;cursor:pointer;color:' + (s.enabled ? '#16a34a' : '#94a3b8') + ';padding:2px;">' + (s.enabled ? self.svg('<path d="M20 6 9 17l-5-5"/>', 15) : self.svg('<circle cx="12" cy="12" r="10"/><path d="m4.9 4.9 14.2 14.2"/>', 15)) + '</button>' +
+            '<button class="wb-mcp-edit" data-id="' + s.id + '" style="border:none;background:none;color:#64748b;cursor:pointer;padding:2px;">' + self.svg('<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/>', 14) + '</button>' +
+            '<button class="wb-mcp-del" data-id="' + s.id + '" style="border:none;background:none;color:#ef4444;cursor:pointer;padding:2px;">' + self.svg('<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', 14) + '</button>' +
+          '</div>' +
+          '<div style="font-size:9px;color:#94a3b8;margin-top:4px;word-break:break-all;">' + self.esc(s.url || '') + '</div>' +
+        '</div>';
+      }).join('');
+      wrap.querySelectorAll('.wb-mcp-toggle').forEach(function (b) {
+        b.onclick = function () {
+          var id = Number(b.getAttribute('data-id'));
+          self.wbMCP.list().then(function (servers) {
+            var s = servers.find(function (x) { return x.id === id; });
+            if (s) { self.wbMCP.save(Object.assign({}, s, { enabled: !s.enabled })).then(function () { self._renderMcpList(dlg); }); }
+          });
+        };
+      });
+      wrap.querySelectorAll('.wb-mcp-edit').forEach(function (b) {
+        b.onclick = function () { self.wbMCP.list().then(function (servers) { var s = servers.find(function (x) { return x.id === Number(b.getAttribute('data-id')); }); if (s) self.showMcpEditDialog(s, dlg); }); };
+      });
+      wrap.querySelectorAll('.wb-mcp-del').forEach(function (b) {
+        b.onclick = function () {
+          var id = Number(b.getAttribute('data-id'));
+          self.confirmDialog('删除 MCP 服务器', '确定删除该服务器及其工具配置吗？', function () {
+            self.wbMCP.remove(id).then(function () { self._renderMcpList(dlg); });
+          });
+        };
+      });
+    });
+  };
+
+  WB.showMcpEditDialog = function (server, parentDlg) {
+    var self = this;
+    var s = server || { name: '', group: '默认', type: 'streamable_http', url: '', headers: null, tools: [] };
+    var dlg = this.overlay(
+      '<div style="font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + (server ? '编辑 MCP 服务器' : '添加 MCP 服务器') + '</div>' +
+      '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">名称</div>' +
+      '<input id="wb-mcp-name" value="' + self.esc(s.name) + '" placeholder="例如: 我的工具箱" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid var(--border);border-radius:10px;font-size:12px;outline:none;margin-bottom:8px;">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">URL</div>' +
+      '<input id="wb-mcp-url" value="' + self.esc(s.url || '') + '" placeholder="https://..." style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid var(--border);border-radius:10px;font-size:12px;outline:none;margin-bottom:8px;">' +
+      '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">自定义 Headers（JSON，可选）</div>' +
+      '<textarea id="wb-mcp-headers" rows="2" placeholder="Headers JSON（可选），如 Bearer 认证" style="width:100%;box-sizing:border-box;padding:8px;border:1.5px solid var(--border);border-radius:10px;font-size:11px;resize:none;outline:none;margin-bottom:10px;">' + self.esc(s.headers ? JSON.stringify(s.headers) : '') + '</textarea>' +
+      '<div id="wb-mcp-tools" style="display:none;margin-bottom:10px;">' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;"><span style="font-size:11px;font-weight:700;color:var(--text-primary);flex:1;">工具列表</span><button id="wb-mcp-fetch" style="border:1px solid #6366f1;background:#eef2ff;color:#4338ca;border-radius:8px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;">拉取 tools/list</button></div>' +
+        '<div id="wb-mcp-tools-list" style="display:flex;flex-direction:column;gap:4px;max-height:140px;overflow-y:auto;"></div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">取消</button>' +
+        '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">保存</button>' +
+      '</div>'
+    );
+    var toolsBox = dlg.card.querySelector('#wb-mcp-tools');
+    var toolsList = dlg.card.querySelector('#wb-mcp-tools-list');
+    var currentTools = (s.tools || []).slice();
+    function renderTools() {
+      if (!currentTools.length) { toolsList.innerHTML = '<div style="font-size:10px;color:#94a3b8;">暂无工具（点击拉取或保存后由 Agent 探测）</div>'; return; }
+      toolsList.innerHTML = currentTools.map(function (t, idx) {
+        return '<label style="display:flex;align-items:center;gap:6px;padding:4px 6px;background:#f8fafc;border-radius:6px;font-size:10px;cursor:pointer;">' +
+          '<input type="checkbox" class="wb-mcp-tool-chk" data-idx="' + idx + '" ' + (t.enabled !== false ? 'checked' : '') + ' style="accent-color:#6366f1;">' +
+          '<span style="flex:1;color:var(--text-primary);font-weight:600;">' + self.esc(t.name) + '</span>' +
+          '<span style="color:#94a3b8;font-size:9px;max-width:40%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.esc(t.description || '') + '</span>' +
+        '</label>';
+      }).join('');
+      toolsList.querySelectorAll('.wb-mcp-tool-chk').forEach(function (chk) {
+        chk.onchange = function () { currentTools[Number(chk.getAttribute('data-idx'))].enabled = chk.checked; };
+      });
+    }
+    renderTools();
+    if (currentTools.length) toolsBox.style.display = 'block';
+    dlg.card.querySelector('#wb-mcp-fetch').onclick = async function () {
+      var name = dlg.card.querySelector('#wb-mcp-name').value.trim();
+      var url = dlg.card.querySelector('#wb-mcp-url').value.trim();
+      var headersRaw = dlg.card.querySelector('#wb-mcp-headers').value.trim();
+      if (!name || !url) { if (typeof showToast === 'function') showToast('请先填写名称与 URL'); return; }
+      var headers = {};
+      if (headersRaw) { try { headers = JSON.parse(headersRaw); } catch (e) { if (typeof showToast === 'function') showToast('Headers 不是合法 JSON'); return; } }
+      var temp = { name: name, url: url, headers: headers, type: 'streamable_http' };
+      toolsList.innerHTML = '<div style="font-size:10px;color:#94a3b8;">正在拉取...</div>';
+      try {
+        var fetched = await self.wbMCP.fetchTools(temp);
+        currentTools = fetched.map(function (t) { return { name: t.name, description: t.description || '', inputSchema: t.inputSchema || {}, enabled: true }; });
+        toolsBox.style.display = 'block';
+        renderTools();
+        if (typeof showToast === 'function') showToast('拉取到 ' + fetched.length + ' 个工具');
+      } catch (e) {
+        toolsList.innerHTML = '<div style="font-size:10px;color:#dc2626;">拉取失败: ' + self.esc(e.message) + '</div>';
+      }
+    };
+    dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+    dlg.card.querySelector('.wb-dlg-ok').onclick = async function () {
+      var name = dlg.card.querySelector('#wb-mcp-name').value.trim();
+      var url = dlg.card.querySelector('#wb-mcp-url').value.trim();
+      var headersRaw = dlg.card.querySelector('#wb-mcp-headers').value.trim();
+      if (!name || !url) { if (typeof showToast === 'function') showToast('请填写名称与 URL'); return; }
+      var headers = {};
+      if (headersRaw) { try { headers = JSON.parse(headersRaw); } catch (e) { if (typeof showToast === 'function') showToast('Headers 不是合法 JSON'); return; } }
+      var data = Object.assign({}, s, { name: name, url: url, headers: headers, tools: currentTools, updatedAt: Date.now() });
+      await self.wbMCP.save(data);
+      // 更新系统提示词缓存
+      var promptTools = await self.wbMCP.promptTools();
+      try { localStorage.setItem('wb_mcp_prompt_tools', JSON.stringify(promptTools)); } catch (e) {}
+      dlg.close();
+      if (parentDlg) self._renderMcpList(parentDlg);
+      if (typeof showToast === 'function') showToast('MCP 服务器已保存');
+    };
+  };
+
+  // ============ alert 兜底 ============
+  WB.alert = function (title, msg) {
+    if (typeof window.showCustomAlert === 'function') { window.showCustomAlert(title, msg); return; }
+    this.overlay('<div style="font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:10px;">' + this.esc(title) + '</div><div style="font-size:12px;color:var(--text-secondary);line-height:1.6;margin-bottom:14px;">' + this.esc(msg) + '</div><button class="wb-dlg-ok" style="width:100%;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">确定</button>');
+  };
+
+})();
+
+// ============ runAgent 兼容：流式完成后 Markdown 化 ============
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB || !WB.runAgent) return;
+  var origRunAgent = WB.runAgent;
+  WB.runAgent = async function (conv, userText) {
+    // 让 appendBubble 返回的 _finalize 在最终落库后生效：先跑原逻辑
+    await origRunAgent.call(WB, conv, userText);
   };
 })();

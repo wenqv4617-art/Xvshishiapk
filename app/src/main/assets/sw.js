@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v36'; // v36：诊断密文 + 预设播放器移除/工作台上位 + 美化图标面板补工作台 + 弹窗层级修复 + 工作区路径输入/链接版适配
+const CACHE_NAME = 'story-phone-v37'; // v37：工作台 Claude 化重设计（侧边栏/空态/富文本/Artifacts/模型切换）+ 独立 MCP 配置
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
