@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v33'; // v33：新增工作台 Agent（多对话/本地工作区/GitHub 推送/多轮工具调用）
+const CACHE_NAME = 'story-phone-v34'; // v34：防篡改哈希按 LF 归一化修复（v32/v33 的 index.html 哈希在真机 CRLF/LF 下误判瘫痪，必须换缓存）
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
