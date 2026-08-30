@@ -246,6 +246,7 @@
     var history = await self.msgs(conv.id);
     var messages = self.buildMessages(conv, history);
     var aborted = false;
+    var redoGuard = 0; // 代码输出纠偏次数上限（防死循环）
 
     // 无硬性轮数限制：agent 自主决定是否继续调用工具（仅保留 999 安全兜底防死循环）
     var _lastChunk = 0;
@@ -314,6 +315,28 @@
 
       var toolCall = self.parseToolCall(reply);
       if (!toolCall) {
+        // ---- 代码输出纪律（对标 DSH）：正文出现大段代码块且未调用 write_file → 纠偏重来 ----
+        var bloat = false;
+        var codeMs = String(reply || '').match(/```[\s\S]*?```/g) || [];
+        if (codeMs.length) {
+          var codeLines = 0, codeChars = 0;
+          codeMs.forEach(function (b) {
+            codeLines += b.split('\n').length - 2;
+            codeChars += b.length;
+          });
+          if (codeLines >= 3 || codeChars > 200) bloat = true;
+        }
+        var usedWrite = /"tool"\s*:\s*"write_file"/.test(String(reply || ''));
+        if (bloat && !usedWrite && redoGuard < 3) {
+          redoGuard++;
+          await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
+          messages = messages.concat([
+            { role: 'assistant', content: reply },
+            { role: 'system', content: '【纠偏】你刚才在回复正文里直接输出了代码块。按【代码输出纪律】，代码必须通过 write_file 工具写入工作区文件，正文禁止粘贴。请立即调用 write_file（一次一个文件，路径用相对工作区路径），把完整代码落盘；如果路径不确定，先 list_dir / read_file 确认。' }
+          ]);
+          if (bubble && bubble._el) bubble._el.textContent = '（检测到正文输出代码块，正在纠正为 write_file…）';
+          continue;
+        }
         // 最终回复：Markdown 渲染（含思考折叠块）
         if (bubble && bubble._finalize) bubble._finalize(reply);
         else if (bubble && bubble._el) bubble._el.textContent = wbStripToolTag(reply);
@@ -1335,6 +1358,13 @@
     lines.push('4. 审查类任务按「代码审查」工作流输出：审查范围 → 问题清单（严重/一般/建议）→ 总体评价；');
     lines.push('5. 修改文件前先向用户说明要改什么，涉及删除/覆盖前必须征得同意。');
     lines.push('如果工作区为空或没有相关代码，明确告诉用户，而不是编造内容。');
+    // ---- 代码输出纪律（对标 DSH：代码只允许通过 write_file 落盘，正文禁止粘贴大段代码） ----
+    lines.push('');
+    lines.push('【代码输出纪律（极其重要，违反会丢代码）】');
+    lines.push('- 写代码/改代码的【唯一】途径是调用 write_file 工具，把完整代码写入工作区文件。');
+    lines.push('- 你的回复正文【禁止】出现超过 3 行的代码块。需要给用户展示代码时，先 write_file 落盘，然后在正文里用 1~3 行说明文件路径与作用，不要整段粘贴。');
+    lines.push('- 一次只调用一个工具：创建多个文件请多次调用 write_file（每次单独一行 [WB_TOOL:...]）。');
+    lines.push('- 如果系统提示你「请用 write_file 写入」而你仍直接输出代码，任务会被视为失败并继续纠正，直到代码真正落盘。');
     return base + lines.join('\n');
   };
 

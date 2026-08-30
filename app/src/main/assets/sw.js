@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v42'; // v42：代码审查自动工作流——系统提示强制工具循环+内置代码审查SKILL(工作区预置+db种子)
+const CACHE_NAME = 'story-phone-v43'; // v43：代码输出纪律——正文禁止贴代码块(>3行自动纠偏逼write_file)+系统提示硬约束
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
