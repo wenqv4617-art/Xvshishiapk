@@ -45,7 +45,20 @@ jobs:
           done
           exit 1
 
+      # 清理历史构建产物（防止 500MB 配额被频繁构建堆满；失败不影响构建）
+      - name: Clean old artifacts
+        continue-on-error: true
+        run: |
+          curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+            | jq -r '.artifacts[]?.id' | while read -r id; do
+              [ -n "$id" ] && curl -s -X DELETE -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/$id" || true
+            done
+
+      # ★ 配额用量是延迟计算的（6-12h），删了也未必立刻释放；上传失败不拖垮构建
       - name: Upload APK
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: StoryPhone-Android-APK
