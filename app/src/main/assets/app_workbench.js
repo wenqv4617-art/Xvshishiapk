@@ -1499,7 +1499,7 @@
         ghDot +
         '<span style="font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:26%;">' + this.esc(wsTxt) + '</span>' +
         '<span style="flex:1;"></span>' +
-        '<span id="wb-usage" style="font-size:9px;color:#94a3b8;">↑' + (conv.totalTokensIn || 0) + ' ↓' + (conv.totalTokensOut || 0) + (conv.cacheHits ? ' 缓存:' + conv.cacheHits : '') + '</span>' +
+        '<span id="wb-usage" style="font-size:9px;color:#94a3b8;">' + (self._usageText ? self._usageText(conv) : ('↑' + (conv.totalTokensIn || 0) + ' ↓' + (conv.totalTokensOut || 0))) + '</span>' +
         '<button id="wb-conv-menu" style="border:none;background:none;color:#64748b;cursor:pointer;padding:4px;">' + this.svg('<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>', 16) + '</button>' +
       '</div>' +
       '<div id="wb-msgs" style="flex:1;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:14px;width:100%;max-width:760px;margin:0 auto;box-sizing:border-box;"></div>' +
@@ -1945,5 +1945,284 @@
   WB.runAgent = async function (conv, userText) {
     // 让 appendBubble 返回的 _finalize 在最终落库后生效：先跑原逻辑
     await origRunAgent.call(WB, conv, userText);
+  };
+})();
+
+// ============ Agent 成熟模式 v2：思考折叠块 + 工具卡片状态机 + 缓存命中率 + Markdown 完成渲染 ============
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB) return;
+
+  // ---- 过滤工具标签（避免"爆代码"） ----
+  function wbStripToolTag(t) {
+    return String(t || '').replace(/\[\s*WB_TOOL\s*:\s*\{[\s\S]*?\}\s*\]/gi, '').trim();
+  }
+
+  // ---- 缓存命中率文本 ----
+  WB._usageText = function (conv) {
+    var txt = '↑' + (conv.totalTokensIn || 0) + ' ↓' + (conv.totalTokensOut || 0);
+    var hit = conv.cacheHits || 0;
+    var total = conv.totalTokensIn || 0;
+    if (hit > 0 && total > 0) {
+      var pct = Math.min(100, Math.round(hit / total * 100));
+      txt += ' 缓存命中 ' + pct + '%';
+    }
+    return txt;
+  };
+  WB.updateChatHeader = function (conv) {
+    var usageEl = document.getElementById('wb-usage');
+    if (usageEl) usageEl.textContent = WB._usageText(conv);
+  };
+
+  // ---- 思考折叠块 + Markdown + Artifacts ----
+  WB.renderAssistantContent = function (full, container, t0) {
+    var self = this;
+    var thinks = String(full || '').match(/<think>([\s\S]*?)<\/think>/g) || [];
+    var cleaned = String(full || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    var html = '';
+    var secs = t0 ? Math.round((Date.now() - t0) / 1000) : 0;
+    var thinkLabel = secs > 1 ? ('Thought for ' + secs + ' seconds') : '思考过程';
+    thinks.forEach(function (t) {
+      var inner = t.replace(/<\/?think>/g, '').trim();
+      var uid = 'wb-think-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+      html += '<div style="margin:6px 0;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;overflow:hidden;">' +
+        '<div class="wb-think-head" data-uid="' + uid + '" style="display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;user-select:none;">' +
+          '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>' +
+          '<span style="flex:1;font-size:11px;font-weight:500;color:#64748b;">' + self.esc(thinkLabel) + '</span>' +
+          '<svg class="wb-think-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
+        '</div>' +
+        '<div class="wb-think-body" id="' + uid + '" style="display:none;border-top:1px solid #f1f5f9;padding:8px 12px;font-size:11px;line-height:1.6;color:#64748b;white-space:pre-wrap;word-break:break-word;max-height:320px;overflow-y:auto;">' + self.esc(inner) + '</div>' +
+      '</div>';
+    });
+    container.innerHTML = html + self.renderMarkdown(cleaned);
+    container.querySelectorAll('.wb-think-head').forEach(function (h) {
+      h.onclick = function () {
+        var body = document.getElementById(h.getAttribute('data-uid'));
+        if (!body) return;
+        var open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : 'block';
+        var chev = h.querySelector('.wb-think-chev');
+        if (chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
+      };
+    });
+    // artifacts 代码块（保留原逻辑）
+    var codeRe = /\x60\x60\x60([\w-]*)\n([\s\S]*?)\x60\x60\x60/g;
+    var m;
+    while ((m = codeRe.exec(cleaned))) {
+      var lang = (m[1] || 'txt').toLowerCase();
+      var code = m[2].replace(/\n$/, '');
+      var idx = self.artifacts.push(lang, code);
+      var card = document.createElement('div');
+      card.style.cssText = 'display:flex;align-items:center;gap:10px;margin:10px 0;padding:10px 12px;border:1px solid #e2e8f0;border-radius:12px;background:#fff;box-shadow:0 2px 8px rgba(15,23,42,0.04);cursor:pointer;';
+      card.innerHTML =
+        '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#3b82f6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>' +
+        '<span style="flex:1;"><span style="display:block;font-size:12px;font-weight:700;color:var(--text-primary);">' + self.esc('output.' + (lang || 'txt')) + '</span>' +
+        '<span style="display:block;font-size:10px;color:#94a3b8;">' + (lang === 'html' || lang === 'svg' ? '点击打开预览' : '代码产出物') + '</span></span>' +
+        '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 17 17 7"/><path d="M8 7h9v9"/></svg>';
+      card.setAttribute('class', 'wb-art-open');
+      card.setAttribute('data-idx', String(idx));
+      container.appendChild(card);
+    }
+    return container;
+  };
+
+  // ---- appendBubble：记录起始时间供思考时长，流式阶段由 runAgent 过滤 ----
+  WB.appendBubble = function (role, text) {
+    var self = this;
+    var el = document.getElementById('wb-msgs');
+    if (!el) return null;
+    if (role === 'user') {
+      var wrap = document.createElement('div');
+      wrap.style.cssText = 'align-self:flex-end;background:#f4f1ec;color:#1c1917;border-radius:16px 16px 4px 16px;padding:10px 14px;max-width:84%;font-size:13.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;';
+      wrap.textContent = text || '';
+      el.appendChild(wrap);
+      this.scrollToBottom();
+      return { _el: wrap };
+    }
+    var wrap2 = document.createElement('div');
+    wrap2.style.cssText = 'align-self:stretch;display:flex;flex-direction:column;';
+    var head = document.createElement('div');
+    head.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:6px;';
+    head.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v8m0 0 4-4m-4 4-4-4"/><path d="M12 10v12"/><path d="M20 15a8 8 0 0 1-16 0"/></svg><span style="font-size:11px;font-weight:600;color:#64748b;">工作台 Agent</span>';
+    var content = document.createElement('div');
+    content.style.cssText = 'font-size:13.5px;line-height:1.75;color:var(--text-primary);word-break:break-word;';
+    var t0 = Date.now();
+    wrap2.appendChild(head);
+    wrap2.appendChild(content);
+    el.appendChild(wrap2);
+    this.scrollToBottom();
+    return {
+      _el: content,
+      _finalize: function (full) {
+        self.renderAssistantContent(full, content, t0);
+        self.scrollToBottom();
+      }
+    };
+  };
+
+  // ---- 工具调用卡片：Claude 风格状态机（执行中→完成/失败，可折叠） ----
+  WB.appendToolCard = function (tool, args) {
+    var self = this;
+    var el = document.getElementById('wb-msgs');
+    if (!el) return { _render: function () {} };
+    var uid = 'wb-tc-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+    var card = document.createElement('div');
+    card.style.cssText = 'align-self:flex-start;width:92%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden;';
+    card.innerHTML =
+      '<div class="wb-tool-head" data-uid="' + uid + '" style="display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;">' +
+        '<span style="display:flex;align-items:center;gap:6px;color:#6366f1;flex-shrink:0;">' + self.svg('<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>', 13) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#334155;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + self.esc(tool) + '</span>' +
+        '<span class="wb-tool-status" style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:#b45309;flex-shrink:0;">' +
+          '<span class="wb-tool-spinner" style="width:10px;height:10px;border:1.5px solid #fbbf24;border-top-color:transparent;border-radius:50%;display:inline-block;animation:wbSpin 0.8s linear infinite;"></span>执行中…</span>' +
+        '<svg class="wb-tool-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>' +
+      '</div>' +
+      '<div class="wb-tool-body" style="display:none;border-top:1px solid #f1f5f9;padding:8px 12px;font-size:10px;color:#475569;max-height:280px;overflow-y:auto;">' +
+        '<div style="font-weight:700;color:#94a3b8;margin-bottom:4px;">Arguments</div>' +
+        '<pre style="margin:0 0 8px;padding:8px;background:#f8fafc;border-radius:8px;overflow-x:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;">' + self.esc(JSON.stringify(args || {}, null, 2)) + '</pre>' +
+        '<div style="font-weight:700;color:#94a3b8;margin-bottom:4px;">Response</div>' +
+        '<pre class="wb-tool-result" style="margin:0;padding:8px;background:#f8fafc;border-radius:8px;overflow:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>' +
+      '</div>';
+    el.appendChild(card);
+    var head = card.querySelector('.wb-tool-head');
+    head.onclick = function () {
+      var body = head.parentNode.querySelector('.wb-tool-body');
+      if (!body) return;
+      var open = body.style.display !== 'none';
+      body.style.display = open ? 'none' : 'block';
+      var chev = head.querySelector('.wb-tool-chev');
+      if (chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
+    };
+    if (!document.getElementById('wbSpinKey')) {
+      var st = document.createElement('style');
+      st.id = 'wbSpinKey';
+      st.textContent = '@keyframes wbSpin { to { transform: rotate(360deg); } }';
+      document.head.appendChild(st);
+    }
+    this.scrollToBottom();
+    return {
+      _render: function (result) {
+        var status = card.querySelector('.wb-tool-status');
+        var box = card.querySelector('.wb-tool-result');
+        if (!status || !box) return;
+        var ok = !!(result && result.ok);
+        var txt = '';
+        if (ok) {
+          status.style.color = '#15803d';
+          status.innerHTML = self.svg('<path d="M20 6 9 17l-5-5"/>', 11) + ' 完成';
+          if (result.entries && Array.isArray(result.entries)) txt = '共 ' + result.entries.length + ' 项: ' + result.entries.map(function (en) { return en.name + (en.type === 'dir' ? '/' : ''); }).join(', ').slice(0, 1000);
+          else if (result.result !== undefined) txt = String(result.result).slice(0, 3000);
+          else if (result.content !== undefined) txt = String(result.content).slice(0, 3000);
+          else txt = result.message || '执行完成';
+        } else {
+          status.style.color = '#dc2626';
+          status.innerHTML = self.svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>', 11) + ' 失败';
+          txt = (result && result.error) || '未知错误';
+        }
+        box.textContent = txt;
+        box.style.color = ok ? '#475569' : '#b91c1c';
+      }
+    };
+  };
+
+  // ---- runAgent：成熟 Agent 模式（思考→工具卡片→正文，流式过滤工具标签，完成时 Markdown 渲染） ----
+  WB.runAgent = async function (conv, userText) {
+    var self = this;
+    if (self.state.sending) return;
+    self.state.sending = true;
+    var preset = await self.getApiPreset();
+    if (!preset || !preset.url || !preset.key) {
+      self.appendSysMsg('未配置可用 API（请先在 设置-API 服务 中配置并启用一个服务）');
+      self.state.sending = false;
+      return;
+    }
+    var seq = (await self.msgs(conv.id)).length;
+    var turnTokensIn = 0, turnTokensOut = 0, turnCache = 0;
+
+    await self.addMsg({ convId: conv.id, seq: seq++, role: 'user', content: userText, createdAt: Date.now() });
+    self.appendBubble('user', userText);
+
+    var history = await self.msgs(conv.id);
+    var messages = self.buildMessages(conv, history);
+    var loop = 0;
+    var aborted = false;
+
+    while (loop < WB.MAX_TOOL_LOOPS && !aborted) {
+      loop++;
+      var reply = '';
+      var usage = null;
+      var ctrl = new AbortController();
+      self.state.abortCtrl = ctrl;
+      var bubble = self.appendBubble('assistant', '');
+      try {
+        reply = await self.wbStreamChat(
+          preset.url,
+          { key: preset.key, model: preset.model, temperature: preset.temperature },
+          messages,
+          ctrl.signal,
+          function (delta, fullText) {
+            reply = fullText;
+            if (bubble && bubble._el) bubble._el.textContent = wbStripToolTag(fullText) || '思考中…';
+          },
+          function (u) { usage = u; }
+        );
+      } catch (e) {
+        if (e && e.name === 'AbortError') { aborted = true; }
+        else {
+          self.appendSysMsg('请求失败: ' + (e && e.message ? e.message : String(e)));
+          self.state.sending = false;
+          return;
+        }
+      }
+      if (aborted) break;
+
+      if (usage && usage.prompt_tokens) turnTokensIn += usage.prompt_tokens;
+      if (usage && usage.completion_tokens) turnTokensOut += usage.completion_tokens;
+      if (usage && usage.prompt_cache_hit_tokens) turnCache += usage.prompt_cache_hit_tokens;
+
+      await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
+
+      var toolCall = self.parseToolCall(reply);
+      if (!toolCall) {
+        // 最终回复：Markdown 渲染（含思考折叠块）
+        if (bubble && bubble._finalize) bubble._finalize(reply);
+        else if (bubble && bubble._el) bubble._el.textContent = wbStripToolTag(reply);
+        break;
+      }
+
+      // 有工具调用：正文渲染（去掉工具标签）+ 工具卡片
+      var textPart = wbStripToolTag(reply);
+      if (bubble && bubble._finalize) bubble._finalize(textPart);
+      else if (bubble && bubble._el) bubble._el.textContent = textPart;
+
+      var card = self.appendToolCard(toolCall.tool, toolCall.arguments);
+      var result = await self.executeTool(toolCall.tool, toolCall.arguments, conv);
+      if (card && card._render) card._render(result);
+      var resultText = JSON.stringify(result);
+      if (resultText.length > 6000) resultText = resultText.slice(0, 6000) + '...(截断)';
+      await self.addMsg({ convId: conv.id, seq: seq++, role: 'tool', content: resultText, createdAt: Date.now() });
+      messages = messages.concat([
+        { role: 'assistant', content: reply },
+        { role: 'user', content: '[工具结果] ' + resultText }
+      ]);
+      if (messages.length > 40) {
+        messages = messages.slice(-30);
+        messages.unshift({ role: 'system', content: '（上下文已裁剪，保留最近对话）' });
+      }
+    }
+
+    var convPatch = {
+      totalTokensIn: (conv.totalTokensIn || 0) + turnTokensIn,
+      totalTokensOut: (conv.totalTokensOut || 0) + turnTokensOut,
+      cacheHits: (conv.cacheHits || 0) + turnCache
+    };
+    if (!conv.title || conv.title === '未命名会话') {
+      convPatch.title = userText.slice(0, 18) + (userText.length > 18 ? '...' : '');
+    }
+    await self.updateConv(conv.id, convPatch);
+    conv = Object.assign(conv, convPatch);
+    self.updateChatHeader(conv);
+    self.state.sending = false;
+    self.state.abortCtrl = null;
+    self.scrollToBottom();
   };
 })();

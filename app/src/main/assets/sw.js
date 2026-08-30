@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v37'; // v37：工作台 Claude 化重设计（侧边栏/空态/富文本/Artifacts/模型切换）+ 独立 MCP 配置
+const CACHE_NAME = 'story-phone-v38'; // v38：工作台 Agent 成熟模式——思考折叠块/工具卡片状态机/缓存命中率/Markdown 完成渲染
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
