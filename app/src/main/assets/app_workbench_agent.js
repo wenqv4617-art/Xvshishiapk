@@ -1191,6 +1191,51 @@
 
   var SKILL_TEMPLATE = '---\nname: 我的技能\ndescription: 一句话描述这个技能的作用\n---\n\n# 技能指令\n\n启用此 Skill 后，请遵循以下行为规范：\n\n- 规则 1\n- 规则 2\n';
 
+  // 内置 Skill：代码审查（对标 DSH 等 Agent 平台的自动审查工作流）
+  var SKILL_CODE_REVIEW = [
+    '---',
+    'name: 代码审查',
+    'description: 自动对工作区代码进行结构化审查（探索→逐文件读取→问题清单→改进建议）',
+    '---',
+    '',
+    '# 代码审查工作流',
+    '',
+    '当用户要求「审查代码」「检查代码质量」「帮我看看这个项目」等代码类任务时，必须执行以下工具循环，禁止凭空回答：',
+    '',
+    '## 第 1 步：探索项目结构',
+    '- 调用 list_dir 查看工作区根目录，了解项目有哪些文件/目录',
+    '- 根据文件类型（.js/.kt/.py/.html/.css 等）确定要审查的范围',
+    '',
+    '## 第 2 步：逐个读取代码文件',
+    '- 调用 read_file 读取每个目标文件的完整内容',
+    '- 一次读一个文件，读完再读下一个（工具结果会作为上下文返回）',
+    '- 大文件注意分段（read_file 会自动截断超 512KB 的文件）',
+    '',
+    '## 第 3 步：分析问题',
+    '对每个文件检查：',
+    '- 语法/明显的 bug（未定义变量、错误函数签名、逻辑矛盾）',
+    '- 代码规范（命名、缩进、重复代码、魔法数字）',
+    '- 安全隐患（硬编码密钥、注入风险、危险操作无校验）',
+    '- 性能问题（无谓循环、同步阻塞、内存泄漏）',
+    '',
+    '## 第 4 步：输出结构化审查报告',
+    '按以下格式汇报：',
+    '### 审查范围',
+    '- 文件清单与行数',
+    '### 发现的问题',
+    '- **严重问题**（会导致崩溃/错误）：文件 + 行号 + 说明',
+    '- **一般问题**（规范/可维护性）：文件 + 说明',
+    '- **建议**（优化点）：文件 + 说明',
+    '### 总体评价',
+    '- 一句话总结代码质量',
+    '',
+    '## 注意',
+    '- 若工作区为空或没有代码文件，明确告诉用户并建议先创建项目',
+    '- 用户可以要求修复问题：此时调用 write_file 修改，修改前先说明改了什么',
+    ''
+  ].join('\n');
+  WB._SKILL_CODE_REVIEW = SKILL_CODE_REVIEW;
+
   /** 扫描工作区中的标准配置文件 */
   WB.scanWorkspaceConfig = function (conv) {
     var result = { agents: null, skills: [] };
@@ -1249,6 +1294,12 @@
       this.fs.mkdir(base + '.workbench/skills');
       this.fs.writeFile(base + '.workbench/skills/示例技能.md', SKILL_TEMPLATE);
     }
+    // 预置内置「代码审查」Skill（对标 DSH 自动审查；仅首次创建，用户可自由编辑）
+    var crFile = base + '.workbench/skills/代码审查.md';
+    var cr = this.fs.readFile(crFile);
+    if (!(cr && cr.ok)) {
+      this.fs.writeFile(crFile, SKILL_CODE_REVIEW);
+    }
     if (onDone) onDone(true);
   };
 
@@ -1274,6 +1325,16 @@
         }
       }
     } catch (e) {}
+    // ---- 代码任务强制工具循环（对标 DSH：代码类任务禁止凭空回答，必须实际调用工具） ----
+    lines.push('');
+    lines.push('【代码任务工作流（极其重要）】');
+    lines.push('当用户提出代码类任务（写代码/审查代码/修改代码/排查 bug/了解项目结构）时，你必须像真正的 Agent 一样实际调用工具完成，禁止仅凭想象回答：');
+    lines.push('1. 先调用 list_dir 查看工作区结构，确定相关文件；');
+    lines.push('2. 再调用 read_file 读取目标文件内容（一次一个文件，按需逐个读取）；');
+    lines.push('3. 基于真实文件内容分析、修改（write_file）或创建文件；');
+    lines.push('4. 审查类任务按「代码审查」工作流输出：审查范围 → 问题清单（严重/一般/建议）→ 总体评价；');
+    lines.push('5. 修改文件前先向用户说明要改什么，涉及删除/覆盖前必须征得同意。');
+    lines.push('如果工作区为空或没有相关代码，明确告诉用户，而不是编造内容。');
     return base + lines.join('\n');
   };
 
@@ -1392,4 +1453,39 @@
 
 
 
+
+
+// ============ 内置 Skill 种子：代码审查（db.wb_skills 预置，Agent 可勾选启用） ============
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB) return;
+
+  var SEEDED_KEY = 'wb_skill_seeded_v1';
+  function seed() {
+    try {
+      if (localStorage.getItem(SEEDED_KEY) === '1') return;
+      if (!db || !db.wb_skills) return;
+      db.wb_skills.toArray().then(function (arr) {
+        var has = arr.some(function (s) { return s.builtin === true && s.name === '代码审查'; });
+        if (!has) {
+          var crText = WB._SKILL_CODE_REVIEW || '';
+          db.wb_skills.add({
+            name: '代码审查',
+            description: '自动对工作区代码进行结构化审查（探索→逐文件读取→问题清单→改进建议）',
+            instructions: crText.slice(0, 2000),
+            builtin: true,
+            enabled: true,
+            updatedAt: Date.now()
+          }).then(function () {
+            try { localStorage.setItem(SEEDED_KEY, '1'); } catch (e) {}
+            db.wb_skills.toArray().then(function (a2) { try { localStorage.setItem('wb_skills_cache', JSON.stringify(a2)); } catch (e) {} }).catch(function () {});
+          }).catch(function () {});
+        } else {
+          try { localStorage.setItem(SEEDED_KEY, '1'); } catch (e) {}
+        }
+      }).catch(function () {});
+    } catch (e) {}
+  }
+  setTimeout(seed, 800);
+})();
 

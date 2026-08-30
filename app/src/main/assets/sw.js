@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v41'; // v41：历史回显不爆代码/工作区标准配置(AGENTS.md+skills)/权限主动引导/路径显示修正
+const CACHE_NAME = 'story-phone-v42'; // v42：代码审查自动工作流——系统提示强制工具循环+内置代码审查SKILL(工作区预置+db种子)
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
