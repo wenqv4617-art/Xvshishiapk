@@ -6,7 +6,7 @@
   <script>
   window.__APP_INTEGRITY_EXPECTED__ = {
     'app_crypto.js': 'dae057b29029b6b833978c008e177dc1795826ca74687ab06b593d619a26197a',
-    'invite.html': 'fc4cccb9cef91968fbfbc7e076bdcc61b58c2fb8905fe5492af61e7302413284'
+    'invite.html': '2a14863375bd7d5adc4ba895881fa10ef3983c3605d969d5c955b9c04f13c4b0'
   };
   (function () {
     function sha256(bytes) {
@@ -62,11 +62,20 @@
         return null;
       } catch (e) { return null; }
     }
+    // 换行归一化：统一按 LF 计算哈希，避免 git/打包环境 CRLF/LF 差异导致误判篡改
+    function normalizeCrlf(bytes) {
+      var out = [];
+      for (var i = 0; i < bytes.length; i++) {
+        if (bytes[i] === 13 && i + 1 < bytes.length && bytes[i + 1] === 10) continue;
+        out.push(bytes[i]);
+      }
+      return out;
+    }
     var ok = true;
     var expected = window.__APP_INTEGRITY_EXPECTED__;
     for (var f in expected) {
       var bytes = fetchBytes('./' + f);
-      if (!bytes || sha256(bytes) !== expected[f]) { ok = false; break; }
+      if (!bytes || sha256(normalizeCrlf(bytes)) !== expected[f]) { ok = false; break; }
     }
     window.__APP_INTEGRITY_OK__ = ok;
     if (!ok) {
