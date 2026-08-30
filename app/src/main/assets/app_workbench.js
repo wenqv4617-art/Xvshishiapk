@@ -858,7 +858,7 @@
     // ============ 新建会话 ============
     showNewConvDialog: function () {
       var self = this;
-      var wsLabel = "工作台私有区";
+      var wsLabel = "工作台私有区(Android/data/com.story.phone/files/workbench)";
       var wsPath = ".";
       var dlg = this.overlay(
         '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M12 5v14"/><path d="M5 12h14"/>', 18, "color:var(--primary);") + '新建工作台会话</div>' +
@@ -948,7 +948,7 @@
       var self = this;
       var dlg = this.overlay(
         '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 18, "color:#0e7490;") + '选择工作区文件夹</div>' +
-        '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;">工作区为 App 私有目录下的文件夹（免存储权限、天然隔离）。公共存储仅可浏览。</div>' +
+        '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.6;">工作区位于手机存储 <b style="color:#0e7490;">Android/data/com.story.phone/files/workbench</b><br>可用文件管理器直接查看；免存储权限、天然隔离。公共存储仅可浏览。</div>' +
         '<div id="wb-pick-breadcrumb" style="font-size:11px;color:#0e7490;margin-bottom:8px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;"></div>' +
         '<div id="wb-pick-list" style="max-height:300px;overflow-y:auto;border:1.5px solid var(--border);border-radius:10px;padding:6px;background:#f8fafc;min-height:80px;"></div>' +
         '<div style="display:flex;gap:6px;margin-top:10px;">' +

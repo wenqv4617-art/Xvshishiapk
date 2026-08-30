@@ -31,9 +31,12 @@ class WorkbenchFileSystem(private val context: Context) {
         private const val MAX_READ_BYTES = 512 * 1024 // 512KB 读取上限
     }
 
-    /** 私有工作区根（所有相对路径的基准） */
+    /** 私有工作区根（所有相对路径的基准）。
+     *  优先使用外部存储（/storage/emulated/0/Android/data/<pkg>/files/workbench），
+     *  用户可通过文件管理器直接查看；外部存储不可用时回退内部目录。 */
     private fun workspaceRoot(): File {
-        val dir = File(context.filesDir, "workbench")
+        val base = context.getExternalFilesDir(null) ?: context.filesDir
+        val dir = File(base, "workbench")
         if (!dir.exists()) dir.mkdirs()
         return dir
     }

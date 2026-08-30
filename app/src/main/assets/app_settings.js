@@ -199,6 +199,7 @@ function initSettingsApp() {
       else if (appId === "shopping") appName = "购物";
       else if (appId === "encounter") appName = "邂逅";
       else if (appId === "quicktravel") appName = "快穿局";
+      else if (appId === "workbench") appName = "工作台";
 
       alert(`应用「${appName}」图标已重置为系统默认。`);
       if (window.loadDesktopLayout) window.loadDesktopLayout();
@@ -759,7 +760,7 @@ function loadBeautifyForm() {
   if (enterSendInput) enterSendInput.checked = enterSend;
 
   // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples, encounter)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel"];
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -814,7 +815,7 @@ async function saveBeautifyConfig() {
   }
 
   // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples, encounter)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel"];
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
@@ -856,7 +857,7 @@ function resetBeautifyConfig() {
     localStorage.removeItem("settings-enter-send");
     document.getElementById("beautify-bg-url").value = "";
     
-    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel"];
+    const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench"];
     apps.forEach(appId => {
       const input = document.getElementById(`beautify-icon-url-${appId}`);
       if (input) input.value = "";
