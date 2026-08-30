@@ -20,3 +20,4 @@ app/libs/
 .idea/
 *.iml
 .DS_Store
+tools/
