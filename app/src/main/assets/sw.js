@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v45'; // v45：状态机标签解析(content含引号/括号/换行不爆)+格式错误反馈纠偏(不默默降级)
+const CACHE_NAME = 'story-phone-v46'; // v46：实时工具调用卡片——流式"正在调用工具"可点击展开看代码流程，完成后原地升级
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

@@ -223,6 +223,77 @@
     };
   };
 
+  // ---- 实时工具调用占位卡片：流式阶段显示"正在调用工具"，点击可展开查看正在生成的代码流程 ----
+  WB.appendToolPendingCard = function () {
+    var self = this;
+    var el = document.getElementById('wb-msgs');
+    if (!el) return { _update: function () {}, _upgrade: function () {}, _fail: function () {} };
+    var uid = 'wb-tp-' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+    var card = document.createElement('div');
+    card.className = 'wb-tool-card';
+    card.style.cssText = 'align-self:flex-start;width:92%;box-sizing:border-box;border:1px solid #e2e8f0;border-radius:12px;background:#fff;overflow:hidden;flex-shrink:0;';
+    card.innerHTML =
+      '<div class="wb-tool-head" data-uid="' + uid + '" style="display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;user-select:none;">' +
+        '<span style="display:flex;align-items:center;gap:6px;color:#6366f1;flex-shrink:0;">' + self.svg('<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>', 13) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:11px;font-weight:700;color:#334155;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">正在调用工具…</span>' +
+        '<span class="wb-tool-status" style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:#6366f1;flex-shrink:0;">' +
+          '<span class="wb-tool-spinner" style="width:10px;height:10px;border:1.5px solid #6366f1;border-top-color:transparent;border-radius:50%;display:inline-block;animation:wbSpin 0.8s linear infinite;"></span>执行中</span>' +
+        '<svg class="wb-tool-chev" viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;transition:transform .15s;"><path d="M6 9l6 6 6-6"/></svg>' +
+      '</div>' +
+      '<div class="wb-tool-body" style="display:none;border-top:1px solid #f1f5f9;padding:8px 12px;font-size:10px;color:#475569;max-height:240px;overflow-y:auto;">' +
+        '<div style="font-weight:700;color:#94a3b8;margin-bottom:4px;">正在生成的调用流程（实时）</div>' +
+        '<pre class="wb-tp-stream" style="margin:0;padding:8px;background:#0f172a;border-radius:8px;overflow:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#e2e8f0;"></pre>' +
+      '</div>';
+    el.appendChild(card);
+    var head = card.querySelector('.wb-tool-head');
+    var body = card.querySelector('.wb-tool-body');
+    var streamPre = card.querySelector('.wb-tp-stream');
+    var expanded = false;
+    head.onclick = function () {
+      expanded = !expanded;
+      body.style.display = expanded ? 'block' : 'none';
+      var chev = head.querySelector('.wb-tool-chev');
+      if (chev) chev.style.transform = expanded ? 'rotate(180deg)' : 'rotate(0deg)';
+    };
+    if (!document.getElementById('wbSpinKey')) {
+      var st = document.createElement('style');
+      st.id = 'wbSpinKey';
+      st.textContent = '@keyframes wbSpin { to { transform: rotate(360deg); } }';
+      document.head.appendChild(st);
+    }
+    this.scrollToBottom();
+    return {
+      _update: function (rawText) {
+        if (streamPre) streamPre.textContent = String(rawText || '');
+      },
+      _upgrade: function (tool, args) {
+        // 升级为正式工具卡片：标题/Arguments/Response
+        if (head) {
+          var nameEl = head.querySelector('span:nth-child(2)');
+          if (nameEl) nameEl.textContent = tool;
+          var status = head.querySelector('.wb-tool-status');
+          if (status) status.style.color = '#b45309';
+        }
+        if (body) {
+          body.innerHTML =
+            '<div style="font-weight:700;color:#94a3b8;margin-bottom:4px;">Arguments</div>' +
+            '<pre style="margin:0 0 8px;padding:8px;background:#f8fafc;border-radius:8px;overflow-x:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;">' + self.esc(JSON.stringify(args || {}, null, 2)) + '</pre>' +
+            '<div style="font-weight:700;color:#94a3b8;margin-bottom:4px;">Response</div>' +
+            '<pre class="wb-tool-result" style="margin:0;padding:8px;background:#f8fafc;border-radius:8px;overflow:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>';
+        }
+      },
+      _fail: function (msg) {
+        var status = head ? head.querySelector('.wb-tool-status') : null;
+        if (status) {
+          status.style.color = '#dc2626';
+          status.innerHTML = self.svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>', 11) + ' 失败';
+        }
+        if (streamPre) streamPre.textContent = msg || '工具调用失败';
+      },
+      _card: card
+    };
+  };
+
   // ---- runAgent：成熟 Agent 模式（无次数限制，agent 自主决定；统计轮数/步数；发送按钮进行中状态） ----
   WB.runAgent = async function (conv, userText) {
     var self = this;
@@ -259,6 +330,7 @@
       var ctrl = new AbortController();
       self.state.abortCtrl = ctrl;
       var bubble = self.appendBubble('assistant', '');
+      var pendingCard = null; // 实时工具占位卡片（流式→升级为正式卡片）
       try {
         reply = await self.wbStreamChat(
           preset.url,
@@ -267,7 +339,7 @@
           ctrl.signal,
           function (delta, fullText) {
             reply = fullText;
-            // ---- 流式实时渲染（Markdown + 思考中 + 工具调用占位） ----
+            // ---- 流式实时渲染（Markdown + 思考中 + 实时工具调用卡片） ----
             if (!bubble || !bubble._el) return;
             var s = String(fullText || '');
             var toolAt = s.indexOf('[WB_TOOL:');
@@ -281,13 +353,17 @@
                 '<span style="width:10px;height:10px;border:1.5px solid #d97706;border-top-color:transparent;border-radius:50%;display:inline-block;animation:wbSpin 0.8s linear infinite;"></span>思考中…</div>';
               return;
             }
-            // 工具标签未闭合：正文只保留标签前内容，并显示"正在调用工具"占位
+            // 工具标签出现：正文只保留标签前内容；创建可展开的实时占位卡片并持续更新
             var bodyText = toolAt >= 0 ? s.slice(0, toolAt) : s;
             var clean = wbStripToolTag(bodyText);
             var html = self.renderMarkdown(clean);
             if (toolAt >= 0) {
-              html += '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;border:1px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#6366f1;font-size:11px;font-weight:600;">' +
-                '<span style="width:10px;height:10px;border:1.5px solid #6366f1;border-top-color:transparent;border-radius:50%;display:inline-block;animation:wbSpin 0.8s linear infinite;"></span>正在调用工具…</div>';
+              if (!pendingCard) {
+                pendingCard = self.appendToolPendingCard();
+              }
+              if (pendingCard && pendingCard._update) {
+                pendingCard._update(s.slice(toolAt));
+              }
             }
             bubble._el.innerHTML = html || '';
           },
@@ -319,6 +395,7 @@
       // ---- 格式掉链子纠偏（对标 DSH 的错误反馈）：检测到 WB_TOOL 标记但解析出 0 个有效标签 → 说明模型输出格式错误，注入错误消息让它重试，绝不默默降级 ----
       if (!toolCalls.length && self.hasToolTag && self.hasToolTag(reply) && redoGuard < 3) {
         redoGuard++;
+        if (pendingCard && pendingCard._fail) pendingCard._fail('工具调用格式错误，已请求重试');
         await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
         messages = messages.concat([
           { role: 'assistant', content: reply },
@@ -351,6 +428,7 @@
           continue;
         }
         // 最终回复：Markdown 渲染（含思考折叠块）
+        if (pendingCard && pendingCard._fail) pendingCard._fail('未生成有效工具调用');
         if (bubble && bubble._finalize) bubble._finalize(reply);
         else if (bubble && bubble._el) bubble._el.textContent = wbStripToolTag(reply);
         break;
@@ -383,7 +461,15 @@
           lastCallKey = callKey;
           repeatCount = 0;
         }
-        var card = self.appendToolCard(tc.tool, tc.arguments);
+        // 若流式阶段已创建实时占位卡片，原地升级为正式卡片；否则新建
+        var card = null;
+        if (ti === 0 && pendingCard && pendingCard._upgrade) {
+          pendingCard._upgrade(tc.tool, tc.arguments);
+          card = pendingCard;
+          pendingCard = null;
+        } else {
+          card = self.appendToolCard(tc.tool, tc.arguments);
+        }
         var result = await self.executeTool(tc.tool, tc.arguments, conv);
         if (card && card._render) card._render(result);
         var resultText = JSON.stringify(result);
