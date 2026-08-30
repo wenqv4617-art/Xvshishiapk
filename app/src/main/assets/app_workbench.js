@@ -399,23 +399,55 @@
         return { fullMatch: m[0], tool: obj.tool, arguments: obj.arguments || {} };
       } catch (e) { return null; }
     },
-    /** 解析一条回复中的全部工具调用（对标 Claude/OpenAI 多 tool_calls） */
+    /** 解析一条回复中的全部工具调用（对标 Claude/OpenAI 多 tool_calls）
+     *  用状态机扫描：跳过字符串内的引号/转义/括号，正确处理 content 中含任意代码（[]{}、"、\n）的标签 */
     parseToolCalls: function (text) {
-      var re = /\[\s*WB_TOOL\s*:\s*(\{[\s\S]*?\})\s*\]/gi;
-      var out = [];
-      var m;
       var s = String(text || "");
-      while ((m = re.exec(s)) !== null) {
+      var out = [];
+      var i = 0;
+      var n = s.length;
+      var tagRe = /\[\s*WB_TOOL\s*:/gi;
+      var m;
+      while ((m = tagRe.exec(s)) !== null) {
+        var start = m.index + m[0].length;
+        // 找到真正的 JSON 对象：从 { 开始状态机扫描到配对的 }
+        var braceAt = s.indexOf('{', start);
+        if (braceAt < 0) { if (tagRe.lastIndex === m.index + 1) tagRe.lastIndex++; continue; }
+        var depth = 0;
+        var inStr = false;
+        var esc = false;
+        var endBrace = -1;
+        for (var j = braceAt; j < s.length; j++) {
+          var ch = s.charAt(j);
+          if (inStr) {
+            if (esc) esc = false;
+            else if (ch === '\\') esc = true;
+            else if (ch === '"') inStr = false;
+          } else {
+            if (ch === '"') inStr = true;
+            else if (ch === '{') depth++;
+            else if (ch === '}') { depth--; if (depth === 0) { endBrace = j; break; } }
+          }
+        }
+        if (endBrace < 0) { if (tagRe.lastIndex === m.index + 1) tagRe.lastIndex++; continue; }
+        // 确认后面是 ]（允许空格）
+        var k = endBrace + 1;
+        while (k < s.length && /\s/.test(s.charAt(k))) k++;
+        if (s.charAt(k) !== ']') { if (tagRe.lastIndex === m.index + 1) tagRe.lastIndex++; continue; }
+        var jsonStr = s.slice(braceAt, endBrace + 1);
         try {
-          var obj = JSON.parse(m[1]);
+          var obj = JSON.parse(jsonStr);
           if (obj && typeof obj.tool === "string") {
-            out.push({ fullMatch: m[0], tool: obj.tool, arguments: obj.arguments || {}, index: m.index });
+            out.push({ fullMatch: s.slice(m.index, k + 1), tool: obj.tool, arguments: obj.arguments || {}, index: m.index, raw: jsonStr });
           }
         } catch (e) {}
-        // 防止零宽匹配死循环
-        if (m.index === re.lastIndex) re.lastIndex++;
+        tagRe.lastIndex = k + 1;
       }
       return out;
+    },
+    /** 检测文本中是否存在 WB_TOOL 标记（无论格式是否规范） */
+    hasToolTag: function (text) {
+      return /\[\s*WB_TOOL\s*:/i.test(String(text || ''));
     },
 
     runAgent: async function (conv, userText) {

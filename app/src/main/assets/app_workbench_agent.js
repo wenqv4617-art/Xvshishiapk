@@ -316,6 +316,17 @@
       await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
 
       var toolCalls = self.parseToolCalls ? self.parseToolCalls(reply) : (self.parseToolCall(reply) ? [self.parseToolCall(reply)] : []);
+      // ---- 格式掉链子纠偏（对标 DSH 的错误反馈）：检测到 WB_TOOL 标记但解析出 0 个有效标签 → 说明模型输出格式错误，注入错误消息让它重试，绝不默默降级 ----
+      if (!toolCalls.length && self.hasToolTag && self.hasToolTag(reply) && redoGuard < 3) {
+        redoGuard++;
+        await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
+        messages = messages.concat([
+          { role: 'assistant', content: reply },
+          { role: 'system', content: '【格式错误反馈】你上一轮输出了 [WB_TOOL:...] 工具调用标记，但格式有误（JSON 解析失败，常见原因：content 字符串内的引号/换行/括号未正确转义，或标签被截断）。请重新输出规范的工具调用标签，格式必须为一行完整的：[WB_TOOL:{"tool":"工具名","arguments":{...}}]；write_file 的 content 请用 JSON 字符串（引号转义为 \"，换行用 \n）。不要输出其他内容，只输出这一个标签。' }
+        ]);
+        if (bubble && bubble._el) bubble._el.textContent = '（检测到工具调用格式错误，正在请求重试…）';
+        continue;
+      }
       if (!toolCalls.length) {
         // ---- 代码输出纪律（对标 DSH）：正文出现大段代码块且未调用 write_file → 纠偏重来 ----
         var bloat = false;

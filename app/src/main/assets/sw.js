@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v44'; // v44：一轮多工具调用(parseToolCalls全部执行)+正文与工具分离(标签间代码不爆开)+重复调用防死循环
+const CACHE_NAME = 'story-phone-v45'; // v45：状态机标签解析(content含引号/括号/换行不爆)+格式错误反馈纠偏(不默默降级)
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
