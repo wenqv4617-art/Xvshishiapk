@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v32'; // v32：密钥文件混淆（app_crypto.js / invite.html）+ 完整性防篡改校验
+const CACHE_NAME = 'story-phone-v33'; // v33：新增工作台 Agent（多对话/本地工作区/GitHub 推送/多轮工具调用）
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -9,6 +9,8 @@ const ASSETS = [
   './chat.css',
   './sticker.css',
   './app_quicktravel.js',
+  './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
+  './workbench.css',      // 工作台样式
   './db.js',
   './app_prompts.js',
   './app_desktop.js',

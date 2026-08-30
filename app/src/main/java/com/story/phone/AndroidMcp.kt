@@ -1171,6 +1171,30 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+
+    // 10. 工作台文件系统桥接（Workbench 本地工作区）
+    private val workbenchFs: WorkbenchFileSystem by lazy { WorkbenchFileSystem(context) }
+
+    @JavascriptInterface
+    fun wbListDir(path: String): String = workbenchFs.listDir(path)
+
+    @JavascriptInterface
+    fun wbReadFile(path: String): String = workbenchFs.readFile(path)
+
+    @JavascriptInterface
+    fun wbWriteFile(path: String, content: String): String = workbenchFs.writeFile(path, content)
+
+    @JavascriptInterface
+    fun wbMkdir(path: String): String = workbenchFs.mkdir(path)
+
+    @JavascriptInterface
+    fun wbDelete(path: String): String = workbenchFs.deletePath(path)
+
+    @JavascriptInterface
+    fun wbGetRoots(): String = workbenchFs.getRoots()
+
+    @JavascriptInterface
+    fun wbListPublicDir(path: String): String = workbenchFs.listPublicDir(path)
     // 9.1 跳转到系统"通知使用权"设置页，授权后可读取其他 App 的媒体会话（敏感权限，用户主动开启）
     @JavascriptInterface
     fun requestNotificationListenerPermission() {

@@ -297,6 +297,11 @@ function initSettingsApp() {
   document.getElementById("file-import-all").onchange = importBackup;
 
   document.getElementById("btn-clear-all-data").onclick = clearAllAppData;
+  // 工作台数据清理（对话 + 可选配置；弹窗由 app_workbench.js 提供）
+  document.getElementById("btn-clear-workbench").onclick = function() {
+    if (typeof window.clearWorkbenchData === "function") window.clearWorkbenchData();
+    else if (typeof showToast === "function") showToast("工作台模块未加载");
+  };
 
   // 注：本地向量记忆检索总开关已迁移至「向量化记忆设置」二级面板，由 vectorMemorySystem 统一接管
 

@@ -317,7 +317,8 @@ const DESKTOP_APPS_CONFIG = {
   music: { name: "听歌", svg: '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>' },
   shopping: { name: "购物", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>' },
   encounter: { name: "邂逅", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-30 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(30 12 12)"/><circle cx="20" cy="9" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="15" r="1.2" fill="currentColor" stroke="none"/></svg>' },
-  quicktravel: { name: "快穿局", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M5 5l3 3"/><path d="M19 5l-3 3"/><path d="M5 19l3-3"/><path d="M19 19l-3-3"/></svg>' }
+  quicktravel: { name: "快穿局", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M5 5l3 3"/><path d="M19 5l-3 3"/><path d="M5 19l3-3"/><path d="M19 19l-3-3"/></svg>' },
+  workbench: { name: "工作台", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8 3 3-3 3"/><path d="M12 16h5"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>' }
 };
 
 function loadDesktopLayout() {
@@ -344,10 +345,11 @@ function loadDesktopLayout() {
             desktopLayout[2] = 'reader';
             desktopLayout[3] = 'forum';
             desktopLayout[4] = 'couples';
-            // 第二页：听歌 + 购物 + 快穿局
+            // 第二页：听歌 + 购物 + 快穿局 + 工作台
             desktopLayout[20] = 'music';
             desktopLayout[21] = 'shopping';
             desktopLayout[22] = 'quicktravel';
+            desktopLayout[23] = 'workbench';
             // 关键修复：默认布局必须立即写回 localStorage，否则 isAppAlreadyPlaced / placeAppOnSlot
             //   会读到 null，导致"添加图标列表显示全部"+"添加后覆盖成空数组使全部图标消失"
             localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
@@ -847,6 +849,7 @@ function openApp(app) {
     if (app === 'shopping' && typeof initShoppingApp === 'function') initShoppingApp();
     if (app === 'encounter' && typeof initEncounterApp === 'function') initEncounterApp();
     if (app === 'quicktravel' && typeof initQuickTravelApp === 'function') initQuickTravelApp();
+    if (app === 'workbench' && typeof initWorkbenchApp === 'function') initWorkbenchApp();
   }
 }
 
@@ -1279,7 +1282,7 @@ function openAddSelector(type, slotIndex) {
   } catch(e) {}
 
   const widgetIds = Object.keys(widgets);
-  const appsList = ["encounter", "settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "quicktravel"];
+  const appsList = ["encounter", "settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "quicktravel", "workbench"];
 
   let html = `<div style="padding:16px;">
     <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;text-align:center;">选择要添加的内容</h4>
@@ -1303,6 +1306,7 @@ function openAddSelector(type, slotIndex) {
       else if (appId === "shopping") name = "购物";
       else if (appId === "encounter") name = "邂逅";
       else if (appId === "quicktravel") name = "快穿局";
+      else if (appId === "workbench") name = "工作台";
 
       html += `
         <button onclick="placeAppOnSlot('${type}', ${slotIndex}, '${appId}')" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid #e2e8f0; background:#f8fafc; font-size:12px; font-weight:600; text-align:left; cursor:pointer; display:flex; align-items:center; gap:6px;">

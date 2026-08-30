@@ -1135,6 +1135,11 @@
                 <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M12 2L1 21h22L12 2zm1 14h-2v-2h2v2zm0-4h-2v-4h2v4z"/></svg>
                 彻底清除所有数据 (全格式化)
               </button>
+
+              <button id="btn-clear-workbench" class="btn btn-outline" style="width:100%; display:flex; align-items:center; justify-content:center; gap:4px; margin-top:8px; border-color:#f59e0b; color:#b45309;">
+                <svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:middle;"><path fill="currentColor" d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2v9.67z"/></svg>
+                清空工作台对话数据 (GitHub/工作区配置可选保留)
+              </button>
             </div>
 
             <!-- Supabase 自动备份板块（可炸开收起） -->
@@ -6013,6 +6018,19 @@
           <div id="qt-overlay"></div>
         </div> <!-- 快穿局应用(win-quicktravel)结束 -->
 
+        <!-- 工作台 Agent 应用窗口 -->
+        <div id="win-workbench" class="app-window" style="overflow:hidden; background:#f8fafc;">
+          <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.8), rgba(255,255,255,0.4)); border-bottom:1px solid rgba(148,163,184,0.25);">
+            <button class="btn-icon" id="wb-close-btn" style="color:#475569;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h3 id="wb-title" style="color:#1e293b; font-size:15px; font-weight:700; letter-spacing:1px;">工作台</h3>
+            <span style="width:20px;"></span>
+          </header>
+          <div class="win-body" id="wb-body" style="padding:0; position:relative; color:#334155;"></div>
+          <div id="wb-overlay"></div>
+        </div> <!-- 工作台应用(win-workbench)结束 -->
+
             </div> <!-- app-window-container 结束 -->
 
       <!-- ===== 应用小助手 悬浮小窗（跳转/执行命令时收起为此窗）===== -->
@@ -6109,6 +6127,8 @@
   <script src="app_encounter.js"></script>
   <script src="app_quicktravel.js"></script>
   <script src="app_quicktravel_fanwall.js"></script>
+  <script src="app_workbench.js"></script>
+  <link rel="stylesheet" href="workbench.css">
   <script src="app_floating_widget.js"></script>
   <script src="app_miniprogram.js"></script>
   <script src="app_miniprogram_workshop.js"></script>

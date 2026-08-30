@@ -48,6 +48,7 @@ window.DESKTOP_PRESETS = {
 .app-icon[data-app="archive"] .icon-wrapper svg { color: #60a5fa !important; }    /* 浅天蓝 */
 .app-icon[data-app="world_book"] .icon-wrapper svg { color: #2dd4bf !important; }/* 浅青绿 */
 .app-icon[data-app="music"] .icon-wrapper svg { color: #f472b6 !important; }      /* 樱花粉 */
+.app-icon[data-app="workbench"] .icon-wrapper svg { color: #22d3ee !important; } /* 工作台青 */
 .app-icon[data-app="shopping"] .icon-wrapper svg { color: #ff6b35 !important; }  /* 淘宝橙 */
 .app-icon[data-app="encounter"] .icon-wrapper svg { color: #a78bfa !important; } /* 邂逅紫 */
 .app-icon[data-app="settings"] .icon-wrapper svg { color: #64748b !important; }  /* 烟灰钛 */
@@ -416,10 +417,11 @@ window.DESKTOP_PRESETS = {
       null, null, "reader", "forum",
 
       // === 第二页 (20~39) === 槽位 32-35 可用（36-39 被播放器组件占用）
+      // 注：原 music（播放器）图标位已改为 workbench（工作台）
       null, null, null, null,
       null, null, null, null,
       null, null, null, null,
-      "couples", "music", "shopping", "quicktravel",
+      "couples", "workbench", "shopping", "quicktravel",
       null, null, null, null
     ],
 

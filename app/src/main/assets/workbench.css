@@ -1,0 +1,24 @@
+/* ===== 工作台 Agent 样式 ===== */
+.wb-conv-card:hover {
+  border-color: var(--primary) !important;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08) !important;
+  transform: translateY(-1px);
+}
+.wb-icon-btn:hover {
+  opacity: 0.75;
+}
+#wb-input:focus {
+  border-color: var(--primary) !important;
+  background: #fff !important;
+}
+#wb-msgs::-webkit-scrollbar,
+#wb-list::-webkit-scrollbar,
+#wb-pick-list::-webkit-scrollbar {
+  width: 4px;
+}
+#wb-msgs::-webkit-scrollbar-thumb,
+#wb-list::-webkit-scrollbar-thumb,
+#wb-pick-list::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 4px;
+}

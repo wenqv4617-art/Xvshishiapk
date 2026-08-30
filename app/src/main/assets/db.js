@@ -367,3 +367,13 @@ db.version(37).stores({
   sessions: 'id++, userId, charId, isGroup, groupId, customCharName, customCharAvatar, customCharPersona, customUserAvatar, customUserPersona, lastMessageTime, mountedEntryIds, offlineMinWordCount, offlineMaxWordCount, offlineAutoSummaryCount, offlineMountedEntryIds, stickerMountedGroupIds, autoSummaryToggle, autoSummaryInterval, bufferRounds, summarySystemPrompt, coreSelfStatus, coreSelfPurpose, coreSelfChanges, coreRelationship, coreUserInEyes',
   archives: 'id++, type, name, avatar, remark, group, persona, parentId, isSnapshot, sourceArchiveId'
 });
+
+// ============================================
+// Version 38：工作台 Agent（多对话 + 本地工作区 + GitHub）
+// - wb_conversations: 会话（标题/工作区/GitHub/系统规则/统计）
+// - wb_messages: 会话消息（role: user|assistant|tool|system）
+// ============================================
+db.version(38).stores({
+  wb_conversations: 'id++, title, workspace, workspaceLabel, github, systemPrompt, summary, createdAt, updatedAt, totalTokensIn, totalTokensOut, cacheHits',
+  wb_messages: 'id++, convId, seq, role, content, createdAt'
+});
