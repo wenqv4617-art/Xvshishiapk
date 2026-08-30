@@ -391,12 +391,11 @@ window.DESKTOP_PRESETS = {
       }
     },
 
-    // 绑定小部件落地槽位
+    // 绑定小部件落地槽位（播放器组件已移除，槽位 36 让给工作台图标）
     placedDesktop: {
       "0": "widget_clear_summer_top",
       "12": "widget_clear_summer_polaroid",
-      "20": "widget_clear_summer_dialogue",
-      "36": "widget_clear_summer_music"
+      "20": "widget_clear_summer_dialogue"
     },
 
     // 桌面两页网格排版映射
@@ -416,13 +415,12 @@ window.DESKTOP_PRESETS = {
       null, null, "encounter", "deeptalk",
       null, null, "reader", "forum",
 
-      // === 第二页 (20~39) === 槽位 32-35 可用（36-39 被播放器组件占用）
-      // 注：原 music（播放器）图标位已改为 workbench（工作台）
+      // === 第二页 (20~39) === 槽位 32-35 为四个应用，槽位 36 为工作台（原播放器组件已移除）
       null, null, null, null,
       null, null, null, null,
       null, null, null, null,
-      "couples", "workbench", "shopping", "quicktravel",
-      null, null, null, null
+      "couples", "music", "shopping", "quicktravel",
+      "workbench", null, null, null
     ],
 
     // 底部 Dock 栏排布

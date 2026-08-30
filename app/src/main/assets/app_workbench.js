@@ -618,8 +618,10 @@
           '<div style="border-top:1px solid var(--border);padding:8px 10px;background:#fff;">' +
             '<textarea id="wb-input" rows="2" placeholder="输入任务，例如：在工作区创建一个项目并写入示例代码，然后推送到 GitHub..." style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:12px;padding:10px 12px;font-size:13px;resize:none;outline:none;color:var(--text-primary);background:#f8fafc;line-height:1.5;"></textarea>' +
             '<div style="display:flex;align-items:center;gap:6px;margin-top:6px;">' +
-              '<button class="wb-icon-btn" id="wb-ws-pick" title="切换工作区" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px;cursor:pointer;color:#0e7490;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 15) + '</button>' +
-              '<span style="flex:1;font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + this.esc(conv.workspaceLabel || "工作台私有区") + '</span>' +
+              (this.fs._guard()
+                ? '<button class="wb-icon-btn" id="wb-ws-pick" title="切换工作区" style="border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px;cursor:pointer;color:#0e7490;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 15) + '</button>' +
+                '<span style="flex:1;font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + this.esc(conv.workspaceLabel || "工作台私有区") + '</span>'
+                : '<span style="flex:1;font-size:9px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">链接版：仅 GitHub 连接</span>') +
               '<button id="wb-stop-btn" style="display:none;border:none;background:#ef4444;color:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;cursor:pointer;">' + this.svg('<rect x="6" y="6" width="12" height="12" rx="2"/>', 13) + '停止</button>' +
               '<button id="wb-send-btn" style="border:none;background:var(--primary);color:#fff;border-radius:8px;padding:7px 14px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;gap:4px;">' + this.svg('<path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/>', 13) + '发送</button>' +
             '</div>' +
@@ -635,7 +637,16 @@
       document.getElementById("wb-back-btn").onclick = function () { self.renderList(); };
       document.getElementById("wb-send-btn").onclick = function () { self.onSend(conv); };
       document.getElementById("wb-stop-btn").onclick = function () { self.stopAgent(); };
-      document.getElementById("wb-ws-pick").onclick = function () { self.showWorkspacePicker(function (path, label) { self.updateConv(conv.id, { workspace: path, workspaceLabel: label }); conv.workspace = path; conv.workspaceLabel = label; self.showChat(conv.id); }); };
+      var wsPick = document.getElementById("wb-ws-pick");
+      if (wsPick) {
+        wsPick.onclick = function () {
+          self.showWorkspacePicker(function (path, label) {
+            self.updateConv(conv.id, { workspace: path, workspaceLabel: label });
+            conv.workspace = path; conv.workspaceLabel = label;
+            self.showChat(conv.id);
+          });
+        };
+      }
       document.getElementById("wb-conv-menu").onclick = function () { self.showConvMenu(conv); };
       document.getElementById("wb-input").addEventListener("keydown", function (ev) {
         if (ev.key === "Enter" && !ev.shiftKey) {
@@ -773,7 +784,7 @@
         } }
       ];
       var box = document.createElement("div");
-      box.style.cssText = "position:fixed;top:70px;right:12px;background:#fff;border:1.5px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,0.12);z-index:9990;min-width:180px;overflow:hidden;";
+      box.style.cssText = "position:fixed;top:70px;right:12px;background:#fff;border:1.5px solid var(--border);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,0.12);z-index:100010;min-width:180px;overflow:hidden;";
       items.forEach(function (it) {
         var b = document.createElement("button");
         b.textContent = it.label;
@@ -793,7 +804,7 @@
     // ==================== 弹窗（自制卡片，禁止原生） ====================
     overlay: function (contentHtml, width) {
       var mask = document.createElement("div");
-      mask.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.45);z-index:9995;display:flex;align-items:center;justify-content:center;padding:20px;";
+      mask.style.cssText = "position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(15,23,42,0.45);z-index:100000;display:flex;align-items:center;justify-content:center;padding:20px;";
       var card = document.createElement("div");
       card.style.cssText = "background:#fff;border-radius:16px;width:" + (width || 360) + "px;max-width:94vw;max-height:84vh;overflow-y:auto;padding:18px;box-shadow:0 24px 60px rgba(15,23,42,0.25);";
       card.innerHTML = contentHtml;
@@ -853,8 +864,10 @@
         '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:12px;">' + this.svg('<path d="M12 5v14"/><path d="M5 12h14"/>', 18, "color:var(--primary);") + '新建工作台会话</div>' +
         '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">会话标题</div>' +
         '<input id="wb-new-title" type="text" placeholder="例如: 搭建一个天气查询工具" style="width:100%;box-sizing:border-box;padding:9px;border:1.5px solid var(--border);border-radius:10px;font-size:13px;outline:none;margin-bottom:10px;">' +
-        '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">专属本地工作区</div>' +
-        '<button id="wb-new-ws" style="width:100%;display:flex;align-items:center;gap:6px;padding:9px;border:1.5px dashed var(--border);border-radius:10px;background:#f8fafc;font-size:12px;color:#0e7490;cursor:pointer;margin-bottom:10px;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 14) + '<span id="wb-new-ws-label" style="flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + this.esc(wsLabel) + '</span>' + this.svg('<path d="M9 18l6-6-6-6"/>', 14) + '</button>' +
+        (this.fs._guard()
+          ? '<div style="font-size:11px;font-weight:700;color:var(--text-secondary);margin-bottom:4px;">专属本地工作区</div>' +
+            '<button id="wb-new-ws" style="width:100%;display:flex;align-items:center;gap:6px;padding:9px;border:1.5px dashed var(--border);border-radius:10px;background:#f8fafc;font-size:12px;color:#0e7490;cursor:pointer;margin-bottom:10px;">' + this.svg('<path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z"/>', 14) + '<span id="wb-new-ws-label" style="flex:1;text-align:left;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + this.esc(wsLabel) + '</span>' + this.svg('<path d="M9 18l6-6-6-6"/>', 14) + '</button>'
+          : '<div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:10px;background:#f8fafc;border:1.5px dashed var(--border);border-radius:10px;padding:9px;">链接版（网页/PWA）无本地文件系统，本会话仅支持 GitHub 连接工作。</div>') +
         '<div style="display:flex;align-items:center;justify-content:space-between;padding:9px;border:1.5px solid var(--border);border-radius:10px;background:#fff;margin-bottom:10px;">' +
           '<div style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-primary);">' + this.svg('<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>', 15, "color:#16a34a;") + '连接 GitHub' +
           '</div>' +
@@ -868,12 +881,16 @@
         '</div>'
       );
       dlg.card.querySelector(".wb-dlg-cancel").onclick = function () { dlg.close(); };
-      document.getElementById("wb-new-ws").onclick = function () {
-        self.showWorkspacePicker(function (path, label) {
-          wsPath = path; wsLabel = label;
-          document.getElementById("wb-new-ws-label").textContent = label;
-        });
-      };
+      var wsBtn = document.getElementById("wb-new-ws");
+      if (wsBtn) {
+        wsBtn.onclick = function () {
+          self.showWorkspacePicker(function (path, label) {
+            wsPath = path; wsLabel = label;
+            var lbl = document.getElementById("wb-new-ws-label");
+            if (lbl) lbl.textContent = label;
+          });
+        };
+      }
       dlg.card.querySelector(".wb-dlg-ok").onclick = async function () {
         var title = document.getElementById("wb-new-title").value.trim() || "未命名会话";
         var gh = document.getElementById("wb-new-gh").checked;
@@ -934,7 +951,11 @@
         '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;">工作区为 App 私有目录下的文件夹（免存储权限、天然隔离）。公共存储仅可浏览。</div>' +
         '<div id="wb-pick-breadcrumb" style="font-size:11px;color:#0e7490;margin-bottom:8px;display:flex;align-items:center;gap:4px;flex-wrap:wrap;"></div>' +
         '<div id="wb-pick-list" style="max-height:300px;overflow-y:auto;border:1.5px solid var(--border);border-radius:10px;padding:6px;background:#f8fafc;min-height:80px;"></div>' +
-        '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<div style="display:flex;gap:6px;margin-top:10px;">' +
+          '<input id="wb-pick-path-input" type="text" placeholder="或手动输入相对路径，如: my-project/src" style="flex:1;min-width:0;padding:8px;border:1.5px solid var(--border);border-radius:10px;font-size:11px;outline:none;">' +
+          '<button id="wb-pick-path-btn" style="flex-shrink:0;padding:8px 12px;border:1.5px solid #0e7490;background:#ecfeff;border-radius:10px;font-size:11px;font-weight:700;color:#0e7490;cursor:pointer;">绑定路径</button>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;margin-top:10px;">' +
           '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">取消</button>' +
           '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">选择此目录</button>' +
         '</div>'
@@ -1010,6 +1031,16 @@
         }
       }
       render();
+      var pathBtn = dlg.card.querySelector("#wb-pick-path-btn");
+      if (pathBtn) {
+        pathBtn.onclick = function () {
+          var raw = dlg.card.querySelector("#wb-pick-path-input").value.trim();
+          if (!raw) { if (typeof showToast === "function") showToast("请输入相对路径"); return; }
+          var clean = raw.replace(/\\/g, "/").replace(/^\.?\//, "");
+          dlg.close();
+          if (onPick) onPick(clean || ".", "手动路径: " + clean);
+        };
+      }
       dlg.card.querySelector(".wb-dlg-cancel").onclick = function () { dlg.close(); };
       dlg.card.querySelector(".wb-dlg-ok").onclick = function () {
         dlg.close();

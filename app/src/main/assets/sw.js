@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v35'; // v35：防篡改机制重设计——仅 app_crypto.js 参与校验，Kotlin 原生读取+诊断卡片
+const CACHE_NAME = 'story-phone-v36'; // v36：诊断密文 + 预设播放器移除/工作台上位 + 美化图标面板补工作台 + 弹窗层级修复 + 工作区路径输入/链接版适配
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
