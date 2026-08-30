@@ -29,17 +29,16 @@ class NowPlayingListenerService : NotificationListenerService() {
         @Volatile
         var lastUpdateTs: Long = 0L
 
-        /** 判断通知是否为媒体通知（MediaStyle / 携带媒体会话 / TRANSPORT 分类，且带标题） */
+        /** 判断通知是否为媒体通知（携带媒体会话 / TRANSPORT 分类，且带标题） */
         fun isMediaNotification(n: Notification): Boolean {
             return try {
                 val extras: Bundle = n.extras
                 val hasSession = extras.containsKey(Notification.EXTRA_MEDIA_SESSION)
                 val hasTitle = extras.containsKey(Notification.EXTRA_TITLE)
-                val isMediaStyle = n.style is Notification.MediaStyle
                 val isTransport = n.category == Notification.CATEGORY_TRANSPORT
                 // 注意：主流媒体 App（网易云/B站等）播放时都跑前台服务(FGS)，不可按 FGS 标志排除；
-                // 必须靠 MediaStyle/媒体会话/标题 三要素判断是否为媒体通知
-                (isMediaStyle || hasSession || isTransport) && hasTitle
+                // 判断靠"媒体会话 Extra / TRANSPORT 分类 + 标题"（不依赖 Notification.style，兼容性更好）
+                (hasSession || isTransport) && hasTitle
             } catch (e: Exception) {
                 false
             }
@@ -50,17 +49,16 @@ class NowPlayingListenerService : NotificationListenerService() {
             return try {
                 val extras: Bundle = n.extras
                 val title = extras.getString(Notification.EXTRA_TITLE)?.takeIf { it.isNotBlank() }
-                val artist = extras.getString(Notification.EXTRA_ARTIST)?.takeIf { it.isNotBlank() }
-                val album = extras.getString(Notification.EXTRA_ALBUM)?.takeIf { it.isNotBlank() }
                 val text = extras.getString(Notification.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
                 val resolvedTitle = title ?: text
-                val resolvedArtist = artist ?: if (title != null && text != null && text != title) text else ""
+                // 歌手/专辑：多数媒体 App 把"歌手 · 专辑"放进 EXTRA_TEXT；与标题相同则视为无歌手信息
+                val textLine = if (text != null && text != title && text != resolvedTitle) text else null
                 JSONObject().apply {
                     put("packageName", packageName)
                     put("appName", appNameOf(packageName))
                     put("title", resolvedTitle ?: "")
-                    put("artist", resolvedArtist ?: "")
-                    put("album", album ?: "")
+                    put("artist", textLine ?: "")
+                    put("album", "")
                     put("playing", true)
                 }.toString()
             } catch (e: Exception) {
