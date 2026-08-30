@@ -60,6 +60,9 @@ class BluetoothMcp(private val context: Context) {
     /** 最近一次 BLE 写入结果 */
     @Volatile private var lastBleWriteResult: String? = null
 
+    /** 最近一次 BLE 服务发现结果（能力档案配置辅助） */
+    @Volatile private var lastBleServicesResult: String? = null
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     // ---------------------------------------------------------------
@@ -417,6 +420,125 @@ class BluetoothMcp(private val context: Context) {
             Log.e(TAG, "读取电量失败: ${e.message}")
             "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "电量读取失败")}}"
         }
+    }
+
+    // ---------------------------------------------------------------
+    // 7. BLE 服务发现（枚举设备的 GATT 服务/特征，供能力档案配置使用）
+    // ---------------------------------------------------------------
+
+    /** 常见服务/特征 UUID 的名称映射（仅用于展示，帮助用户识别） */
+    private fun knownUuidName(uuid: String): String {
+        val lower = uuid.lowercase()
+        val short = if (lower.length >= 8) lower.substring(4, 8) else ""
+        return when (short) {
+            "180a" -> "设备信息"
+            "180f" -> "电池电量"
+            "180d" -> "心率"
+            "1809" -> "电量信息"
+            "1812" -> "HID 键鼠"
+            "1816" -> "血糖"
+            "ffe0" -> "自定义服务(常见)"
+            "ffe5" -> "自定义服务(常见)"
+            "ffe1" -> "自定义特征(常见)"
+            "fff1" -> "自定义特征(常见)"
+            else -> ""
+        }
+    }
+
+    /**
+     * 连接指定 BLE 设备并枚举其全部服务与特征（含可读/可写属性），返回 JSON。
+     * 供 MCP 面板"发现服务"按钮使用，帮助用户填写能力档案的 Service/Characteristic UUID。
+     * 异步执行，结果通过 getBleServicesResult() 轮询拉取。
+     */
+    fun bleDiscoverServices(deviceAddress: String): String {
+        if (!hasConnectPermission()) return ERR_NO_PERMISSION
+        return try {
+            val device = adapter?.getRemoteDevice(deviceAddress)
+                ?: return JSONObject().apply {
+                    put("ok", false)
+                    put("error", "设备不存在")
+                }.toString()
+            // 断开旧连接
+            try { gatt?.disconnect(); gatt?.close() } catch (e: Exception) {}
+            gatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        Log.d(TAG, "BLE 服务发现已连接: $deviceAddress")
+                        g.discoverServices()
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        try { g.close() } catch (e: Exception) {}
+                        if (gatt === g) gatt = null
+                    }
+                }
+
+                override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        lastBleServicesResult = JSONObject().apply {
+                            put("ok", false)
+                            put("error", "服务发现失败 status=$status")
+                        }.toString()
+                        try { g.disconnect(); g.close() } catch (e: Exception) {}
+                        return
+                    }
+                    try {
+                        val services = JSONArray()
+                        for (svc in g.services) {
+                            val chars = JSONArray()
+                            for (ch in svc.characteristics) {
+                                chars.put(JSONObject().apply {
+                                    put("uuid", ch.uuid.toString())
+                                    put("name", knownUuidName(ch.uuid.toString()))
+                                    put("properties", describeCharProperties(ch.properties))
+                                })
+                            }
+                            services.put(JSONObject().apply {
+                                put("uuid", svc.uuid.toString())
+                                put("name", knownUuidName(svc.uuid.toString()))
+                                put("characteristics", chars)
+                            })
+                        }
+                        lastBleServicesResult = JSONObject().apply {
+                            put("ok", true)
+                            put("deviceAddress", deviceAddress)
+                            put("count", services.length())
+                            put("services", services)
+                        }.toString()
+                    } catch (e: Exception) {
+                        lastBleServicesResult = JSONObject().apply {
+                            put("ok", false)
+                            put("error", e.message ?: "解析失败")
+                        }.toString()
+                    }
+                    try { g.disconnect(); g.close() } catch (e: Exception) {}
+                    if (gatt === g) gatt = null
+                }
+            })
+            JSONObject().apply {
+                put("ok", true)
+                put("discovering", true)
+            }.toString()
+        } catch (e: Exception) {
+            JSONObject().apply {
+                put("ok", false)
+                put("error", e.message ?: "服务发现启动失败")
+            }.toString()
+        }
+    }
+
+    fun getBleServicesResult(): String = lastBleServicesResult
+        ?: JSONObject().apply {
+            put("ok", false)
+            put("error", "尚未执行过服务发现")
+        }.toString()
+
+    private fun describeCharProperties(props: Int): String {
+        val list = mutableListOf<String>()
+        if (props and BluetoothGattCharacteristic.PROPERTY_READ != 0) list.add("read")
+        if (props and BluetoothGattCharacteristic.PROPERTY_WRITE != 0) list.add("write")
+        if (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0) list.add("write_no_response")
+        if (props and BluetoothGattCharacteristic.PROPERTY_NOTIFY != 0) list.add("notify")
+        if (props and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0) list.add("indicate")
+        return list.joinToString(",")
     }
 
     // 确保进程退出前释放资源

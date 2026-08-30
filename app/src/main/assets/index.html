@@ -3375,7 +3375,8 @@
                         <div id="mcp-geo-status" style="font-size:13px; font-weight:700; color:var(--text-primary);">尚未同步设备定位</div>
                         <div id="mcp-weather-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;">实时天气信息将在此展现</div>
                         <div id="mcp-battery-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;">设备真实电量将在此展现</div>
-                        <button class="btn btn-outline" onclick="mcpSystem.syncLocation()" style="width:100%; margin-top:10px; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">读取手机 GPS / 电量并同步给 AI 伙伴</button>
+                        <div id="mcp-nowplaying-status" style="font-size:12px; color:var(--text-secondary); margin-top:4px;">正在播放：尚未同步（歌名/歌手，需开启通知使用权）</div>
+                        <button class="btn btn-outline" onclick="mcpSystem.syncLocation()" style="width:100%; margin-top:10px; font-size:11px; padding:8px; border-radius:8px; font-weight:600; cursor:pointer;">读取手机 GPS / 电量 / 正在播放并同步给 AI 伙伴</button>
                       </div>
 
                       <!-- 蓝牙设备管理卡片（可点击展开/收起） -->
@@ -3398,12 +3399,48 @@
                             <div id="mcp-ble-list" style="font-size:11px; color:var(--text-secondary); line-height:1.5; max-height:200px; overflow-y:auto;">支持扫描并写入 BLE 特征值，控制智能硬件</div>
                           </div>
                           <div style="margin-top:8px; font-size:10px; color:var(--text-secondary); line-height:1.5;">
-                            * 每个设备可独立开关"注入提示词"；开启后 AI 能感知该设备并通过
-                            <code style="background:#f1f5f9; padding:1px 4px; border-radius:4px;">[BLUETOOTH_CMD]</code> 指令控制它（SPP 串口 / BLE 写入）。
+                            * 每个设备可独立开关"注入提示词"；开启后 AI 能感知该设备，并通过
+                            <code style="background:#f1f5f9; padding:1px 4px; border-radius:4px;">[BLUETOOTH_CMD]</code> 指令像放歌一样随时控制它（耳机类可调音量/播放暂停/切歌；BLE/串口设备点击"能力配置"定义命令映射）。
                             <br>* Android 13+ 系统限制应用直接开关蓝牙，请手动在系统设置中开关。
                           </div>
                         </div>
                       </details>
+
+                      <!-- 蓝牙设备能力档案配置弹窗 -->
+                      <div id="bt-profile-editor-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:center; justify-content:center; padding:16px;">
+                        <div style="background:#ffffff; border-radius:14px; width:92%; max-width:430px; max-height:86vh; overflow-y:auto; padding:16px; box-shadow: var(--shadow-md);">
+                          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+                            <div style="font-size:14px; font-weight:700; color:var(--text-primary);">设备能力配置</div>
+                            <button onclick="mcpSystem.closeBtProfileEditor()" style="border:none; background:none; font-size:18px; cursor:pointer; color:#9ca3af; line-height:1;">✕</button>
+                          </div>
+                          <div id="bt-profile-device-name" style="font-size:12px; color:var(--text-secondary); margin-bottom:10px; word-break:break-all;"></div>
+                          <label style="font-size:11px; font-weight:700; color:var(--text-primary);">设备类型</label>
+                          <select id="bt-profile-type" onchange="mcpSystem.onBtProfileTypeChange()" style="width:100%; padding:6px; border:1px solid var(--border); border-radius:8px; font-size:12px; margin:4px 0 8px 0; background:#fff;">
+                            <option value="auto">自动识别（耳机→媒体控制，其他→串口原始发送）</option>
+                            <option value="media">媒体设备（音量 / 播放暂停 / 切歌，走系统通道）</option>
+                            <option value="ble">BLE 设备（特征值写入，需 UUID + 命令表）</option>
+                            <option value="spp">串口设备（文本命令表）</option>
+                          </select>
+                          <div id="bt-profile-ble-fields" style="display:none; margin-bottom:8px;">
+                            <label style="font-size:11px; font-weight:700; color:var(--text-primary);">Service UUID</label>
+                            <input id="bt-profile-svc" oninput="mcpSystem.onBtSvcCharInput()" placeholder="如 0000ffe0-0000-1000-8000-00805f9b34fb" style="width:100%; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff; margin:2px 0 4px 0;">
+                            <label style="font-size:11px; font-weight:700; color:var(--text-primary);">Characteristic UUID</label>
+                            <div style="display:flex; gap:4px; align-items:center; margin:2px 0 4px 0;">
+                              <input id="bt-profile-char" oninput="mcpSystem.onBtSvcCharInput()" placeholder="如 0000ffe1-0000-1000-8000-00805f9b34fb" style="flex:1; min-width:0; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
+                              <button onclick="mcpSystem.discoverBleServices()" style="flex-shrink:0; padding:5px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">发现服务</button>
+                            </div>
+                            <div id="bt-profile-svc-result" style="font-size:10px; color:var(--text-secondary); line-height:1.5; max-height:150px; overflow-y:auto; background:#f8fafc; border-radius:8px; padding:6px;"></div>
+                          </div>
+                          <div style="font-size:11px; font-weight:700; color:var(--text-primary); margin:8px 0 4px 0;">命令映射表（AI 语义命令 → 设备数据）</div>
+                          <div id="bt-profile-command-rows"></div>
+                          <button onclick="mcpSystem.addBtProfileCommandRow()" style="margin-top:4px; width:100%; padding:6px; font-size:11px; font-weight:700; border-radius:8px; border:1.5px dashed #a855f7; background:#faf5ff; color:#9333ea; cursor:pointer;">+ 添加命令</button>
+                          <div style="font-size:10px; color:var(--text-secondary); line-height:1.6; margin-top:8px;">
+                            占位符：{value} 十进制 · {value:byte} 单字节十六进制 · {value:hex} 两位十六进制 · {on}=1 · {off}=0<br>
+                            示例（BLE）：01{value:byte} → 01 0A；示例（串口）：V{value} → V5
+                          </div>
+                          <button onclick="mcpSystem.saveBtProfile()" style="margin-top:10px; width:100%; padding:8px; font-size:12px; font-weight:700; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer;">保存配置</button>
+                        </div>
+                      </div>
 
                       <!-- 屏幕使用时长卡片 -->
                       <div class="mcp-card" style="background:#ffffff; border:1.5px solid var(--border); border-radius:12px; padding:12px; box-shadow: var(--shadow-sm);">

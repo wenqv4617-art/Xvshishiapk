@@ -469,6 +469,127 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    /** BLE 服务发现（能力档案配置辅助：枚举设备 GATT 服务/特征） */
+    @JavascriptInterface
+    fun bluetoothBleDiscoverServices(deviceAddress: String): String = bluetoothMcp.bleDiscoverServices(deviceAddress)
+
+    @JavascriptInterface
+    fun bluetoothGetBleServicesResult(): String = bluetoothMcp.getBleServicesResult()
+
+    /**
+     * 系统媒体控制通道（蓝牙耳机等媒体设备的统一控制）。
+     * 支持命令：
+     * - volume_up / volume_down：音量加减（音乐流，A2DP 耳机跟随手机媒体音量）
+     * - volume_set：音量调到 value(0-100)
+     * - volume_mute / volume_unmute：静音/取消静音
+     * - play / pause / play_pause / stop：本应用媒体播放器控制；未播放时兜底派发系统媒体键
+     * - next / prev：派发系统媒体键（切歌，外部媒体应用生效；本应用歌单切歌由 JS 侧处理）
+     */
+    @JavascriptInterface
+    fun mediaControlCommand(cmd: String, value: Int): String {
+        return try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            when (cmd) {
+                "volume_up" -> {
+                    audioManager.adjustStreamVolume(
+                        android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.ADJUST_RAISE,
+                        android.media.AudioManager.FLAG_PLAY_SOUND
+                    )
+                    okJson("volume_up")
+                }
+                "volume_down" -> {
+                    audioManager.adjustStreamVolume(
+                        android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.ADJUST_LOWER,
+                        android.media.AudioManager.FLAG_PLAY_SOUND
+                    )
+                    okJson("volume_down")
+                }
+                "volume_set" -> {
+                    val max = audioManager.getStreamMaxVolume(android.media.AudioManager.STREAM_MUSIC)
+                    val target = if (max > 0) value.coerceIn(0, 100) * max / 100 else 0
+                    audioManager.setStreamVolume(android.media.AudioManager.STREAM_MUSIC, target, android.media.AudioManager.FLAG_PLAY_SOUND)
+                    JSONObject().apply {
+                        put("ok", true)
+                        put("cmd", "volume_set")
+                        put("value", value.coerceIn(0, 100))
+                    }.toString()
+                }
+                "volume_mute" -> {
+                    audioManager.adjustStreamVolume(
+                        android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.ADJUST_MUTE,
+                        android.media.AudioManager.FLAG_PLAY_SOUND
+                    )
+                    okJson("volume_mute")
+                }
+                "volume_unmute" -> {
+                    audioManager.adjustStreamVolume(
+                        android.media.AudioManager.STREAM_MUSIC,
+                        android.media.AudioManager.ADJUST_UNMUTE,
+                        android.media.AudioManager.FLAG_PLAY_SOUND
+                    )
+                    okJson("volume_unmute")
+                }
+                "play" -> {
+                    if (mediaPlayer != null && mediaPlayer?.isPlaying == false) resumeMusicNatively()
+                    else dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY)
+                    okJson("play")
+                }
+                "pause" -> {
+                    if (mediaPlayer?.isPlaying == true) pauseMusicNatively()
+                    else dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
+                    okJson("pause")
+                }
+                "play_pause" -> {
+                    if (mediaPlayer?.isPlaying == true) pauseMusicNatively()
+                    else if (mediaPlayer != null) resumeMusicNatively()
+                    else dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+                    okJson("play_pause")
+                }
+                "stop" -> {
+                    if (mediaPlayer != null) stopMusicNatively()
+                    else dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_STOP)
+                    okJson("stop")
+                }
+                "next" -> {
+                    dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_NEXT)
+                    okJson("next")
+                }
+                "prev" -> {
+                    dispatchMediaKey(android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+                    okJson("prev")
+                }
+                else -> JSONObject().apply {
+                    put("ok", false)
+                    put("error", "未知媒体命令: " + cmd)
+                }.toString()
+            }
+        } catch (e: Exception) {
+            Log.e("AndroidMcp", "mediaControlCommand 失败: " + e.message)
+            JSONObject().apply {
+                put("ok", false)
+                put("error", e.message ?: "媒体控制失败")
+            }.toString()
+        }
+    }
+
+    private fun okJson(cmd: String): String = JSONObject().apply {
+        put("ok", true)
+        put("cmd", cmd)
+    }.toString()
+
+    private fun dispatchMediaKey(keyCode: Int) {
+        try {
+            val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, keyCode))
+            audioManager.dispatchMediaKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, keyCode))
+        } catch (e: Exception) {
+            Log.e("AndroidMcp", "dispatchMediaKey 失败: " + e.message)
+        }
+    }
+
     /** 停止闹钟循环铃声（用户手动关闭） */
     @JavascriptInterface
     fun stopAlarmRingtone() {
@@ -943,6 +1064,110 @@ class AndroidMcp private constructor(private val context: Context) {
         } catch (e: Exception) {
             e.printStackTrace()
             "{}"
+        }
+    }
+
+
+    // 9.2 当前正在播放的媒体（跨应用：通知监听解析 + 本应用会话兜底）
+    @JavascriptInterface
+    fun isNotificationListenerGranted(): Boolean {
+        return try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            nm.isNotificationListenerAccessGranted(android.content.ComponentName(context, NowPlayingListenerService::class.java))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            false
+        }
+    }
+
+    /**
+     * 读取当前正在播放的媒体信息，返回 JSON：
+     * {"ok":true,"granted":true,"title":"歌名","artist":"歌手","album":"专辑","appName":"网易云音乐","playing":true}
+     * granted=false 表示尚未授予"通知使用权"权限（前端引导用户去系统设置开启）。
+     */
+    @JavascriptInterface
+    fun getNowPlayingMedia(): String {
+        return try {
+            // 1) 通知监听缓存（跨应用最可靠，需通知使用权）
+            if (isNotificationListenerGranted()) {
+                val cached = NowPlayingListenerService.currentPlaying
+                if (cached != null) {
+                    return try {
+                        val obj = JSONObject(cached)
+                        obj.put("ok", true)
+                        obj.put("granted", true)
+                        obj.toString()
+                    } catch (e: Exception) { cached }
+                }
+            }
+            // 2) 本应用自身的 MediaSession（自己放歌时）
+            try {
+                val self = JSONObject(getCurrentMediaInfo())
+                val selfSong = self.optString("songName")
+                if (selfSong.isNotBlank() && self.optBoolean("isPlaying")) {
+                    return JSONObject().apply {
+                        put("ok", true)
+                        put("granted", isNotificationListenerGranted())
+                        put("title", selfSong)
+                        put("artist", "")
+                        put("album", "")
+                        put("appName", "叙事诗小手机")
+                        put("playing", true)
+                    }.toString()
+                }
+            } catch (e: Exception) {}
+            // 3) 兜底：旧系统/有权限时直接枚举活跃媒体会话
+            queryActiveSessions()?.let { return it }
+            // 4) 没有权限时的提示
+            if (!isNotificationListenerGranted()) {
+                return JSONObject().apply {
+                    put("ok", true)
+                    put("granted", false)
+                    put("title", "")
+                    put("artist", "")
+                    put("appName", "")
+                    put("playing", false)
+                    put("message", "需要通知使用权权限，请在系统设置中开启")
+                }.toString()
+            }
+            JSONObject().apply {
+                put("ok", true)
+                put("granted", true)
+                put("title", "")
+                put("artist", "")
+                put("appName", "")
+                put("playing", false)
+                put("message", "当前没有检测到正在播放的媒体")
+            }.toString()
+        } catch (e: Exception) {
+            Log.e("AndroidMcp", "getNowPlayingMedia 失败: " + e.message)
+            JSONObject().apply {
+                put("ok", false)
+                put("error", e.message ?: "读取失败")
+            }.toString()
+        }
+    }
+
+    /** 枚举活跃媒体会话（老系统可读；新系统无权限时返回 null） */
+    private fun queryActiveSessions(): String? {
+        return try {
+            val msm = context.getSystemService(Context.MEDIA_SESSION_SERVICE) as android.media.session.MediaSessionManager
+            val sessions = msm.getActiveSessions(null)
+            if (sessions.isNullOrEmpty()) return null
+            val controller = sessions[0]
+            val meta = controller.metadata ?: return null
+            val title = meta.description.title?.toString()?.takeIf { it.isNotBlank() } ?: return null
+            JSONObject().apply {
+                put("ok", true)
+                put("granted", isNotificationListenerGranted())
+                put("title", title)
+                put("artist", meta.description.subtitle?.toString() ?: "")
+                put("album", meta.description.description?.toString() ?: "")
+                put("appName", controller.packageName)
+                put("playing", controller.playbackState?.state == android.media.session.PlaybackState.STATE_PLAYING)
+            }.toString()
+        } catch (e: Exception) {
+            null
         }
     }
 
