@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v40'; // v40：工作台细节打磨——流式实时识别+Markdown实时渲染/artifacts索引修复/工作区迁Download/用户气泡操作/缓存优化
+const CACHE_NAME = 'story-phone-v41'; // v41：历史回显不爆代码/工作区标准配置(AGENTS.md+skills)/权限主动引导/路径显示修正
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

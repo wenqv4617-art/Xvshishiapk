@@ -44,8 +44,11 @@
   // ---- 思考折叠块 + Markdown + Artifacts ----
   WB.renderAssistantContent = function (full, container, t0) {
     var self = this;
-    var thinks = String(full || '').match(/<think>([\s\S]*?)<\/think>/g) || [];
-    var cleaned = String(full || '').replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    var raw = String(full || '');
+    // 先剥离 WB_TOOL 标签（历史回显/流式都统一，避免"爆代码"）
+    raw = wbStripToolTag(raw);
+    var thinks = raw.match(/<think>([\s\S]*?)<\/think>/g) || [];
+    var cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
     var html = '';
     var secs = t0 ? Math.round((Date.now() - t0) / 1000) : 0;
     var thinkLabel = secs > 1 ? ('Thought for ' + secs + ' seconds') : '思考过程';
@@ -1115,7 +1118,277 @@
       return r;
     };
   }
+
+  // 进入对话后自动检查工作区权限（每会话首次进入时弹一次引导，避免打扰）
+  var _origShowChat = WB.showChat;
+  if (typeof _origShowChat === 'function') {
+    WB.showChat = function (convId) {
+      var self = this;
+      var ret = _origShowChat.apply(this, arguments);
+      if (ret && ret.then) {
+        ret.then(function (conv) {
+          try {
+            if (window.AndroidMCP && typeof window.AndroidMCP.wbIsPublicWorkspace === 'function' && !window.AndroidMCP.wbIsPublicWorkspace()) {
+              var key = 'wb_perm_prompt_' + (conv ? conv.id : convId);
+              var prompted = false;
+              try { prompted = localStorage.getItem(key) === '1'; } catch (e) {}
+              if (!prompted) {
+                try { localStorage.setItem(key, '1'); } catch (e) {}
+                setTimeout(function () { self.ensurePublicWorkspace(); }, 600);
+              }
+            }
+          } catch (e) {}
+        }).catch(function () {});
+      }
+      return ret;
+    };
+  }
 })();
+
+// ============ 历史回显统一：tool 消息卡片化 + assistant 剥离工具标签 ============
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB) return;
+
+  WB.renderStoredMsg = function (container, m) {
+    var self = this;
+    if (m.role === 'user') {
+      this.appendBubble('user', m.content);
+    } else if (m.role === 'assistant') {
+      // 历史 assistant 消息：剥离 WB_TOOL 标签后渲染（避免"爆代码"）
+      var bubble = this.appendBubble('assistant', '');
+      var clean = WB._stripToolTag ? WB._stripToolTag(m.content) : m.content;
+      if (bubble && bubble._finalize) bubble._finalize(clean);
+      else if (bubble && bubble._el) bubble._el.textContent = clean;
+    } else if (m.role === 'tool') {
+      // 历史工具结果：渲染为可折叠工具卡片（不再显示"爆代码"原始 JSON）
+      try {
+        var parsed = JSON.parse(m.content || '');
+        var ok = !!(parsed && parsed.ok);
+        var card = this.appendToolCard('tool_result', {});
+        if (card && card._render) card._render(ok ? parsed : { ok: false, error: (parsed && parsed.error) || '未知错误' });
+      } catch (e) {
+        var div = document.createElement('div');
+        div.style.cssText = 'align-self:flex-start;background:#f1f5f9;border:1px dashed #cbd5e1;border-radius:10px;padding:8px 10px;font-size:10px;color:#64748b;max-width:88%;word-break:break-all;';
+        div.textContent = '[工具结果] ' + String(m.content || '').slice(0, 200);
+        container.appendChild(div);
+      }
+    } else {
+      var sys = document.createElement('div');
+      sys.style.cssText = 'align-self:center;font-size:10px;color:#94a3b8;background:#f8fafc;border-radius:8px;padding:4px 10px;max-width:80%;';
+      sys.textContent = m.content;
+      container.appendChild(sys);
+    }
+  };
+})();
+
+// ============ 工作区标准配置文件：AGENTS.md + .workbench/skills/*.md（对标 Claude Code / 市面 Agent 工作台） ============
+(function () {
+  var WB = window.workbenchSystem;
+  if (!WB) return;
+
+  var AGENTS_MD = '# AGENTS.md\n\n这是本工作区的项目级 Agent 说明文件（对标 Claude Code / Cursor 的 AGENTS.md 标准）。\n\n## 项目概述\n在这里描述本项目/工作区的目标与结构。\n\n## 代码规范\n- 保持简洁、可读\n- 中文注释\n\n## 工作约定\n- 修改文件前先读取确认\n- 删除/覆盖前先询问用户\n';
+
+  var SKILL_TEMPLATE = '---\nname: 我的技能\ndescription: 一句话描述这个技能的作用\n---\n\n# 技能指令\n\n启用此 Skill 后，请遵循以下行为规范：\n\n- 规则 1\n- 规则 2\n';
+
+  /** 扫描工作区中的标准配置文件 */
+  WB.scanWorkspaceConfig = function (conv) {
+    var result = { agents: null, skills: [] };
+    if (!this.fs || !this.fs._guard || !this.fs._guard()) return result;
+    var root = conv && conv.workspace ? conv.workspace : '.';
+    // AGENTS.md
+    var ag = this.fs.readFile((root === '.' ? '' : root + '/') + 'AGENTS.md');
+    if (ag && ag.ok) result.agents = { path: 'AGENTS.md', content: ag.content || '' };
+    // .workbench/skills/*.md
+    var skillDir = (root === '.' ? '' : root + '/') + '.workbench/skills';
+    var dir = this.fs.listDir(skillDir);
+    if (dir && dir.ok && dir.entries) {
+      dir.entries.forEach(function (en) {
+        if (en.type !== 'file' || !/\.md$/i.test(en.name)) return;
+        var fr = WB.fs.readFile(skillDir + '/' + en.name);
+        if (fr && fr.ok) {
+          var meta = parseSkillMd(fr.content || '');
+          result.skills.push({ file: en.name, path: skillDir + '/' + en.name, name: meta.name || en.name.replace(/\.md$/i, ''), description: meta.description || '', instructions: meta.instructions || '' });
+        }
+      });
+    }
+    return result;
+  };
+
+  /** 解析 SKILL.md 的 frontmatter（--- name/description --- 正文指令） */
+  function parseSkillMd(content) {
+    var out = { name: '', description: '', instructions: '' };
+    var m = String(content || '').match(/^---\s*\n([\s\S]*?)\n---\s*\n([\s\S]*)$/);
+    if (m) {
+      var fm = m[1];
+      var nm = fm.match(/^name:\s*(.+)$/m);
+      var dm = fm.match(/^description:\s*(.+)$/m);
+      if (nm) out.name = nm[1].trim();
+      if (dm) out.description = dm[1].trim();
+      out.instructions = (m[2] || '').trim();
+    } else {
+      out.instructions = String(content || '').trim();
+    }
+    return out;
+  }
+  WB._parseSkillMd = parseSkillMd;
+
+  /** 确保工作区有标准配置文件（无则创建模板） */
+  WB.ensureWorkspaceConfig = function (conv, onDone) {
+    var self = this;
+    if (!this.fs || !this.fs._guard || !this.fs._guard()) { if (onDone) onDone(false); return; }
+    var root = conv && conv.workspace ? conv.workspace : '.';
+    var base = root === '.' ? '' : root + '/';
+    var wb = this.fs.readFile(base + 'AGENTS.md');
+    if (!(wb && wb.ok)) {
+      this.fs.writeFile(base + 'AGENTS.md', AGENTS_MD);
+    }
+    var skillDir = this.fs.listDir(base + '.workbench/skills');
+    if (!(skillDir && skillDir.ok)) {
+      this.fs.mkdir(base + '.workbench');
+      this.fs.mkdir(base + '.workbench/skills');
+      this.fs.writeFile(base + '.workbench/skills/示例技能.md', SKILL_TEMPLATE);
+    }
+    if (onDone) onDone(true);
+  };
+
+  // ---- buildSystemPrompt 注入工作区配置文件 ----
+  var _origBuild2 = WB.buildSystemPrompt;
+  WB.buildSystemPrompt = function (conv) {
+    var base = _origBuild2 ? _origBuild2.call(this, conv) : '';
+    var lines = [];
+    try {
+      var cfg = this.scanWorkspaceConfig ? this.scanWorkspaceConfig(conv) : null;
+      if (cfg) {
+        if (cfg.agents && cfg.agents.content) {
+          lines.push('');
+          lines.push('【项目级 AGENTS.md（请遵循）】');
+          lines.push(String(cfg.agents.content).slice(0, 3000));
+        }
+        if (cfg.skills && cfg.skills.length) {
+          lines.push('');
+          lines.push('【工作区 Skills（.workbench/skills）】');
+          cfg.skills.forEach(function (sk) {
+            lines.push('- Skill「' + (sk.name || sk.file) + '」：' + (sk.description || '') + (sk.instructions ? ' 指令：' + sk.instructions.slice(0, 500) : ''));
+          });
+        }
+      }
+    } catch (e) {}
+    return base + lines.join('\n');
+  };
+
+  // ---- 加号弹窗增加「工作区配置文件」区块 ----
+  // 通过包装 overlay 记录最新卡片，供 showAgentMcpDialog 注入使用
+  var _origOverlay = WB.overlay;
+  if (typeof _origOverlay === 'function') {
+    WB.overlay = function (contentHtml, width) {
+      var d = _origOverlay.call(this, contentHtml, width);
+      WB._lastOverlay = d;
+      return d;
+    };
+  }
+  var _origAgentMcp = WB.showAgentMcpDialog;
+  if (typeof _origAgentMcp === 'function') {
+    WB.showAgentMcpDialog = function () {
+      var self = this;
+      _origAgentMcp.apply(this, arguments);
+      // 在弹窗打开后注入工作区配置区块
+      setTimeout(function () {
+        var card = WB._lastOverlay ? WB._lastOverlay.card : null;
+        if (!card) return;
+        var mcpBtn = card.querySelector('#wb-agent-mcp');
+        if (!mcpBtn) return;
+        var block = document.createElement('div');
+        block.id = 'wb-ws-config-block';
+        block.style.cssText = 'margin-top:10px;border:1.5px solid #e2e8f0;border-radius:12px;padding:10px 12px;background:#f8fafc;';
+        block.innerHTML = '<div style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">' + self.svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>', 13, 'color:#0e7490;') + '工作区标准配置</div>' +
+          '<div id="wb-ws-config-list" style="font-size:10px;color:#64748b;line-height:1.7;">扫描中...</div>';
+        mcpBtn.parentNode.insertBefore(block, mcpBtn.nextSibling);
+        self._renderWsConfigList(block, self.state.activeConvId);
+      }, 120);
+    };
+  }
+
+  WB._renderWsConfigList = function (block, convId) {
+    var self = this;
+    var list = block.querySelector('#wb-ws-config-list');
+    if (!list) return;
+    self.getConv(convId).then(function (conv) {
+      if (!conv) return;
+      if (!self.fs || !self.fs._guard || !self.fs._guard()) {
+        list.innerHTML = '<div style="color:#94a3b8;">链接版无本地文件系统，无法使用工作区配置。</div>';
+        return;
+      }
+      // 确保存在
+      self.ensureWorkspaceConfig(conv, function () {
+        var cfg = self.scanWorkspaceConfig(conv);
+        var html = '';
+        html += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;"><span style="flex:1;">📄 AGENTS.md</span>' +
+          '<button class="wb-ws-edit-file" data-path="AGENTS.md" style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 8px;font-size:9px;color:#475569;cursor:pointer;">' + (cfg.agents ? '查看/编辑' : '创建') + '</button></div>';
+        if (cfg.skills && cfg.skills.length) {
+          cfg.skills.forEach(function (sk) {
+            html += '<div style="display:flex;align-items:center;gap:4px;margin-bottom:2px;"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">⚙ ' + self.esc(sk.name || sk.file) + '</span>' +
+              '<button class="wb-ws-edit-file" data-path="' + self.esc(sk.path) + '" style="border:1px solid #cbd5e1;background:#fff;border-radius:6px;padding:2px 8px;font-size:9px;color:#475569;cursor:pointer;">编辑</button></div>';
+          });
+        }
+        if (!cfg.skills.length) html += '<div style="color:#94a3b8;">尚无 Skills，可在 .workbench/skills/ 添加 *.md（frontmatter: name/description）</div>';
+        list.innerHTML = html;
+        list.querySelectorAll('.wb-ws-edit-file').forEach(function (btn) {
+          btn.onclick = function () {
+            var path = btn.getAttribute('data-path');
+            self.showWorkspaceFileEditor(conv, path);
+          };
+        });
+      });
+    });
+  };
+
+  // ---- 工作区配置文件编辑器 ----
+  WB.showWorkspaceFileEditor = function (conv, path) {
+    var self = this;
+    var rel = (conv.workspace && conv.workspace !== '.' ? conv.workspace + '/' : '') + path;
+    var existing = this.fs.readFile(rel);
+    var content = (existing && existing.ok) ? (existing.content || '') : (path === 'AGENTS.md' ? AGENTS_MD : SKILL_TEMPLATE);
+    var dlg = this.overlay(
+      '<div style="display:flex;align-items:center;gap:6px;font-size:15px;font-weight:700;color:var(--text-primary);margin-bottom:10px;">' + this.svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/>', 16, 'color:#0e7490;') + '编辑 ' + this.esc(path) + '</div>' +
+      '<textarea id="wb-ws-edit-content" rows="12" style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-size:12px;font-family:ui-monospace,monospace;resize:vertical;outline:none;color:var(--text-primary);line-height:1.6;">' + this.esc(content) + '</textarea>' +
+      '<div style="display:flex;gap:8px;margin-top:12px;">' +
+        '<button class="wb-dlg-cancel" style="flex:1;padding:9px;border:1.5px solid var(--border);background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:var(--text-secondary);cursor:pointer;">取消</button>' +
+        '<button class="wb-dlg-ok" style="flex:1;padding:9px;border:none;background:var(--primary);border-radius:10px;font-size:12px;font-weight:700;color:#fff;cursor:pointer;">保存</button>' +
+      '</div>'
+    );
+    dlg.card.querySelector('.wb-dlg-cancel').onclick = function () { dlg.close(); };
+    dlg.card.querySelector('.wb-dlg-ok').onclick = function () {
+      var val = dlg.card.querySelector('#wb-ws-edit-content').value;
+      var res = self.fs.writeFile(rel, val);
+      if (res && res.ok) {
+        dlg.close();
+        if (typeof showToast === 'function') showToast('已保存 ' + path);
+      } else {
+        if (typeof showToast === 'function') showToast('保存失败: ' + ((res && res.error) || '未知'));
+      }
+    };
+  };
+
+  // 初始化：进入对话时确保工作区配置存在（静默创建模板）
+  var _origShowChat3 = WB.showChat;
+  if (typeof _origShowChat3 === 'function') {
+    WB.showChat = function (convId) {
+      var self = this;
+      var ret = _origShowChat3.apply(this, arguments);
+      if (ret && ret.then) {
+        ret.then(function (conv) {
+          if (conv && self.fs && self.fs._guard && self.fs._guard()) {
+            self.ensureWorkspaceConfig(conv);
+          }
+        }).catch(function () {});
+      }
+      return ret;
+    };
+  }
+})();
+
+
 
 
 
