@@ -399,6 +399,24 @@
         return { fullMatch: m[0], tool: obj.tool, arguments: obj.arguments || {} };
       } catch (e) { return null; }
     },
+    /** 解析一条回复中的全部工具调用（对标 Claude/OpenAI 多 tool_calls） */
+    parseToolCalls: function (text) {
+      var re = /\[\s*WB_TOOL\s*:\s*(\{[\s\S]*?\})\s*\]/gi;
+      var out = [];
+      var m;
+      var s = String(text || "");
+      while ((m = re.exec(s)) !== null) {
+        try {
+          var obj = JSON.parse(m[1]);
+          if (obj && typeof obj.tool === "string") {
+            out.push({ fullMatch: m[0], tool: obj.tool, arguments: obj.arguments || {}, index: m.index });
+          }
+        } catch (e) {}
+        // 防止零宽匹配死循环
+        if (m.index === re.lastIndex) re.lastIndex++;
+      }
+      return out;
+    },
 
     runAgent: async function (conv, userText) {
       if (this.state.sending) return;

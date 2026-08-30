@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v43'; // v43：代码输出纪律——正文禁止贴代码块(>3行自动纠偏逼write_file)+系统提示硬约束
+const CACHE_NAME = 'story-phone-v44'; // v44：一轮多工具调用(parseToolCalls全部执行)+正文与工具分离(标签间代码不爆开)+重复调用防死循环
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

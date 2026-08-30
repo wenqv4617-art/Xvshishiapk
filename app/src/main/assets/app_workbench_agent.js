@@ -247,6 +247,8 @@
     var messages = self.buildMessages(conv, history);
     var aborted = false;
     var redoGuard = 0; // 代码输出纠偏次数上限（防死循环）
+    var lastCallKey = ''; // 检测重复工具调用死循环
+    var repeatCount = 0;
 
     // 无硬性轮数限制：agent 自主决定是否继续调用工具（仅保留 999 安全兜底防死循环）
     var _lastChunk = 0;
@@ -313,8 +315,8 @@
 
       await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
 
-      var toolCall = self.parseToolCall(reply);
-      if (!toolCall) {
+      var toolCalls = self.parseToolCalls ? self.parseToolCalls(reply) : (self.parseToolCall(reply) ? [self.parseToolCall(reply)] : []);
+      if (!toolCalls.length) {
         // ---- 代码输出纪律（对标 DSH）：正文出现大段代码块且未调用 write_file → 纠偏重来 ----
         var bloat = false;
         var codeMs = String(reply || '').match(/```[\s\S]*?```/g) || [];
@@ -343,23 +345,49 @@
         break;
       }
 
-      // 有工具调用：正文渲染（去掉工具标签）+ 工具卡片
-      steps++;
-      var textPart = wbStripToolTag(reply);
+      // ---- 有工具调用：正文只保留第一个标签前的说明文字（标签之间/之后的代码块不再进正文），逐个执行全部工具卡片 ----
+      // 对标 Claude/OpenAI：正文与工具调用分离，一次可含多个 tool_calls
+      var textPart = '';
+      var firstIdx = toolCalls[0].index;
+      if (firstIdx > 0) {
+        textPart = wbStripToolTag(reply.slice(0, firstIdx)).trim();
+      }
       if (bubble && bubble._finalize) bubble._finalize(textPart);
       else if (bubble && bubble._el) bubble._el.textContent = textPart;
 
-      var card = self.appendToolCard(toolCall.tool, toolCall.arguments);
-      var result = await self.executeTool(toolCall.tool, toolCall.arguments, conv);
-      if (card && card._render) card._render(result);
-      var resultText = JSON.stringify(result);
-      if (resultText.length > 6000) resultText = resultText.slice(0, 6000) + '...(截断)';
-      await self.addMsg({ convId: conv.id, seq: seq++, role: 'tool', content: resultText, createdAt: Date.now() });
-      // 把"已调用 N 步"提示并入 user 消息（保持 system 前缀稳定，利于缓存命中）
-      messages = messages.concat([
-        { role: 'assistant', content: reply },
-        { role: 'user', content: '[工具结果] ' + resultText + '（本轮已调用 ' + steps + ' 步工具。任务完成请直接输出结论，不要继续调用工具）' }
-      ]);
+      // 逐个执行工具调用
+      for (var ti = 0; ti < toolCalls.length; ti++) {
+        steps++;
+        var tc = toolCalls[ti];
+        // 重复检测：连续 5 次相同工具+相同参数 → 判定死循环，终止
+        var callKey = tc.tool + '|' + JSON.stringify(tc.arguments || {});
+        if (callKey === lastCallKey) {
+          repeatCount++;
+          if (repeatCount >= 5) {
+            self.appendSysMsg('检测到重复调用相同工具（' + tc.tool + '）多次无进展，已自动停止。');
+            aborted = true;
+            break;
+          }
+        } else {
+          lastCallKey = callKey;
+          repeatCount = 0;
+        }
+        var card = self.appendToolCard(tc.tool, tc.arguments);
+        var result = await self.executeTool(tc.tool, tc.arguments, conv);
+        if (card && card._render) card._render(result);
+        var resultText = JSON.stringify(result);
+        if (resultText.length > 6000) resultText = resultText.slice(0, 6000) + '...(截断)';
+        await self.addMsg({ convId: conv.id, seq: seq++, role: 'tool', content: resultText, createdAt: Date.now() });
+        // 每个工具结果并入 user 消息（保持 system 前缀稳定，利于缓存命中）
+        messages = messages.concat([
+          { role: 'user', content: '[工具结果] ' + resultText + '（本轮已调用 ' + steps + ' 步工具。任务完成请直接输出结论，不要继续调用工具）' }
+        ]);
+      }
+      if (aborted) break;
+      // assistant 回复整体入上下文（含全部工具标签原文），插到工具结果之前、系统消息之后
+      var insPos = 0;
+      while (insPos < messages.length && messages[insPos].role === 'system') insPos++;
+      messages.splice(insPos, 0, { role: 'assistant', content: reply });
       if (messages.length > 40) {
         // 保留最前面的 system 消息（含 Agent/Skills 注入，前缀稳定 → 缓存命中率高）
         var keepSys = [];
