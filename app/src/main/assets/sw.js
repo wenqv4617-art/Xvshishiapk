@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v46'; // v46：实时工具调用卡片——流式"正在调用工具"可点击展开看代码流程，完成后原地升级
+const CACHE_NAME = 'story-phone-v47'; // v47：防篡改校验降级修复——同步XHR responseType限制改异步fetch，纯前端(xvshishi)不再误报
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
