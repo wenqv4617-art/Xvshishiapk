@@ -40,6 +40,7 @@ C_DIM="\033[2m"; C_BOLD="\033[1m"; C_END="\033[0m"
 SERVICES=(
   "ncm-api|网易云音乐 API|网易云登录代理/歌单同步/歌词搜索|NeteaseCloudMusicApi -p 3000|http://localhost:3000|kill"
   "cors-proxy|CORS 跨域中转|打破 PWA/网页版跨域限制|node \$HOME/.xvshishi/cors-proxy.js|http://localhost:3001/health|kill"
+  "cmd-runner|AI 命令执行服务|工作台 Agent 执行 termux 命令/git 仓库操作（端口 3002）|node $HOME/.xvshishi/cmd-runner.js|http://localhost:3002/health|kill"
 )
 
 # ---------- 用户自定义服务（追加到数组末尾） ----------

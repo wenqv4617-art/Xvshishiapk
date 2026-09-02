@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v48'; // v48：工作台/桌宠修复批——multitool占位卡片stream残留清理 + 流式90s悬挂超时 + 模型选择器禁用回退 + 桌宠双击回复持久化
+const CACHE_NAME = 'story-phone-v49'; // v49：harness 能力扩展——github_api认证读取/actions观测/文件与内容搜索/read_file分段 + termux_run与git镜像工具(cmd-runner 3002) + 本地部署内置脚本3
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

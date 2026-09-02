@@ -176,7 +176,25 @@
         return WB.fs.listDir(p);
       },
       read_file: function (args, conv) {
-        return WB.fs.readFile(WB.fsPath(args.path, conv));
+        var r = WB.fs.readFile(WB.fsPath(args.path, conv));
+        if (!r || !r.ok) return r;
+        var content = String(r.content || "");
+        var totalLines = content ? content.split("\n").length : 0;
+        var meta = { ok: true, path: r.path, bytes: r.bytes || 0, encoding: "utf-8", totalLines: totalLines };
+        var from = parseInt(args.from_line, 10);
+        var to = parseInt(args.to_line, 10);
+        if (from >= 1) {
+          // 分段读取：from_line/to_line 为 1 基行号（默认一次最多 200 行，防上下文爆炸）
+          var linesArr = content.split("\n");
+          var end = (to >= from) ? Math.min(to, linesArr.length) : Math.min(from + 199, linesArr.length);
+          meta.from_line = from;
+          meta.to_line = end;
+          meta.truncated = end < linesArr.length;
+          meta.content = linesArr.slice(from - 1, end).join("\n");
+          return meta;
+        }
+        meta.content = content;
+        return meta;
       },
       write_file: function (args, conv) {
         if (typeof args.content !== "string") return { ok: false, error: "content 必须为字符串" };
@@ -225,7 +243,288 @@
         } catch (e) {
           return { ok: false, error: "MCP 调用失败: " + e.message };
         }
+      },
+      github_api: async function (args) {
+        // 带认证的通用 GitHub REST API（P0：解锁私有仓库「看」的能力；contents 文件自动 base64 解码）
+        try {
+          var cfg = WB.github.config();
+          if (!cfg || !cfg.token) return { ok: false, error: "未配置 GitHub Token（请先在 设置-GitHub 中配置用户名与 Token；仅在你的 Token 权限范围内访问）" };
+          var method = String(args.method || "GET").toUpperCase();
+          var apiPath = String(args.api_path || "");
+          if (!apiPath) return { ok: false, error: "缺少 api_path（如 /repos/{owner}/{repo}/contents/ 或 /user）" };
+          if (apiPath.charAt(0) !== "/") apiPath = "/" + apiPath;
+          if (apiPath.indexOf("/repos/") !== 0 && apiPath.indexOf("/user") !== 0 && args.owner && args.repo) {
+            apiPath = "/repos/" + encodeURIComponent(args.owner) + "/" + encodeURIComponent(args.repo) + apiPath;
+          }
+          var headers = { "Authorization": "Bearer " + cfg.token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+          var opts = { method: method, headers: headers };
+          if (args.body !== undefined && args.body !== null && method !== "GET") {
+            headers["Content-Type"] = "application/json";
+            opts.body = typeof args.body === "string" ? args.body : JSON.stringify(args.body);
+          }
+          var res = await fetch("https://api.github.com" + apiPath, opts);
+          var text = await res.text();
+          var json = null; try { json = JSON.parse(text); } catch (e) {}
+          if (!res.ok) {
+            var msg = (json && json.message) ? json.message : text.slice(0, 300);
+            return { ok: false, status: res.status, error: "GitHub API " + res.status + ": " + msg };
+          }
+          if (json && Array.isArray(json)) {
+            // 目录列表：精简为 name/type/size
+            return { ok: true, status: res.status, type: "list", data: json.map(function (it) { return { name: it.name, type: it.type, size: it.size, sha: it.sha }; }) };
+          }
+          if (json && json.content && typeof json.content === "string") {
+            // contents API 单文件：base64 解码为可读文本
+            var dec = "";
+            try {
+              var b64 = json.content.replace(/\s+/g, "");
+              var bin = atob(b64);
+              var bytes = new Uint8Array(bin.length);
+              for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+              dec = new TextDecoder("utf-8").decode(bytes);
+            } catch (e2) { dec = "（base64 解码失败: " + e2.message + "）"; }
+            return { ok: true, status: res.status, type: "file", name: json.name, path: json.path, sha: json.sha, size: json.size, content: dec.slice(0, 60000) };
+          }
+          return { ok: true, status: res.status, type: "json", data: json };
+        } catch (e) {
+          return { ok: false, error: "GitHub API 调用失败: " + e.message };
+        }
+      },
+      actions_list: async function (args) {
+        // 查看仓库 CI 运行列表（P1 可观测）
+        try {
+          var cfg = WB.github.config();
+          if (!cfg || !cfg.token) return { ok: false, error: "未配置 GitHub Token" };
+          var owner = args.owner || cfg.username;
+          var repo = args.repo || cfg.repo;
+          if (!owner || !repo) return { ok: false, error: "缺少仓库（传 repo/owner 或在设置中配置默认仓库）" };
+          var q = "?per_page=" + (parseInt(args.per_page, 10) || 10) + "&page=1";
+          if (args.workflow) q += "&workflow=" + encodeURIComponent(args.workflow);
+          var res = await fetch("https://api.github.com/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo) + "/actions/runs" + q, {
+            headers: { "Authorization": "Bearer " + cfg.token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" }
+          });
+          var json = null; try { json = await res.json(); } catch (e) {}
+          if (!res.ok) return { ok: false, status: res.status, error: (json && json.message) || "查询失败" };
+          if (!json || !json.workflow_runs) return { ok: true, data: [] };
+          return {
+            ok: true, owner: owner, repo: repo,
+            data: json.workflow_runs.map(function (r) {
+              return { id: r.id, run_number: r.run_number, name: r.name || r.display_title || r.event, workflow_id: r.workflow_id, branch: r.head_branch, sha: String(r.head_sha || "").slice(0, 7), status: r.status, conclusion: r.conclusion, created_at: r.created_at, updated_at: r.updated_at };
+            })
+          };
+        } catch (e) {
+          return { ok: false, error: "Actions 查询失败: " + e.message };
+        }
+      },
+      actions_log: async function (args) {
+        // 拉取某次 CI 运行日志文本（P1 可观测：能看到报错全文）
+        try {
+          var cfg = WB.github.config();
+          if (!cfg || !cfg.token) return { ok: false, error: "未配置 GitHub Token" };
+          var runId = parseInt(args.run_id, 10);
+          if (!runId) return { ok: false, error: "缺少 run_id（可用 actions_list 查看）" };
+          var owner = args.owner || cfg.username;
+          var repo = args.repo || cfg.repo;
+          if (!owner || !repo) return { ok: false, error: "缺少仓库" };
+          var base = "https://api.github.com/repos/" + encodeURIComponent(owner) + "/" + encodeURIComponent(repo);
+          var hdrs = { "Authorization": "Bearer " + cfg.token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+          // 先找 job（日志按 job 提供）
+          var jobId = null;
+          try {
+            var jres = await fetch(base + "/actions/runs/" + runId + "/jobs", { headers: hdrs });
+            var jjson = await jres.json();
+            if (jres.ok && jjson && jjson.jobs && jjson.jobs.length) jobId = jjson.jobs[0].id;
+          } catch (e) {}
+          var url = jobId ? base + "/actions/jobs/" + jobId + "/logs" : base + "/actions/runs/" + runId + "/logs";
+          var res = await fetch(url, { headers: { "Authorization": "Bearer " + cfg.token, "Accept": "application/vnd.github+json" } });
+          var text = await res.text();
+          if (!res.ok) return { ok: false, status: res.status, error: text.slice(0, 300) };
+          var truncated = text.length > 30000;
+          return { ok: true, run_id: runId, job_id: jobId, bytes: text.length, truncated: truncated, content: text.slice(-30000) };
+        } catch (e) {
+          return { ok: false, error: "Actions 日志拉取失败: " + e.message };
+        }
+      },
+      file_search: async function (args, conv) {
+        // 按文件名/glob 搜索工作区（P1：替代逐目录人工翻找）
+        try {
+          var pattern = String(args.pattern || "").trim();
+          if (!pattern) return { ok: false, error: "缺少 pattern（如 *.js、**/*.kt、*readme*）" };
+          function patToRx(p) {
+            var optPrefix = "";
+            if (p.indexOf("**/") === 0) { optPrefix = "(?:.*/)?"; p = p.slice(3); }
+            var i = 0, out = "";
+            while (i < p.length) {
+              var c = p[i];
+              if (c === "*") { if (p[i + 1] === "*") { out += ".*"; i += 2; } else { out += "[^/]*"; i++; } }
+              else if (c === "?") { out += "[^/]"; i++; }
+              else if ("\\^$+{}()|[]".indexOf(c) >= 0) { out += "\\" + c; i++; }
+              else { out += c; i++; }
+            }
+            return new RegExp("^" + optPrefix + out + "$");
+          }
+          var rx = patToRx(pattern);
+          var root = WB.fsPath(args.path || ".", conv);
+          var out = [];
+          var MAX_FILES = 300, MAX_DEPTH = 8;
+          var walk = function (dir, depth) {
+            if (depth > MAX_DEPTH || out.length >= MAX_FILES) return;
+            var r = WB.fs.listDir(dir);
+            if (!r || !r.ok || !r.entries) return;
+            for (var j = 0; j < r.entries.length; j++) {
+              var en = r.entries[j];
+              if (en.type === "dir") walk(dir === "." ? en.name : dir + "/" + en.name, depth + 1);
+              else {
+                var rel = dir === "." ? en.name : dir + "/" + en.name;
+                if (rx.test(rel)) out.push({ file: rel, size: en.size, modified: en.modified });
+              }
+            }
+          };
+          walk(root, 0);
+          return { ok: true, root: root, pattern: pattern, matched: out.slice(0, 100), truncated: out.length > 100 };
+        } catch (e) {
+          return { ok: false, error: "搜索失败: " + e.message };
+        }
+      },
+      grep_search: async function (args, conv) {
+        // 按内容搜索工作区文本（P1）
+        try {
+          var query = String(args.query || "");
+          if (!query) return { ok: false, error: "缺少 query（搜索关键字）" };
+          var root = WB.fsPath(args.path || ".", conv);
+          var rx = null;
+          try {
+            rx = new RegExp(args.regex ? query : query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), args.case_sensitive ? "" : "i");
+          } catch (e) { return { ok: false, error: "非法正则: " + e.message }; }
+          var out = [];
+          var MAX_FILES = 300, MAX_MATCH = 60, MAX_DEPTH = 8;
+          var walk = function (dir, depth) {
+            if (depth > MAX_DEPTH || out.length >= MAX_MATCH) return;
+            var r = WB.fs.listDir(dir);
+            if (!r || !r.ok || !r.entries) return;
+            for (var j = 0; j < r.entries.length; j++) {
+              var en = r.entries[j];
+              if (en.type === "dir") walk(dir === "." ? en.name : dir + "/" + en.name, depth + 1);
+              else {
+                if (out.length >= MAX_MATCH) return;
+                var rel = dir === "." ? en.name : dir + "/" + en.name;
+                var fr = WB.fs.readFile(rel);
+                if (!fr || !fr.ok || !fr.content) continue;
+                var content = String(fr.content);
+                if (content.indexOf("\u0000") >= 0) continue; // 跳过二进制
+                var lines = content.split("\n");
+                for (var k = 0; k < lines.length && out.length < MAX_MATCH; k++) {
+                  if (rx.test(lines[k])) out.push({ file: rel, line: k + 1, text: lines[k].slice(0, 300) });
+                }
+              }
+            }
+          };
+          walk(root, 0);
+          return { ok: true, root: root, query: query, matches: out, truncated: out.length >= MAX_MATCH };
+        } catch (e) {
+          return { ok: false, error: "内容搜索失败: " + e.message };
+        }
+      },
+      termux_run: async function (args, conv) {
+        // 通过 Termux 常驻 cmd-runner（127.0.0.1:3002）执行命令/脚本（P2 run_sandbox 的落地：AI 自写自用 termux 脚本）
+        var cmd = String(args.cmd || "").trim();
+        if (!cmd) return { ok: false, error: "缺少 cmd（要执行的 shell 命令或脚本路径，如 bash test.sh 或 git status）" };
+        var cwd = args.cwd ? WB._wbAbs(args.cwd, conv) : WB._wbAbs(".", conv);
+        var payload = { cmd: cmd, cwd: cwd };
+        if (args.timeout_s) payload.timeout_ms = parseInt(args.timeout_s, 10) * 1000;
+        try {
+          var res = await fetch("http://127.0.0.1:3002/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          if (!res.ok) { var t2 = await res.text(); return { ok: false, status: res.status, error: t2.slice(0, 300) }; }
+          return await res.json();
+        } catch (e) {
+          return { ok: false, error: "无法连接 Termux 命令服务（http://127.0.0.1:3002）。请先完成 设置-本地部署-部署引导（含内置脚本3 cmd-runner），再在 Termux 执行 xvshishi start cmd-runner。详情: " + e.message };
+        }
+      },
+      github_clone: async function (args, conv) {
+        // 用 Termux git 把远端仓库克隆到工作区（P0 本地镜像：clone → 本地文件工具改 → commit/push）
+        var cfg = WB.github.config();
+        var url = String(args.url || "").trim();
+        if (!url && args.owner && args.repo) url = "https://github.com/" + encodeURIComponent(args.owner) + "/" + encodeURIComponent(args.repo) + ".git";
+        if (!url) return { ok: false, error: "缺少 url（或 owner/repo）" };
+        var dest = args.path ? WB._wbAbs(args.path, conv) : "";
+        var q = function (s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; };
+        var prefix = "";
+        if (cfg && cfg.token) {
+          var auth = "Authorization: Basic " + btoa("x-access-token:" + cfg.token);
+          prefix = "git -c http.extraHeader=" + q(auth) + " "; // token 不进 .git/config，仅本次进程
+        }
+        var branch = args.branch ? " --branch " + q(args.branch) : "";
+        var cmd = prefix + "git clone" + (args.depth === false ? "" : " --depth 1") + branch + " " + q(url) + (dest ? " " + q(dest) : "");
+        var payload = { cmd: cmd, cwd: WB._wbAbs(args.cwd || ".", conv) };
+        if (args.timeout_s) payload.timeout_ms = parseInt(args.timeout_s, 10) * 1000;
+        try {
+          var res = await fetch("http://127.0.0.1:3002/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+          var j = await res.json();
+          return Object.assign({ ok: true, note: "clone 完成（工作区路径: " + (dest || url.split("/").pop().replace(/\.git$/, "")) + "）" }, j || {});
+        } catch (e) {
+          return { ok: false, error: "无法连接 Termux 命令服务（http://127.0.0.1:3002）。请先完成 本地部署-部署引导 并 xvshishi start cmd-runner。详情: " + e.message };
+        }
+      },
+      github_pull: async function (args, conv) {
+        var p = args.path ? WB._wbAbs(args.path, conv) : WB._wbAbs(".", conv);
+        var cfg = WB.github.config();
+        var q = function (s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; };
+        var prefix = "";
+        if (cfg && cfg.token) {
+          var auth = "Authorization: Basic " + btoa("x-access-token:" + cfg.token);
+          prefix = "git -c http.extraHeader=" + q(auth) + " ";
+        }
+        var cmd = prefix + "git -C " + q(p) + " pull --ff-only";
+        return await WB.tools._termuxExec(cmd, p, "pull");
+      },
+      github_commit: async function (args, conv) {
+        var p = args.path ? WB._wbAbs(args.path, conv) : WB._wbAbs(".", conv);
+        var message = String(args.message || "").trim();
+        if (!message) return { ok: false, error: "缺少 message（提交说明）" };
+        var cfg = WB.github.config();
+        var q = function (s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; };
+        var name = (cfg && cfg.username) || "xvshishi";
+        var email = (cfg && cfg.email) || (name + "@users.noreply.github.com");
+        var cmd = "git -C " + q(p) + " config user.name " + q(name) + " ; git -C " + q(p) + " config user.email " + q(email) + " ; git -C " + q(p) + " add -A ; git -C " + q(p) + " commit -m " + q(message);
+        return await WB.tools._termuxExec(cmd, p, "commit");
+      },
+      github_push: async function (args, conv) {
+        var p = args.path ? WB._wbAbs(args.path, conv) : WB._wbAbs(".", conv);
+        var cfg = WB.github.config();
+        var q = function (s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; };
+        var prefix = "";
+        if (cfg && cfg.token) {
+          var auth = "Authorization: Basic " + btoa("x-access-token:" + cfg.token);
+          prefix = "git -c http.extraHeader=" + q(auth) + " ";
+        }
+        var branch = args.branch ? q(args.branch) : "HEAD";
+        var cmd = prefix + "git -C " + q(p) + " push origin " + branch;
+        return await WB.tools._termuxExec(cmd, p, "push");
+      },
+      _termuxExec: async function (cmd, cwd, label) {
+        // 共享执行入口（git 工具用）：调用 127.0.0.1:3002 /run
+        try {
+          var res = await fetch("http://127.0.0.1:3002/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ cmd: cmd, cwd: cwd }) });
+          var j = await res.json();
+          return Object.assign({ ok: true, note: label + " 执行完成" }, j || {});
+        } catch (e) {
+          return { ok: false, error: "无法连接 Termux 命令服务（http://127.0.0.1:3002）。请先完成 本地部署-部署引导（含 cmd-runner）并执行 xvshishi start cmd-runner。详情: " + e.message };
+        }
       }
+    },
+    _wbAbs: function (rel, conv) {
+      // 把工作区相对路径换算为 Android 公共工作区的绝对路径（供 Termux cmd-runner 使用）
+      var relStr = String(rel == null || rel === "" ? "." : rel).trim();
+      try {
+        var rr = WB.fs.roots();
+        if (rr && rr.roots && rr.roots.length && rr.roots[0] && rr.roots[0].absolute) {
+          var abs = String(rr.roots[0].absolute);
+          if (relStr === "." || relStr === "/") return abs;
+          if (relStr.charAt(0) === "/") return abs + relStr;
+          return abs + "/" + relStr;
+        }
+      } catch (e) {}
+      return relStr; // 无法解析根时退回相对路径（由 cmd-runner 在 termux $HOME 解析）
     },
 
     /** 把 Agent 传来的相对路径换算为对话工作区下的实际路径 */
@@ -357,7 +656,7 @@
       lines.push("");
       lines.push("【可用工具（通过工具标签调用）】");
       lines.push("1. list_dir: 列出目录内容。参数 {path}（相对工作区）");
-      lines.push("2. read_file: 读取文本文件。参数 {path}");
+      lines.push("2. read_file: 读取文本文件。参数 {path, from_line?, to_line?}（from/to 为 1 基行号，可分段读大文件；返回含 bytes/totalLines/truncated 头注）");
       lines.push("3. write_file: 写入/创建文本文件。参数 {path, content}");
       lines.push("4. mkdir: 创建目录。参数 {path}");
       lines.push("5. delete_path: 删除文件或目录。参数 {path}");
@@ -366,6 +665,15 @@
       lines.push("8. github_push: 推送文件到 GitHub。参数 {path(仓库内路径), content, message?, repo?, owner?, branch?}");
       lines.push("9. github_status: 查看 GitHub 连接状态");
       lines.push("10. mcp_tool: 调用已配置的外部 MCP 服务器工具。参数 {server, tool, arguments}");
+      lines.push("11. github_api: 带认证调用 GitHub REST API（能看私有仓库）。参数 {method?, api_path, body?, owner?, repo?}，如 api_path=\"/repos/{owner}/{repo}/contents/\"；contents 目录返回列表、文件自动 base64 解码；也可查 commits/issues/Actions 等");
+      lines.push("12. actions_list: 查看仓库 CI 运行列表。参数 {repo?, owner?, workflow?, per_page?}");
+      lines.push("13. actions_log: 拉取某次 CI 运行日志文本（排障用）。参数 {run_id 必填, repo?, owner?}");
+      lines.push("14. file_search: 按文件名/glob 搜索工作区。参数 {pattern, path?}，如 *.js、**/*.kt");
+      lines.push("15. grep_search: 按内容搜索工作区文本。参数 {query, path?, case_sensitive?}，返回 文件:行号:匹配行");
+      lines.push("16. termux_run: 在手机 Termux 中执行命令/脚本（需先完成 设置-本地部署 的第 3 个内置服务 cmd-runner；git 仓库类操作请用 github_clone/github_pull/github_commit/github_push，见第 17 节）。参数 {cmd, cwd?, timeout_s?}");
+      lines.push("17. github_clone: 用 Termux git 把远端仓库克隆到工作区。参数 {url 或 owner/repo, path?, branch?}");
+      lines.push("18. github_commit: 在本地仓库提交改动。参数 {path(仓库目录), message}");
+      lines.push("19. github_push: 把本地仓库改动推送到远端。参数 {path(仓库目录), branch?}");
       lines.push("");
       lines.push("【工具调用语法（极其重要）】");
       lines.push("当你需要调用工具时，在你的回复中单独输出一行（必须单独占一行）：");

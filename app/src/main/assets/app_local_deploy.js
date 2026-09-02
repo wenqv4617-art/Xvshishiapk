@@ -173,6 +173,7 @@ C_DIM="\\033[2m"; C_BOLD="\\033[1m"; C_END="\\033[0m"
 SERVICES=(
   "ncm-api|网易云音乐 API|网易云登录代理/歌单同步/歌词搜索|NeteaseCloudMusicApi -p 3000|http://localhost:3000|kill"
   "cors-proxy|CORS 跨域中转|打破 PWA/网页版跨域限制|node \\$HOME/.xvshishi/cors-proxy.js|http://localhost:3001/health|kill"
+  "cmd-runner|AI 命令执行服务|工作台 Agent 执行 termux 命令/git 仓库操作（端口 3002）|node \\$HOME/.xvshishi/cmd-runner.js|http://localhost:3002/health|kill"
 )
 
 # ---------- 用户自定义服务（追加到数组末尾） ----------
@@ -484,6 +485,109 @@ esac
 # ============================================================
 exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
 `;
+var CMD_RUNNER_SOURCE = `
+#!/data/data/com.termux/files/usr/bin/env node
+// ============================================================
+// 叙事诗小手机 - cmd-runner（内置脚本3 · AI 命令执行服务）
+// ------------------------------------------------------------
+// 用途：让「工作台 Agent」能执行 termux 命令 / 运行自己写的脚本 /
+//       做 git 仓库操作（clone/commit/push），并取回 stdout/stderr。
+// 原理：在 Termux 内常驻一个只监听 127.0.0.1 的小 HTTP 服务（端口 3002），
+//       工作台通过 http://127.0.0.1:3002/run 提交 { cmd, cwd, timeout_ms }。
+// 安全：
+//   - 只绑定 127.0.0.1（仅本机可访问）；
+//   - 若存在 ~/.xvshishi/.cmd_token 文件，则要求请求头 X-Cmd-Token 一致才执行
+//     （echo -n '你的随机口令' > ~/.xvshishi/.cmd_token 即可启用）；
+//   - 命令以 Termux 用户身份运行，请勿随意开放给不可信来源。
+// 管理：由 xvshishi-services.sh 统一启停：xvshishi start cmd-runner
+// ============================================================
+
+'use strict';
+const http = require('http');
+const { exec } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+
+const PORT = 3002;
+const HOME = os.homedir();
+const TOKEN_FILE = path.join(HOME, '.xvshishi', '.cmd_token');
+
+function token() {
+  try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim() || null; } catch (e) { return null; }
+}
+
+function cors(res) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Cmd-Token');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
+function sendJson(res, code, obj) {
+  cors(res);
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
+  res.end(JSON.stringify(obj));
+}
+
+function runCmd(cmd, cwd, timeoutMs, cb) {
+  const target = (cwd && fs.existsSync(cwd)) ? cwd : HOME;
+  exec(cmd, {
+    cwd: target,
+    timeout: timeoutMs || 90000,
+    maxBuffer: 4 * 1024 * 1024,
+    encoding: 'utf8'
+  }, function (err, stdout, stderr) {
+    cb({
+      ok: !err,
+      exitCode: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+      killed: !!(err && err.killed),
+      stdout: String(stdout || ''),
+      stderr: String(stderr || '')
+    });
+  });
+}
+
+const server = http.createServer(function (req, res) {
+  cors(res);
+  if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+
+  const tk = token();
+  if (tk) {
+    const given = req.headers['x-cmd-token'];
+    if (given !== tk) { sendJson(res, 403, { ok: false, error: 'token 校验失败（请检查请求头 X-Cmd-Token）' }); return; }
+  }
+
+  const url = String(req.url || '/');
+
+  if (req.method === 'GET' && url.indexOf('/health') === 0) {
+    exec('git --version', { timeout: 5000 }, function (e, so) {
+      sendJson(res, 200, { ok: true, service: 'cmd-runner', port: PORT, git: e ? null : String(so || '').trim() });
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && url.indexOf('/run') === 0) {
+    let body = '';
+    req.on('data', function (c) { body += c; if (body.length > 524288) req.destroy(); });
+    req.on('end', function () {
+      let p = {};
+      try { p = JSON.parse(body || '{}'); } catch (e) { sendJson(res, 400, { ok: false, error: '请求体不是合法 JSON' }); return; }
+      const cmd = String(p.cmd || '').trim();
+      if (!cmd) { sendJson(res, 400, { ok: false, error: '缺少 cmd' }); return; }
+      runCmd(cmd, String(p.cwd || ''), p.timeout_ms || 90000, function (r) { sendJson(res, 200, r); });
+    });
+    return;
+  }
+
+  sendJson(res, 404, { ok: false, error: 'not found' });
+});
+
+server.listen(PORT, '127.0.0.1', function () {
+  console.log('[cmd-runner] listening on http://127.0.0.1:' + PORT + (token() ? ' (token 已启用)' : ' (未启用 token，仅绑定本机)'));
+});
+`;
+
 
   var BUILTIN_SCRIPTS = [
     { id: "ncm-api", name: "网易云音乐 API", desc: "网易云登录代理 / 歌单同步 / 歌词搜索（端口 3000）", port: 3000, healthUrl: "http://localhost:3000/search?keywords=test&limit=1", termuxCmd: "NeteaseCloudMusicApi -p 3000", fileContent: "", isBuiltin: true },
@@ -761,6 +865,9 @@ exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
       L.push("cat > ~/.xvshishi/cors-proxy.js <<'XSH_EOF'");
       L.push(CORS_PROXY_SOURCE.replace(/\n$/, ""));
       L.push("XSH_EOF");
+      L.push("cat > ~/.xvshishi/cmd-runner.js <<'XSH_EOF'");
+      L.push(CMD_RUNNER_SOURCE.replace(/\n$/, ""));
+      L.push("XSH_EOF");
       L.push("cat > ~/.xvshishi/xvshishi-services.sh <<'XSH_EOF'");
       L.push(SERVICES_MANAGER_SOURCE.replace(/\n$/, ""));
       L.push("XSH_EOF");
@@ -772,6 +879,7 @@ exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
       L.push("chmod +x ~/.xvshishi/xvshishi-services.sh");
       L.push("pkg update -y");
       L.push("pkg install -y nodejs-lts");
+      L.push("pkg install -y git");
       L.push("npm install -g NeteaseCloudMusicApi --registry=https://registry.npmmirror.com");
       L.push("bash ~/.xvshishi/xvshishi-services.sh tui");
       return L.join("\n");
@@ -785,7 +893,7 @@ exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
       var steps = [
         { title: "第 1 步：安装 Termux", desc: "务必用 F-Droid 版（Play 版已停更）：https://f-droid.org/packages/com.termux/", cmd: "" },
         { title: "第 2 步：一键部署", desc: "复制下面整条命令到 Termux 执行。命令已内置全部脚本内容，会自动创建 CORS 中转脚本、服务管理器与唤出命令 xvshishi，并安装依赖、进入服务管理器，全程无需联网下载：", cmd: this.buildDeployCommand() },
-        { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy" },
+        { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy\nbash $HOME/.xvshishi/xvshishi-services.sh start cmd-runner" },
         { title: "第 4 步：随时唤出脚本页面", desc: "退出 Termux 后再进入时，直接输入下面的命令即可再次进入脚本交互页面：", cmd: "xvshishi" },
         { title: "第 5 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
         { title: "第 6 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填（网页版跨域中转为 3001 端口）：", cmd: "http://localhost:3000" }
