@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v47'; // v47：防篡改校验降级修复——同步XHR responseType限制改异步fetch，纯前端(xvshishi)不再误报
+const CACHE_NAME = 'story-phone-v48'; // v48：工作台/桌宠修复批——multitool占位卡片stream残留清理 + 流式90s悬挂超时 + 模型选择器禁用回退 + 桌宠双击回复持久化
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

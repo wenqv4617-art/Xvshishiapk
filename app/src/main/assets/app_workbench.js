@@ -256,11 +256,23 @@
       var endpoint = cleanBaseUrl.indexOf("/chat/completions") > 0 ? cleanBaseUrl : cleanBaseUrl + "/chat/completions";
       var streamEnabled = !api.disableStream;
       if (streamEnabled) {
+        // 流式悬挂保护：内部 AbortController + 空闲超时，与外部 signal 联动
+        var streamCtrl = new AbortController();
+        var outerAborted = false;
+        if (signal && typeof signal.addEventListener === 'function') {
+          signal.addEventListener('abort', function () { outerAborted = true; try { streamCtrl.abort(); } catch (e) {} });
+        }
+        var IDLE_TIMEOUT = 90000; // 90s 无新数据视为悬挂
+        var timeoutTimer = setTimeout(function () { try { streamCtrl.abort(); } catch (e) {} }, IDLE_TIMEOUT);
+        function resetIdleTimer() {
+          try { clearTimeout(timeoutTimer); } catch (e) {}
+          timeoutTimer = setTimeout(function () { try { streamCtrl.abort(); } catch (e) {} }, IDLE_TIMEOUT);
+        }
         var response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Accept": "text/event-stream, application/json, */*", "Authorization": "Bearer " + api.key },
           body: JSON.stringify({ model: api.model, messages: messages, temperature: api.temperature, stream: true }),
-          signal: signal
+          signal: streamCtrl.signal
         });
         if (!response.ok) {
           var errText = await response.text();
@@ -272,9 +284,11 @@
         var buffer = "";
         var contentText = "";
         var usage = null;
+        function checkOuterAborted() { return outerAborted; }
         while (true) {
           var r = await reader.read();
           if (r.done) break;
+          resetIdleTimer();
           buffer += decoder.decode(r.value, { stream: true });
           var lines = buffer.split("\n");
           buffer = lines.pop() || "";
@@ -294,6 +308,7 @@
             } catch (e) {}
           }
         }
+        try { clearTimeout(timeoutTimer); } catch (e) {}
         if (usage && onUsage) onUsage(usage);
         return contentText;
       }
@@ -1635,9 +1650,11 @@
           '<div style="display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;">' +
             presets.map(function (p) {
               var active = current && current.name === p.name;
-              return '<button class="wb-model-opt" data-name="' + self.esc(p.name) + '" style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid ' + (active ? '#d97706' : 'var(--border)') + ';border-radius:12px;background:' + (active ? '#fff7ed' : '#fff') + ';cursor:pointer;text-align:left;">' +
-                '<span style="flex:1;"><span style="display:block;font-size:13px;font-weight:700;color:var(--text-primary);">' + self.esc(p.name || '未命名') + '</span>' +
-                '<span style="display:block;font-size:10px;color:#94a3b8;">' + self.esc(p.model || '') + (p.enabled ? '' : ' (已禁用)') + '</span></span>' +
+              var disabled = p.enabled === false;
+              var style = 'display:flex;align-items:center;gap:10px;padding:10px 12px;border:1.5px solid ' + (active ? '#d97706' : (disabled ? '#fecaca' : 'var(--border)')) + ';border-radius:12px;background:' + (active ? '#fff7ed' : (disabled ? '#fef2f2' : '#fff')) + ';cursor:' + (disabled ? 'not-allowed' : 'pointer') + ';text-align:left;';
+              return '<button class="wb-model-opt" data-name="' + self.esc(p.name) + '" data-enabled="' + (p.enabled !== false) + '" style="' + style + '">' +
+                '<span style="flex:1;"><span style="display:block;font-size:13px;font-weight:700;color:' + (disabled ? '#b91c1c' : 'var(--text-primary)') + ';">' + self.esc(p.name || '未命名') + '</span>' +
+                '<span style="display:block;font-size:10px;color:#94a3b8;">' + self.esc(p.model || '') + (disabled ? ' (已禁用，请先在设置中启用)' : '') + '</span></span>' +
                 (active ? self.svg('<path d="M20 6 9 17l-5-5"/>', 16, 'color:#d97706;') : '') +
               '</button>';
             }).join('') +
@@ -1645,6 +1662,10 @@
         );
         dlg.card.querySelectorAll('.wb-model-opt').forEach(function (b) {
           b.onclick = function () {
+            if (b.getAttribute('data-enabled') !== 'true') {
+              if (typeof showToast === 'function') showToast('该模型服务已被禁用，请先在 设置-API 服务 中启用');
+              return;
+            }
             localStorage.setItem('wb_model_name', b.getAttribute('data-name'));
             dlg.close();
             self.refreshModelPill();
@@ -1660,7 +1681,15 @@
       var name = localStorage.getItem('wb_model_name');
       var found = null;
       for (var i = 0; i < presets.length; i++) { if (presets[i].name === name) { found = presets[i]; break; } }
-      return found || presets.find(function (p) { return p.enabled; }) || presets[0];
+      // 选中的模型若被禁用：优先回退到已启用的模型（显示与实际一致，避免"显示已禁用却仍在用"的矛盾）
+      if (found && found.enabled !== false) return found;
+      var enabled = presets.find(function (p) { return p.enabled !== false; });
+      if (enabled) {
+        // 修正本地选中项指向实际使用的模型
+        try { localStorage.setItem('wb_model_name', enabled.name); } catch (e) {}
+        return enabled;
+      }
+      return found || presets[0];
     } catch (e) { return null; }
   };
   WB.renderAssistantContent = function (full, container) {

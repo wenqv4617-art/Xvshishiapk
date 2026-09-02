@@ -281,6 +281,9 @@
             '<div style="font-weight:700;color:#94a3b8;margin-bottom:4px;">Response</div>' +
             '<pre class="wb-tool-result" style="margin:0;padding:8px;background:#f8fafc;border-radius:8px;overflow:auto;font-size:10px;line-height:1.5;white-space:pre-wrap;word-break:break-all;"></pre>';
         }
+        // 升级后显式清空实时流原文（真实 DOM 中 body.innerHTML 已移除 stream 区；此处兜底防残留，
+        // 避免占位卡片残留的 [WB_TOOL:...] 原文/代码进入消息正文，multitool 测试「正文不爆标签间代码」依赖此行为）
+        if (streamPre) streamPre.textContent = '';
       },
       _fail: function (msg) {
         var status = head ? head.querySelector('.wb-tool-status') : null;

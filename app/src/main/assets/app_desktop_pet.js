@@ -444,7 +444,36 @@
 
         this.currentState = foundState;
         this.renderPetToDesktop();
-        this.popBubble(reply || "(晃动了身体)");
+        const finalReply = reply || "(晃动了身体)";
+        // 把双击回复持久化写入该角色的会话（对标 AI 主动来信），任意页面双击都会进入对话，
+        // 打开与该角色的聊天页即可看到；同时保留全局浮窗气泡 + 系统通知
+        try {
+          const baseTime = Date.now();
+          const newMsg = {
+            sessionId: sess.id,
+            senderType: 'char',
+            senderId: 0,
+            content: finalReply,
+            contentType: 'text',
+            timestamp: baseTime
+          };
+          await db.messages.add(newMsg);
+          // 若当前正打开该角色的聊天页，立即刷新消息流
+          if (typeof activeSessionId !== 'undefined' && activeSessionId === sess.id && typeof renderDialogMessages === 'function') {
+            try { await renderDialogMessages(); } catch (e) {}
+          }
+        } catch (e) {
+          console.error("桌宠双击回复写入会话失败:", e);
+        }
+        // 浮窗气泡提示
+        this.popBubble(finalReply);
+        // 系统通知（App 在后台或桌面浮窗时也能感知）
+        try {
+          if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
+            const charName = (char && char.name) || sess.customCharName || "桌宠";
+            window.AndroidMCP.showSystemNotification(charName, finalReply);
+          }
+        } catch (e) {}
       } catch (e) {
         console.error("桌宠实时生成 API 出错:", e);
         this.popBubble("气流阻塞了...");
