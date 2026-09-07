@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v50'; // v50: BLE 玩具保活控制——ANKNI MR-Z 内置范本/能力档案{csum}/试振/复制AI提示词/安卓12+蓝牙权限引导
+const CACHE_NAME = 'story-phone-v51'; // v51: 免配对BLE设备支持——扫描结果可直接加入AI控制/能力配置(ANKNI玩具无需系统配对)/扫描缓存; v1.1.4
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

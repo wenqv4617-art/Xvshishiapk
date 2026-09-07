@@ -1114,7 +1114,7 @@
     /** 汇总注入设备到 localStorage（供 app_prompts.js 拼提示词） */
     syncBluetoothPromptData: function() {
       try {
-        const injected = this.bluetoothDevices.filter(dev =>
+        const injected = this._allBtDevices().filter(dev =>
           localStorage.getItem(`mcp_bt_inject_${dev.address}`) === "1"
         ).map(dev => {
           const caps = this.getDeviceCapabilities(dev);
@@ -1127,7 +1127,7 @@
           };
         });
         localStorage.setItem("mcp_bluetooth_devices", JSON.stringify(injected));
-        localStorage.setItem("mcp_bluetooth_all", JSON.stringify(this.bluetoothDevices.map(d => ({
+        localStorage.setItem("mcp_bluetooth_all", JSON.stringify(this._allBtDevices().map(d => ({
           name: d.name, address: d.address, isConnected: !!d.isConnected, profileName: d.profileName || ""
         }))));
       } catch(e) { console.warn("同步蓝牙注入数据失败:", e); }
@@ -1189,6 +1189,8 @@
             const raw = window.AndroidMCP.bluetoothGetBleResults();
             const data = JSON.parse(raw);
             this.bleDevices = (data && data.devices) || [];
+            // 缓存扫描结果，避免免配对设备每次都要重扫才能看到
+            try { localStorage.setItem("mcp_ble_cache", JSON.stringify({ t: Date.now(), devices: this.bleDevices })); } catch(e) {}
             this.renderBleDevices();
           } catch(e) {
             listEl.innerHTML = `<div>扫描结果读取失败</div>`;
@@ -1203,19 +1205,38 @@
     renderBleDevices: function() {
       const listEl = document.getElementById("mcp-ble-list");
       if (!listEl) return;
+      // 优先展示最近一次扫描缓存（免配对设备在附近未广播时仍可见/可配置）
+      if (this.bleDevices.length === 0) {
+        try {
+          const cache = JSON.parse(localStorage.getItem("mcp_ble_cache") || "null");
+          if (cache && Array.isArray(cache.devices) && cache.devices.length > 0) {
+            this.bleDevices = cache.devices;
+          }
+        } catch(e) {}
+      }
       if (this.bleDevices.length === 0) {
         listEl.innerHTML = `<div>未扫描到 BLE 设备（请确认设备处于可广播状态）</div>`;
         return;
       }
       const rows = this.bleDevices.map((dev) => {
         const addrKey = String(dev.address).replace(/[^a-zA-Z0-9]/g, "_");
+        const name = dev.name || dev.address;
+        const injectOn = localStorage.getItem(`mcp_bt_inject_${dev.address}`) === "1";
+        const injectBtn = injectOn
+          ? `<button onclick="mcpSystem.toggleScanDeviceAi('${this._escapeHtml(name)}','${this._escapeHtml(dev.address)}',false)" style="flex-shrink:0; padding:3px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #16a34a; background:#f0fdf4; color:#15803d; cursor:pointer;">✓ 已注入</button>`
+          : `<button onclick="mcpSystem.toggleScanDeviceAi('${this._escapeHtml(name)}','${this._escapeHtml(dev.address)}',true)" style="flex-shrink:0; padding:3px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #a855f7; background:#faf5ff; color:#9333ea; cursor:pointer;">+ 加入AI控制</button>`;
         return `<div style="border:1px solid var(--border); border-radius:8px; padding:6px; margin-bottom:5px; background:#fcfcfd;">
           <div style="display:flex; align-items:center; gap:6px;">
-            <span style="font-weight:700; color:var(--text-primary); font-size:11px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this._escapeHtml(dev.name)}</span>
+            <span style="font-weight:700; color:var(--text-primary); font-size:11px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${this._escapeHtml(name)}</span>
             <span style="font-size:9px; color:#9ca3af;">${this._escapeHtml(dev.address)}</span>
             <span style="font-size:9px; color:#16a34a;">RSSI: ${dev.rssi}</span>
-            <button onclick="mcpSystem.toggleBleWritePanel('${this._escapeHtml(dev.address)}')" style="margin-left:auto; flex-shrink:0; padding:4px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">写入特征值</button>
+            <button onclick="mcpSystem.toggleBleWritePanel('${this._escapeHtml(dev.address)}')" style="margin-left:auto; flex-shrink:0; padding:4px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">手动写入</button>
           </div>
+          <div style="display:flex; gap:4px; margin-top:5px; align-items:center; flex-wrap:wrap;">
+            ${injectBtn}
+            <button onclick="mcpSystem.openBtProfileEditor('${this._escapeHtml(dev.address)}')" style="flex-shrink:0; padding:3px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">⚙ 能力配置(协议/试振/复制提示词)</button>
+          </div>
+          <div style="font-size:9px; color:var(--text-secondary); margin-top:3px;">免配对设备（如 ANKNI 玩具）系统里显示"不允许配对"是正常的：直接在这里点 加入AI控制 / 能力配置，App 会以 BLE 直连方式工作，无需系统配对。</div>
           <div id="ble-write-${addrKey}" style="display:none; margin-top:6px; flex-direction:column; gap:4px;">
             <input id="ble-svc-${addrKey}" placeholder="Service UUID（如 0000ffe0-0000-1000-8000-00805f9b34fb）" style="width:100%; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
             <input id="ble-char-${addrKey}" placeholder="Characteristic UUID（如 0000ffe1-0000-1000-8000-00805f9b34fb）" style="width:100%; padding:5px 6px; border:1px solid var(--border); border-radius:6px; font-size:10px; background:#fff;">
@@ -1228,6 +1249,21 @@
         </div>`;
       }).join("");
       listEl.innerHTML = rows;
+    },
+
+    /** BLE 扫描结果行：加入/移除 AI 控制（免配对设备走本地已知清单） */
+    toggleScanDeviceAi: function(name, address, on) {
+      if (on) {
+        this.saveKnownBtDevice(address, name);
+        localStorage.setItem(`mcp_bt_inject_${address}`, "1");
+        showToast("已加入 AI 控制：可在顶部刷新后于\"能力配置\"设置协议并试振");
+      } else {
+        localStorage.removeItem(`mcp_bt_inject_${address}`);
+        showToast("已从 AI 控制移除");
+      }
+      this.syncBluetoothPromptData();
+      this.renderBleDevices();
+      this.renderBluetoothDevices();
     },
 
     /** 展开/收起 BLE 写入面板 */
@@ -1322,6 +1358,48 @@
       return this.BT_DEVICE_PRESETS.find(p => p.match && p.match.test(n)) || null;
     },
 
+    /** 免配对 BLE 玩具等"已知设备"本地清单（key=address，value={name}），供未系统配对设备参与注入/控制 */
+    _btKnownKey: "mcp_bt_known_devices",
+    getKnownBtDevices: function() {
+      try { return JSON.parse(localStorage.getItem(this._btKnownKey)) || {}; } catch(e) { return {}; }
+    },
+    saveKnownBtDevice: function(address, name) {
+      try {
+        const known = this.getKnownBtDevices();
+        if (name && (!known[address] || known[address].name !== name)) {
+          known[address] = { name: String(name) };
+          localStorage.setItem(this._btKnownKey, JSON.stringify(known));
+        }
+      } catch(e) {}
+    },
+
+    /** 全量设备视角：已配对/已连接 + BLE 扫描结果 + 本地已知设备（按地址去重） */
+    _allBtDevices: function() {
+      const map = {};
+      const push = (d) => {
+        if (!d || !d.address) return;
+        const prev = map[d.address];
+        if (!prev) map[d.address] = { name: d.name || prev?.name || "", address: d.address, isConnected: !!d.isConnected, profileName: d.profileName || "BLE" };
+        else {
+          if (!prev.name && d.name) prev.name = d.name;
+          if (!prev.profileName && d.profileName) prev.profileName = d.profileName;
+          if (d.isConnected) prev.isConnected = true;
+        }
+      };
+      (this.bluetoothDevices || []).forEach(push);
+      (this.bleDevices || []).forEach(d => push({ name: d.name, address: d.address, isConnected: false, profileName: "BLE" }));
+      const known = this.getKnownBtDevices();
+      Object.keys(known).forEach(addr => push({ name: known[addr].name, address: addr, isConnected: false, profileName: "BLE(未绑定)" }));
+      return Object.keys(map).map(k => map[k]);
+    },
+
+    /** 按名称或地址在"全量设备"里查找 */
+    findAnyDevice: function(query) {
+      const q = String(query || "");
+      if (!q) return null;
+      return this._allBtDevices().find(d => d.name === q || d.address === q || (d.name && d.name.toLowerCase() === q.toLowerCase())) || null;
+    },
+
     /** 媒体设备能力清单（A2DP / 耳机类，注入后生效） */
     MEDIA_CAPABILITIES: [
       { id: "volume_up", label: "音量+" },
@@ -1392,7 +1470,7 @@
     /** 执行 AI 语义控制指令（action:"control"） */
     executeDeviceControl: function(device, command, value) {
       if (!command) return false;
-      const found = this.bluetoothDevices.find(d => d.name === device || d.address === device);
+      const found = this.findAnyDevice(device);
       if (!found) { showToast("未找到蓝牙设备：" + device); return false; }
       const profile = this.getDeviceProfile(found.address);
 
@@ -1475,7 +1553,10 @@
     _profileEdit: null, // { address, type, service, char, commands: [{name, pattern, hint}] }
 
     openBtProfileEditor: function(address) {
-      const dev = this.bluetoothDevices.find(d => d.address === address) || { name: address, address: address };
+      const found = this.findAnyDevice(address);
+      const dev = found || { name: this.bleDevices.find(d => d.address === address)?.name || address, address: address };
+      // 免配对 BLE 玩具也记入"已知设备"，保证保存/注入全链路可用
+      this.saveKnownBtDevice(dev.address, dev.name);
       const existing = this.getDeviceProfile(address) || {};
       const hasExisting = !!(existing.type || (existing.commands && Object.keys(existing.commands).length > 0));
       this._profileEdit = {
@@ -1736,7 +1817,7 @@
     /** 在编辑器内手动套用内置预设（按当前设备名识别） */
     applyPresetDetect: function() {
       if (!this._profileEdit) return;
-      const dev = this.bluetoothDevices.find(d => d.address === this._profileEdit.address) || { name: "", address: this._profileEdit.address };
+      const dev = this.findAnyDevice(this._profileEdit.address) || { name: "", address: this._profileEdit.address };
       const preset = this.findPresetForName(dev.name);
       if (!preset) { showToast("未识别到内置预设，请手动填写 Service/Characteristic 与命令模板"); return; }
       const p = this._profileEdit;
@@ -1782,7 +1863,7 @@
       const bridge = window.AndroidMCP;
       const svc = edit.service.trim();
       const chr = edit.char.trim();
-      const dev = this.bluetoothDevices.find(d => d.address === edit.address);
+      const dev = this.findAnyDevice(edit.address) || { name: edit.address, address: edit.address };
       const devName = dev ? dev.name : edit.address;
       showToast("试振 1.2 秒…（" + devName + "）");
       if (bridge && typeof bridge.bleHoldStart === 'function') {
@@ -1808,7 +1889,7 @@
 
     /** 生成该设备可直接粘贴给 AI/写入角色卡的提示词文本 */
     buildBtPromptText: function(address) {
-      const dev = this.bluetoothDevices.find(d => d.address === address);
+      const dev = this.findAnyDevice(address);
       if (!dev) return "";
       const profile = this.getDeviceProfile(address) || {};
       const caps = this.getDeviceCapabilities(dev).filter(c => c.id !== "send");
@@ -1924,7 +2005,7 @@
         if (!device || !data) return false;
         // 支持按名称或地址匹配
         let target = device;
-        const found = this.bluetoothDevices.find(d => d.name === device || d.address === device);
+        const found = this.findAnyDevice(device);
         if (found) target = found.address;
         if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothSendSpp === 'function') {
           const ok = window.AndroidMCP.bluetoothSendSpp(target, data);
