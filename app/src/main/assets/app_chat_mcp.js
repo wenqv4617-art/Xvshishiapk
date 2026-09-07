@@ -1865,19 +1865,61 @@
       const chr = edit.char.trim();
       const dev = this.findAnyDevice(edit.address) || { name: edit.address, address: edit.address };
       const devName = dev ? dev.name : edit.address;
-      showToast("试振 1.2 秒…（" + devName + "）");
+      const statusEl = document.getElementById("bt-profile-hold-status");
+      const setStat = (html, color) => {
+        if (statusEl) statusEl.innerHTML = `<span style="color:${color || 'var(--text-secondary)'};">${html}</span>`;
+      };
       if (bridge && typeof bridge.bleHoldStart === 'function') {
         try {
-          const hold = !!edit.hold;
-          const interval = (hold && edit.intervalMs >= 50) ? edit.intervalMs : 150;
+          const interval = (edit.intervalMs >= 50) ? edit.intervalMs : 150;
           const res = JSON.parse(bridge.bleHoldStart(edit.address, svc, chr, data, interval) || "{}");
-          if (res && res.ok) {
-            setTimeout(() => { try { bridge.bleHoldStop(); } catch(e) {} }, 1200);
+          if (!(res && res.ok)) {
+            setStat("启动失败：" + ((res && res.error) || "未知"), "#dc2626");
+            showToast("试振启动失败");
             return;
           }
-          showToast("启动失败：" + ((res && res.error) || "未知"));
-        } catch(e) { showToast("试振异常：" + (e.message || e)); }
-        return;
+          showToast("试振中…请感受 " + devName);
+          setStat("已发起连接，等待设备就绪…");
+          let started = false, finished = false, ticks = 0;
+          const finish = (msg, color) => {
+            if (finished) return;
+            finished = true;
+            clearInterval(timer);
+            try { bridge.bleHoldStop(); } catch(e) {}
+            setStat(msg, color);
+            if (color === "#dc2626") showToast(msg.replace(/<[^>]*>/g, ""));
+          };
+          const timer = setInterval(() => {
+            ticks++;
+            let st = null, lr = null;
+            try { st = JSON.parse(bridge.bleHoldState() || "{}"); } catch(e) {}
+            try { lr = JSON.parse(bridge.bleHoldGetLastResult() || "{}"); } catch(e) {}
+            if (lr && lr.ok === false) {
+              finish("连接/写入出错：" + (lr.error || "未知"), "#dc2626");
+              return;
+            }
+            const isReady = st && st.connected && lr && lr.ok &&
+              (lr.event === "ready" || lr.event === "connected" || lr.event === "writing" || lr.writing);
+            if (!started && isReady) {
+              started = true;
+              setStat("✓ 已连接并持续写帧中（保活 " + interval + "ms）…再保持 1.6 秒");
+              setTimeout(() => finish("试振结束：连接与写帧均正常。若没震感，请确认玩具未连其它设备并重启后再试", "#16a34a"), 1600);
+            } else if (!started && ticks >= 24) {
+              // ~6s 未就绪
+              let detail = "";
+              if (lr && lr.error) detail = "；最近错误：" + lr.error;
+              finish("6 秒内未完成连接" + detail + "。请确认：玩具已开机广播、未被电脑/官方App占用，然后重试", "#dc2626");
+            } else if (!started) {
+              const phase = (lr && lr.event) ? ("（" + lr.event + "）") : "";
+              setStat("连接中…" + phase + " 已等待 " + Math.round(ticks * 0.25) + "s");
+            }
+          }, 250);
+          return;
+        } catch(e) {
+          showToast("试振异常：" + (e.message || e));
+          try { bridge.bleHoldStop(); } catch(e2) {}
+          return;
+        }
       }
       if (bridge && typeof bridge.bluetoothBleWrite === 'function') {
         bridge.bluetoothBleWrite(edit.address, svc, chr, data);

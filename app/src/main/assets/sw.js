@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v51'; // v51: 免配对BLE设备支持——扫描结果可直接加入AI控制/能力配置(ANKNI玩具无需系统配对)/扫描缓存; v1.1.4
+const CACHE_NAME = 'story-phone-v52'; // v52: 试振诊断版——等连接+写帧就绪后再计时试振/实时状态显示/6s超时报错; v1.1.5
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
