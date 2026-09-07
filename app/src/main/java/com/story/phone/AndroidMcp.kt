@@ -532,13 +532,13 @@ class AndroidMcp private constructor(private val context: Context) {
     @JavascriptInterface
     fun getBluetoothPermissionState(): String {
         return try {
-            val pm = android.content.pm.PackageManager
+            val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
             val connectGranted: Boolean
             val scanGranted: Boolean
-            val fineGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == pm.PERMISSION_GRANTED
+            val fineGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == granted
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                connectGranted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == pm.PERMISSION_GRANTED
-                scanGranted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) == pm.PERMISSION_GRANTED
+                connectGranted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == granted
+                scanGranted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) == granted
             } else {
                 // Android 11 及以下：这两个属安装时普通权限，天然已授予
                 connectGranted = true
@@ -571,16 +571,16 @@ class AndroidMcp private constructor(private val context: Context) {
     @JavascriptInterface
     fun requestBluetoothPermissions(): String {
         val act = mainActivity ?: return "{\"ok\":false,\"error\":\"界面尚未就绪\"}"
-        val pm = android.content.pm.PackageManager
         return try {
+            val granted = android.content.pm.PackageManager.PERMISSION_GRANTED
             val perms = ArrayList<String>()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != pm.PERMISSION_GRANTED)
+                if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != granted)
                     perms.add(android.Manifest.permission.BLUETOOTH_CONNECT)
-                if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) != pm.PERMISSION_GRANTED)
+                if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) != granted)
                     perms.add(android.Manifest.permission.BLUETOOTH_SCAN)
             } else {
-                if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != pm.PERMISSION_GRANTED)
+                if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != granted)
                     perms.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
             }
             if (perms.isEmpty()) {
