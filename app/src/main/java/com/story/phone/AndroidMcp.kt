@@ -51,6 +51,30 @@ class AndroidMcp private constructor(private val context: Context) {
         fun releaseBluetoothIfHeld() {
             try { instance?.bluetoothMcp?.onDestroy() } catch (e: Exception) { e.printStackTrace() }
         }
+
+        /** 蓝牙运行时权限申请结果记录（供 JS 判断是否被永久拒绝） */
+        @Volatile
+        var lastBtPermissionRequestSummary: String = "{\"requested\":false}"
+
+        private const val BT_PERMISSION_REQUEST_CODE = 8303
+
+        /** 由 MainActivity.onRequestPermissionsResult 回调写入最近一次申请中被拒绝的权限 */
+        fun recordBluetoothPermissionResult(permissions: Array<out String>, grantResults: IntArray) {
+            try {
+                val denied = ArrayList<String>()
+                permissions.forEachIndexed { i, p ->
+                    val r = if (i < grantResults.size) grantResults[i] else android.content.pm.PackageManager.PERMISSION_DENIED
+                    if (r != android.content.pm.PackageManager.PERMISSION_GRANTED) denied.add(p)
+                }
+                lastBtPermissionRequestSummary = JSONObject().apply {
+                    put("requested", true)
+                    put("denied", JSONArray(denied))
+                    put("time", System.currentTimeMillis())
+                }.toString()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     private var mediaPlayer: MediaPlayer? = null
@@ -475,6 +499,115 @@ class AndroidMcp private constructor(private val context: Context) {
 
     @JavascriptInterface
     fun bluetoothGetBleServicesResult(): String = bluetoothMcp.getBleServicesResult()
+
+    // ---------------- BLE 保活写入会话（玩具类持续控制）----------------
+
+    /** 启动保活写入会话：周期续帧防设备自停（ANKNI 等玩具 1~2s 会自停） */
+    @JavascriptInterface
+    fun bleHoldStart(deviceAddress: String, serviceUuid: String, charUuid: String, dataHex: String, intervalMs: Long): String =
+        bluetoothMcp.bleHoldStart(deviceAddress, serviceUuid, charUuid, dataHex, intervalMs)
+
+    /** 更新保活会话当前帧（改强度/换指令不重连） */
+    @JavascriptInterface
+    fun bleHoldUpdate(dataHex: String): String = bluetoothMcp.bleHoldUpdate(dataHex)
+
+    /** 停止保活会话 */
+    @JavascriptInterface
+    fun bleHoldStop(): String = bluetoothMcp.bleHoldStop()
+
+    /** 查询保活会话状态 */
+    @JavascriptInterface
+    fun bleHoldState(): String = bluetoothMcp.bleHoldState()
+
+    /** 拉取保活会话最近结果 */
+    @JavascriptInterface
+    fun bleHoldGetLastResult(): String = bluetoothMcp.getHoldLastResult()
+
+    // ---------------- 蓝牙运行时权限闭环（Android 12+ 附近设备权限）----------------
+
+    /**
+     * 实时蓝牙权限状态：{connect,scan,fine,btOn,needLocation, rationale*, permanentlyDenied*}
+     * 供 JS 决定：直接重试 / 引导再次申请 / 跳系统设置。
+     */
+    @JavascriptInterface
+    fun getBluetoothPermissionState(): String {
+        return try {
+            val pm = android.content.pm.PackageManager
+            val connectGranted: Boolean
+            val scanGranted: Boolean
+            val fineGranted = context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == pm.PERMISSION_GRANTED
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                connectGranted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) == pm.PERMISSION_GRANTED
+                scanGranted = context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) == pm.PERMISSION_GRANTED
+            } else {
+                // Android 11 及以下：这两个属安装时普通权限，天然已授予
+                connectGranted = true
+                scanGranted = true
+            }
+            val act = mainActivity
+            val rationaleConnect = act?.shouldShowRequestPermissionRationale(android.Manifest.permission.BLUETOOTH_CONNECT) ?: false
+            val rationaleScan = act?.shouldShowRequestPermissionRationale(android.Manifest.permission.BLUETOOTH_SCAN) ?: false
+            JSONObject().apply {
+                put("ok", true)
+                put("connect", connectGranted)
+                put("scan", scanGranted)
+                put("fine", fineGranted)
+                put("btOn", try { bluetoothMcp.isBluetoothEnabled() } catch (e: Exception) { false })
+                // Android 12+ 已声明 neverForLocation：不再需要定位；Android 11- 扫描仍需定位
+                put("needLocation", Build.VERSION.SDK_INT < Build.VERSION_CODES.S && !fineGranted)
+                put("rationaleConnect", rationaleConnect)
+                put("rationaleScan", rationaleScan)
+                put("permanentlyDeniedConnect", Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !connectGranted && !rationaleConnect)
+                put("permanentlyDeniedScan", Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !scanGranted && !rationaleScan)
+                put("sdkInt", Build.VERSION.SDK_INT)
+                put("lastRequest", try { JSONObject(lastBtPermissionRequestSummary) } catch (e: Exception) { JSONObject() })
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"权限状态读取失败\"}"
+        }
+    }
+
+    /** 主动发起蓝牙运行时权限申请（拒绝后可再次调用；永久拒绝后系统不再弹窗，需走设置页） */
+    @JavascriptInterface
+    fun requestBluetoothPermissions(): String {
+        val act = mainActivity ?: return "{\"ok\":false,\"error\":\"界面尚未就绪\"}"
+        val pm = android.content.pm.PackageManager
+        return try {
+            val perms = ArrayList<String>()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_CONNECT) != pm.PERMISSION_GRANTED)
+                    perms.add(android.Manifest.permission.BLUETOOTH_CONNECT)
+                if (context.checkSelfPermission(android.Manifest.permission.BLUETOOTH_SCAN) != pm.PERMISSION_GRANTED)
+                    perms.add(android.Manifest.permission.BLUETOOTH_SCAN)
+            } else {
+                if (context.checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) != pm.PERMISSION_GRANTED)
+                    perms.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+            if (perms.isEmpty()) {
+                "{\"ok\":true,\"already\":true}"
+            } else {
+                act.requestPermissions(perms.toTypedArray(), BT_PERMISSION_REQUEST_CODE)
+                lastBtPermissionRequestSummary = "{\"requested\":true,\"pending\":${perms.size}}"
+                "{\"ok\":true,\"requesting\":true,\"count\":${perms.size}}"
+            }
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "权限申请失败")}}"
+        }
+    }
+
+    /** 跳转本应用系统详情页（供“永久拒绝”后手动开启附近设备/通知等权限） */
+    @JavascriptInterface
+    fun openAppBluetoothPermissionSettings() {
+        try {
+            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = android.net.Uri.parse("package:${context.packageName}")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
 
     /**
      * 系统媒体控制通道（蓝牙耳机等媒体设备的统一控制）。

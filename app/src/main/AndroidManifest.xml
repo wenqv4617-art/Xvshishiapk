@@ -5,6 +5,7 @@
 <!-- 申请真机振动、GPS定位、闹钟、通知监听、后台锁屏唤醒等安卓硬件权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- GPS 定位：网页侧“定位卡片/天气”功能所有版本都需要（Android 12+ 蓝牙扫描已由 BLUETOOTH_SCAN+neverForLocation 覆盖） -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -32,7 +33,8 @@
     <!-- 蓝牙管理：读取已连接/已配对设备、SPP 串口控制、BLE 扫描与写入 -->
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- neverForLocation：本应用不通过蓝牙扫描结果推导物理位置，Android 12+ 免定位即可扫描 -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application

@@ -1052,6 +1052,7 @@
             return;
           }
           listEl.innerHTML = `<div style="color:#dc2626;">读取失败：${(data && data.error) || "未知错误"}</div>`;
+          if (data && data.error && /权限/.test(data.error)) this.ensureBtPermissionGranted();
           return;
         } catch(e) {
           console.error("读取蓝牙设备失败:", e);
@@ -1296,6 +1297,31 @@
       this.syncBluetoothPromptData();
     },
 
+    /** 内置 BLE 玩具协议预设（MR-Z 为范本；用户可照此自定义其它玩具） */
+    BT_DEVICE_PRESETS: [
+      {
+        id: "ankni-mr-z",
+        name: "ANKNI MR-Z（安可尼/谜姬 震动，保活型）",
+        match: /ankni|mr-?z|安可尼|醉清风|谜姬|mizzzee|miji|miyu|xhtkj/i,
+        type: "ble",
+        service: "0000DDDD-0000-1000-8000-00805F9B34FB",
+        char: "0000DDD1-0000-1000-8000-00805F9B34FB",
+        hold: true,
+        intervalMs: 150,
+        commands: {
+          vibrate: { pattern: "AA0801{value:hex}{csum}", hint: "0-100 持续强度；0=停止" },
+          stop: { pattern: "AA080100B3", hint: "立即停止" }
+        }
+      }
+    ],
+
+    /** 按设备名匹配内置预设 */
+    findPresetForName: function(name) {
+      const n = String(name || "");
+      if (!n) return null;
+      return this.BT_DEVICE_PRESETS.find(p => p.match && p.match.test(n)) || null;
+    },
+
     /** 媒体设备能力清单（A2DP / 耳机类，注入后生效） */
     MEDIA_CAPABILITIES: [
       { id: "volume_up", label: "音量+" },
@@ -1322,28 +1348,44 @@
       const profile = this.getDeviceProfile(dev.address);
       if (profile && profile.type === "media") return this.MEDIA_CAPABILITIES;
       if (profile && profile.commands && Object.keys(profile.commands).length > 0) {
+        const holdTag = profile.type === "ble" && profile.hold ? "·持续" : "";
         return Object.keys(profile.commands).map(name => {
           const c = profile.commands[name] || {};
-          return { id: name, label: c.hint ? (name + "(" + c.hint + ")") : name };
+          return { id: name, label: c.hint ? (name + "(" + c.hint + ")" + holdTag) : (name + holdTag) };
         });
       }
       if (this.isMediaDevice(dev)) return this.MEDIA_CAPABILITIES;
       return [{ id: "send", label: "串口发送原始文本" }];
     },
 
-    /** 命令模板渲染：{value} 十进制 / {value:byte} 单字节hex / {value:hex} 两位hex / {on}=1 / {off}=0 */
+    /** 命令模板渲染：{value} 十进制 / {value:byte} 单字节hex / {value:hex} 两位hex / {on}=1 / {off}=0 / {csum}=前字节累加校验和(hex) */
     renderCommandPattern: function(pattern, value) {
       if (!pattern) return "";
       let out = pattern;
+      const hasSum = out.indexOf("{csum}") >= 0;
+      // 先用占位符保护 {csum}，避免被其它替换误伤
+      out = out.split("{csum}").join("\u0001");
       out = out.split("{on}").join("1").split("{off}").join("0");
       const v = (value === undefined || value === null || value === "") ? null : Number(value);
       if (v === null) {
-        return out.includes("{value") ? null : out;
+        return out.includes("{value") ? null : out.split("\u0001").join("");
       }
       const clamped = Math.max(0, Math.min(255, Math.round(v)));
       out = out.split("{value:byte}").join(clamped.toString(16).padStart(2, "0"));
       out = out.split("{value:hex}").join(clamped.toString(16).padStart(2, "0"));
       out = out.split("{value}").join(String(clamped));
+      if (hasSum) {
+        // 计算校验和：对模板中除占位符外的全部十六进制字节累加取低 8 位
+        const cleaned = out.replace(/\u0001/g, "").replace(/0x/gi, "").replace(/[^0-9a-fA-F]/g, "");
+        if (cleaned.length >= 2 && cleaned.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(cleaned)) {
+          let sum = 0;
+          for (let i = 0; i < cleaned.length; i += 2) sum += parseInt(cleaned.slice(i, i + 2), 16);
+          const cs = (sum & 0xFF).toString(16).toUpperCase().padStart(2, "0");
+          out = out.split("\u0001").join(cs);
+        } else {
+          out = out.split("\u0001").join("");
+        }
+      }
       return out;
     },
 
@@ -1360,6 +1402,10 @@
         if (!cmd) { showToast("设备 [" + found.name + "] 未定义命令 [" + command + "]"); return false; }
         const data = this.renderCommandPattern(cmd.pattern, value);
         if (data === null || data === "") { showToast("命令 [" + command + "] 需要 value 参数"); return false; }
+        // 保活持续型（玩具类）：启动/更新 周期续帧会话，直到 stop 或 vibrate 0
+        if (profile.hold) {
+          return this.executeBleHold(found, profile, command, data, value);
+        }
         if (window.AndroidMCP && typeof window.AndroidMCP.bluetoothBleWrite === 'function') {
           window.AndroidMCP.bluetoothBleWrite(found.address, profile.service || "", profile.char || "", data);
           setTimeout(() => {
@@ -1431,23 +1477,48 @@
     openBtProfileEditor: function(address) {
       const dev = this.bluetoothDevices.find(d => d.address === address) || { name: address, address: address };
       const existing = this.getDeviceProfile(address) || {};
+      const hasExisting = !!(existing.type || (existing.commands && Object.keys(existing.commands).length > 0));
       this._profileEdit = {
         address: address,
         type: existing.type || "auto",
         service: existing.service || "",
         char: existing.char || "",
+        hold: !!existing.hold,
+        intervalMs: existing.intervalMs || 150,
         commands: existing.commands ? Object.keys(existing.commands).map(k => ({
           name: k,
           pattern: (existing.commands[k] || {}).pattern || "",
           hint: (existing.commands[k] || {}).hint || ""
         })) : []
       };
+      // 内置预设自动填充：该设备无档案但名称命中已知协议族（如 ANKNI MR-Z）
+      if (!hasExisting) {
+        const preset = this.findPresetForName(dev.name);
+        if (preset) {
+          const p = this._profileEdit;
+          p.type = preset.type || "ble";
+          p.service = preset.service || p.service;
+          p.char = preset.char || p.char;
+          p.hold = !!preset.hold;
+          p.intervalMs = preset.intervalMs || 150;
+          p.commands = Object.keys(preset.commands || {}).map(k => ({
+            name: k,
+            pattern: preset.commands[k].pattern || "",
+            hint: preset.commands[k].hint || ""
+          }));
+          showToast("已按内置预设[" + preset.name + "]填充，可调整后保存");
+        }
+      }
       const overlay = document.getElementById("bt-profile-editor-overlay");
       if (!overlay) { showToast("配置弹窗未找到"); return; }
       document.getElementById("bt-profile-device-name").innerText = dev.name + "（" + dev.address + "）";
       document.getElementById("bt-profile-type").value = this._profileEdit.type;
       document.getElementById("bt-profile-svc").value = this._profileEdit.service;
       document.getElementById("bt-profile-char").value = this._profileEdit.char;
+      const holdEl = document.getElementById("bt-profile-hold");
+      if (holdEl) holdEl.checked = !!this._profileEdit.hold;
+      const msEl = document.getElementById("bt-profile-hold-ms");
+      if (msEl) msEl.value = this._profileEdit.intervalMs || 150;
       this._syncProfileTypeFields();
       this.renderBtProfileCommandRows();
       overlay.style.display = "flex";
@@ -1463,6 +1534,16 @@
       const type = this._profileEdit ? this._profileEdit.type : "auto";
       const bleFields = document.getElementById("bt-profile-ble-fields");
       if (bleFields) bleFields.style.display = (type === "ble") ? "block" : "none";
+      this.onBtHoldToggle();
+    },
+
+    /** 保活开关：联动显示间隔输入行 */
+    onBtHoldToggle: function() {
+      const el = document.getElementById("bt-profile-hold");
+      const row = document.getElementById("bt-profile-hold-ms-row");
+      if (row) row.style.display = (el && el.checked) ? "block" : "none";
+      const edit = this._profileEdit;
+      if (edit && el) edit.hold = !!el.checked;
     },
 
     onBtProfileTypeChange: function() {
@@ -1553,6 +1634,15 @@
       const edit = this._profileEdit;
       const type = edit.type;
       if (type === "ble" && (!edit.service || !edit.char)) { showToast("BLE 设备请填写 Service 与 Characteristic UUID"); return; }
+      if (type === "ble") {
+        const holdEl = document.getElementById("bt-profile-hold");
+        if (holdEl) edit.hold = !!holdEl.checked;
+        const msEl = document.getElementById("bt-profile-hold-ms");
+        const ms = msEl ? parseInt(msEl.value, 10) : NaN;
+        edit.intervalMs = (edit.hold && !isNaN(ms) && ms >= 50 && ms <= 3000) ? ms : 150;
+      } else {
+        edit.hold = false;
+      }
       const commands = {};
       edit.commands.forEach(c => {
         const name = (c.name || "").trim();
@@ -1561,17 +1651,242 @@
       });
       if (type !== "media" && type !== "auto" && Object.keys(commands).length === 0) { showToast("该类型至少需要一个命令"); return; }
       const profile = { type: type };
-      if (type === "ble") { profile.service = edit.service.trim(); profile.char = edit.char.trim(); }
+      if (type === "ble") {
+        profile.service = edit.service.trim();
+        profile.char = edit.char.trim();
+        if (edit.hold) {
+          profile.hold = true;
+          profile.intervalMs = edit.intervalMs || 150;
+        }
+      }
       if (Object.keys(commands).length > 0) profile.commands = commands;
       this.saveDeviceProfile(edit.address, profile);
       this.closeBtProfileEditor();
       this.renderBluetoothDevices();
       this.syncBluetoothPromptData();
-      showToast("能力配置已保存，AI 可执行语义控制");
+      showToast("能力配置已保存，AI 可执行语义控制" + (profile.hold ? "（保活持续模式）" : ""));
     },
     _mediaCmdLabel: function(command) {
       const hit = this.MEDIA_CAPABILITIES.find(c => c.id === command);
       return hit ? hit.label : command;
+    },
+
+    // ---- 保活持续控制（ANKNI 等玩具：周期续帧直到 stop）----
+
+    executeBleHold: function(found, profile, command, data, value) {
+      const service = profile.service || "";
+      const char = profile.char || "";
+      const interval = profile.intervalMs || 150;
+      const numVal = (value === undefined || value === null || value === "") ? NaN : Number(value);
+      const isStop = command === "stop" || numVal === 0;
+      const bridge = window.AndroidMCP;
+      if (!bridge || typeof bridge.bleHoldStart !== 'function') {
+        // 旧版兜底：退回单次写（设备约1~2s后自停）
+        if (bridge && typeof bridge.bluetoothBleWrite === 'function') {
+          bridge.bluetoothBleWrite(found.address, service, char, data);
+          showToast("当前版本无保活接口，已单次发送（约1-2s后自停）");
+          return true;
+        }
+        showToast("当前环境不支持蓝牙保活控制");
+        return false;
+      }
+      try {
+        if (isStop) {
+          // 先补一帧停止帧，再停会话
+          try { bridge.bleHoldUpdate(data); } catch(e) {}
+          setTimeout(() => {
+            try {
+              const st = JSON.parse(bridge.bleHoldState() || "{}");
+              if (st && st.active) bridge.bleHoldStop();
+            } catch(e) { try { bridge.bleHoldStop(); } catch(e2) {} }
+          }, 220);
+          showToast("已停止 [" + found.name + "] 持续控制");
+          return true;
+        }
+        let st = null;
+        try { st = JSON.parse(bridge.bleHoldState() || "{}"); } catch(e) {}
+        if (st && st.active && st.deviceAddress === found.address) {
+          bridge.bleHoldUpdate(data);
+          showToast("[" + found.name + "] 强度已调整，保持中 → " + data);
+        } else {
+          if (st && st.active) { try { bridge.bleHoldStop(); } catch(e) {} }
+          let res = null;
+          try { res = JSON.parse(bridge.bleHoldStart(found.address, service, char, data, interval) || "{}"); } catch(e) {}
+          if (res && res.ok) showToast("[" + found.name + "] 持续震动已开启 → " + data);
+          else showToast("开启失败：" + ((res && res.error) || "未知错误"));
+        }
+        return true;
+      } catch(e) {
+        showToast("持续控制异常：" + (e && e.message ? e.message : e));
+        return false;
+      }
+    },
+
+    /** 停止任何正在进行的保活会话（手动兜底按钮） */
+    stopBtHoldTest: function() {
+      const bridge = window.AndroidMCP;
+      if (bridge && typeof bridge.bleHoldStop === 'function') {
+        try { bridge.bleHoldStop(); } catch(e) {}
+        showToast("已停止保活会话");
+      } else {
+        showToast("当前环境不支持");
+      }
+    },
+
+    /** 在编辑器内手动套用内置预设（按当前设备名识别） */
+    applyPresetDetect: function() {
+      if (!this._profileEdit) return;
+      const dev = this.bluetoothDevices.find(d => d.address === this._profileEdit.address) || { name: "", address: this._profileEdit.address };
+      const preset = this.findPresetForName(dev.name);
+      if (!preset) { showToast("未识别到内置预设，请手动填写 Service/Characteristic 与命令模板"); return; }
+      const p = this._profileEdit;
+      p.type = preset.type || "ble";
+      p.service = preset.service || "";
+      p.char = preset.char || "";
+      p.hold = !!preset.hold;
+      p.intervalMs = preset.intervalMs || 150;
+      p.commands = Object.keys(preset.commands || {}).map(k => ({
+        name: k,
+        pattern: preset.commands[k].pattern || "",
+        hint: preset.commands[k].hint || ""
+      }));
+      document.getElementById("bt-profile-type").value = p.type;
+      document.getElementById("bt-profile-svc").value = p.service;
+      document.getElementById("bt-profile-char").value = p.char;
+      const holdEl = document.getElementById("bt-profile-hold");
+      if (holdEl) holdEl.checked = !!p.hold;
+      const msEl = document.getElementById("bt-profile-hold-ms");
+      if (msEl) msEl.value = p.intervalMs;
+      this.onBtHoldToggle();
+      this.renderBtProfileCommandRows();
+      showToast("已套用预设[" + preset.name + "]，可微调后保存");
+    },
+
+    /** 能力配置弹窗内的“复制AI提示词”入口 */
+    copyBtPromptFromEditor: function() {
+      if (this._profileEdit) this.copyBtPrompt(this._profileEdit.address);
+      else showToast("请先打开设备能力配置");
+    },
+
+    /** 能力配置弹窗内“试振 1.2s”：取 vibrate 命令(缺省用含 {value 的首条命令) value≈60 */
+    testBtProfile: function() {
+      const edit = this._profileEdit;
+      if (!edit) return;
+      if (edit.type !== "ble" || !edit.service || !edit.char) { showToast("请先填写 BLE Service/Characteristic 并选择类型 BLE"); return; }
+      const list = edit.commands || [];
+      let cmd = list.find(c => (c.name || "").trim() === "vibrate") || list.find(c => (c.pattern || "").includes("{value")) || list[0];
+      if (!cmd) { showToast("请至少添加一个命令（如 vibrate 模板 AA0801{value:hex}{csum}）"); return; }
+      const pattern = (cmd.pattern || "").trim();
+      const data = this.renderCommandPattern(pattern, pattern.includes("{value") ? 60 : undefined);
+      if (!data) { showToast("命令模板渲染失败"); return; }
+      const bridge = window.AndroidMCP;
+      const svc = edit.service.trim();
+      const chr = edit.char.trim();
+      const dev = this.bluetoothDevices.find(d => d.address === edit.address);
+      const devName = dev ? dev.name : edit.address;
+      showToast("试振 1.2 秒…（" + devName + "）");
+      if (bridge && typeof bridge.bleHoldStart === 'function') {
+        try {
+          const hold = !!edit.hold;
+          const interval = (hold && edit.intervalMs >= 50) ? edit.intervalMs : 150;
+          const res = JSON.parse(bridge.bleHoldStart(edit.address, svc, chr, data, interval) || "{}");
+          if (res && res.ok) {
+            setTimeout(() => { try { bridge.bleHoldStop(); } catch(e) {} }, 1200);
+            return;
+          }
+          showToast("启动失败：" + ((res && res.error) || "未知"));
+        } catch(e) { showToast("试振异常：" + (e.message || e)); }
+        return;
+      }
+      if (bridge && typeof bridge.bluetoothBleWrite === 'function') {
+        bridge.bluetoothBleWrite(edit.address, svc, chr, data);
+        showToast("已单次发送（旧版，约1-2s）");
+        return;
+      }
+      showToast("当前环境不支持蓝牙");
+    },
+
+    /** 生成该设备可直接粘贴给 AI/写入角色卡的提示词文本 */
+    buildBtPromptText: function(address) {
+      const dev = this.bluetoothDevices.find(d => d.address === address);
+      if (!dev) return "";
+      const profile = this.getDeviceProfile(address) || {};
+      const caps = this.getDeviceCapabilities(dev).filter(c => c.id !== "send");
+      if (!caps.length) return "";
+      const name = dev.name || dev.address;
+      const isHold = profile.type === "ble" && !!profile.hold;
+      const capLine = caps.map(c => c.label + "(" + c.id + ")").join(" / ");
+      let out = "";
+      out += "【已接入的蓝牙设备 · AI 可控】" + name + "（" + dev.address + "）" + (profile.type === "ble" ? " [BLE 特征值控制]" : profile.type === "spp" ? " [串口控制]" : profile.type === "media" ? " [媒体控制]" : "") + "\n";
+      out += "该设备对 AI 开放的能力：" + capLine + "\n";
+      out += "需要控制时，请在你的回复文本最末尾单独追加一行（JSON 必须完全合法）：\n";
+      caps.forEach(c => {
+        const stopLike = c.id === "stop" || c.id === "off";
+        if (stopLike) out += `[BLUETOOTH_CMD]{"action":"control","device":"${name}","command":"${c.id}"}\n`;
+        else out += `[BLUETOOTH_CMD]{"action":"control","device":"${name}","command":"${c.id}","value":80}\n`;
+      });
+      if (isHold) {
+        out += "注意：该设备为【保活持续型】——你发出一次强度指令后设备会保持当前强度持续运行，直到你再次调整强度，或发送 " +
+          (caps.some(c => c.id === "stop") ? "stop（或强度 value:0）" : "value:0 的强度指令") + " 才会停止；请根据剧情需要掌控节奏，结束后务必停止。\n";
+      }
+      out += "只允许使用上面列出的 command id，严禁编造能力列表以外的命令。\n";
+      return out;
+    },
+
+    /** 一键复制该设备的 AI 提示词 */
+    copyBtPrompt: function(address) {
+      const text = this.buildBtPromptText(address);
+      if (!text) { showToast("请先保存该设备的能力配置"); return; }
+      const done = () => showToast("提示词已复制，可粘贴到角色卡/帮助文档");
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(done).catch(() => this._fallbackCopy(text, done));
+        } else {
+          this._fallbackCopy(text, done);
+        }
+      } catch(e) { this._fallbackCopy(text, done); }
+    },
+
+    _fallbackCopy: function(text, done) {
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+      } catch(e) {}
+      if (done) done();
+    },
+
+    /** 蓝牙权限引导：状态缺失→再次申请；被永久拒绝→跳系统设置手动开 */
+    ensureBtPermissionGranted: function() {
+      const bridge = window.AndroidMCP;
+      if (!bridge || typeof bridge.getBluetoothPermissionState !== 'function') return false;
+      let st = null;
+      try { st = JSON.parse(bridge.getBluetoothPermissionState() || "{}"); } catch(e) { return false; }
+      if (!st.ok) return false;
+      const need = (st.sdkInt >= 31 && (!st.connect || !st.scan)) || !!st.needLocation;
+      if (need) {
+        try { if (bridge.requestBluetoothPermissions) bridge.requestBluetoothPermissions(); } catch(e) {}
+        showToast("请在系统弹窗中允许「附近设备/蓝牙」权限后，再点一次刷新");
+        setTimeout(() => {
+          try {
+            const st2 = JSON.parse(bridge.getBluetoothPermissionState() || "{}");
+            if (st2.permanentlyDeniedConnect || st2.permanentlyDeniedScan || st2.needLocation) {
+              showToast("系统已不再自动弹窗：打开权限设置页，请手动开启「附近设备/定位」");
+              setTimeout(() => {
+                try { if (bridge.openAppBluetoothPermissionSettings) bridge.openAppBluetoothPermissionSettings(); } catch(e) {}
+              }, 1500);
+            }
+          } catch(e) {}
+        }, 1800);
+        return true;
+      }
+      if (!st.btOn) showToast("请先在系统快捷开关中开启蓝牙");
+      return false;
     },
     /**
      * AI [BLUETOOTH_CMD] 指令解析分发（由 app_chat.js 在解析 AI 回复时调用）。

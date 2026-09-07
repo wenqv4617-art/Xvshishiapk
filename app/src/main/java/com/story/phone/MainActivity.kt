@@ -130,6 +130,7 @@ class MainActivity : AppCompatActivity() {
     // 申请运行时权限
     private fun requestAppPermissions() {
         val permissions = mutableListOf(
+            // GPS 定位（网页“定位卡片/天气”需要）；Android 12+ 蓝牙扫描不依赖它(SCAN带neverForLocation)
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION
         )
@@ -160,6 +161,16 @@ class MainActivity : AppCompatActivity() {
                 PERMISSIONS_REQUEST_CODE
             )
         }
+    }
+
+    // 蓝牙等运行时权限结果回执：转发给 AndroidMcp 记录（JS 权限引导用）
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        try {
+            if (permissions.any { it == Manifest.permission.BLUETOOTH_CONNECT || it == Manifest.permission.BLUETOOTH_SCAN }) {
+                AndroidMcp.recordBluetoothPermissionResult(permissions, grantResults)
+            }
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     override fun onBackPressed() {

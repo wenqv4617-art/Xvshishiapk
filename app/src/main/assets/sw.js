@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v49'; // v49：harness 能力扩展——github_api认证读取/actions观测/文件与内容搜索/read_file分段 + termux_run与git镜像工具(cmd-runner 3002) + 本地部署内置脚本3
+const CACHE_NAME = 'story-phone-v50'; // v50: BLE 玩具保活控制——ANKNI MR-Z 内置范本/能力档案{csum}/试振/复制AI提示词/安卓12+蓝牙权限引导
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

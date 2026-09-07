@@ -54,6 +54,25 @@ class BluetoothMcp(private val context: Context) {
     /** 当前 BLE GATT 连接 */
     @Volatile private var gatt: BluetoothGatt? = null
 
+    // ---------- BLE 保活写入会话（玩具类"持续控制"专用）----------
+    /** 保活会话的独立 GATT 连接（与单次写入 gatt 互斥） */
+    @Volatile private var holdGatt: BluetoothGatt? = null
+    /** 保活会话目标特征（服务发现成功后缓存） */
+    @Volatile private var holdChar: BluetoothGattCharacteristic? = null
+    /** 是否处于保活会话中（true=断线要自动重连） */
+    @Volatile private var holdActive = false
+    @Volatile private var holdConnected = false
+    /** 当前保活帧（最新一次强度/指令） */
+    @Volatile private var holdFrame: ByteArray = ByteArray(0)
+    @Volatile private var holdIntervalMs: Long = 150
+    private var holdDeviceAddress: String = ""
+    private var holdServiceUuid: UUID? = null
+    private var holdCharUuid: UUID? = null
+    /** 保活写循环 Runnable（每 intervalMs 一帧） */
+    private var holdWriteLoop: Runnable? = null
+    /** 保活会话最近一次执行结果（JS 轮询） */
+    @Volatile private var holdLastResult: String? = null
+
     /** 最近一次 BLE 扫描结果（JS 侧轮询拉取） */
     @Volatile private var lastBleScanResults: String? = null
 
@@ -290,7 +309,8 @@ class BluetoothMcp(private val context: Context) {
             val charU = UUID.fromString(charUuid)
             val value = parseWriteData(dataHex)
 
-            // 断开旧连接
+            // 断开旧连接（含保活会话，避免同设备双连接互踢）
+            if (holdActive) stopHoldInternal(closeGatt = true)
             try { gatt?.disconnect(); gatt?.close() } catch (e: Exception) {}
             gatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
@@ -357,6 +377,210 @@ class BluetoothMcp(private val context: Context) {
         }
         // 否则按 UTF-8 文本发送
         return trimmed.toByteArray(Charsets.UTF_8)
+    }
+
+    // ---------------------------------------------------------------
+    // 4.5 BLE 保活写入会话（玩具类持续控制：周期性续帧，防设备 1~2s 自停）
+    // ---------------------------------------------------------------
+
+    /**
+     * 启动一个"保活写入会话"：连接设备 → 定位写特征 → 每 intervalMs 重发一次 dataHex。
+     * 断线自动重连；同一时刻只有一个保活会话。返回 {"ok":true,"starting":true}
+     */
+    fun bleHoldStart(deviceAddress: String, serviceUuid: String, charUuid: String, dataHex: String, intervalMs: Long): String {
+        if (!hasConnectPermission()) return ERR_NO_PERMISSION
+        return try {
+            val device = adapter?.getRemoteDevice(deviceAddress)
+                ?: return "{\"ok\":false,\"error\":\"设备不存在\"}"
+            val serviceU = UUID.fromString(serviceUuid)
+            val charU = UUID.fromString(charUuid)
+            val value = parseWriteData(dataHex)
+            if (value.isEmpty()) return "{\"ok\":false,\"error\":\"数据帧为空\"}"
+
+            stopHoldInternal(closeGatt = true)   // 先清旧会话（旧任务 + 旧连接）
+            holdDeviceAddress = deviceAddress
+            holdServiceUuid = serviceU
+            holdCharUuid = charU
+            holdFrame = value
+            holdIntervalMs = if (intervalMs in 50L..3000L) intervalMs else 150L
+            holdActive = true
+            holdConnected = false
+            holdChar = null
+            holdLastResult = "{\"ok\":true,\"connecting\":true}"
+            connectHoldDevice()
+            "{\"ok\":true,\"starting\":true,\"intervalMs\":$holdIntervalMs}"
+        } catch (e: Exception) {
+            Log.e(TAG, "BLE 保活启动失败: ${e.message}")
+            "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "保活启动失败")}}"
+        }
+    }
+
+    /** 更新保活会话当前帧（不重建连接），立即补发一次 */
+    fun bleHoldUpdate(dataHex: String): String {
+        if (!holdActive) return "{\"ok\":false,\"error\":\"保活会话未启动，请先 bleHoldStart\"}"
+        return try {
+            val value = parseWriteData(dataHex)
+            if (value.isEmpty()) return "{\"ok\":false,\"error\":\"数据帧为空\"}"
+            holdFrame = value
+            val g = holdGatt
+            val c = holdChar
+            if (g != null && holdConnected && c != null) {
+                writeChar(g, c, value)
+            }
+            holdLastResult = "{\"ok\":true,\"updated\":true,\"bytes\":${value.size}}"
+            "{\"ok\":true,\"updated\":true}"
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "更新失败")}}"
+        }
+    }
+
+    /** 停止保活会话（停循环、断开并关闭连接） */
+    fun bleHoldStop(): String {
+        return try {
+            stopHoldInternal(closeGatt = true)
+            "{\"ok\":true,\"stopped\":true}"
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "停止失败")}}"
+        }
+    }
+
+    /** 查询保活会话状态 */
+    fun bleHoldState(): String {
+        return try {
+            JSONObject().apply {
+                put("ok", true)
+                put("active", holdActive)
+                put("connected", holdConnected)
+                put("deviceAddress", holdDeviceAddress)
+                put("intervalMs", holdIntervalMs)
+                put("frameHex", holdFrame.joinToString("") { "%02x".format(it) })
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"状态读取失败\"}"
+        }
+    }
+
+    /** 取保活会话最近一次执行结果（JS 轮询） */
+    fun getHoldLastResult(): String = holdLastResult
+        ?: "{\"ok\":false,\"error\":\"尚无保活记录\"}"
+
+    /** 发起/重连保活连接（首次与断线自动重连共用） */
+    private fun connectHoldDevice() {
+        val adapter = adapter ?: return
+        val address = holdDeviceAddress
+        if (!holdActive || address.isEmpty()) return
+        try {
+            val device = adapter.getRemoteDevice(address)
+            // 关闭可能残留的旧连接对象
+            try { holdGatt?.close() } catch (e: Exception) {}
+            holdGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
+                override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        holdConnected = true
+                        holdLastResult = "{\"ok\":true,\"event\":\"connected\"}"
+                        Log.d(TAG, "BLE 保活已连接: $address")
+                        try { g.discoverServices() } catch (e: Exception) {}
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        holdConnected = false
+                        holdChar = null
+                        stopHoldWriteLoop()
+                        if (!holdActive) {
+                            try { g.close() } catch (e: Exception) {}
+                            if (holdGatt === g) holdGatt = null
+                            return
+                        }
+                        // 保活会话存活中：关旧连，自动重连
+                        holdLastResult = "{\"ok\":true,\"event\":\"disconnected_reconnecting\"}"
+                        try { g.close() } catch (e: Exception) {}
+                        if (holdGatt === g) holdGatt = null
+                        mainHandler.postDelayed({
+                            if (holdActive) connectHoldDevice()
+                        }, 800)
+                    }
+                }
+
+                override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+                    val svcU = holdServiceUuid
+                    val charU = holdCharUuid
+                    if (svcU == null || charU == null) return
+                    if (status != BluetoothGatt.GATT_SUCCESS) {
+                        holdLastResult = "{\"ok\":false,\"error\":\"保活服务发现失败 status=$status\"}"
+                        stopHoldInternal(closeGatt = true)
+                        return
+                    }
+                    val service = g.getService(svcU)
+                    val ch = service?.getCharacteristic(charU)
+                    if (ch == null) {
+                        holdLastResult = "{\"ok\":false,\"error\":\"保活未找到特征 $svcU/$charU\"}"
+                        stopHoldInternal(closeGatt = true)
+                        return
+                    }
+                    holdChar = ch
+                    holdLastResult = "{\"ok\":true,\"event\":\"ready\"}"
+                    startHoldWriteLoop(g, ch)
+                }
+
+                override fun onCharacteristicWrite(g: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        holdLastResult = "{\"ok\":true,\"writing\":true}"
+                    } else {
+                        holdLastResult = "{\"ok\":false,\"error\":\"保活写入失败 status=$status\"}"
+                    }
+                }
+            })
+        } catch (e: Exception) {
+            Log.e(TAG, "保活连接发起失败: ${e.message}")
+            holdLastResult = "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "保活连接失败")}}"
+            mainHandler.postDelayed({
+                if (holdActive) connectHoldDevice()
+            }, 1500)
+        }
+    }
+
+    /** 每 intervalMs 写一次当前帧 */
+    private fun startHoldWriteLoop(g: BluetoothGatt, ch: BluetoothGattCharacteristic) {
+        stopHoldWriteLoop()
+        holdWriteLoop = object : Runnable {
+            override fun run() {
+                if (!holdActive || !holdConnected) return
+                try {
+                    writeChar(g, ch, holdFrame)
+                } catch (e: Exception) {
+                    Log.e(TAG, "保活写入异常: ${e.message}")
+                }
+                mainHandler.postDelayed(this, holdIntervalMs)
+            }
+        }
+        // 先立即补一帧，随后进入周期循环
+        try { writeChar(g, ch, holdFrame) } catch (e: Exception) {}
+        mainHandler.postDelayed(holdWriteLoop!!, holdIntervalMs)
+    }
+
+    private fun stopHoldWriteLoop() {
+        val r = holdWriteLoop
+        if (r != null) {
+            mainHandler.removeCallbacks(r)
+            holdWriteLoop = null
+        }
+    }
+
+    /** 停止保活会话内部逻辑 */
+    private fun stopHoldInternal(closeGatt: Boolean) {
+        holdActive = false
+        holdConnected = false
+        holdChar = null
+        stopHoldWriteLoop()
+        holdDeviceAddress = ""
+        holdServiceUuid = null
+        holdCharUuid = null
+        holdFrame = ByteArray(0)
+        if (closeGatt) {
+            try {
+                holdGatt?.disconnect()
+                holdGatt?.close()
+            } catch (e: Exception) {}
+            holdGatt = null
+        }
     }
 
     // ---------------------------------------------------------------
@@ -458,7 +682,8 @@ class BluetoothMcp(private val context: Context) {
                     put("ok", false)
                     put("error", "设备不存在")
                 }.toString()
-            // 断开旧连接
+            // 断开旧连接（含保活会话）
+            if (holdActive) stopHoldInternal(closeGatt = true)
             try { gatt?.disconnect(); gatt?.close() } catch (e: Exception) {}
             gatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
                 override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
@@ -547,6 +772,7 @@ class BluetoothMcp(private val context: Context) {
             sppSocket?.close()
         } catch (e: Exception) {}
         sppSocket = null
+        stopHoldInternal(closeGatt = true)
         try {
             gatt?.disconnect()
             gatt?.close()

@@ -3607,7 +3607,8 @@
                           <div style="margin-top:8px; font-size:10px; color:var(--text-secondary); line-height:1.5;">
                             * 每个设备可独立开关"注入提示词"；开启后 AI 能感知该设备，并通过
                             <code style="background:#f1f5f9; padding:1px 4px; border-radius:4px;">[BLUETOOTH_CMD]</code> 指令像放歌一样随时控制它（耳机类可调音量/播放暂停/切歌；BLE/串口设备点击"能力配置"定义命令映射）。
-                            <br>* Android 13+ 系统限制应用直接开关蓝牙，请手动在系统设置中开关。
+                            <br>* BLE 玩具（如 ANKNI MR-Z 等谜姬/安可尼设备）：进"能力配置"会自动套用内置协议（保活持续震动），保存后点<b style="color:#6366f1;">复制AI提示词</b>可把它的控制规则粘进角色卡；用户也可按同样流程添加自己的其它蓝牙设备。
+                            <br>* Android 13+ 系统限制应用直接开关蓝牙；12+ 需允许"附近设备"权限（被拒后可点刷新重新申请或跳系统设置开启）。
                           </div>
                         </div>
                       </details>
@@ -3636,13 +3637,31 @@
                               <button onclick="mcpSystem.discoverBleServices()" style="flex-shrink:0; padding:5px 8px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">发现服务</button>
                             </div>
                             <div id="bt-profile-svc-result" style="font-size:10px; color:var(--text-secondary); line-height:1.5; max-height:150px; overflow-y:auto; background:#f8fafc; border-radius:8px; padding:6px;"></div>
+                            <div style="display:flex; gap:4px; margin-top:6px;">
+                              <button onclick="mcpSystem.applyPresetDetect()" style="flex:1; padding:5px 6px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #16a34a; background:#f0fdf4; color:#15803d; cursor:pointer;">套用内置预设(ANKNI等)</button>
+                              <button onclick="mcpSystem.discoverBleServices()" style="flex:1; padding:5px 6px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #0891b2; background:#ecfeff; color:#0e7490; cursor:pointer;">重新发现服务</button>
+                            </div>
+                            <label style="display:flex; align-items:center; gap:6px; font-size:10px; color:var(--text-primary); margin-top:8px; cursor:pointer;">
+                              <input type="checkbox" id="bt-profile-hold" onchange="mcpSystem.onBtHoldToggle()" style="accent-color:#a855f7;">
+                              <span style="font-weight:700;">保活持续模式</span>
+                              <span style="color:var(--text-secondary);">(玩具类周期续帧防1~2s自停)</span>
+                            </label>
+                            <div id="bt-profile-hold-ms-row" style="display:none; font-size:10px; color:var(--text-secondary); margin:4px 0 6px 20px;">
+                              续帧间隔：<input type="number" id="bt-profile-hold-ms" value="150" min="50" max="3000" style="width:64px; padding:3px 4px; border:1px solid var(--border); border-radius:6px; font-size:10px;"> ms（默认150）
+                            </div>
+                            <div style="display:flex; gap:4px; margin-top:6px;">
+                              <button onclick="mcpSystem.testBtProfile()" style="flex:1; padding:5px 6px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #f59e0b; background:#fffbeb; color:#b45309; cursor:pointer;">试振1.2秒</button>
+                              <button onclick="mcpSystem.stopBtHoldTest()" style="flex:1; padding:5px 6px; font-size:10px; font-weight:700; border-radius:6px; border:1px solid #d1d5db; background:#f9fafb; color:#6b7280; cursor:pointer;">立即停</button>
+                              <button onclick="mcpSystem.copyBtPromptFromEditor()" style="flex:1.4; padding:5px 6px; font-size:10px; font-weight:700; border-radius:6px; border:1.5px solid #6366f1; background:#eef2ff; color:#4338ca; cursor:pointer;">复制AI提示词</button>
+                            </div>
                           </div>
                           <div style="font-size:11px; font-weight:700; color:var(--text-primary); margin:8px 0 4px 0;">命令映射表（AI 语义命令 → 设备数据）</div>
                           <div id="bt-profile-command-rows"></div>
                           <button onclick="mcpSystem.addBtProfileCommandRow()" style="margin-top:4px; width:100%; padding:6px; font-size:11px; font-weight:700; border-radius:8px; border:1.5px dashed #a855f7; background:#faf5ff; color:#9333ea; cursor:pointer;">+ 添加命令</button>
                           <div style="font-size:10px; color:var(--text-secondary); line-height:1.6; margin-top:8px;">
-                            占位符：{value} 十进制 · {value:byte} 单字节十六进制 · {value:hex} 两位十六进制 · {on}=1 · {off}=0<br>
-                            示例（BLE）：01{value:byte} → 01 0A；示例（串口）：V{value} → V5
+                            占位符：{value} 十进制 · {value:byte} 单字节十六进制 · {value:hex} 两位十六进制 · {on}=1 · {off}=0 · <b style="color:#9333ea;">{csum}</b>=对前序全部字节累加取低8位(hex)<br>
+                            示例（ANKNI 震动帧）：AA0801{value:hex}{csum} → 强度50 = AA080132E5 · 停止帧可直接写 AA080100B3<br>
+                            自定义设备做法：先把设备"发现服务"出可写特征 → 参考上面填模板 → 试振验证 → 保存并开启注入 → 复制AI提示词即可让角色按命令字控制
                           </div>
                           <button onclick="mcpSystem.saveBtProfile()" style="margin-top:10px; width:100%; padding:8px; font-size:12px; font-weight:700; border-radius:8px; border:none; background:var(--primary); color:#fff; cursor:pointer;">保存配置</button>
                         </div>

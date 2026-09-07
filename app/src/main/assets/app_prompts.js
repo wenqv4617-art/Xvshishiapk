@@ -377,6 +377,7 @@ async function buildGlobalSystemPrompt(sessionId) {
 [BLUETOOTH_CMD]{"action":"control","device":"耳机","command":"volume_down"}
 [BLUETOOTH_CMD]{"action":"control","device":"耳机","command":"volume_set","value":40}
 [BLUETOOTH_CMD]{"action":"control","device":"智能硬件","command":"vibrate","value":128}
+- 标注"·持续"的能力（保活型设备，如 ANKNI 震动玩具的 vibrate）：发出一次后设备会保持该强度持续运行，直到你再次发强度指令（value 0-100）或发送该设备的 stop/off 命令才停止。请像控制一首"放歌"一样把握节奏，剧情结束或需要停止时务必发送 stop 或强度 value:0。
 保留原始通道（高级）：send（SPP 串口发送）、ble_write（BLE 特征值写入）、disconnect、toggle、scan、info 用法不变。
 警告：只可控制用户已开启"注入"开关并出现在上面列表中的设备；command 严禁编造能力列表以外的命令 id。执行后请在正文中自然告知用户操作结果。`;
         }
