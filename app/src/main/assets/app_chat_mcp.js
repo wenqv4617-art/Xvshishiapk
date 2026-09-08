@@ -1021,13 +1021,44 @@
           // 给 requestRebind→onListenerConnected→快照 留出时间，再试一次
           setTimeout(() => { try { this.syncNowPlaying(round + 1); } catch(e) {} }, 900);
         } else {
-          statusEl.innerHTML = (data.message || "当前没有检测到正在播放的媒体") +
-            "　<span style=\"color:#6366f1; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.debugNowPlaying()\">诊断</span>";
+          // 判断是不是"服务未被系统绑定"（权限开着但没拉起服务）
+          let alive = null;
+          try {
+            const dbg = JSON.parse((window.AndroidMCP.getNowPlayingDebug && window.AndroidMCP.getNowPlayingDebug()) || "{}");
+            alive = dbg.serviceAlive;
+          } catch(e) {}
+          if (alive === false) {
+            statusEl.innerHTML = "系统没有绑定通知监听服务（权限虽开但服务未运行）　" +
+              "<span style=\"color:#dc2626; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.repairNowPlaying()\">一键修复</span>　" +
+              "<span style=\"color:#6366f1; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.debugNowPlaying()\">诊断</span>";
+          } else {
+            statusEl.innerHTML = (data.message || "当前没有检测到正在播放的媒体") +
+              "　<span style=\"color:#6366f1; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.debugNowPlaying()\">诊断</span>";
+          }
           try { localStorage.removeItem("mcp_now_playing"); } catch(e) {}
         }
       } catch(e) {
         finish("读取失败：" + e.message);
       }
+    },
+
+    /** 一键修复：强制系统重新绑定通知监听服务（部分 ROM 权限开着却不拉起服务） */
+    repairNowPlaying: function() {
+      if (!(window.AndroidMCP && typeof window.AndroidMCP.repairNotificationListener === 'function')) {
+        showToast("当前环境不支持一键修复，请到系统设置里关闭再打开\"通知使用权\"");
+        return;
+      }
+      try {
+        const r = JSON.parse(window.AndroidMCP.repairNotificationListener() || "{}");
+        if (r && r.ok) {
+          showToast(r.aliveBefore ? "已请求重绑监听服务，正在重新读取…" : "已强制重绑监听服务，正在重新读取…");
+        } else {
+          showToast("修复失败：" + ((r && r.error) || "未知"));
+        }
+      } catch(e) {
+        showToast("修复异常：" + (e.message || e));
+      }
+      setTimeout(() => { try { this.syncNowPlaying(0); } catch(e) {} }, 1500);
     },
 
     /** 诊断"正在播放"为何读不到：看通知监听是否真的在收数据、媒体判定卡在哪一步 */
@@ -1047,7 +1078,12 @@
           "最近收到通知：" + (d.lastAnyNotification || "（一条都没收到 → 系统没投递通知给本应用）"),
           "Android SDK：" + d.sdkInt
         ];
-        if (statusEl) statusEl.innerText = lines.join("\n");
+        let html = this._escapeHtml(lines.join("\n")).replace(/\n/g, "<br>");
+        if (d.serviceAlive === false) {
+          html += "<br><span style=\"color:#dc2626;\">处理：</span><span style=\"color:#dc2626; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.repairNowPlaying()\">一键修复（强制重绑）</span>" +
+            "<br><span style=\"color:var(--text-secondary);\">仍不行：系统设置里把本应用\"通知使用权\"关掉再打开；并在电池/应用管理里允许后台运行、关闭省电限制。</span>";
+        }
+        if (statusEl) statusEl.innerHTML = html;
         showToast("诊断结果已显示");
       } catch(e) {
         showToast("诊断失败：" + e.message);

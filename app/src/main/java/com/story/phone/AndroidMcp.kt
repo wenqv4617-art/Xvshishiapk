@@ -1302,6 +1302,50 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * 一键修复"通知监听服务未被系统绑定"（部分 ROM：权限开着但服务死活不绑定）。
+     * 先请求重绑；仍无效则用"组件禁用→再启用"强制系统重新拉起监听服务。
+     */
+    @JavascriptInterface
+    fun repairNotificationListener(): String {
+        return try {
+            val cn = android.content.ComponentName(context, NowPlayingListenerService::class.java)
+            val grantedBefore = isNotificationListenerGranted()
+            android.service.notification.NotificationListenerService.requestRebind(cn)
+            NowPlayingListenerService.requestSnapshot()
+            val aliveBefore = NowPlayingListenerService.isServiceAlive()
+            if (!aliveBefore) {
+                try {
+                    val pm = context.packageManager
+                    pm.setComponentEnabledSetting(
+                        cn,
+                        android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                        android.content.pm.PackageManager.DONT_KILL_APP
+                    )
+                    Thread {
+                        try {
+                            Thread.sleep(450)
+                            pm.setComponentEnabledSetting(
+                                cn,
+                                android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                                android.content.pm.PackageManager.DONT_KILL_APP
+                            )
+                        } catch (e: Exception) { e.printStackTrace() }
+                    }.start()
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            JSONObject().apply {
+                put("ok", true)
+                put("grantedBefore", grantedBefore)
+                put("aliveBefore", aliveBefore)
+                put("grantedAfter", isNotificationListenerGranted())
+                put("action", if (aliveBefore) "rebind" else "toggle_component")
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "修复失败")}}"
+        }
+    }
+
     /** 诊断信息：判断通知监听是否真的在收数据、媒体判定卡在哪一步 */
     @JavascriptInterface
     fun getNowPlayingDebug(): String {
