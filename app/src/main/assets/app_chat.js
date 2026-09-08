@@ -4872,6 +4872,7 @@ function bindChatAppEvents() {
 
       try {
         onlineAbortController = new AbortController();
+        window._visionUsedInRequest = false; // 每次请求重置视觉标记，避免上一次的带图状态污染降级判断
         onlineAbortController._reqSessionId = reqSessionId; // 标记本次请求所属会话
         const presetId = localStorage.getItem("global_api_preset_id");
         if (!presetId) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
@@ -5115,7 +5116,7 @@ function bindChatAppEvents() {
             try {
               const data = JSON.parse(h.content);
               const isRealPhoto = typeof data.url === 'string' && /^data:image\//i.test(data.url) && !/svg\+xml/i.test(data.url);
-              if (isRealPhoto && visionSendEnabled(api)) {
+              if (isRealPhoto && h.senderType === 'user' && visionSendEnabled(api)) {
                 // 视觉模型：把真实照片以 OpenAI vision 格式随消息一起发送
                 visionImageUrl = data.url;
                 displayContent = data.text ? `[你发送了一张真实照片，附言：${data.text}]` : '[你发送了一张真实照片]';
@@ -7755,6 +7756,7 @@ async function triggerOfflineReply() {
 
   try {
     offlineAbortController = new AbortController();
+    window._visionUsedInRequest = false;
     const presetId = localStorage.getItem("global_api_preset_id");
     if (!presetId) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置！");
     const api = await db.api_presets.get(Number(presetId));
@@ -7832,7 +7834,7 @@ async function triggerOfflineReply() {
             try {
               const d = JSON.parse(h.content);
               const isRealPhoto = typeof d.url === 'string' && /^data:image\//i.test(d.url) && !/svg\+xml/i.test(d.url);
-              if (isRealPhoto && visionSendEnabled(api)) {
+              if (isRealPhoto && h.senderType === 'user' && visionSendEnabled(api)) {
                 visionImageUrl = d.url;
                 displayContent = d.text ? `[你发送了一张真实照片，附言：${d.text}]` : '[你发送了一张真实照片]';
               } else {

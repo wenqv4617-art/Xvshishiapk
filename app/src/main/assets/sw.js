@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v65'; // v65: 发图界面文案对齐(照片可选说明/视觉模型直接看图)；开发日志补记分享链接卡片与视觉识别批次; v1.3.4
+const CACHE_NAME = 'story-phone-v66'; // v66: 视觉发送仅限用户消息(角色生成图不再误发assistant图片导致API报错)+每次请求重置视觉降级标记; v1.3.5
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
