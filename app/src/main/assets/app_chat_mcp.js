@@ -995,6 +995,17 @@
         try {
           if (typeof window.AndroidMCP.refreshNowPlayingMedia === 'function') window.AndroidMCP.refreshNowPlayingMedia();
         } catch(e) {}
+        // 若监听服务根本没被系统绑定（部分 ROM 权限开着也不拉服务），静默自动强制重绑一次
+        try {
+          const dbg = JSON.parse((window.AndroidMCP.getNowPlayingDebug && window.AndroidMCP.getNowPlayingDebug()) || "{}");
+          const now = Date.now();
+          if (dbg && dbg.serviceAlive === false &&
+              typeof window.AndroidMCP.repairNotificationListener === 'function' &&
+              now - (this._npAutoRepairAt || 0) > 5 * 60 * 1000) {
+            this._npAutoRepairAt = now;
+            window.AndroidMCP.repairNotificationListener();
+          }
+        } catch(e) {}
       }
       statusEl.innerText = round === 0 ? "正在读取设备正在播放的媒体..." : "正在播放：仍未捕获，二次读取中...";
       const finish = (text) => { statusEl.innerText = text; };
@@ -1017,8 +1028,8 @@
             }));
           } catch(e) {}
           if (round === 0) showToast("已同步正在播放：" + title);
-        } else if (round < 2) {
-          // 给 requestRebind→onListenerConnected→快照 留出时间，再试一次
+        } else if (round < 4) {
+          // 给自动修复(组件重绑)+快照 留出时间，最多再重试 4 次(约3.6秒)
           setTimeout(() => { try { this.syncNowPlaying(round + 1); } catch(e) {} }, 900);
         } else {
           // 判断是不是"服务未被系统绑定"（权限开着但没拉起服务）
@@ -1028,8 +1039,8 @@
             alive = dbg.serviceAlive;
           } catch(e) {}
           if (alive === false) {
-            statusEl.innerHTML = "系统没有绑定通知监听服务（权限虽开但服务未运行）　" +
-              "<span style=\"color:#dc2626; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.repairNowPlaying()\">一键修复</span>　" +
+            statusEl.innerHTML = "系统没有绑定通知监听服务（已自动尝试修复）　" +
+              "<span style=\"color:#dc2626; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.repairNowPlaying()\">再修一次</span>　" +
               "<span style=\"color:#6366f1; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.debugNowPlaying()\">诊断</span>";
           } else {
             statusEl.innerHTML = (data.message || "当前没有检测到正在播放的媒体") +
