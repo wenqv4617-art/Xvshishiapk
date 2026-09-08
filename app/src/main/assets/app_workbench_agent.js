@@ -158,6 +158,46 @@
     };
   };
 
+  // ---- 工具结果 → 卡片状态/内容（正式卡片与「流式升级卡」共用，避免两条路径行为不一致） ----
+  function wbToolResultText(result) {
+    var ok = !!(result && result.ok);
+    if (!ok) return (result && result.error) || '未知错误';
+    if (result.entries && Array.isArray(result.entries)) return '共 ' + result.entries.length + ' 项: ' + result.entries.map(function (en) { return en.name + (en.type === 'dir' ? '/' : ''); }).join(', ').slice(0, 1000);
+    if (result.result !== undefined) return String(result.result).slice(0, 3000);
+    if (result.content !== undefined) return String(result.content).slice(0, 3000);
+    // fetch_url 等抓取类工具：正文优先（text），其次 raw body
+    if (result.text !== undefined) {
+      var head = 'HTTP ' + (result.status || 200) + (result.title ? ' · ' + result.title : '') + (result.jsRendered ? ' · 疑似 JS 动态渲染' : '') + '\n';
+      return head + String(result.text).slice(0, 3000);
+    }
+    if (result.body !== undefined) return String(result.body).slice(0, 3000);
+    if (result.summary !== undefined) return String(result.summary).slice(0, 3000);
+    return result.message || '执行完成';
+  }
+
+  function wbApplyToolResult(self, card, result) {
+    if (!card) return;
+    var status = card.querySelector('.wb-tool-status');
+    var box = card.querySelector('.wb-tool-result');
+    var ok = !!(result && result.ok);
+    if (status) {
+      if (ok) {
+        status.style.color = '#15803d';
+        status.innerHTML = self.svg('<path d="M20 6 9 17l-5-5"/>', 11) + ' 完成';
+      } else {
+        status.style.color = '#dc2626';
+        status.innerHTML = self.svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>', 11) + ' 失败';
+      }
+    }
+    if (box) {
+      box.textContent = wbToolResultText(result);
+      box.style.color = ok ? '#475569' : '#b91c1c';
+    }
+    // 完成后把标题恢复为等宽字体（与正式卡片视觉一致）
+    var nameEl = card.querySelector('.wb-tool-head > span:nth-child(2)');
+    if (nameEl) nameEl.style.fontFamily = 'ui-monospace,monospace';
+  }
+
   // ---- 工具调用卡片：Claude 风格状态机（执行中→完成/失败，可折叠） ----
   WB.appendToolCard = function (tool, args) {
     var self = this;
@@ -200,26 +240,9 @@
     this.scrollToBottom();
     return {
       _render: function (result) {
-        var status = card.querySelector('.wb-tool-status');
-        var box = card.querySelector('.wb-tool-result');
-        if (!status || !box) return;
-        var ok = !!(result && result.ok);
-        var txt = '';
-        if (ok) {
-          status.style.color = '#15803d';
-          status.innerHTML = self.svg('<path d="M20 6 9 17l-5-5"/>', 11) + ' 完成';
-          if (result.entries && Array.isArray(result.entries)) txt = '共 ' + result.entries.length + ' 项: ' + result.entries.map(function (en) { return en.name + (en.type === 'dir' ? '/' : ''); }).join(', ').slice(0, 1000);
-          else if (result.result !== undefined) txt = String(result.result).slice(0, 3000);
-          else if (result.content !== undefined) txt = String(result.content).slice(0, 3000);
-          else txt = result.message || '执行完成';
-        } else {
-          status.style.color = '#dc2626';
-          status.innerHTML = self.svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>', 11) + ' 失败';
-          txt = (result && result.error) || '未知错误';
-        }
-        box.textContent = txt;
-        box.style.color = ok ? '#475569' : '#b91c1c';
-      }
+        wbApplyToolResult(self, card, result);
+      },
+      _card: card
     };
   };
 
@@ -291,7 +314,18 @@
           status.style.color = '#dc2626';
           status.innerHTML = self.svg('<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/>', 11) + ' 失败';
         }
-        if (streamPre) streamPre.textContent = msg || '工具调用失败';
+        var box = card.querySelector('.wb-tool-result');
+        if (box) {
+          box.textContent = msg || '工具调用失败';
+          box.style.color = '#b91c1c';
+        } else if (streamPre) {
+          streamPre.textContent = msg || '工具调用失败';
+        }
+      },
+      // 关键：占位卡片被 _upgrade 复用为正式卡片后，必须同样能收到执行结果，
+      // 否则状态会永远停在「执行中…」（此前该对象缺 _render，工具早已跑完却不更新状态）
+      _render: function (result) {
+        wbApplyToolResult(self, card, result);
       },
       _card: card
     };
@@ -326,6 +360,7 @@
 
     // 无硬性轮数限制：agent 自主决定是否继续调用工具（仅保留 999 安全兜底防死循环）
     var _lastChunk = 0;
+    var openPendingCard = null; // 仍处于「执行中」的流式占位卡（中断/异常时兜底收尾，避免状态永远卡住）
     while (loops < 999 && !aborted) {
       loops++;
       var reply = '';
@@ -363,6 +398,7 @@
             if (toolAt >= 0) {
               if (!pendingCard) {
                 pendingCard = self.appendToolPendingCard();
+                openPendingCard = pendingCard;
               }
               if (pendingCard && pendingCard._update) {
                 pendingCard._update(s.slice(toolAt));
@@ -375,6 +411,7 @@
       } catch (e) {
         if (e && e.name === 'AbortError') { aborted = true; }
         else {
+          if (openPendingCard && openPendingCard._fail) { openPendingCard._fail('请求失败：' + (e && e.message ? e.message : String(e))); openPendingCard = null; }
           self.appendSysMsg('请求失败: ' + (e && e.message ? e.message : String(e)));
           self.state.sending = false;
           self._setSendBtnState(false);
@@ -398,7 +435,7 @@
       // ---- 格式掉链子纠偏（对标 DSH 的错误反馈）：检测到 WB_TOOL 标记但解析出 0 个有效标签 → 说明模型输出格式错误，注入错误消息让它重试，绝不默默降级 ----
       if (!toolCalls.length && self.hasToolTag && self.hasToolTag(reply) && redoGuard < 3) {
         redoGuard++;
-        if (pendingCard && pendingCard._fail) pendingCard._fail('工具调用格式错误，已请求重试');
+        if (pendingCard && pendingCard._fail) { pendingCard._fail('工具调用格式错误，已请求重试'); openPendingCard = null; }
         await self.addMsg({ convId: conv.id, seq: seq++, role: 'assistant', content: reply, createdAt: Date.now() });
         messages = messages.concat([
           { role: 'assistant', content: reply },
@@ -431,7 +468,7 @@
           continue;
         }
         // 最终回复：Markdown 渲染（含思考折叠块）
-        if (pendingCard && pendingCard._fail) pendingCard._fail('未生成有效工具调用');
+        if (pendingCard && pendingCard._fail) { pendingCard._fail('未生成有效工具调用'); openPendingCard = null; }
         if (bubble && bubble._finalize) bubble._finalize(reply);
         else if (bubble && bubble._el) bubble._el.textContent = wbStripToolTag(reply);
         break;
@@ -470,13 +507,20 @@
           pendingCard._upgrade(tc.tool, tc.arguments);
           card = pendingCard;
           pendingCard = null;
+          openPendingCard = null; // 已升级为正式卡片，交由 _render 收尾
         } else {
           card = self.appendToolCard(tc.tool, tc.arguments);
         }
         var result = await self.executeTool(tc.tool, tc.arguments, conv);
         if (card && card._render) card._render(result);
         var resultText = JSON.stringify(result);
-        if (resultText.length > 6000) resultText = resultText.slice(0, 6000) + '...(截断)';
+        // 工具结果上限：抓网页/接口的正文较长，6000 字符会把内容砍掉一半；
+        // 提高到 14000 并保留「头 75% + 尾 25%」，避免只看到开头。
+        var MAX_RESULT_CHARS = 14000;
+        if (resultText.length > MAX_RESULT_CHARS) {
+          var headLen = Math.floor(MAX_RESULT_CHARS * 0.75);
+          resultText = resultText.slice(0, headLen) + '\n...(中间省略 ' + (resultText.length - MAX_RESULT_CHARS) + ' 字符)...\n' + resultText.slice(-(MAX_RESULT_CHARS - headLen));
+        }
         await self.addMsg({ convId: conv.id, seq: seq++, role: 'tool', content: resultText, createdAt: Date.now() });
         // 每个工具结果并入 user 消息（保持 system 前缀稳定，利于缓存命中）
         messages = messages.concat([
@@ -495,6 +539,13 @@
         messages = messages.slice(-30);
         messages = keepSys.concat(messages);
       }
+    }
+
+    // 兜底收尾：循环因中断/异常退出时，仍处于「执行中」的占位卡必须落到失败态，
+    // 否则小条会一直转圈（用户反馈的"明明执行完了还显示执行中"另一类诱因）
+    if (openPendingCard && openPendingCard._fail) {
+      openPendingCard._fail(aborted ? '已中断' : '未收到执行结果');
+      openPendingCard = null;
     }
 
     var convPatch = {

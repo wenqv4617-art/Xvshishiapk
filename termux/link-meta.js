@@ -17,6 +17,7 @@
 //                                        likedCount, collectedCount, commentCount, shareCount,
 //                                        publishTime, tags[], noteId, comments[], commentsHasMore}
 //   GET /img?url=<图片地址>     → 原样转发图片字节（Access-Control-Allow-Origin: *）
+//   GET /raw?url=<目标链接>     → 原样转发页面 HTML（工作台 fetch_url 抓正文兜底）
 // 管理：xvshishi start link-meta
 // ============================================================
 
@@ -496,6 +497,15 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { 'Content-Type': r.type, 'Cache-Control': 'public, max-age=600', 'Content-Length': r.buf.length });
       res.end(r.buf);
     }).catch((e) => sendJson(res, 502, { ok: false, error: e.message || 'image fetch failed' }));
+  }
+  if (u.pathname === '/raw') {
+    // 原始页面代理：给工作台 fetch_url 做「抓正文」兜底（返回完整 HTML，而非解析后的 meta）
+    const target = u.searchParams.get('url') || '';
+    if (!/^https?:\/\//i.test(target)) return sendJson(res, 400, { ok: false, error: 'missing or invalid url' });
+    return fetchFollow(target).then((r) => {
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(r.body || '');
+    }).catch((e) => sendJson(res, 502, { ok: false, error: e.message || 'fetch failed' }));
   }
   if (u.pathname !== '/meta') {
     return sendJson(res, 404, { ok: false, error: 'not found', usage: '/meta?url=https://xhslink.cn/o/xxxx' });

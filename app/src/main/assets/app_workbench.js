@@ -169,6 +169,279 @@
       try { return (await db.wb_messages.where("convId").equals(Number(convId)).sortBy("seq")).pop() || null; } catch (e) { return null; }
     },
 
+    // ==================== 网页读取：原始抓取 + 正文抽取 ====================
+    // 背景：早期 fetch_url 直接返回原始 HTML 的前 8000 字符，而真实页面这 8000 字符
+    // 几乎全在 <head>（meta/内联样式/脚本）里，正文根本没截到 → 模型只看到 meta 标签。
+    // 现在改为：拿到完整 HTML 后做「正文抽取」（保留标题/小标题/列表/链接/表格结构），
+    // 再交给模型；同时对 JS 动态渲染页面给出显式标记与建议。
+    _UA: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+
+    /** 原始抓取（多通道自适应）：原生桥 → 直连 → cors-proxy:3001 → link-meta:3003/raw → mcpFetch(含公共代理) */
+    rawFetch: async function (url, method, headers, body) {
+      var self = this;
+      var hdrs = Object.assign({
+        "User-Agent": self._UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8"
+      }, headers || {});
+      var errors = [];
+      var pickCtype = function (h) {
+        var out = "";
+        if (!h) return out;
+        if (typeof h.get === "function") { try { return String(h.get("content-type") || ""); } catch (e) { return ""; } }
+        Object.keys(h).forEach(function (k) { if (k.toLowerCase() === "content-type") out = String(h[k] || ""); });
+        return out;
+      };
+
+      // 1) APK 原生桥（完全绕过 WebView CORS）
+      if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === "function") {
+        try {
+          var nativeRes = window.AndroidMCP.sendNativeHttpRequest(url, method, JSON.stringify(hdrs), body || "");
+          if (nativeRes) {
+            var pr = JSON.parse(nativeRes);
+            if (pr && typeof pr.body === "string" && (pr.status > 0)) {
+              return { ok: pr.status >= 200 && pr.status < 300, status: pr.status, text: pr.body, contentType: pickCtype(pr.headers), via: "native" };
+            }
+          }
+        } catch (e) { errors.push("native: " + e.message); }
+      }
+
+      // 2) 浏览器直连
+      try {
+        var res = await fetch(url, { method: method, headers: hdrs, body: (body && method !== "GET") ? body : undefined });
+        return { ok: res.ok, status: res.status, text: await res.text(), contentType: pickCtype(res.headers), via: "direct" };
+      } catch (e) { errors.push("direct: " + e.message); }
+
+      // 3) 本地代理（Termux 服务）
+      var localProxies = [
+        { base: "http://127.0.0.1:3001/proxy?url=", via: "cors-proxy:3001" },
+        { base: "http://127.0.0.1:3003/raw?url=", via: "link-meta:3003" }
+      ];
+      for (var i = 0; i < localProxies.length; i++) {
+        try {
+          var r2 = await fetch(localProxies[i].base + encodeURIComponent(url));
+          if (r2 && r2.ok) return { ok: true, status: r2.status, text: await r2.text(), contentType: pickCtype(r2.headers), via: localProxies[i].via };
+          errors.push(localProxies[i].via + ": HTTP " + (r2 && r2.status));
+        } catch (e2) { errors.push(localProxies[i].via + ": " + e2.message); }
+      }
+
+      // 4) MCP 通用引擎（含公共代理容灾）
+      try {
+        if (window.mcpClientSystem && typeof window.mcpClientSystem.mcpFetch === "function") {
+          var r3 = await window.mcpClientSystem.mcpFetch(url, { method: method, headers: hdrs, body: (body && method !== "GET") ? body : undefined });
+          if (r3) return { ok: r3.ok !== false, status: r3.status || 200, text: await r3.text(), contentType: pickCtype(r3.headers), via: "mcpFetch" };
+        }
+      } catch (e3) { errors.push("mcpFetch: " + e3.message); }
+
+      return { ok: false, error: "抓取失败（所有通道均不可用）: " + errors.join("；") };
+    },
+
+    /** HTML 实体解码 */
+    _decodeEntities: function (s) {
+      var map = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " ", "#39": "'", "#34": "\"", "#x27": "'", "#x2F": "/", ldquo: "“", rdquo: "”", hellip: "…", mdash: "—", ndash: "–" };
+      return String(s || "").replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, function (m, code) {
+        if (map[code] !== undefined) return map[code];
+        if (code.charAt(0) === "#") {
+          var num = code.charAt(1).toLowerCase() === "x" ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
+          if (!isNaN(num) && num > 0 && num < 1114112) { try { return String.fromCodePoint(num); } catch (e) { return m; } }
+        }
+        return m;
+      });
+    },
+
+    /**
+     * HTML → 可读正文（保留标题层级 / 列表 / 链接 / 表格）
+     * 返回 { title, description, text, links[], embedded[], scriptCount, jsonLd[] }
+     */
+    htmlToText: function (html) {
+      var raw = String(html || "");
+      var out = { title: "", description: "", text: "", links: [], embedded: [], scriptCount: 0, jsonLd: [] };
+
+      // 标题与描述（从 head 里取，作为补充信息而非正文）
+      var tm = raw.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+      if (tm) out.title = this._decodeEntities(tm[1].replace(/\s+/g, " ")).trim();
+      var dm = raw.match(/<meta[^>]+(?:name|property)=["'](?:description|og:description|twitter:description)["'][^>]*>/i);
+      if (dm) {
+        var dc = dm[0].match(/content=["']([\s\S]*?)["']/i);
+        if (dc) out.description = this._decodeEntities(dc[1]).replace(/\s+/g, " ").trim();
+      }
+
+      // JSON-LD
+      var ldRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi, lm;
+      while ((lm = ldRe.exec(raw)) !== null) {
+        var ldTxt = lm[1].trim();
+        if (ldTxt) out.jsonLd.push(ldTxt.slice(0, 2000));
+      }
+
+      // 内嵌应用状态（SPA 常见：服务端把数据塞进 JSON 供前端渲染）
+      var statePatterns = [
+        /<script[^>]+id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+        /window\.__NUXT__\s*=\s*([\s\S]*?);?\s*<\/script>/i,
+        /window\.__INITIAL_STATE__\s*=\s*([\s\S]*?);?\s*<\/script>/i,
+        /window\.__INITIAL_DATA__\s*=\s*([\s\S]*?);?\s*<\/script>/i,
+        /window\.__APOLLO_STATE__\s*=\s*([\s\S]*?);?\s*<\/script>/i,
+        /window\.__PRELOADED_STATE__\s*=\s*([\s\S]*?);?\s*<\/script>/i,
+        /window\.__data\s*=\s*([\s\S]*?);?\s*<\/script>/i
+      ];
+      statePatterns.forEach(function (re) {
+        var m = raw.match(re);
+        if (m && m[1] && m[1].length > 40) out.embedded.push({ key: (re.source.match(/__([A-Za-z_]+)__|__data/) || ["embedded"])[0], json: m[1].trim() });
+      });
+
+      // 去噪：脚本/样式/注释/内联模板
+      var body = raw
+        .replace(/<!--[\s\S]*?-->/g, " ")
+        .replace(/<script[\s\S]*?<\/script>/gi, " ")
+        .replace(/<style[\s\S]*?<\/style>/gi, " ")
+        .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+        .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+        .replace(/<canvas[\s\S]*?<\/canvas>/gi, " ")
+        .replace(/<template[\s\S]*?<\/template>/gi, " ")
+        .replace(/<iframe[\s\S]*?<\/iframe>/gi, " ");
+      out.scriptCount = (raw.match(/<script/gi) || []).length;
+
+      // 链接先抽取（随后正文里的 a 标签会被压成纯文本，链接单独列出更省 token）
+      var aRe = /<a\b[^>]*href=["']([^"'#][^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, am;
+      while ((am = aRe.exec(body)) !== null && out.links.length < 60) {
+        var lt = this._decodeEntities(am[2].replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+        if (!lt || lt.length > 80) continue;
+        var href = am[1].trim();
+        if (/^javascript:/i.test(href)) continue;
+        out.links.push({ text: lt, href: href });
+      }
+
+      // 结构 → 文本
+      var txt = body
+        .replace(/<a\b[^>]*>([\s\S]*?)<\/a>/gi, "$1")
+        .replace(/<h1[^>]*>([\s\S]*?)<\/h1>/gi, "\n\n# $1\n")
+        .replace(/<h2[^>]*>([\s\S]*?)<\/h2>/gi, "\n\n## $1\n")
+        .replace(/<h3[^>]*>([\s\S]*?)<\/h3>/gi, "\n\n### $1\n")
+        .replace(/<h[4-6][^>]*>([\s\S]*?)<\/h[4-6]>/gi, "\n\n#### $1\n")
+        .replace(/<li\b[^>]*>/gi, "\n- ")
+        .replace(/<tr\b[^>]*>/gi, "\n| ")
+        .replace(/<\/t[dh]>/gi, " | ")
+        .replace(/<br\s*\/?>/gi, "\n")
+        .replace(/<\/(p|div|section|article|header|footer|nav|aside|ul|ol|table|main|figure|blockquote|dd|dt|pre)>/gi, "\n")
+        .replace(/<[^>]+>/g, " ");
+      txt = this._decodeEntities(txt)
+        .replace(/\r/g, "")
+        .replace(/[ \t\u00a0\u200b]+/g, " ")
+        .replace(/ *\n */g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+      // 连续重复行折叠（SPA 骨架页常见「打开App查看更多」刷屏；允许中间夹空行）
+      var lines = txt.split("\n"), kept = [], lastNonEmpty = null;
+      for (var li = 0; li < lines.length; li++) {
+        var ln = lines[li];
+        if (ln && ln === lastNonEmpty) continue;
+        if (ln) lastNonEmpty = ln;
+        kept.push(ln);
+      }
+      out.text = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+      return out;
+    },
+
+    /** 从内嵌 JSON 里「捞」出可读文本（SPA 的数据往往就在这里面，正文区只是骨架） */
+    harvestStrings: function (jsonText, limit) {
+      var found = [], seen = {};
+      var re = /"((?:[^"\\]|\\.){10,400})"/g, m;
+      while ((m = re.exec(String(jsonText || ""))) !== null && found.length < (limit || 60)) {
+        var s = m[1].replace(/\\n/g, " ").replace(/\\"/g, '"').replace(/\\u([0-9a-fA-F]{4})/g, function (x, h) { return String.fromCharCode(parseInt(h, 16)); }).replace(/\\\//g, "/").replace(/\s+/g, " ").trim();
+        if (s.length < 10) continue;
+        if (/^https?:\/\//i.test(s)) continue;              // 纯 URL
+        if (/^[0-9a-f]{16,}$/i.test(s)) continue;           // 哈希/ID
+        if (/^[A-Za-z0-9_\-.:\/]+$/.test(s)) continue;      // 纯标识符（配置键/类名/路径）
+        if (/^[\d\s\-:.,]+$/.test(s)) continue;             // 纯数字时间戳
+        // 只保留「像人话」的：含中文，或足够长且带空格
+        var hasCJK = /[\u4e00-\u9fa5]/.test(s);
+        if (!hasCJK && !(s.length >= 24 && /\s/.test(s))) continue;
+        if (seen[s]) continue;
+        seen[s] = 1;
+        found.push(s);
+      }
+      return found;
+    },
+
+    /** 统一抓取入口：按 mode 返回「正文 / 原始 HTML / JSON」 */
+    fetchPage: async function (args) {
+      var self = this;
+      var url = String(args.url || "").trim();
+      if (!/^https?:\/\//i.test(url)) return { ok: false, error: "仅支持 http/https 地址" };
+      var method = String(args.method || "GET").toUpperCase();
+      var mode = String(args.mode || "auto").toLowerCase();
+      var maxChars = parseInt(args.max_chars, 10);
+      if (isNaN(maxChars) || maxChars <= 0) maxChars = 10000;
+      maxChars = Math.min(Math.max(maxChars, 500), 20000);
+
+      var r = await self.rawFetch(url, method, args.headers, args.body);
+      if (!r || (r.ok === false && !r.text)) return { ok: false, error: (r && r.error) || "抓取失败" };
+      var text = String(r.text || "");
+      var ctype = String(r.contentType || "");
+      // JSON 判定：优先看 Content-Type；拿不到时按内容形状兜底（很多接口/代理不带头）
+      var looksJson = /json/i.test(ctype) || (!ctype && /^\s*[\[{]/.test(text) && /"[^"]{1,60}"\s*:/.test(text.slice(0, 3000)));
+      if (mode === "json") looksJson = true;
+
+      // JSON 接口：直接结构化返回（很多站点的"搜索结果"其实是 XHR 接口）
+      if (looksJson) {
+        var parsed = null;
+        try { parsed = JSON.parse(text); } catch (e) {}
+        if (parsed !== null) {
+          var pretty = JSON.stringify(parsed, null, 2);
+          var truncatedJson = pretty.length > maxChars;
+          return {
+            ok: true, status: r.status, url: url, via: r.via, contentType: ctype || "application/json", mode: "json",
+            text: truncatedJson ? pretty.slice(0, maxChars) + "\n…（已截断，共 " + pretty.length + " 字符；可调小 max_chars 或改用更精确的接口）" : pretty,
+            truncated: truncatedJson
+          };
+        }
+      }
+
+      if (mode === "html") {
+        var cut = text.length > maxChars;
+        return { ok: true, status: r.status, url: url, via: r.via, contentType: ctype || "text/html", mode: "html", text: cut ? text.slice(0, maxChars) + "\n…（已截断）" : text, truncated: cut };
+      }
+
+      // 默认：抽取可读正文
+      var ex = self.htmlToText(text);
+      var bodyText = ex.text || "";
+      var dense = bodyText.replace(/\s+/g, "").length;
+      var jsRendered = ex.scriptCount >= 3 && dense < 300;
+      var truncated = bodyText.length > maxChars;
+      var result = {
+        ok: true, status: r.status, url: url, via: r.via,
+        contentType: ctype || "text/html", mode: "text",
+        title: ex.title, description: ex.description,
+        text: truncated ? bodyText.slice(0, maxChars) + "\n…（正文已截断，共 " + bodyText.length + " 字符）" : bodyText,
+        chars: bodyText.length, truncated: truncated,
+        jsRendered: jsRendered
+      };
+      if (ex.links.length) result.links = ex.links.slice(0, 30);
+      if (ex.jsonLd.length) result.jsonLd = ex.jsonLd.slice(0, 2);
+      if (ex.embedded.length) {
+        // 内嵌状态往往是 SPA 的真实数据源：挑最长的那个给出（截断），并把里面的可读文本捞出来
+        var biggest = ex.embedded[0];
+        ex.embedded.forEach(function (b) { if (b.json.length > biggest.json.length) biggest = b; });
+        result.embeddedJson = { key: biggest.key, preview: biggest.json.slice(0, 4000) + (biggest.json.length > 4000 ? "\n…（截断，原始 " + biggest.json.length + " 字符）" : "") };
+        result.embeddedKeys = ex.embedded.map(function (b) { return b.key; });
+        var harvested = self.harvestStrings(biggest.json, 60);
+        if (harvested.length) {
+          var joined = harvested.join("\n");
+          result.embeddedText = joined.length > 3000 ? joined.slice(0, 3000) + "\n…（已截断）" : joined;
+          // 内嵌数据有实质内容、而正文区只是骨架 → 判定为 JS 渲染页
+          if (dense < 1500 && harvested.length >= 5) jsRendered = true;
+          result.jsRendered = jsRendered;
+        }
+      }
+      if (jsRendered) {
+        result.hint = "该页面正文疑似由 JS 动态渲染：服务端返回的 HTML 里正文区只是骨架。" +
+          (result.embeddedText ? "已从页面内嵌状态（" + (result.embeddedKeys || []).join("/") + "）中捞出可读文本，见 embeddedText / embeddedJson。" : "") +
+          " 若仍拿不到需要的数据，改用该站点的数据接口（浏览器开发者工具 Network → Fetch/XHR 找真实数据 URL，再用 fetch_url + mode:\"json\" 请求）。";
+      } else if (dense < 300 && ex.scriptCount >= 3) {
+        result.hint = "正文抽取结果很短，可能被反爬拦截（需登录/验证码）或页面结构特殊；可尝试 mode:\"html\" 看原始 HTML，或改用站点接口。";
+      }
+      return result;
+    },
+
     // ==================== 工具集（供 Agent 调用） ====================
     tools: {
       list_dir: function (args, conv) {
@@ -211,39 +484,16 @@
         return { ok: true, workspace: conv.workspace || ".", label: conv.workspaceLabel || "", roots: roots.roots || [] };
       },
       fetch_url: async function (args) {
+        // 抓取网页：默认返回「可读正文」（而非原始 HTML 前 8000 字符，那样只会看到 head 里的 meta）
+        // 参数：{url, method?, headers?, body?, mode?: "auto"|"text"|"html"|"json", max_chars?}
         try {
-          var url = String(args.url || "");
-          if (!/^https?:\/\//i.test(url)) return { ok: false, error: "仅支持 http/https 地址" };
-          var method = String(args.method || "GET").toUpperCase();
-          var enc = encodeURIComponent(url);
-          var viaProxy = async function (base) {
-            var r = await fetch(base + enc);
-            return { status: r.status, text: await r.text() };
-          };
-          try {
-            var res = await fetch(url, {
-              method: method,
-              headers: (args.headers && typeof args.headers === "object") ? args.headers : {},
-              body: (args.body && method !== "GET") ? String(args.body) : undefined
-            });
-            var text = await res.text();
-            return { ok: true, status: res.status, body: text.slice(0, 8000) };
-          } catch (directErr) {
-            // WebView 沙箱/CORS 受限 → 本地代理兜底：先裸代理(3001)，再 link-meta(3003)
-            try {
-              var p1 = await viaProxy("http://127.0.0.1:3001/proxy?url=");
-              return { ok: true, status: p1.status, body: String(p1.text).slice(0, 8000), via: "cors-proxy:3001" };
-            } catch (e1) {
-              try {
-                var p2 = await viaProxy("http://127.0.0.1:3003/meta?url=");
-                return { ok: true, status: p2.status, body: String(p2.text).slice(0, 8000), via: "link-meta:3003" };
-              } catch (e2) {
-                return { ok: false, error: "抓取失败: " + directErr.message + "；本地代理也不可用（请先启动 cors-proxy 3001 / link-meta 3003）" };
-              }
-            }
+          var res = await WB.fetchPage(args || {});
+          if (res && res.ok && res.mode === "text" && !res.jsRendered && !res.text) {
+            res.hint = (res.hint || "") + " 页面正文为空，可能是纯前端渲染或需要登录。";
           }
+          return res;
         } catch (e) {
-          return { ok: false, error: "抓取失败: " + e.message };
+          return { ok: false, error: "抓取失败: " + (e && e.message ? e.message : String(e)) };
         }
       },
       github_push: async function (args, conv) {
@@ -682,7 +932,7 @@
       lines.push("4. mkdir: 创建目录。参数 {path}");
       lines.push("5. delete_path: 删除文件或目录。参数 {path}");
       lines.push("6. workspace_info: 查看工作区信息");
-      lines.push("7. fetch_url: 抓取网页内容。参数 {url, method?, headers?, body?}");
+      lines.push("7. fetch_url: 抓取网页/接口。参数 {url, method?, headers?, body?, mode?(\"auto\"|\"text\"|\"html\"|\"json\"), max_chars?(默认10000，上限20000)}。默认返回抽取好的可读正文（title/description/text/links），不是原始 HTML；接口返回 JSON 时自动结构化。若结果带 jsRendered:true，说明该页正文由 JS 动态渲染（服务端 HTML 无内容），此时优先读返回里的 embeddedJson/embeddedKeys（SPA 数据源），或改用该站点的数据接口（Network 面板找 XHR/Fetch 真实 URL 后用 mode:\"json\" 请求）");
       lines.push("8. github_push: 推送文件到 GitHub。参数 {path(仓库内路径), content, message?, repo?, owner?, branch?}");
       lines.push("9. github_status: 查看 GitHub 连接状态");
       lines.push("10. mcp_tool: 调用已配置的外部 MCP 服务器工具。参数 {server, tool, arguments}");
