@@ -1496,6 +1496,117 @@ function escapeHtml(str) {
 
 // 统一消息预览文本提取器：把任意 contentType 的消息转为干净的纯文本预览
 // 用于会话列表、浏览器/APK 通知卡片等"列表场景"，避免显示渲染前的 <think>/状态栏/HTML 标签
+// ============================================================
+// 分享链接卡片：自动识别 + 服务端元数据解析（termux link-meta:3003 / cors-proxy:3001 兜底）
+// ============================================================
+const SHARE_LINK_HOST_RE = /(xhslink\.cn|xiaohongshu\.com|b23\.tv|bilibili\.com|douyin\.com|iesdouyin\.com|weibo\.(?:cn|com)|zhihu\.com|github\.com|youtu\.be|youtube\.com|taobao\.com|tmall\.com|tb\.cn|jd\.com|music\.163\.com|y\.qq\.com)/i;
+
+function extractShareUrl(text) {
+  if (typeof text !== 'string') return '';
+  const m = text.match(/https?:\/\/[^\s\u4e00-\u9fa5，。；！？、）】」”"']+/i);
+  if (!m) return '';
+  return m[0].replace(/[.,;!?)\]}，。；！？、）】]+$/, '');
+}
+
+function isShareLinkText(text) {
+  const u = extractShareUrl(text);
+  return !!u && SHARE_LINK_HOST_RE.test(u);
+}
+
+function shareSiteName(site, url) {
+  if (site) return site;
+  try { return new URL(url).hostname.replace(/^www\./, ''); } catch (e) { return ''; }
+}
+
+function fetchWithTimeout(u, ms) {
+  return new Promise(function (resolve, reject) {
+    const t = setTimeout(function () { reject(new Error('timeout')); }, ms || 15000);
+    fetch(u).then(function (r) { clearTimeout(t); resolve(r); })
+      .catch(function (e) { clearTimeout(t); reject(e); });
+  });
+}
+
+/** 抓取分享链接元数据：优先本地 link-meta(3003)，失败退回 cors-proxy(3001) 解析 og 标签 */
+async function fetchLinkMeta(url) {
+  const enc = encodeURIComponent(url);
+  try {
+    const r = await fetchWithTimeout('http://127.0.0.1:3003/meta?url=' + enc, 20000);
+    if (r) {
+      const j = await r.json();
+      if (j && j.ok !== false && (j.title || (j.images && j.images.length))) return j;
+      if (j && j.error) console.warn('link-meta:', j.error);
+    }
+  } catch (e) { console.warn('link-meta 服务不可用:', e.message); }
+  try {
+    const r2 = await fetchWithTimeout('http://127.0.0.1:3001/proxy?url=' + enc, 20000);
+    if (r2) {
+      const html = await r2.text();
+      const pick = function (p) {
+        const m = html.match(new RegExp('<meta[^>]+(?:property|name)=["\']' + p + '["\'][^>]*>', 'i'));
+        if (!m) return '';
+        const c = m[0].match(/content=["\']([\s\S]*?)["\']/i);
+        return c ? c[1].replace(/<[^>]+>/g, '').trim() : '';
+      };
+      const t = pick('og:title') || (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || url;
+      return {
+        ok: true, finalUrl: url, site: shareSiteName('', url), kind: 'web',
+        title: String(t).trim(), desc: pick('og:description') || pick('description'),
+        author: '', images: [pick('og:image')].filter(Boolean)
+      };
+    }
+  } catch (e) { console.warn('cors-proxy 兜底失败:', e.message); }
+  return { ok: false, finalUrl: url, site: shareSiteName('', url), kind: 'web', title: url, desc: '', author: '', images: [] };
+}
+
+/** 分享卡片 HTML */
+function buildShareCardHTML(msgId, data) {
+  const cover = data.cover || (data.images && data.images[0]) || '';
+  const site = escapeHtml(shareSiteName(data.site, data.url));
+  const title = escapeHtml(data.title || data.url || '分享链接');
+  const desc = escapeHtml(String(data.desc || '').slice(0, 120));
+  const author = escapeHtml(data.author || '');
+  const url = String(data.url || '').replace(/"/g, '&quot;');
+  const imgCount = (data.images && data.images.length) || 0;
+  return `
+    <div class="share-card" onclick="window.openShareLink('${url}')" style="cursor:pointer; width:100%; max-width:262px; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:#fff;">
+      ${cover ? `<img src="${String(cover).replace(/"/g, '&quot;')}" style="width:100%; max-height:180px; object-fit:cover; display:block;" onerror="this.style.display='none';">` : ''}
+      <div style="padding:8px 10px;">
+        <div style="font-size:10px; color:#ef4444; font-weight:700; margin-bottom:2px;">${site}${imgCount > 1 ? ' · ' + imgCount + ' 图' : ''}</div>
+        <div style="font-size:12.5px; font-weight:700; color:var(--text-primary); line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${title}</div>
+        ${desc ? `<div style="font-size:10.5px; color:var(--text-secondary); margin-top:4px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${desc}</div>` : ''}
+        ${author ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">@${author}</div>` : ''}
+        <div style="font-size:9.5px; color:#9ca3af; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); word-break:break-all;">${escapeHtml(shareSiteName('', data.url))}</div>
+      </div>
+    </div>`;
+}
+
+window.openShareLink = function (url) {
+  try {
+    if (window.AndroidMCP && typeof window.AndroidMCP.openExternalUrl === 'function') {
+      window.AndroidMCP.openExternalUrl(url); return;
+    }
+  } catch (e) {}
+  try { window.open(url, '_blank'); } catch (e) { showToast('无法打开链接'); }
+};
+
+/** 分享消息 → AI 上下文干净文本（无乱码、无标签） */
+function formatShareContextText(msg, isUser, charName) {
+  try {
+    const d = JSON.parse(msg.content);
+    const site = d.site || shareSiteName('', d.url);
+    const title = d.title || d.url;
+    const lines = [];
+    lines.push(isUser
+      ? `[你向 ${charName} 分享了一个${site}链接：《${title}》]`
+      : `[${charName} 向你分享了一个${site}链接：《${title}》]`);
+    if (d.author) lines.push(`作者：${d.author}`);
+    if (d.desc) lines.push(`内容摘要：${String(d.desc).slice(0, 200)}`);
+    if (d.note) lines.push(`附带留言：${d.note}`);
+    lines.push(`链接：${d.url}`);
+    return lines.join('\n');
+  } catch (e) { return '[分享链接]'; }
+}
+
 function getMessagePreviewText(msg) {
   if (!msg) return '暂无对话消息';
   const ct = msg.contentType;
@@ -1504,6 +1615,10 @@ function getMessagePreviewText(msg) {
   // 非文本类型：直接返回语义化标签
   if (ct === 'voice') return '[语音]';
   if (ct === 'image') return '[图片]';
+  if (ct === 'share') {
+    try { const d = JSON.parse(content); return '[分享] ' + (d.title || d.url || ''); }
+    catch (e) { return '[分享链接]'; }
+  }
   if (ct === 'transfer') return '[微信转账]';
   if (ct === 'red_envelope') return '[微信红包]';
   if (ct === 'location') return '[位置]';
@@ -2564,7 +2679,10 @@ async function renderDialogMessages(isInitial = true) {
     
     const emojiHtml = m.reactionEmoji ? `<div class="bubble-attached-emoji" onclick="window.removeReaction(${m.id}, event)">${m.reactionEmoji}</div>` : "";
     let contentHtml = "";
-    if (m.contentType === 'image') {
+    if (m.contentType === 'share') {
+      try { contentHtml = buildShareCardHTML(m.id, JSON.parse(m.content)); }
+      catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[分享链接]</div>`; }
+    } else if (m.contentType === 'image') {
       try {
         const data = JSON.parse(m.content);
         const captionText = data.text || "场景画面";
@@ -3328,7 +3446,10 @@ async function appendMessageToDOM(msg) {
   }
   
   let contentHtml = "";
-  if (msg.contentType === 'image') {
+  if (msg.contentType === 'share') {
+    try { contentHtml = buildShareCardHTML(msg.id, JSON.parse(msg.content)); }
+    catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[分享链接]</div>`; }
+  } else if (msg.contentType === 'image') {
     try {
       const data = JSON.parse(msg.content);
       const captionText = data.text || "场景画面";
@@ -4635,6 +4756,30 @@ function bindChatAppEvents() {
             if (isIntercepted) return;
           }
         } else {
+          // 分享链接自动识别：抓取元数据后以"分享卡片"上屏（失败则退回普通文本）
+          const _shareUrl = extractShareUrl(processedText);
+          if (_shareUrl && isShareLinkText(processedText)) {
+            dialogInput.value = "";
+            dialogInput.focus();
+            showToast("正在解析分享链接…");
+            let meta = null;
+            try { meta = await fetchLinkMeta(_shareUrl); } catch (e) { meta = null; }
+            const shareData = {
+              url: (meta && meta.finalUrl) || _shareUrl,
+              rawUrl: _shareUrl,
+              site: (meta && meta.site) || "",
+              kind: (meta && meta.kind) || "web",
+              title: (meta && meta.title) || _shareUrl,
+              desc: (meta && meta.desc) || "",
+              author: (meta && meta.author) || "",
+              images: (meta && Array.isArray(meta.images)) ? meta.images.slice(0, 9) : [],
+              cover: (meta && meta.images && meta.images[0]) || "",
+              note: String(processedText).replace(_shareUrl, "").trim(),
+              ok: !(meta && meta.ok === false)
+            };
+            await saveAndRenderMessage('user', JSON.stringify(shareData), 'share');
+            return;
+          }
           await saveAndRenderMessage('user', processedText);
           dialogInput.value = "";
           dialogInput.focus(); // 显式回焦，保证键盘在移动端与桌面端均能顺畅保持不收起
@@ -5049,6 +5194,9 @@ function bindChatAppEvents() {
                 displayContent = `[${_chatCharName} 向你转发了一个"砍一刀提现"活动链接]`;
               }
             } catch(e) { displayContent = "[转发了一个砍一刀提现链接]"; }
+          } else if (h.contentType === 'share') {
+            // 分享链接：转为干净上下文（标题/作者/摘要/链接），避免乱码与标签污染
+            displayContent = formatShareContextText(h, h.senderType === 'user', _chatCharName);
           }
 
           // 核心 Few-shot 历史格式对齐

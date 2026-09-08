@@ -41,6 +41,7 @@ SERVICES=(
   "ncm-api|网易云音乐 API|网易云登录代理/歌单同步/歌词搜索|NeteaseCloudMusicApi -p 3000|http://localhost:3000|kill"
   "cors-proxy|CORS 跨域中转|打破 PWA/网页版跨域限制|node \$HOME/.xvshishi/cors-proxy.js|http://localhost:3001/health|kill"
   "cmd-runner|AI 命令执行服务|工作台 Agent 执行 termux 命令/git 仓库操作（端口 3002）|node $HOME/.xvshishi/cmd-runner.js|http://localhost:3002/health|kill"
+  "link-meta|分享链接解析服务|解析小红书/B站等分享链接的标题/封面/摘要（端口 3003）|node $HOME/.xvshishi/link-meta.js|http://localhost:3003/health|kill"
 )
 
 # ---------- 用户自定义服务（追加到数组末尾） ----------
@@ -69,6 +70,7 @@ builtin_script_file() {
   case "$1" in
     cors-proxy) echo "$HOME/.xvshishi/cors-proxy.js" ;;
     cmd-runner) echo "$HOME/.xvshishi/cmd-runner.js" ;;
+    link-meta) echo "$HOME/.xvshishi/link-meta.js" ;;
     *) echo "" ;;
   esac
 }
@@ -116,7 +118,7 @@ repair_all() {
   log ""
   log "${C_BOLD}修复/补齐内置脚本${C_END}"
   local ok=0 fail=0
-  for id in cors-proxy cmd-runner; do
+  for id in cors-proxy cmd-runner link-meta; do
     if ensure_script "$id"; then ok=$((ok+1)); else fail=$((fail+1)); fi
   done
   log "------------------------------------------"
@@ -353,6 +355,8 @@ tui_menu() {
       T1|t1) [ -n "${SERVICES[0]}" ] && stop_service "${SERVICES[0]%%|*}"; sleep 1;;
       T2|t2) [ -n "${SERVICES[1]}" ] && stop_service "${SERVICES[1]%%|*}"; sleep 1;;
       T3|t3) [ -n "${SERVICES[2]}" ] && stop_service "${SERVICES[2]%%|*}"; sleep 1;;
+      S4|s4) [ -n "${SERVICES[3]}" ] && start_service "${SERVICES[3]%%|*}"; sleep 1;;
+      T4|t4) [ -n "${SERVICES[3]}" ] && stop_service "${SERVICES[3]%%|*}"; sleep 1;;
       *) log "无效选项"; sleep 1;;
     esac
   done

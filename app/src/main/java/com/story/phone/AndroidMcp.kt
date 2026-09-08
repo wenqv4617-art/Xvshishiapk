@@ -631,6 +631,19 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    /** 用系统浏览器/App 打开外链（分享卡片点击） */
+    @JavascriptInterface
+    fun openExternalUrl(url: String) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     /** 跳转本应用系统详情页（供“永久拒绝”后手动开启附近设备/通知等权限） */
     @JavascriptInterface
     fun openAppBluetoothPermissionSettings() {

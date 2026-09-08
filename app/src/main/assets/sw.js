@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v60'; // v60: 本地部署离线自愈——App 一键导出脚本到Download/Storypoem/xvshishi-scripts(防长命令截断)+xvshishi repair(优先本地复制/次选网络)+启动缺文件自动补齐; v1.2.3
+const CACHE_NAME = 'story-phone-v61'; // v61: 分享链接卡片——自动识别小红书/B站等链接→termux link-meta(3003)解析标题/封面/摘要→气泡卡片渲染+干净上下文；部署链路内置link-meta; v1.3.0
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
