@@ -4762,6 +4762,9 @@ function bindChatAppEvents() {
         // 检查"翻译随动生成"开关状态
         const translateAutoToggleEl = document.getElementById("details-translate-auto");
         const isTranslateAutoOn = translateAutoToggleEl ? translateAutoToggleEl.checked : false;
+        // 翻译随动子开关：翻译未命中时是否允许追加一次翻译 API（默认关＝严格单次调用）
+        const translateFallbackEl = document.getElementById("details-translate-fallback");
+        const isTranslateFallbackOn = translateFallbackEl ? translateFallbackEl.checked : false;
 
         let finalSystemPrompt = systemPrompt;
         if (isStatusAutoOn) {
@@ -4783,10 +4786,17 @@ function bindChatAppEvents() {
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
         }
 
-        // 翻译随动生成：不再要求 AI 自插 [TRANSLATE] 标签（易掉格式/原文翻译错位），
-        // 改为回复完成后由本地对整段文本做一次 API 翻译（微信式），见 autoTranslateSavedMessage()
+        // 翻译随动生成：默认单次调用——要求 AI 在正文最末尾追加结构化译文块，
+        // 本地解析后剥离并逐气泡挂载（正文零污染）；不再使用会穿插正文的 [TRANSLATE] 标签
         if (isTranslateAutoOn) {
-          // 预留开关状态即可，提示词不注入翻译指令
+          finalSystemPrompt += `\n\n【翻译随动指令（重要）】
+当你的回复包含非中文内容（英语/日语/法语等）时，请在**整条回复的最末尾**单独追加一行机器可读块，格式严格如下（必须是合法 JSON 数组，不要加代码块围栏）：
+[TRANS_JSON][{"src":"正文中的原文片段（必须与正文逐字一致，含标点）","t":"该片段的简体中文翻译"}]
+规则：
+1) src 必须是正文里出现过的原文片段（可整句或整段），用于系统精确匹配，务必逐字一致；
+2) t 是流畅自然的简体中文翻译；纯中文片段不需要列出；
+3) 该块只能出现在最后，前面必须是完整正文；正文中严禁出现 [TRANSLATE] 等翻译标签；
+4) 若整条回复都是中文，则不要输出该块。`;
         }
 
         // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
@@ -5086,7 +5096,10 @@ function bindChatAppEvents() {
             container.appendChild(streamingBubble);
           }
 
-          const parsedCot = parseThoughtFromText(currentFullText);
+          // 流式期间隐藏结构化译文块，避免在气泡里闪现 [TRANS_JSON]...JSON
+          const tjCutIdx = String(currentFullText || "").indexOf("[TRANS_JSON]");
+          const displayFullText = tjCutIdx >= 0 ? String(currentFullText).slice(0, tjCutIdx) : currentFullText;
+          const parsedCot = parseThoughtFromText(displayFullText);
           let streamHtml = "";
 
           // 关键修复：流式渲染也必须遵守思维链开关。关闭时剥离 <think> 不显示思维链卡片，
@@ -5099,7 +5112,7 @@ function bindChatAppEvents() {
           if (parsedCot.cleanText) {
             streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(parsedCot.cleanText)}</div>`;
           } else if (!parsedCot.thought) {
-            streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(currentFullText)}</div>`;
+            streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(displayFullText)}</div>`;
           }
 
           streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar, activeSessionCharName)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
@@ -5577,6 +5590,17 @@ function bindChatAppEvents() {
         }
 
         // 尝试解析翻译随动 [TRANSLATE] 格式
+        // 结构化译文块解析（默认单次调用方案）：从正文末尾剥离 [TRANS_JSON] 块
+        let autoTransEntries = [];
+        if (isTranslateAutoOn) {
+          const ex = extractTranslateJsonBlock(rawReply);
+          if (ex.entries.length > 0) {
+            autoTransEntries = ex.entries;
+            rawReply = ex.cleanText;
+            textReply = textReply.replace(/[\[【]TRANS_JSON[\]】][\s\S]*$/i, "").trim();
+          }
+        }
+
         let translationText = null;
         if (isTranslateAutoOn) {
           // 这里将保留支持旧的全局 [TRANSLATE]xxx 格式，但重点支持新的分段解析。
@@ -5798,8 +5822,8 @@ function bindChatAppEvents() {
         const sessionObj = await db.sessions.get(activeSessionId);
         const userName = sessionObj?.customUserName || "我";
 
-        // 翻译随动（样式：正文气泡下挂译文）：在气泡上屏前批量翻译一次，
-        // 逐气泡一一对应，与正文同时落库同时渲染——不会"先出正文再补翻译"，也不会格式错位
+        // 翻译随动：优先用正文末尾的结构化译文块，按原文片段精确匹配到各气泡（一次调用即可）；
+        // 仅当子开关"翻译未命中时允许追加一次 API"开启且仍有气泡缺译文时，才追加一次批量翻译调用
         let autoTranslationByIndex = {};
         if (isTranslateAutoOn && Array.isArray(responseItems) && responseItems.length > 0) {
           const textItems = [];
@@ -5809,14 +5833,24 @@ function bindChatAppEvents() {
             }
           });
           if (textItems.length > 0) {
-            try {
-              showToast("正在生成翻译…");
-              const trans = await translateTextsBatch(textItems.map(x => x.content));
-              if (Array.isArray(trans)) {
-                textItems.forEach((x, k) => { if (trans[k]) autoTranslationByIndex[x.idx] = trans[k]; });
+            if (autoTransEntries.length > 0) {
+              const matched = mapTranslationsToBubbles(textItems.map(x => x.content), autoTransEntries);
+              Object.keys(matched).forEach(k => {
+                const hit = textItems[Number(k)];
+                if (hit && matched[k]) autoTranslationByIndex[hit.idx] = matched[k];
+              });
+            }
+            const missing = textItems.filter(x => !autoTranslationByIndex[x.idx] && shouldAutoTranslateText(x.content));
+            if (missing.length > 0 && isTranslateFallbackOn) {
+              try {
+                showToast("正在生成翻译…");
+                const trans = await translateTextsBatch(missing.map(x => x.content));
+                if (Array.isArray(trans)) {
+                  missing.forEach((x, k) => { if (trans[k]) autoTranslationByIndex[x.idx] = trans[k]; });
+                }
+              } catch (e) {
+                console.warn("翻译随动兜底调用失败（本次仅显示正文）:", e);
               }
-            } catch (e) {
-              console.warn("翻译随动生成失败（本次仅显示正文）:", e);
             }
           }
         }
@@ -6392,6 +6426,8 @@ if (btnDialogDetails) {
       // 渲染多媒体、时间感知等全新状态设置开关
       document.getElementById("details-status-auto").checked = !!sess.statusAutoToggle;
       document.getElementById("details-translate-auto").checked = !!sess.translateAutoToggle;
+      const tfEl = document.getElementById("details-translate-fallback");
+      if (tfEl) tfEl.checked = !!sess.translateFallbackApi;
       document.getElementById("details-multimedia-toggle").checked = !!sess.multimediaToggle;
       document.getElementById("details-allow-recall-toggle").checked = !!sess.allowCharRecall;
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
@@ -6555,6 +6591,8 @@ if (btnSaveDetails) {
     // 获取并写入全新的多媒体、时间模拟器属性
     const statusAutoToggle = document.getElementById("details-status-auto").checked;
     const translateAutoToggle = document.getElementById("details-translate-auto").checked;
+    const translateFallbackToggleEl = document.getElementById("details-translate-fallback");
+    const translateFallbackToggle = translateFallbackToggleEl ? translateFallbackToggleEl.checked : false;
     const multimediaToggle = document.getElementById("details-multimedia-toggle").checked;
     const timePerceptionToggle = document.getElementById("details-time-toggle").checked;
     const allowCharRecall = document.getElementById("details-allow-recall-toggle").checked;
@@ -6611,6 +6649,7 @@ if (btnSaveDetails) {
       mountedEntryIds: mountedEntryIds,
       statusAutoToggle: statusAutoToggle ? 1 : 0,
       translateAutoToggle: translateAutoToggle ? 1 : 0,
+      translateFallbackApi: translateFallbackToggle ? 1 : 0,
       multimediaToggle: multimediaToggle ? 1 : 0,
       timePerceptionToggle: timePerceptionToggle ? 1 : 0,
       allowCharRecall: allowCharRecall ? 1 : 0,
@@ -7534,6 +7573,7 @@ async function triggerOfflineReply() {
         // 读取线上对话详情中的"心声随动"与"翻译随动"开关状态，决定线下回复是否一并生成心声/翻译
         const offlineStatusAutoOn = !!(sessObj && sessObj.statusAutoToggle === 1);
         const offlineTranslateAutoOn = !!(sessObj && sessObj.translateAutoToggle === 1);
+        const offlineTranslateFallbackOn = !!(sessObj && sessObj.translateFallbackApi === 1);
 
     const sess = await db.sessions.get(activeSessionId);
         const char = await db.archives.get(sess.charId);
@@ -7556,9 +7596,12 @@ async function triggerOfflineReply() {
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
         }
 
-        // 翻译随动：线下同样改为"回复完成后本地整段翻译一次"，不再注入 [TRANSLATE] 指令
+        // 翻译随动：线下同样默认单次调用——要求正文末尾追加结构化译文块
         if (offlineTranslateAutoOn) {
-          // 开关状态在保存消息后触发 autoTranslateSavedMessage()
+          finalOfflineSystemPrompt += `\n\n【翻译随动指令（重要）】
+当你的回复包含非中文内容时，请在**整条回复的最末尾**单独追加一行机器可读块（必须是合法 JSON 数组，不要加代码块围栏）：
+[TRANS_JSON][{"src":"正文中的原文片段（必须与正文逐字一致，含标点）","t":"该片段的简体中文翻译"}]
+规则：src 必须与正文逐字一致以便精确匹配；t 为简体中文翻译；纯中文片段不用列；该块只能出现在最后，正文中严禁出现 [TRANSLATE] 等标签；若全是中文则不输出该块。`;
         }
 
         messagesToSend.push({ role: "system", content: finalOfflineSystemPrompt });
@@ -7574,7 +7617,10 @@ async function triggerOfflineReply() {
             container.appendChild(streamingCard);
           }
 
-          const parsedCot = parseThoughtFromText(currentFullText, activeSessionId);
+          // 流式期间隐藏结构化译文块，避免气泡闪现 [TRANS_JSON]
+          const offTjIdx = String(currentFullText || "").indexOf("[TRANS_JSON]");
+          const offDisplayText = offTjIdx >= 0 ? String(currentFullText).slice(0, offTjIdx) : currentFullText;
+          const parsedCot = parseThoughtFromText(offDisplayText, activeSessionId);
           const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
           // 关键修复：线下流式也必须遵守思维链开关，与线上 handleStreamChunk 保持一致
@@ -7732,6 +7778,16 @@ async function triggerOfflineReply() {
 
         if (!rawReply) return;
 
+        // 线下翻译随动（默认单次）：先从正文末尾剥离结构化译文块
+        let offlineAutoTrans = null;
+        if (offlineTranslateAutoOn) {
+          const ex = extractTranslateJsonBlock(rawReply);
+          if (ex.entries.length > 0) {
+            rawReply = ex.cleanText;
+            offlineAutoTrans = ex.entries.map(e => e.t).filter(Boolean).join("\n");
+          }
+        }
+
         const msg = {
           theaterId: isOfflineTheater ? activeTheaterId : 0,
           sessionId: activeSessionId,
@@ -7743,13 +7799,17 @@ async function triggerOfflineReply() {
         if (offlineTranslationText) {
           msg.translatedContent = offlineTranslationText;
           msg.showTranslation = 1;
-        } else if (offlineTranslateAutoOn && shouldAutoTranslateText(rawReply)) {
-          // 翻译随动（线下）：上屏前整段翻译一次，正文与译文同时落库渲染
+        } else if (offlineAutoTrans) {
+          // 默认单次调用：直接用正文末尾译文块
+          msg.translatedContent = offlineAutoTrans;
+          msg.showTranslation = 1;
+        } else if (offlineTranslateAutoOn && offlineTranslateFallbackOn && shouldAutoTranslateText(rawReply)) {
+          // 子开关开启时才追加一次翻译 API（正文与译文仍一起落库渲染）
           try {
             const t = await translateTextOnce(rawReply);
             if (t) { msg.translatedContent = t; msg.showTranslation = 1; }
           } catch (e) {
-            console.warn("线下翻译随动失败（本次仅显示正文）:", e);
+            console.warn("线下翻译随动兜底失败（本次仅显示正文）:", e);
           }
         }
         await db.offline_messages.add(msg);
@@ -8648,6 +8708,65 @@ function extractBareTextForTranslation(msg) {
 // 微信式"翻译随动"：回复落库后，对整段文本做一次 API 翻译（不依赖模型自插标签，
 // 因此不会出现掉格式 / 原文与翻译错位的问题）
 // ============================================================
+
+/**
+ * 解析正文末尾的结构化译文块 [TRANS_JSON][{"src":"原文","t":"译文"}]
+ * 返回 { cleanText, entries:[{src,t}] }；解析失败/不存在则 entries 为空、cleanText 原样返回。
+ */
+function extractTranslateJsonBlock(text) {
+  const src = String(text == null ? "" : text);
+  const marker = src.indexOf("[TRANS_JSON]");
+  if (marker < 0) return { cleanText: src, entries: [] };
+  const tail = src.slice(marker + "[TRANS_JSON]".length);
+  const start = tail.indexOf("[");
+  const end = tail.lastIndexOf("]");
+  let entries = [];
+  if (start >= 0 && end > start) {
+    try {
+      const arr = JSON.parse(tail.slice(start, end + 1));
+      if (Array.isArray(arr)) {
+        entries = arr.map(function (it) {
+          if (!it) return null;
+          const s = it.src != null ? String(it.src) : (it.original != null ? String(it.original) : "");
+          const t = it.t != null ? String(it.t) : (it.text != null ? String(it.text) : (it.translation != null ? String(it.translation) : ""));
+          if (!t.trim()) return null;
+          return { src: s, t: t.trim() };
+        }).filter(Boolean);
+      }
+    } catch (e) { entries = []; }
+  }
+  return { cleanText: src.slice(0, marker).trim(), entries: entries };
+}
+window.extractTranslateJsonBlock = extractTranslateJsonBlock;
+
+/** 把译文条目按"原文片段"精确匹配到各气泡：返回 {bubbleIndex: translation} */
+function mapTranslationsToBubbles(bubbleTexts, entries) {
+  const out = {};
+  if (!Array.isArray(bubbleTexts) || !Array.isArray(entries) || entries.length === 0) return out;
+  const norm = function (s) { return String(s == null ? "" : s).replace(/\s+/g, " ").trim(); };
+  const used = {};
+  bubbleTexts.forEach(function (bt, i) {
+    const b = norm(bt);
+    if (!b) return;
+    let bestK = -1, bestLen = 0;
+    entries.forEach(function (e, k) {
+      if (used[k]) return;
+      const s = norm(e.src);
+      if (!s || !e.t) return;
+      if (b === s || b.indexOf(s) >= 0 || s.indexOf(b) >= 0) {
+        const len = Math.min(s.length, b.length);
+        if (len > bestLen) { bestLen = len; bestK = k; }
+      }
+    });
+    if (bestK >= 0) { used[bestK] = true; out[i] = entries[bestK].t; }
+  });
+  // 单条兜底：只有一条译文且只有一个气泡时直接对应
+  if (Object.keys(out).length === 0 && entries.length === 1 && bubbleTexts.length === 1 && entries[0].t) {
+    out[0] = entries[0].t;
+  }
+  return out;
+}
+window.mapTranslationsToBubbles = mapTranslationsToBubbles;
 
 /** 是否需要翻译：含拉丁字母/日文假名/韩文等非中文内容时才翻译（纯中文跳过，省一次调用） */
 function shouldAutoTranslateText(text) {

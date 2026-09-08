@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v58'; // v58: 翻译随动改为上屏前批量翻译(一次API数组进数组出)——正文与译文同时返回/逐气泡一一对应挂载/不掉格式; v1.2.1
+const CACHE_NAME = 'story-phone-v59'; // v59: 翻译随动默认单次调用(正文末尾[TRANS_JSON]结构化译文块→本地剥离+按原文精确匹配到气泡)+子开关"翻译未命中时允许追加一次API"; v1.2.2
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
