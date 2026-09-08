@@ -265,8 +265,10 @@ tui_menu() {
       0) log "再见！随时输入 ${C_C}xvshishi${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "${SERVICES[0]}" ] && start_service "${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "${SERVICES[1]}" ] && start_service "${SERVICES[1]%%|*}"; sleep 1;;
+      S3|s3) [ -n "${SERVICES[2]}" ] && start_service "${SERVICES[2]%%|*}"; sleep 1;;
       T1|t1) [ -n "${SERVICES[0]}" ] && stop_service "${SERVICES[0]%%|*}"; sleep 1;;
       T2|t2) [ -n "${SERVICES[1]}" ] && stop_service "${SERVICES[1]%%|*}"; sleep 1;;
+      T3|t3) [ -n "${SERVICES[2]}" ] && stop_service "${SERVICES[2]%%|*}"; sleep 1;;
       *) log "无效选项"; sleep 1;;
     esac
   done

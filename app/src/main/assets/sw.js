@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v56'; // v56: 正在播放首次读取自动修复——监听服务未绑定时静默强制重绑(5分钟节流)+重试延长至3.6s; v1.1.9
+const CACHE_NAME = 'story-phone-v57'; // v57: 翻译随动改微信式整段单次API翻译(不再让AI自插[TRANSLATE]标签,根治掉格式/错位) + 本地部署补第3个内置服务cmd-runner(列表可见/可启动)+TUI加S3/T3; v1.2.0
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

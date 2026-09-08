@@ -4783,18 +4783,10 @@ function bindChatAppEvents() {
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
         }
 
-        // 翻译随动生成：要求 AI 在回复末尾追加 [TRANSLATE] 标签包裹的中文翻译
+        // 翻译随动生成：不再要求 AI 自插 [TRANSLATE] 标签（易掉格式/原文翻译错位），
+        // 改为回复完成后由本地对整段文本做一次 API 翻译（微信式），见 autoTranslateSavedMessage()
         if (isTranslateAutoOn) {
-          finalSystemPrompt += `\n\n【翻译随动指令（重要）】
-当你输出外语（包括英语、日语、法语等非中文语言）时，必须提供对应的简体中文翻译。
-如果你的一段话包含多句外语且被中文字幕/旁白/动作描写隔开，请不要把翻译全堆在文末！
-请在**每一句外语**后面，立刻换行并使用 [TRANSLATE]翻译内容[/TRANSLATE] 格式提供该句的翻译。
-
-示例：
-*他看着你，轻声说道* "I will always protect you." 
-[TRANSLATE]我会永远保护你。[/TRANSLATE]
-*然后他握住了你的手* "No matter what happens."
-[TRANSLATE]无论发生什么。[/TRANSLATE]`;
+          // 预留开关状态即可，提示词不注入翻译指令
         }
 
         // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
@@ -5807,6 +5799,7 @@ function bindChatAppEvents() {
         const userName = sessionObj?.customUserName || "我";
 
         let currentItemIndex = 0;
+        let autoTransScheduled = false;
         async function processNextResponseItem() {
           if (currentItemIndex < responseItems.length) {
             const item = responseItems[currentItemIndex];
@@ -5818,13 +5811,18 @@ function bindChatAppEvents() {
               if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
                 textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, reqSessionId);
               }
-              // 翻译随动：只附加到第一条 char 文本消息上
+              // 翻译随动：只附加到第一条 char 文本消息上（旧版 [TRANSLATE] 标签兼容）
               const transForThis = translationText;
               translationText = null;
               // 思维链：只附加到第一条 char 文本消息上（独立字段，不污染正文）
               const thoughtForThis = preservedThoughtText;
               preservedThoughtText = "";
-              await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
+              const savedCharMsg = await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
+              // 微信式翻译随动：本次回复没自带翻译时，对"整段回复"做一次 API 翻译后落库
+              if (isTranslateAutoOn && !transForThis && !autoTransScheduled && savedCharMsg && savedCharMsg.id) {
+                autoTransScheduled = true;
+                autoTranslateSavedMessage(savedCharMsg.id, cleanReplyText, false);
+              }
             } else if (item.kind === 'special') {
               await processAndRenderSpecialItem(item, userName, reqSessionId);
             }
@@ -6687,6 +6685,7 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text', o
       }
     }
   }
+  return msg;
 }
 
 // 语音消息与图片场景描述展开机制挂载（支持与翻译显示状态同步存库）
@@ -7540,18 +7539,9 @@ async function triggerOfflineReply() {
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
         }
 
-        // 翻译随动：附加在心声之后（若开启）
+        // 翻译随动：线下同样改为"回复完成后本地整段翻译一次"，不再注入 [TRANSLATE] 指令
         if (offlineTranslateAutoOn) {
-          finalOfflineSystemPrompt += `\n\n【翻译随动指令（重要）】
-当你输出外语（包括英语、日语、法语等非中文语言）时，必须提供对应的简体中文翻译。
-如果你的一段话包含多句外语且被中文字幕/旁白/动作描写隔开，请不要把翻译全堆在文末！
-请在**每一句外语**后面，立刻换行并使用 [TRANSLATE]翻译内容[/TRANSLATE] 格式提供该句的翻译。
-
-示例：
-*他看着你，轻声说道* "I will always protect you." 
-[TRANSLATE]我会永远保护你。[/TRANSLATE]
-*然后他握住了你的手* "No matter what happens."
-[TRANSLATE]无论发生什么。[/TRANSLATE]`;
+          // 开关状态在保存消息后触发 autoTranslateSavedMessage()
         }
 
         messagesToSend.push({ role: "system", content: finalOfflineSystemPrompt });
@@ -7737,8 +7727,12 @@ async function triggerOfflineReply() {
           msg.translatedContent = offlineTranslationText;
           msg.showTranslation = 1;
         }
-        await db.offline_messages.add(msg);
+        const savedOfflineId = await db.offline_messages.add(msg);
         await renderOfflineMessages();
+        // 微信式翻译随动（线下）：回复落库后整段翻译一次并重渲染
+        if (offlineTranslateAutoOn && !offlineTranslationText && savedOfflineId) {
+          autoTranslateSavedMessage(savedOfflineId, rawReply, true);
+        }
 
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -8628,6 +8622,79 @@ function extractBareTextForTranslation(msg) {
   }
   return raw;
 }
+
+// ============================================================
+// 微信式"翻译随动"：回复落库后，对整段文本做一次 API 翻译（不依赖模型自插标签，
+// 因此不会出现掉格式 / 原文与翻译错位的问题）
+// ============================================================
+
+/** 是否需要翻译：含拉丁字母/日文假名/韩文等非中文内容时才翻译（纯中文跳过，省一次调用） */
+function shouldAutoTranslateText(text) {
+  if (!text) return false;
+  return /[A-Za-z\u3040-\u30ff\uac00-\ud7af]/.test(String(text));
+}
+
+/** 单次调用翻译接口：整段文本 → 中文（返回 null 表示未配置/失败） */
+async function translateTextOnce(text) {
+  if (!text) return null;
+  const presetId = localStorage.getItem("global_api_preset_id");
+  const api = await db.api_presets.get(Number(presetId));
+  if (!api) throw new Error("请先在设置中配置 API！");
+
+  const prompt = `你是一个精准信达雅的翻译官。请把下面这一整段内容无损翻译为流畅自然的简体中文。
+
+要求：
+- 逐句对应翻译，保持原有换行、分段、语气、称呼与人物关系；不要合并或调换句子顺序。
+- 原文中的中文部分保持原样，只翻译外文/方言部分。
+- 严禁添加任何解释、标题、序号或 Markdown 标记，直接输出翻译后的整段中文。
+- 如果原文已经是纯中文，原样返回即可。
+
+原文：
+${text}`;
+
+  let out;
+  if (typeof window.fwCallLLM === "function") {
+    try {
+      out = await window.fwCallLLM(api, [{ role: "user", content: prompt }], { temperature: 0.2 });
+    } catch (e) { /* 回落到原生 fetch */ }
+  }
+  if (out === undefined || out === null || String(out).trim() === "") {
+    const response = await fetch(`${api.url}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+      body: JSON.stringify({
+        model: api.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2
+      })
+    });
+    if (!response.ok) throw new Error("翻译接口响应失败");
+    const result = await response.json();
+    out = result.choices && result.choices[0] && result.choices[0].message ? result.choices[0].message.content : "";
+  }
+  const clean = String(out || "").trim();
+  return clean || null;
+}
+
+/** 翻译随动落库：给指定消息写入 translatedContent 并重渲染（静默失败，不打断聊天） */
+async function autoTranslateSavedMessage(msgId, text, isOffline) {
+  try {
+    if (!msgId || !shouldAutoTranslateText(text)) return;
+    const translated = await translateTextOnce(text);
+    if (!translated) return;
+    const table = isOffline ? db.offline_messages : db.messages;
+    await table.update(Number(msgId), { translatedContent: translated, showTranslation: 1 });
+    if (isOffline) {
+      try { await renderOfflineMessages(); } catch (e) {}
+    } else {
+      try { await renderDialogMessages(); } catch (e) {}
+    }
+  } catch (e) {
+    console.warn("翻译随动生成失败（已跳过，不影响聊天）:", e);
+  }
+}
+window.autoTranslateSavedMessage = autoTranslateSavedMessage;
+window.translateTextOnce = translateTextOnce;
 
 // 微信同款按需翻译引擎（支持文本、语音、图片智能解包与落盘）
 async function translateChatMessage(msgId, isOffline = false) {
