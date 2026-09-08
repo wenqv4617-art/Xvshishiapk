@@ -5798,8 +5798,30 @@ function bindChatAppEvents() {
         const sessionObj = await db.sessions.get(activeSessionId);
         const userName = sessionObj?.customUserName || "我";
 
+        // 翻译随动（样式：正文气泡下挂译文）：在气泡上屏前批量翻译一次，
+        // 逐气泡一一对应，与正文同时落库同时渲染——不会"先出正文再补翻译"，也不会格式错位
+        let autoTranslationByIndex = {};
+        if (isTranslateAutoOn && Array.isArray(responseItems) && responseItems.length > 0) {
+          const textItems = [];
+          responseItems.forEach((it, idx) => {
+            if (it && it.kind === 'text' && String(it.content || "").trim()) {
+              textItems.push({ idx: idx, content: String(it.content) });
+            }
+          });
+          if (textItems.length > 0) {
+            try {
+              showToast("正在生成翻译…");
+              const trans = await translateTextsBatch(textItems.map(x => x.content));
+              if (Array.isArray(trans)) {
+                textItems.forEach((x, k) => { if (trans[k]) autoTranslationByIndex[x.idx] = trans[k]; });
+              }
+            } catch (e) {
+              console.warn("翻译随动生成失败（本次仅显示正文）:", e);
+            }
+          }
+        }
+
         let currentItemIndex = 0;
-        let autoTransScheduled = false;
         async function processNextResponseItem() {
           if (currentItemIndex < responseItems.length) {
             const item = responseItems[currentItemIndex];
@@ -5811,18 +5833,13 @@ function bindChatAppEvents() {
               if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
                 textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, reqSessionId);
               }
-              // 翻译随动：只附加到第一条 char 文本消息上（旧版 [TRANSLATE] 标签兼容）
-              const transForThis = translationText;
+              // 翻译随动：优先取上屏前预生成的逐气泡译文；兼容旧版 [TRANSLATE] 标签
+              const transForThis = translationText || autoTranslationByIndex[currentItemIndex - 1] || null;
               translationText = null;
               // 思维链：只附加到第一条 char 文本消息上（独立字段，不污染正文）
               const thoughtForThis = preservedThoughtText;
               preservedThoughtText = "";
-              const savedCharMsg = await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
-              // 微信式翻译随动：本次回复没自带翻译时，对"整段回复"做一次 API 翻译后落库
-              if (isTranslateAutoOn && !transForThis && !autoTransScheduled && savedCharMsg && savedCharMsg.id) {
-                autoTransScheduled = true;
-                autoTranslateSavedMessage(savedCharMsg.id, cleanReplyText, false);
-              }
+              await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
             } else if (item.kind === 'special') {
               await processAndRenderSpecialItem(item, userName, reqSessionId);
             }
@@ -7726,13 +7743,17 @@ async function triggerOfflineReply() {
         if (offlineTranslationText) {
           msg.translatedContent = offlineTranslationText;
           msg.showTranslation = 1;
+        } else if (offlineTranslateAutoOn && shouldAutoTranslateText(rawReply)) {
+          // 翻译随动（线下）：上屏前整段翻译一次，正文与译文同时落库渲染
+          try {
+            const t = await translateTextOnce(rawReply);
+            if (t) { msg.translatedContent = t; msg.showTranslation = 1; }
+          } catch (e) {
+            console.warn("线下翻译随动失败（本次仅显示正文）:", e);
+          }
         }
-        const savedOfflineId = await db.offline_messages.add(msg);
+        await db.offline_messages.add(msg);
         await renderOfflineMessages();
-        // 微信式翻译随动（线下）：回复落库后整段翻译一次并重渲染
-        if (offlineTranslateAutoOn && !offlineTranslationText && savedOfflineId) {
-          autoTranslateSavedMessage(savedOfflineId, rawReply, true);
-        }
 
   } catch (err) {
     if (err.name === 'AbortError') {
@@ -8675,6 +8696,77 @@ ${text}`;
   const clean = String(out || "").trim();
   return clean || null;
 }
+
+/** 批量整段翻译：一次 API 调用，数组进数组出，返回与输入等长的中文译文数组（失败返回 null） */
+async function translateTextsBatch(texts) {
+  if (!Array.isArray(texts) || texts.length === 0) return null;
+  // 纯中文的条目无需翻译，原样返回，避免破坏格式与浪费额度
+  const needIdx = [];
+  const payload = [];
+  texts.forEach((t, i) => {
+    const s = String(t == null ? "" : t);
+    if (shouldAutoTranslateText(s)) { needIdx.push(i); payload.push(s); }
+  });
+  const out = texts.map(t => String(t == null ? "" : t));
+  if (payload.length === 0) return out;
+
+  const presetId = localStorage.getItem("global_api_preset_id");
+  const api = await db.api_presets.get(Number(presetId));
+  if (!api) throw new Error("请先在设置中配置 API！");
+
+  const prompt = `你是一个精准信达雅的翻译官。下面是一个 JSON 字符串数组，每个元素是一条待翻译的文本（可能已含中文）。
+请把每个元素**逐条**翻译为流畅自然的简体中文，并严格遵守：
+1) 输出必须是 JSON 字符串数组，长度与输入完全一致，顺序一一对应，不要增删条目；
+2) 中文部分保持原样，只翻译外文/方言；保留原有换行与语气、称呼；
+3) 不要输出任何解释、序号、Markdown 代码块或多余文字。
+
+输入数组：
+${JSON.stringify(payload)}`;
+
+  const callLLM = async () => {
+    if (typeof window.fwCallLLM === "function") {
+      try {
+        const r = await window.fwCallLLM(api, [{ role: "user", content: prompt }], { temperature: 0.2 });
+        if (r !== undefined && r !== null && String(r).trim() !== "") return String(r);
+      } catch (e) { /* 回落 fetch */ }
+    }
+    const response = await fetch(`${api.url}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+      body: JSON.stringify({
+        model: api.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2
+      })
+    });
+    if (!response.ok) throw new Error("翻译接口响应失败");
+    const result = await response.json();
+    return (result.choices && result.choices[0] && result.choices[0].message) ? result.choices[0].message.content : "";
+  };
+
+  let raw = await callLLM();
+  let arr = null;
+  try {
+    const cleaned = String(raw || "").replace(/```json/gi, "").replace(/```/g, "").trim();
+    const start = cleaned.indexOf("[");
+    const end = cleaned.lastIndexOf("]");
+    if (start >= 0 && end > start) arr = JSON.parse(cleaned.slice(start, end + 1));
+  } catch (e) { arr = null; }
+
+  if (!Array.isArray(arr) || arr.length !== payload.length) {
+    // 批量解析失败：逐条兜底（仍是同一次对话内的顺序，保证一一对应）
+    for (let k = 0; k < payload.length; k++) {
+      try { out[needIdx[k]] = (await translateTextOnce(payload[k])) || payload[k]; } catch (e) { out[needIdx[k]] = payload[k]; }
+    }
+    return out;
+  }
+  arr.forEach((v, k) => {
+    const s = typeof v === "string" ? v : (v && (v.text || v.translation)) || "";
+    out[needIdx[k]] = String(s).trim() || payload[k];
+  });
+  return out;
+}
+window.translateTextsBatch = translateTextsBatch;
 
 /** 翻译随动落库：给指定消息写入 translatedContent 并重渲染（静默失败，不打断聊天） */
 async function autoTranslateSavedMessage(msgId, text, isOffline) {

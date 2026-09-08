@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v57'; // v57: 翻译随动改微信式整段单次API翻译(不再让AI自插[TRANSLATE]标签,根治掉格式/错位) + 本地部署补第3个内置服务cmd-runner(列表可见/可启动)+TUI加S3/T3; v1.2.0
+const CACHE_NAME = 'story-phone-v58'; // v58: 翻译随动改为上屏前批量翻译(一次API数组进数组出)——正文与译文同时返回/逐气泡一一对应挂载/不掉格式; v1.2.1
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
