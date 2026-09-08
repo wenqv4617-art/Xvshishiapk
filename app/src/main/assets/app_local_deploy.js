@@ -186,6 +186,75 @@ if [ -f "$USER_SERVICES_FILE" ]; then
   done < "$USER_SERVICES_FILE"
 fi
 
+# ---------- 内置脚本自愈（缺失时从仓库 raw 自动补齐） ----------
+GITHUB_RAW="https://raw.githubusercontent.com/wenqv4617-art/Xvshishiapk/main/termux"
+
+builtin_remote() {
+  case "$1" in
+    cors-proxy) echo "$GITHUB_RAW/cors-proxy.js" ;;
+    cmd-runner) echo "$GITHUB_RAW/cmd-runner.js" ;;
+    *) echo "" ;;
+  esac
+}
+
+builtin_script_file() {
+  case "$1" in
+    cors-proxy) echo "$HOME/.xvshishi/cors-proxy.js" ;;
+    cmd-runner) echo "$HOME/.xvshishi/cmd-runner.js" ;;
+    *) echo "" ;;
+  esac
+}
+
+ensure_script() {
+  local id="$1" file base dl url
+  file=$(builtin_script_file "$id")
+  [ -z "$file" ] && return 0
+  [ -f "$file" ] && [ -s "$file" ] && return 0
+  base=$(basename "$file")
+  log "\${C_Y}[!]\${C_END} 缺少脚本文件: $file，尝试自动补齐..."
+  mkdir -p "$(dirname "$file")"
+  # 1) 优先从 App 导出的手机存储目录复制（无需网络）
+  for src in "/sdcard/Download/Storypoem/xvshishi-scripts/$base" "/storage/emulated/0/Download/Storypoem/xvshishi-scripts/$base"; do
+    if [ -f "$src" ] && cp "$src" "$file" 2>/dev/null && [ -s "$file" ]; then
+      log "\${C_G}[✓]\${C_END} 已从手机存储补齐: $file"
+      return 0
+    fi
+  done
+  dl=""
+  if command -v curl >/dev/null 2>&1; then
+    dl="curl -fsSL"
+  elif command -v wget >/dev/null 2>&1; then
+    dl="wget -qO-"
+  fi
+  if [ -z "$dl" ]; then
+    log "\${C_R}[x]\${C_END} 未安装 curl/wget，请先执行: pkg install -y curl"
+    return 1
+  fi
+  # 主源 GitHub raw，备用源 jsDelivr CDN（国内网络更易成功）
+  for url in "$GITHUB_RAW/$base" "https://cdn.jsdelivr.net/gh/wenqv4617-art/Xvshishiapk@main/termux/$base"; do
+    if $dl "$url" > "$file" 2>/dev/null && [ -s "$file" ]; then
+      log "\${C_G}[✓]\${C_END} 已补齐脚本: $file"
+      return 0
+    fi
+  done
+  rm -f "$file" 2>/dev/null
+  log "\${C_R}[x]\${C_END} 自动下载失败（请检查网络），或重新复制 App「本地部署→部署引导」命令"
+  return 1
+}
+
+repair_all() {
+  log ""
+  log "\${C_BOLD}修复/补齐内置脚本\${C_END}"
+  local ok=0 fail=0
+  for id in cors-proxy cmd-runner; do
+    if ensure_script "$id"; then ok=$((ok+1)); else fail=$((fail+1)); fi
+  done
+  log "------------------------------------------"
+  log "\${C_G}已就绪: $ok\${C_END}  \${C_R}失败: $fail\${C_END}"
+  log "\${C_DIM}提示: 还需 pkg install -y nodejs-lts git curl 以运行脚本与 git 工具\${C_END}"
+  log ""
+}
+
 # ---------- 工具函数 ----------
 log() { echo -e "$*"; }
 now() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -271,16 +340,23 @@ start_service() {
   cmd=$(get_cmd "$id")
   [ -z "$cmd" ] && { log "\${C_R}[x]\${C_END} 未知服务: $id"; return 1; }
 
-  # 预检：若命令指向本地脚本文件，先确认文件存在，避免静默失败
+  # 预检：若命令指向本地脚本文件，先确认文件存在；缺失则尝试自动下载补齐
   mainfile=$(echo "$cmd" | sed -n 's/^[^ ]* \\([^ ]*\\.\\(js\\|sh\\)\\).*/\\1/p')
   if [ -n "$mainfile" ]; then
     # 展开 $HOME 变量
     mainfile_expanded=$(eval echo "$mainfile")
-    if [ ! -f "$mainfile_expanded" ]; then
-      log "\${C_R}[x]\${C_END} $name 启动失败：找不到脚本文件 $mainfile_expanded"
-      log "\${C_Y}[!]\${C_END} 请先运行部署脚本下载辅助文件，或检查该文件是否存在。"
-      write_status "$id" "error" ""
-      return 1
+    if [ ! -s "$mainfile_expanded" ]; then
+      if ! ensure_script "$id"; then
+        log "\${C_R}[x]\${C_END} $name 启动失败：脚本文件缺失 $mainfile_expanded"
+        log "\${C_Y}[!]\${C_END} 可执行 xvshishi repair 自动补齐，或重新复制 App「本地部署→部署引导」命令。"
+        write_status "$id" "error" ""
+        return 1
+      fi
+      if [ ! -s "$mainfile_expanded" ]; then
+        log "\${C_R}[x]\${C_END} $name 启动失败：脚本文件仍缺失"
+        write_status "$id" "error" ""
+        return 1
+      fi
     fi
   fi
 
@@ -298,6 +374,9 @@ start_service() {
     write_status "$id" "error" ""
     log "\${C_R}[x]\${C_END} $name 启动失败，请查看日志: $logf"
     log "\${C_Y}[!]\${C_END} 日志内容: $(tail -5 "$logf" 2>/dev/null | tr '\\n' ' ')"
+    if tail -30 "$logf" 2>/dev/null | grep -q "Cannot find module"; then
+      log "\${C_Y}[!]\${C_END} 检测到脚本文件缺失（Cannot find module）→ 执行 \${C_C}xvshishi repair\${C_END} 可自动补齐"
+    fi
   fi
 }
 
@@ -375,6 +454,7 @@ tui_menu() {
     log "  \${C_C}[3]\${C_END} 查看服务日志"
     log "  \${C_C}[4]\${C_END} 一键部署/修复依赖"
     log "  \${C_C}[5]\${C_END} 查看持久化数据文件"
+    log "  \${C_C}[6]\${C_END} 修复/补齐内置脚本（cmd-runner 等）"
     log "  \${C_C}[0]\${C_END} 退出"
     log ""
     log "  \${C_DIM}—— 单独启停（推荐分开启动，避免相互干扰）——\${C_END}"
@@ -395,6 +475,7 @@ tui_menu() {
       3) tui_logs;;
       4) tui_repair;;
       5) tui_data;;
+      6) repair_all; sleep 1;;
       0) log "再见！随时输入 \${C_C}xvshishi\${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "\${SERVICES[0]}" ] && start_service "\${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "\${SERVICES[1]}" ] && start_service "\${SERVICES[1]%%|*}"; sleep 1;;
@@ -472,8 +553,9 @@ case "\${1:-tui}" in
   restart) stop_service "$2"; start_service "$2" ;;
   status)  [ -n "$2" ] && show_status "$2" || list_all ;;
   list)    list_all ;;
+  repair)  repair_all ;;
   tui)     tui_menu ;;
-  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]}";;
+  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]|repair}";;
 esac
 `;
   var XSHISHI_LAUNCHER_SOURCE = `#!/data/data/com.termux/files/usr/bin/bash
@@ -484,7 +566,11 @@ esac
 # 之后在 Termux 任意位置直接输入：
 #     xvshishi
 # 即可立刻唤出脚本交互页面（服务管理器 TUI），无需再输入长命令。
+# 也支持子命令：xvshishi repair / xvshishi start cmd-runner / xvshishi list
 # ============================================================
+if [ $# -gt 0 ]; then
+  exec bash "$HOME/.xvshishi/xvshishi-services.sh" "$@"
+fi
 exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
 `;
 var CMD_RUNNER_SOURCE = `
@@ -864,19 +950,20 @@ server.listen(PORT, '127.0.0.1', function () {
     // ============ 部署引导（命令内置脚本内容，heredoc 直接创建文件） ============
     buildDeployCommand: function () {
       var L = [];
+      var trimSrc = function (s) { return String(s || "").replace(/^\n+/, "").replace(/\n+$/, ""); };
       L.push("mkdir -p ~/.xvshishi/data ~/.xvshishi/status ~/.xvshishi/logs ~/.xvshishi/pids");
       L.push("cat > ~/.xvshishi/cors-proxy.js <<'XSH_EOF'");
-      L.push(CORS_PROXY_SOURCE.replace(/\n$/, ""));
+      L.push(trimSrc(CORS_PROXY_SOURCE));
       L.push("XSH_EOF");
       L.push("cat > ~/.xvshishi/cmd-runner.js <<'XSH_EOF'");
-      L.push(CMD_RUNNER_SOURCE.replace(/\n$/, ""));
+      L.push(trimSrc(CMD_RUNNER_SOURCE));
       L.push("XSH_EOF");
       L.push("cat > ~/.xvshishi/xvshishi-services.sh <<'XSH_EOF'");
-      L.push(SERVICES_MANAGER_SOURCE.replace(/\n$/, ""));
+      L.push(trimSrc(SERVICES_MANAGER_SOURCE));
       L.push("XSH_EOF");
       L.push("mkdir -p $PREFIX/bin");
       L.push("cat > $PREFIX/bin/xvshishi <<'XSH_EOF'");
-      L.push(XSHISHI_LAUNCHER_SOURCE.replace(/\n$/, ""));
+      L.push(trimSrc(XSHISHI_LAUNCHER_SOURCE));
       L.push("XSH_EOF");
       L.push("chmod +x $PREFIX/bin/xvshishi");
       L.push("chmod +x ~/.xvshishi/xvshishi-services.sh");
@@ -888,22 +975,55 @@ server.listen(PORT, '127.0.0.1', function () {
       return L.join("\n");
     },
 
+    // 导出内置脚本到手机公共存储（Download/Storypoem/xvshishi-scripts/），Termux 一条短命令即可安装
+    exportScriptsToPhone: function () {
+      var bridge = window.AndroidMCP;
+      if (!bridge || typeof bridge.saveLocalDeployScript !== "function") {
+        showToastSafe("当前环境不支持导出，请在 APK 内使用");
+        return;
+      }
+      var files = [
+        ["cors-proxy.js", CORS_PROXY_SOURCE],
+        ["cmd-runner.js", CMD_RUNNER_SOURCE],
+        ["xvshishi-services.sh", SERVICES_MANAGER_SOURCE],
+        ["xvshishi", XSHISHI_LAUNCHER_SOURCE]
+      ];
+      var ok = 0, err = "";
+      files.forEach(function (f) {
+        try {
+          var body = String(f[1] || "").replace(/^\n+/, "").replace(/\n+$/, "");
+          var r = JSON.parse(bridge.saveLocalDeployScript(f[0], body) || "{}");
+          if (r && r.ok) ok++; else err = (r && r.error) || "未知错误";
+        } catch (e) { err = e.message || String(e); }
+      });
+      var dir = "";
+      try { dir = (JSON.parse(bridge.getLocalDeployScriptDir() || "{}") || {}).dir || ""; } catch (e) {}
+      if (ok === files.length) {
+        showToastSafe("已导出 " + ok + " 个脚本 → " + (dir || "Download/Storypoem/xvshishi-scripts"));
+      } else {
+        showToastSafe("导出成功 " + ok + "/" + files.length + " 个" + (err ? ("，失败原因：" + err) : ""));
+      }
+    },
+
     showGuide: function () {
       var overlay = document.getElementById("local-deploy-guide-overlay");
       var body = document.getElementById("local-deploy-guide-body");
       if (!overlay || !body) return;
 
       var steps = [
-        { title: "第 1 步：安装 Termux", desc: "务必用 F-Droid 版（Play 版已停更）：https://f-droid.org/packages/com.termux/", cmd: "" },
-        { title: "第 2 步：一键部署", desc: "复制下面整条命令到 Termux 执行。命令已内置全部脚本内容，会自动创建 CORS 中转脚本、服务管理器与唤出命令 xvshishi，并安装依赖、进入服务管理器，全程无需联网下载：", cmd: this.buildDeployCommand() },
+        { title: "第 1 步：安装 Termux", desc: "务必用 F-Droid 版（Play 版已停更）：https://f-droid.org/packages/com.termux/　首次使用请先执行一次 termux-setup-storage 授权存储（否则读不到手机 Download 目录）", cmd: "termux-setup-storage" },
+        { title: "第 2 步（推荐）：导出脚本到手机存储", desc: "先点下面的『导出脚本到手机存储』按钮（App 会把 4 个脚本直接写进手机 Download/Storypoem/xvshishi-scripts/，不经过剪贴板，绝不会被截断），然后在 Termux 执行这条短命令安装：", cmd: "mkdir -p ~/.xvshishi \"$PREFIX/bin\" && cp /sdcard/Download/Storypoem/xvshishi-scripts/* ~/.xvshishi/ && cp ~/.xvshishi/xvshishi \"$PREFIX/bin/xvshishi\" && chmod +x ~/.xvshishi/xvshishi-services.sh \"$PREFIX/bin/xvshishi\" && xvshishi" },
+        { title: "第 2 步（备选）：一键长命令部署", desc: "若不想用导出方式，也可复制下面整条命令到 Termux 执行（内容较长，注意别被截断）：", cmd: this.buildDeployCommand() },
         { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy\nbash $HOME/.xvshishi/xvshishi-services.sh start cmd-runner" },
+        { title: "脚本缺失 / 启动失败时", desc: "若某服务提示找不到脚本（Cannot find module），执行这条短命令即可自动补齐：优先从手机存储复制，其次从仓库下载：", cmd: "xvshishi repair" },
         { title: "第 4 步：随时唤出脚本页面", desc: "退出 Termux 后再进入时，直接输入下面的命令即可再次进入脚本交互页面：", cmd: "xvshishi" },
         { title: "第 5 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
         { title: "第 6 步：回到 App 使用", desc: "网易云登录弹窗的 API 地址填（网页版跨域中转为 3001 端口）：", cmd: "http://localhost:3000" }
       ];
 
-      var html = '<div style="margin-bottom:12px;">' +
-        '<button class="btn btn-primary" style="width:100%;padding:10px 0;font-size:12px;" id="btn-copy-all-cmds">＋ 一键复制全部命令</button></div>';
+      var html = '<div style="margin-bottom:12px; display:flex; flex-direction:column; gap:8px;">' +
+        '<button class="btn btn-primary" style="width:100%;padding:10px 0;font-size:12px;" id="btn-export-scripts">📥 导出脚本到手机存储（推荐，防截断）</button>' +
+        '<button class="btn btn-outline" style="width:100%;padding:8px 0;font-size:11px;" id="btn-copy-all-cmds">＋ 一键复制全部命令</button></div>';
 
       steps.forEach(function (step, i) {
         html += '<div style="margin-bottom:12px;">';
@@ -935,6 +1055,11 @@ server.listen(PORT, '127.0.0.1', function () {
         btnAll.onclick = function () {
           copyText(steps.map(function (s) { return s.cmd; }).filter(Boolean).join("\n\n"));
         };
+      }
+
+      var btnExport = document.getElementById("btn-export-scripts");
+      if (btnExport) {
+        btnExport.onclick = function () { localDeploySystem.exportScriptsToPhone(); };
       }
 
       overlay.style.display = "flex";

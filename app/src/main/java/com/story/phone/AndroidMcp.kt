@@ -273,6 +273,42 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    // 1.4 Termux 部署脚本离线导出：写入公共 Download/Storypoem/xvshishi-scripts/
+    //     （解决超长部署命令复制被截断导致 cmd-runner.js 缺失的问题）
+    private fun ensureLocalDeployScriptDir(): File {
+        val dir = File(getDownloadDir(), "xvshishi-scripts")
+        if (!dir.exists()) dir.mkdirs()
+        return dir
+    }
+
+    @JavascriptInterface
+    fun saveLocalDeployScript(fileName: String, content: String): String {
+        return try {
+            val safe = fileName.replace("/", "_").replace("\\", "_")
+            val f = File(ensureLocalDeployScriptDir(), safe)
+            f.writeText(content, Charsets.UTF_8)
+            JSONObject().apply {
+                put("ok", true)
+                put("path", f.absolutePath)
+                put("bytes", f.length())
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":${JSONObject.quote(e.message ?: "写入失败")}}"
+        }
+    }
+
+    @JavascriptInterface
+    fun getLocalDeployScriptDir(): String {
+        return try {
+            JSONObject().apply {
+                put("ok", true)
+                put("dir", ensureLocalDeployScriptDir().absolutePath)
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"目录不可用\"}"
+        }
+    }
+
     // 1.4 降级容灾直写：保留作为纯文本备份或单卡片调试导入直写
     @JavascriptInterface
     fun saveBackupFile(jsonString: String, fileName: String): Boolean {

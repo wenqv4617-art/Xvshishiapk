@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v59'; // v59: 翻译随动默认单次调用(正文末尾[TRANS_JSON]结构化译文块→本地剥离+按原文精确匹配到气泡)+子开关"翻译未命中时允许追加一次API"; v1.2.2
+const CACHE_NAME = 'story-phone-v60'; // v60: 本地部署离线自愈——App 一键导出脚本到Download/Storypoem/xvshishi-scripts(防长命令截断)+xvshishi repair(优先本地复制/次选网络)+启动缺文件自动补齐; v1.2.3
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

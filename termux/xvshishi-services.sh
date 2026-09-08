@@ -53,6 +53,78 @@ if [ -f "$USER_SERVICES_FILE" ]; then
   done < "$USER_SERVICES_FILE"
 fi
 
+# ---------- 内置脚本自愈（缺失时从仓库 raw 自动补齐） ----------
+GITHUB_RAW="https://raw.githubusercontent.com/wenqv4617-art/Xvshishiapk/main/termux"
+
+# 内置服务 id → 远程文件名（非内置/无需下载则输出空）
+builtin_remote() {
+  case "$1" in
+    cors-proxy) echo "$GITHUB_RAW/cors-proxy.js" ;;
+    cmd-runner) echo "$GITHUB_RAW/cmd-runner.js" ;;
+    *) echo "" ;;
+  esac
+}
+
+builtin_script_file() {
+  case "$1" in
+    cors-proxy) echo "$HOME/.xvshishi/cors-proxy.js" ;;
+    cmd-runner) echo "$HOME/.xvshishi/cmd-runner.js" ;;
+    *) echo "" ;;
+  esac
+}
+
+# 确保脚本存在；缺失则尝试用 curl/wget 从 GitHub 下载
+ensure_script() {
+  local id="$1" file base dl url
+  file=$(builtin_script_file "$id")
+  [ -z "$file" ] && return 0
+  [ -f "$file" ] && [ -s "$file" ] && return 0
+  base=$(basename "$file")
+  log "${C_Y}[!]${C_END} 缺少脚本文件: $file，尝试自动补齐..."
+  mkdir -p "$(dirname "$file")"
+  # 1) 优先从 App 导出的手机存储目录复制（无需网络）
+  for src in "/sdcard/Download/Storypoem/xvshishi-scripts/$base" "/storage/emulated/0/Download/Storypoem/xvshishi-scripts/$base"; do
+    if [ -f "$src" ] && cp "$src" "$file" 2>/dev/null && [ -s "$file" ]; then
+      log "${C_G}[✓]${C_END} 已从手机存储补齐: $file"
+      return 0
+    fi
+  done
+  dl=""
+  if command -v curl >/dev/null 2>&1; then
+    dl="curl -fsSL"
+  elif command -v wget >/dev/null 2>&1; then
+    dl="wget -qO-"
+  fi
+  if [ -z "$dl" ]; then
+    log "${C_R}[x]${C_END} 未安装 curl/wget，请先执行: pkg install -y curl"
+    return 1
+  fi
+  # 主源 GitHub raw，备用源 jsDelivr CDN（国内网络更易成功）
+  for url in "$GITHUB_RAW/$base" "https://cdn.jsdelivr.net/gh/wenqv4617-art/Xvshishiapk@main/termux/$base"; do
+    if $dl "$url" > "$file" 2>/dev/null && [ -s "$file" ]; then
+      log "${C_G}[✓]${C_END} 已补齐脚本: $file"
+      return 0
+    fi
+  done
+  rm -f "$file" 2>/dev/null
+  log "${C_R}[x]${C_END} 自动下载失败（请检查网络），或重新复制 App「本地部署→部署引导」命令"
+  return 1
+}
+
+# 一键补齐全部内置脚本（xvshishi repair）
+repair_all() {
+  log ""
+  log "${C_BOLD}修复/补齐内置脚本${C_END}"
+  local ok=0 fail=0
+  for id in cors-proxy cmd-runner; do
+    if ensure_script "$id"; then ok=$((ok+1)); else fail=$((fail+1)); fi
+  done
+  log "------------------------------------------"
+  log "${C_G}已就绪: $ok${C_END}  ${C_R}失败: $fail${C_END}"
+  log "${C_DIM}提示: 还需 pkg install -y nodejs-lts git curl 以运行脚本与 git 工具${C_END}"
+  log ""
+}
+
 # ---------- 工具函数 ----------
 log() { echo -e "$*"; }
 now() { date '+%Y-%m-%d %H:%M:%S'; }
@@ -138,16 +210,23 @@ start_service() {
   cmd=$(get_cmd "$id")
   [ -z "$cmd" ] && { log "${C_R}[x]${C_END} 未知服务: $id"; return 1; }
 
-  # 预检：若命令指向本地脚本文件，先确认文件存在，避免静默失败
+  # 预检：若命令指向本地脚本文件，先确认文件存在；缺失则尝试自动下载补齐
   mainfile=$(echo "$cmd" | sed -n 's/^[^ ]* \([^ ]*\.\(js\|sh\)\).*/\1/p')
   if [ -n "$mainfile" ]; then
     # 展开 $HOME 变量
     mainfile_expanded=$(eval echo "$mainfile")
-    if [ ! -f "$mainfile_expanded" ]; then
-      log "${C_R}[x]${C_END} $name 启动失败：找不到脚本文件 $mainfile_expanded"
-      log "${C_Y}[!]${C_END} 请先运行部署脚本下载辅助文件，或检查该文件是否存在。"
-      write_status "$id" "error" ""
-      return 1
+    if [ ! -s "$mainfile_expanded" ]; then
+      if ! ensure_script "$id"; then
+        log "${C_R}[x]${C_END} $name 启动失败：脚本文件缺失 $mainfile_expanded"
+        log "${C_Y}[!]${C_END} 可执行 xvshishi repair 自动补齐，或重新复制 App「本地部署→部署引导」命令。"
+        write_status "$id" "error" ""
+        return 1
+      fi
+      if [ ! -s "$mainfile_expanded" ]; then
+        log "${C_R}[x]${C_END} $name 启动失败：脚本文件仍缺失"
+        write_status "$id" "error" ""
+        return 1
+      fi
     fi
   fi
 
@@ -165,6 +244,9 @@ start_service() {
     write_status "$id" "error" ""
     log "${C_R}[x]${C_END} $name 启动失败，请查看日志: $logf"
     log "${C_Y}[!]${C_END} 日志内容: $(tail -5 "$logf" 2>/dev/null | tr '\n' ' ')"
+    if tail -30 "$logf" 2>/dev/null | grep -q "Cannot find module"; then
+      log "${C_Y}[!]${C_END} 检测到脚本文件缺失（Cannot find module）→ 执行 ${C_C}xvshishi repair${C_END} 可自动补齐"
+    fi
   fi
 }
 
@@ -242,6 +324,7 @@ tui_menu() {
     log "  ${C_C}[3]${C_END} 查看服务日志"
     log "  ${C_C}[4]${C_END} 一键部署/修复依赖"
     log "  ${C_C}[5]${C_END} 查看持久化数据文件"
+    log "  ${C_C}[6]${C_END} 修复/补齐内置脚本（cmd-runner 等）"
     log "  ${C_C}[0]${C_END} 退出"
     log ""
     log "  ${C_DIM}—— 单独启停（推荐分开启动，避免相互干扰）——${C_END}"
@@ -262,6 +345,7 @@ tui_menu() {
       3) tui_logs;;
       4) tui_repair;;
       5) tui_data;;
+      6) repair_all; sleep 1;;
       0) log "再见！随时输入 ${C_C}xvshishi${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "${SERVICES[0]}" ] && start_service "${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "${SERVICES[1]}" ] && start_service "${SERVICES[1]%%|*}"; sleep 1;;
@@ -339,6 +423,7 @@ case "${1:-tui}" in
   restart) stop_service "$2"; start_service "$2" ;;
   status)  [ -n "$2" ] && show_status "$2" || list_all ;;
   list)    list_all ;;
+  repair)  repair_all ;;
   tui)     tui_menu ;;
-  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]}";;
+  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]|repair}";;
 esac

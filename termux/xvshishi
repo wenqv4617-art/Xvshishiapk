@@ -7,4 +7,13 @@
 #     xvshishi
 # 即可立刻唤出脚本交互页面（服务管理器 TUI），无需再输入长命令。
 # ============================================================
+# 用法：
+#     xvshishi              # 进入交互式管理菜单
+#     xvshishi repair       # 修复/补齐内置脚本（如 cmd-runner 缺失）
+#     xvshishi start cmd-runner
+#     xvshishi list
+# ============================================================
+if [ $# -gt 0 ]; then
+  exec bash "$HOME/.xvshishi/xvshishi-services.sh" "$@"
+fi
 exec bash "$HOME/.xvshishi/xvshishi-services.sh" tui
