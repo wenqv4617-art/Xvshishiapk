@@ -734,7 +734,7 @@ server.listen(PORT, '127.0.0.1', function () {
           <div class="local-deploy-intro-card">
             <div class="local-deploy-intro-title">本地部署中心</div>
             <div class="local-deploy-intro-desc">
-              通过 Termux 在手机上运行本地脚本服务（网易云 API / CORS 跨域中转 / AI 命令执行服务），App 通过 localhost 访问。
+              通过 Termux 在手机上运行本地脚本服务（网易云 API / CORS 跨域中转 / AI 命令执行服务 / 分享链接解析），App 通过 localhost 访问。
               部署引导命令已内置全部脚本内容，复制到 Termux 执行即可直接创建脚本文件，无需联网下载。
             </div>
           </div>
@@ -1038,6 +1038,7 @@ server.listen(PORT, '127.0.0.1', function () {
 
       var html = '<div style="margin-bottom:12px; display:flex; flex-direction:column; gap:8px;">' +
         '<button class="btn btn-primary" style="width:100%;padding:10px 0;font-size:12px;" id="btn-export-scripts">📥 导出脚本到手机存储（推荐，防截断）</button>' +
+        '<button class="btn btn-outline" style="width:100%;padding:8px 0;font-size:11px;" id="btn-check-services">🔎 自检本地服务（3001/3002/3003 是否在跑）</button>' +
         '<button class="btn btn-outline" style="width:100%;padding:8px 0;font-size:11px;" id="btn-copy-all-cmds">＋ 一键复制全部命令</button></div>';
 
       steps.forEach(function (step, i) {
@@ -1075,6 +1076,23 @@ server.listen(PORT, '127.0.0.1', function () {
       var btnExport = document.getElementById("btn-export-scripts");
       if (btnExport) {
         btnExport.onclick = function () { localDeploySystem.exportScriptsToPhone(); };
+      }
+
+      // 一键自检：3001/3002/3003 三个本地服务是否在运行
+      var btnCheck = document.getElementById("btn-check-services");
+      if (btnCheck) {
+        btnCheck.onclick = async function () {
+          var items = [["cors-proxy", 3001], ["cmd-runner", 3002], ["link-meta", 3003]];
+          var lines = [];
+          for (var i = 0; i < items.length; i++) {
+            try {
+              var r = await fetch("http://127.0.0.1:" + items[i][1] + "/health");
+              var j = await r.json();
+              lines.push(items[i][0] + ": " + (j && j.ok ? "运行中" : "异常"));
+            } catch (e) { lines.push(items[i][0] + ": 未启动"); }
+          }
+          showToastSafe(lines.join(" · "));
+        };
       }
 
       overlay.style.display = "flex";

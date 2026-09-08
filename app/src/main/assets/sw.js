@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v66'; // v66: 视觉发送仅限用户消息(角色生成图不再误发assistant图片导致API报错)+每次请求重置视觉降级标记; v1.3.5
+const CACHE_NAME = 'story-phone-v67'; // v67: 本地部署新增"自检本地服务"按钮(3001/3002/3003健康检查)+文案补齐第4个服务; v1.3.6
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
