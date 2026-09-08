@@ -1558,23 +1558,108 @@ async function fetchLinkMeta(url) {
   return { ok: false, finalUrl: url, site: shareSiteName('', url), kind: 'web', title: url, desc: '', author: '', images: [] };
 }
 
-/** 分享卡片 HTML */
+/** 元数据 → 分享消息落库结构（线上线下共用，保证两条链路字段完全一致） */
+function buildShareDataFromMeta(meta, rawUrl, noteText) {
+  const d = {
+    url: (meta && meta.finalUrl) || rawUrl,
+    rawUrl: rawUrl,
+    site: (meta && meta.site) || '',
+    kind: (meta && meta.kind) || 'web',
+    title: (meta && meta.title) || rawUrl,
+    desc: (meta && meta.desc) || '',
+    author: (meta && meta.author) || '',
+    images: (meta && Array.isArray(meta.images)) ? meta.images.slice(0, 18) : [],
+    cover: (meta && meta.images && meta.images[0]) || '',
+    note: String(noteText || '').replace(rawUrl, '').trim(),
+    ok: !(meta && meta.ok === false)
+  };
+  if (meta) {
+    if (meta.likedCount != null) d.likedCount = meta.likedCount;
+    if (meta.collectedCount != null) d.collectedCount = meta.collectedCount;
+    if (meta.commentCount != null) d.commentCount = meta.commentCount;
+    if (meta.shareCount != null) d.shareCount = meta.shareCount;
+    if (meta.publishTime) d.publishTime = meta.publishTime;
+    if (Array.isArray(meta.tags) && meta.tags.length) d.tags = meta.tags.slice(0, 10);
+    if (meta.noteId) d.noteId = meta.noteId;
+    if (Array.isArray(meta.comments) && meta.comments.length) d.comments = meta.comments.slice(0, 12);
+    if (meta.commentsHasMore) d.commentsHasMore = true;
+  }
+  return d;
+}
+
+/** 互动数简写：12345 → 1.2万 */
+function fmtShareCount(n) {
+  const v = Number(n);
+  if (!isFinite(v)) return '';
+  if (v >= 100000000) return (v / 100000000).toFixed(1).replace(/\.0$/, '') + '亿';
+  if (v >= 10000) return (v / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+  return String(v);
+}
+
+/** 发布时间：同年只显示月-日 */
+function formatShareTime(ts) {
+  const d = new Date(Number(ts));
+  if (isNaN(d.getTime())) return '';
+  const pad = (x) => (x < 10 ? '0' + x : '' + x);
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return (sameYear ? '' : d.getFullYear() + '-') + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+}
+
+/** 分享卡片正文展开/收起（避免正文过长撑爆气泡） */
+window.toggleShareDesc = function (btn, msgId) {
+  const el = document.getElementById('share-desc-' + msgId);
+  if (!el) return;
+  const expanded = el.getAttribute('data-expanded') === '1';
+  if (expanded) {
+    el.setAttribute('data-expanded', '0');
+    el.style.display = '-webkit-box';
+    el.style.webkitLineClamp = '3';
+    el.style.overflow = 'hidden';
+    el.style.whiteSpace = 'normal';
+    if (btn) btn.innerText = '展开全文';
+  } else {
+    el.setAttribute('data-expanded', '1');
+    el.style.display = 'block';
+    el.style.webkitLineClamp = 'unset';
+    el.style.overflow = 'visible';
+    el.style.whiteSpace = 'pre-wrap';
+    if (btn) btn.innerText = '收起';
+  }
+};
+
+/** 分享卡片 HTML（小红书笔记附带互动数据 / 话题 / 可展开正文） */
 function buildShareCardHTML(msgId, data) {
   const cover = data.cover || (data.images && data.images[0]) || '';
   const site = escapeHtml(shareSiteName(data.site, data.url));
   const title = escapeHtml(data.title || data.url || '分享链接');
-  const desc = escapeHtml(String(data.desc || '').slice(0, 120));
+  const descRaw = String(data.desc || '');
+  const desc = escapeHtml(descRaw);
   const author = escapeHtml(data.author || '');
   const url = String(data.url || '').replace(/"/g, '&quot;');
   const imgCount = (data.images && data.images.length) || 0;
+  const tags = (data.tags || []).slice(0, 6).map(function (t) { return escapeHtml(String(t)); }).filter(Boolean);
+  const pubTime = data.publishTime ? formatShareTime(data.publishTime) : '';
+
+  // 互动数据角标行：点赞 / 收藏 / 评论 / 分享
+  const stats = [];
+  if (data.likedCount != null) stats.push('❤ ' + fmtShareCount(data.likedCount));
+  if (data.collectedCount != null) stats.push('⭐ ' + fmtShareCount(data.collectedCount));
+  if (data.commentCount != null) stats.push('💬 ' + fmtShareCount(data.commentCount));
+  if (data.shareCount != null) stats.push('↗ ' + fmtShareCount(data.shareCount));
+
+  const longDesc = descRaw.length > 48 || descRaw.indexOf('\n') >= 0;
+
   return `
     <div class="share-card" onclick="window.openShareLink('${url}')" style="cursor:pointer; width:100%; max-width:262px; border:1px solid var(--border); border-radius:12px; overflow:hidden; background:#fff;">
       ${cover ? `<img src="${String(cover).replace(/"/g, '&quot;')}" style="width:100%; max-height:180px; object-fit:cover; display:block;" onerror="this.style.display='none';">` : ''}
       <div style="padding:8px 10px;">
-        <div style="font-size:10px; color:#ef4444; font-weight:700; margin-bottom:2px;">${site}${imgCount > 1 ? ' · ' + imgCount + ' 图' : ''}</div>
+        <div style="font-size:10px; color:#ef4444; font-weight:700; margin-bottom:2px;">${site}${imgCount > 1 ? ' · ' + imgCount + ' 图' : ''}${pubTime ? ' · ' + pubTime : ''}</div>
         <div style="font-size:12.5px; font-weight:700; color:var(--text-primary); line-height:1.35; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${title}</div>
-        ${desc ? `<div style="font-size:10.5px; color:var(--text-secondary); margin-top:4px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${desc}</div>` : ''}
-        ${author ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">@${author}</div>` : ''}
+        ${desc ? `<div id="share-desc-${msgId}" data-expanded="0" style="font-size:10.5px; color:var(--text-secondary); margin-top:4px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;">${desc}</div>` : ''}
+        ${longDesc ? `<div onclick="event.stopPropagation(); window.toggleShareDesc(this, ${msgId});" style="font-size:10px; color:#576b95; margin-top:3px; font-weight:600;">展开全文</div>` : ''}
+        ${stats.length ? `<div style="display:flex; flex-wrap:wrap; gap:9px; font-size:10px; color:#6b7280; margin-top:5px;">${stats.map(function (s) { return `<span>${s}</span>`; }).join('')}</div>` : ''}
+        ${tags.length ? `<div style="display:flex; flex-wrap:wrap; gap:4px; margin-top:5px;">${tags.map(function (t) { return `<span style="font-size:9.5px; color:#ef4444; background:rgba(239,68,68,0.08); padding:1px 5px; border-radius:5px;">#${t}</span>`; }).join('')}</div>` : ''}
+        ${author ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:5px;">@${author}</div>` : ''}
         <div style="font-size:9.5px; color:#9ca3af; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); word-break:break-all;">${escapeHtml(shareSiteName('', data.url))}</div>
         ${(data.images && data.images.length > 1) ? `<div style="display:flex; gap:4px; margin-top:6px; overflow-x:auto;">${data.images.slice(0, 5).map(function (u) {
           const s = String(u).replace(/"/g, '&quot;');
@@ -1593,7 +1678,7 @@ window.openShareLink = function (url) {
   try { window.open(url, '_blank'); } catch (e) { showToast('无法打开链接'); }
 };
 
-/** 分享消息 → AI 上下文干净文本（无乱码、无标签） */
+/** 分享消息 → AI 上下文干净文本（标题/正文/互动数据/话题/首屏评论/图片，尽量还原"点进链接能看到什么"） */
 function formatShareContextText(msg, isUser, charName) {
   try {
     const d = JSON.parse(msg.content);
@@ -1604,7 +1689,38 @@ function formatShareContextText(msg, isUser, charName) {
       ? `[你向 ${charName} 分享了一个${site}链接：《${title}》]`
       : `[${charName} 向你分享了一个${site}链接：《${title}》]`);
     if (d.author) lines.push(`作者：${d.author}`);
-    if (d.desc) lines.push(`内容摘要：${String(d.desc).slice(0, 200)}`);
+    if (d.publishTime) {
+      const t = formatShareTime(d.publishTime);
+      if (t) lines.push(`发布时间：${t}`);
+    }
+    const stats = [];
+    if (d.likedCount != null) stats.push(`点赞 ${d.likedCount}`);
+    if (d.collectedCount != null) stats.push(`收藏 ${d.collectedCount}`);
+    if (d.commentCount != null) stats.push(`评论 ${d.commentCount}`);
+    if (d.shareCount != null) stats.push(`分享 ${d.shareCount}`);
+    if (stats.length) lines.push(`互动数据：${stats.join(' · ')}`);
+    if (Array.isArray(d.tags) && d.tags.length) lines.push(`话题：${d.tags.map(function (t) { return '#' + t; }).join(' ')}`);
+    if (d.desc) lines.push(`正文：${String(d.desc).slice(0, 2000)}`);
+    if (Array.isArray(d.comments) && d.comments.length) {
+      const total = d.commentCount != null ? d.commentCount : d.comments.length;
+      lines.push(`评论（共 ${total} 条${d.commentsHasMore ? '，以下为页面可见的前 ' + d.comments.length + ' 条' : ''}）：`);
+      d.comments.slice(0, 8).forEach(function (c) {
+        const who = c.user || '匿名';
+        const ip = c.ip ? `（${c.ip}）` : '';
+        const like = c.like ? ` [赞${c.like}]` : '';
+        lines.push(`- ${who}${ip}${like}：${String(c.content || '').slice(0, 120)}`);
+        (c.subs || []).slice(0, 2).forEach(function (s) {
+          lines.push(`   ↳ ${s.user || '匿名'}：${String(s.content || '').slice(0, 100)}`);
+        });
+      });
+    }
+    const imgTotal = (d.images || []).length;
+    if (imgTotal) {
+      const attached = (d.imageData || []).length;
+      lines.push(attached
+        ? `配图：共 ${imgTotal} 张，已随本条消息附上前 ${attached} 张原图（可直接看图描述内容）`
+        : `配图：共 ${imgTotal} 张（本次仅文字信息，未附带图片）`);
+    }
     if (d.note) lines.push(`附带留言：${d.note}`);
     lines.push(`链接：${d.url}`);
     return lines.join('\n');
@@ -1649,6 +1765,84 @@ function compressImageFile(file, maxSide, quality) {
     reader.readAsDataURL(file);
   });
 }
+
+// ===== 分享链接配图 → 视觉模型（帖子里的图片也要发给 AI） =====
+/** 分享消息随附图片张数：0=不附带；默认 3，可在对话详情里调整 */
+function getShareVisionMaxImages() {
+  const n = parseInt(localStorage.getItem('share-vision-max-images') || '3', 10);
+  if (isNaN(n)) return 3;
+  return Math.min(6, Math.max(0, n));
+}
+window.getShareVisionMaxImages = getShareVisionMaxImages;
+
+/** 取当前全局 API 预设（用于判断是否视觉模型） */
+async function getActiveApiPreset() {
+  try {
+    const presetId = localStorage.getItem('global_api_preset_id');
+    if (!presetId) return null;
+    return await db.api_presets.get(Number(presetId));
+  } catch (e) { return null; }
+}
+
+/** 远程图片 → 压缩后的 data URL（先走本地 link-meta /img 代理，失败再直连） */
+async function fetchRemoteImageAsDataUrl(url, maxSide, quality) {
+  const candidates = [
+    'http://127.0.0.1:3003/img?url=' + encodeURIComponent(url),
+    String(url)
+  ];
+  let lastErr = null;
+  for (const src of candidates) {
+    try {
+      const resp = await fetchWithTimeout(src, 20000);
+      if (!resp || !resp.ok) throw new Error('http ' + (resp && resp.status));
+      const blob = await resp.blob();
+      if (!/^image\//i.test(blob.type || '')) throw new Error('not image: ' + (blob.type || ''));
+      const objUrl = URL.createObjectURL(blob);
+      try {
+        return await new Promise(function (resolve, reject) {
+          const img = new Image();
+          img.onerror = function () { reject(new Error('decode failed')); };
+          img.onload = function () {
+            try {
+              const scale = Math.min(1, (maxSide || 768) / Math.max(img.width, img.height));
+              const w = Math.max(1, Math.round(img.width * scale));
+              const h = Math.max(1, Math.round(img.height * scale));
+              const canvas = document.createElement('canvas');
+              canvas.width = w; canvas.height = h;
+              canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+              resolve(canvas.toDataURL('image/jpeg', quality || 0.7));
+            } catch (e) { reject(e); }
+          };
+          img.src = objUrl;
+        });
+      } finally {
+        try { URL.revokeObjectURL(objUrl); } catch (e) {}
+      }
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('image fetch failed');
+}
+
+/**
+ * 把分享链接的配图抓取并压缩成 data URL 数组（仅视觉模型 + 张数 > 0 时才做）
+ * 结果会存进分享消息内容里，后续每次请求直接复用，无需重复下载。
+ */
+async function buildShareImageData(images, api) {
+  if (!Array.isArray(images) || !images.length) return [];
+  if (!visionSendEnabled(api)) return [];
+  const maxN = getShareVisionMaxImages();
+  if (maxN <= 0) return [];
+  const out = [];
+  for (const u of images.slice(0, maxN)) {
+    try {
+      out.push(await fetchRemoteImageAsDataUrl(u, 768, 0.7));
+    } catch (e) {
+      console.warn('[分享配图] 下载失败，已跳过:', u, e && e.message);
+    }
+  }
+  return out;
+}
+window.buildShareImageData = buildShareImageData;
 
 function getMessagePreviewText(msg) {
   if (!msg) return '暂无对话消息';
@@ -3506,7 +3700,7 @@ async function appendMessageToDOM(msg) {
 
       if (isGenerating) {
         contentHtml = `
-          <div class="msg-image-placeholder-card" style="padding:18px;">
+          <div class="msg-image-placeholder-card" style="position: relative; padding:18px;">
             <div style="display:flex; align-items:center; gap:10px;">
               <div style="width:18px; height:18px; border:2.5px solid var(--border); border-top-color:#ec4899; border-radius:50%; animation:imagegen-spin 0.8s linear infinite; flex-shrink:0;"></div>
               <span style="font-size:12.5px; color:var(--text-secondary); font-weight:600;">正在生成图片…</span>
@@ -3519,7 +3713,7 @@ async function appendMessageToDOM(msg) {
         const hdSrc = data.hdUrl || imgSrc;
         const safeImgSrc = imgSrc.replace(/"/g, '&quot;');
         contentHtml = `
-          <div class="image-bubble-card" onclick="toggleImageText(${msg.id}, this)">
+          <div class="image-bubble-card" onclick="toggleImageText(${msg.id}, this)" style="position: relative;">
             <img src="${imgSrc}" class="msg-img" data-img-url="${safeImgSrc}" data-hd-url="${hdSrc.replace(/"/g, '&quot;')}" onerror="this.style.display='none'; document.getElementById('img-fallback-${msg.id}').style.display='flex';">
             <div id="img-fallback-${msg.id}" class="msg-image-placeholder-card" style="display:none; width: 100%;">
               <div class="msg-image-placeholder-header">
@@ -3535,7 +3729,7 @@ async function appendMessageToDOM(msg) {
         `;
       } else {
         contentHtml = `
-          <div class="msg-image-placeholder-card" onclick="toggleImageText(${msg.id}, this)">
+          <div class="msg-image-placeholder-card" onclick="toggleImageText(${msg.id}, this)" style="position: relative;">
             <div class="msg-image-placeholder-header">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary); flex-shrink:0;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               <span class="msg-image-placeholder-title">发送了画面图片</span>
@@ -3549,7 +3743,7 @@ async function appendMessageToDOM(msg) {
       }
     } catch(e) {
       contentHtml = `
-        <div class="msg-image-placeholder-card" onclick="toggleImageText(${msg.id}, this)">
+        <div class="msg-image-placeholder-card" onclick="toggleImageText(${msg.id}, this)" style="position: relative;">
           <div class="msg-image-placeholder-header">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-secondary); flex-shrink:0;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
             <span class="msg-image-placeholder-title">发送了画面图片</span>
@@ -3574,7 +3768,7 @@ async function appendMessageToDOM(msg) {
 
       contentHtml = `
         <div style="display:flex; flex-direction:column; align-items: ${align}; gap:4px; max-width:220px;">
-          <div class="voice-bubble-card" onclick="toggleVoiceTranslation(${msg.id}, this)" style="width: ${width}px;">
+          <div class="voice-bubble-card" onclick="toggleVoiceTranslation(${msg.id}, this)" style="position: relative; width: ${width}px;">
             <div class="voice-bubble-wave">
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="vertical-align:middle;">
                 <path d="M12 1v22M17 5v14M22 9v6M7 5v14M2 9v6"/>
@@ -3588,7 +3782,7 @@ async function appendMessageToDOM(msg) {
         </div>
       `;
     } catch(e) {
-      contentHtml = `<div class="msg-text">语音格式异常</div>`;
+      contentHtml = `<div class="msg-text" style="position: relative;">语音格式异常</div>`;
     }
   } else if (msg.contentType === 'transfer') {
     try {
@@ -3615,7 +3809,7 @@ async function appendMessageToDOM(msg) {
         </div>
       `;
     } catch(e) {
-      contentHtml = `<div class="msg-text">转账格式错误</div>`;
+      contentHtml = `<div class="msg-text" style="position: relative;">转账格式错误</div>`;
     }
   } else if (msg.contentType === 'red_envelope') {
     try {
@@ -3644,7 +3838,7 @@ async function appendMessageToDOM(msg) {
         </div>
       `;
     } catch(e) {
-      contentHtml = `<div class="msg-text">红包格式错误</div>`;
+      contentHtml = `<div class="msg-text" style="position: relative;">红包格式错误</div>`;
     }
   } else if (msg.contentType === 'location') {
     try {
@@ -3713,14 +3907,14 @@ async function appendMessageToDOM(msg) {
         </div>
       `;
     } catch(e) {
-      contentHtml = `<div class="msg-text">朋友圈分享格式错误</div>`;
+      contentHtml = `<div class="msg-text" style="position: relative;">朋友圈分享格式错误</div>`;
     }
   } else if (msg.contentType === 'miniprogram_share') {
     // 小程序分享卡片（追加渲染分支）：user/char 邀请对方一起玩小程序
     if (window.miniProgramSystem && typeof window.miniProgramSystem.renderShareCardHtml === "function") {
       contentHtml = window.miniProgramSystem.renderShareCardHtml(msg);
     } else {
-      contentHtml = `<div class="msg-text">[小程序分享]</div>`;
+      contentHtml = `<div class="msg-text" style="position: relative;">[小程序分享]</div>`;
     }
   } else if (msg.contentType === 'mcp_tool') {
     try {
@@ -3927,18 +4121,11 @@ async function appendMessageToDOM(msg) {
   }
   
   let finalContentHtml = contentHtml;
-  if (msg.contentType === 'image') {
-    finalContentHtml = contentHtml.replace('class="image-bubble-card"', 'class="image-bubble-card" style="position: relative;"').replace('class="msg-image-placeholder-card"', 'class="msg-image-placeholder-card" style="position: relative;"') + emojiHtml;
-  } else if (msg.contentType === 'voice') {
-    finalContentHtml = contentHtml.replace('class="voice-bubble-card"', 'class="voice-bubble-card" style="position: relative;"').replace('class="voice-bubble-card"', 'class="voice-bubble-card" style="position: relative;"') + emojiHtml;
-  } else if (msg.contentType === 'transfer' || msg.contentType === 'red_envelope' || msg.contentType === 'moment_share') {
-    // 关键修复：之前用 .replace('class="wallet-bubble-card', ...) 会在 wallet-bubble-card 后插入 "
-    // 导致 class 属性提前闭合，transfer/red-envelope/pending 等状态类被丢弃，卡片失去橙红背景变灰
-    // 现在所有 wallet-bubble-card 模板已内联 style="position: relative;"，无需再 replace
-    finalContentHtml = contentHtml + emojiHtml;
-  } else {
-    finalContentHtml = contentHtml.replace('class="msg-text"', 'class="msg-text" style="position: relative;"').replace('class="msg-sticker-alone-wrapper"', 'class="msg-sticker-alone-wrapper" style="position: relative;"') + emojiHtml;
-  }
+  // 注意：各分支模板已内联 position:relative（表情角标定位需要），此处只追加表情。
+  // 历史上这里用 .replace('class="xxx"', 'class="xxx" style="position: relative;"') 打补丁，
+  // 会与模板自带的 style 属性形成「重复 style 属性」——浏览器只保留第一个，
+  // 于是图片消息里 display:none 的兜底占位卡被顶掉、首屏渲染直接露出来（首条发图气泡错位的根因）。
+  finalContentHtml = contentHtml + emojiHtml;
 
   const blockedIconHtml = msg.isBlocked === 1 ? `
     <div class="msg-blocked-icon" style="color: #ef4444; display: flex; align-items: center; justify-content: center; margin: 0 4px; align-self: center; flex-shrink: 0;" title="消息未送达/对方已拒收">
@@ -4807,19 +4994,18 @@ function bindChatAppEvents() {
             showToast("正在解析分享链接…");
             let meta = null;
             try { meta = await fetchLinkMeta(_shareUrl); } catch (e) { meta = null; }
-            const shareData = {
-              url: (meta && meta.finalUrl) || _shareUrl,
-              rawUrl: _shareUrl,
-              site: (meta && meta.site) || "",
-              kind: (meta && meta.kind) || "web",
-              title: (meta && meta.title) || _shareUrl,
-              desc: (meta && meta.desc) || "",
-              author: (meta && meta.author) || "",
-              images: (meta && Array.isArray(meta.images)) ? meta.images.slice(0, 9) : [],
-              cover: (meta && meta.images && meta.images[0]) || "",
-              note: String(processedText).replace(_shareUrl, "").trim(),
-              ok: !(meta && meta.ok === false)
-            };
+            const shareData = buildShareDataFromMeta(meta, _shareUrl, processedText);
+            // 帖子配图送入视觉模型（仅视觉模型且张数设置 > 0 时才下载压缩）
+            if (meta && Array.isArray(meta.images) && meta.images.length && shareData.ok) {
+              try {
+                const _api = await getActiveApiPreset();
+                if (visionSendEnabled(_api) && getShareVisionMaxImages() > 0) {
+                  showToast("正在抓取帖子配图…");
+                  const imgs = await buildShareImageData(meta.images, _api);
+                  if (imgs.length) shareData.imageData = imgs;
+                }
+              } catch (e) { console.warn('[分享配图] 处理失败:', e && e.message); }
+            }
             await saveAndRenderMessage('user', JSON.stringify(shareData), 'share');
             return;
           }
@@ -5103,7 +5289,7 @@ function bindChatAppEvents() {
 
           const prefix = `[MSG_ID: ${h.id}] `;
           let displayContent = h.content;
-          let visionImageUrl = null; // 真实照片（视觉模型可直接读图）
+          let visionImageUrls = []; // 真实照片 / 分享链接配图（视觉模型可直接读图）
 
           // 从历史消息中物理剥离旧思维链（覆盖所有标签变体 + 未闭合兜底）
           if (typeof displayContent === 'string') {
@@ -5118,7 +5304,7 @@ function bindChatAppEvents() {
               const isRealPhoto = typeof data.url === 'string' && /^data:image\//i.test(data.url) && !/svg\+xml/i.test(data.url);
               if (isRealPhoto && h.senderType === 'user' && visionSendEnabled(api)) {
                 // 视觉模型：把真实照片以 OpenAI vision 格式随消息一起发送
-                visionImageUrl = data.url;
+                visionImageUrls = [data.url];
                 displayContent = data.text ? `[你发送了一张真实照片，附言：${data.text}]` : '[你发送了一张真实照片]';
               } else {
                 displayContent = `[图片描述: ${data.text || '（无描述）'}]`;
@@ -5247,8 +5433,15 @@ function bindChatAppEvents() {
               }
             } catch(e) { displayContent = "[转发了一个砍一刀提现链接]"; }
           } else if (h.contentType === 'share') {
-            // 分享链接：转为干净上下文（标题/作者/摘要/链接），避免乱码与标签污染
+            // 分享链接：转为干净上下文（标题/正文/互动数据/评论/链接），避免乱码与标签污染
             displayContent = formatShareContextText(h, h.senderType === 'user', _chatCharName);
+            // 帖子配图：分享时已压缩存库，视觉模型下直接随消息附带（最多前 N 张）
+            try {
+              const _sd = JSON.parse(h.content);
+              if (Array.isArray(_sd.imageData) && _sd.imageData.length && visionSendEnabled(api)) {
+                visionImageUrls = _sd.imageData.slice(0, 6);
+              }
+            } catch (e) {}
           }
 
           // 核心 Few-shot 历史格式对齐
@@ -5271,14 +5464,13 @@ function bindChatAppEvents() {
           }
 
           if (displayContent) {
-            if (visionImageUrl) {
-              // 视觉格式：文本 + 真实图片（仅用户消息）
+            if (visionImageUrls.length) {
+              // 视觉格式：文本 + 真实图片（真实照片 / 分享链接配图）
+              const parts = [{ type: 'text', text: prefix + displayContent }];
+              visionImageUrls.forEach(function (u) { parts.push({ type: 'image_url', image_url: { url: u } }); });
               messagesToSend.push({
                 role: h.senderType === 'user' ? 'user' : 'assistant',
-                content: [
-                  { type: 'text', text: prefix + displayContent },
-                  { type: 'image_url', image_url: { url: visionImageUrl } }
-                ]
+                content: parts
               });
               window._visionUsedInRequest = true;
             } else {
@@ -6650,6 +6842,8 @@ if (btnDialogDetails) {
       if (tfEl) tfEl.checked = !!sess.translateFallbackApi;
       const vmEl = document.getElementById("details-vision-mode");
       if (vmEl) vmEl.value = localStorage.getItem("api-vision-mode") || "auto";
+      const svcEl = document.getElementById("details-share-vision-count");
+      if (svcEl) svcEl.value = String(getShareVisionMaxImages());
       document.getElementById("details-multimedia-toggle").checked = !!sess.multimediaToggle;
       document.getElementById("details-allow-recall-toggle").checked = !!sess.allowCharRecall;
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
@@ -6818,6 +7012,10 @@ if (btnSaveDetails) {
     const visionModeEl = document.getElementById("details-vision-mode");
     if (visionModeEl) {
       try { localStorage.setItem("api-vision-mode", visionModeEl.value || "auto"); } catch(e) {}
+    }
+    const shareVisionCountEl = document.getElementById("details-share-vision-count");
+    if (shareVisionCountEl) {
+      try { localStorage.setItem("share-vision-max-images", String(parseInt(shareVisionCountEl.value, 10) || 0)); } catch(e) {}
     }
     const multimediaToggle = document.getElementById("details-multimedia-toggle").checked;
     const timePerceptionToggle = document.getElementById("details-time-toggle").checked;
@@ -7685,19 +7883,18 @@ async function sendOfflineMessage() {
     showToast("正在解析分享链接…");
     let meta = null;
     try { meta = await fetchLinkMeta(offShareUrl); } catch (e) { meta = null; }
-    const shareData = {
-      url: (meta && meta.finalUrl) || offShareUrl,
-      rawUrl: offShareUrl,
-      site: (meta && meta.site) || "",
-      kind: (meta && meta.kind) || "web",
-      title: (meta && meta.title) || offShareUrl,
-      desc: (meta && meta.desc) || "",
-      author: (meta && meta.author) || "",
-      images: (meta && Array.isArray(meta.images)) ? meta.images.slice(0, 9) : [],
-      cover: (meta && meta.images && meta.images[0]) || "",
-      note: String(content).replace(offShareUrl, "").trim(),
-      ok: !(meta && meta.ok === false)
-    };
+    const shareData = buildShareDataFromMeta(meta, offShareUrl, content);
+    // 帖子配图送入视觉模型（线下链路同样支持）
+    if (meta && Array.isArray(meta.images) && meta.images.length && shareData.ok) {
+      try {
+        const _api = await getActiveApiPreset();
+        if (visionSendEnabled(_api) && getShareVisionMaxImages() > 0) {
+          showToast("正在抓取帖子配图…");
+          const imgs = await buildShareImageData(meta.images, _api);
+          if (imgs.length) shareData.imageData = imgs;
+        }
+      } catch (e) { console.warn('[分享配图] 处理失败:', e && e.message); }
+    }
     await db.offline_messages.add({
       theaterId: isOfflineTheater ? activeTheaterId : 0,
       sessionId: activeSessionId,
@@ -7825,7 +8022,7 @@ async function triggerOfflineReply() {
           prevTime = h.timestamp || prevTime;
 
           let displayContent = h.content;
-          let visionImageUrl = null;
+          let visionImageUrls = [];
           if (typeof displayContent === 'string') {
             displayContent = displayContent.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
           }
@@ -7835,7 +8032,7 @@ async function triggerOfflineReply() {
               const d = JSON.parse(h.content);
               const isRealPhoto = typeof d.url === 'string' && /^data:image\//i.test(d.url) && !/svg\+xml/i.test(d.url);
               if (isRealPhoto && h.senderType === 'user' && visionSendEnabled(api)) {
-                visionImageUrl = d.url;
+                visionImageUrls = [d.url];
                 displayContent = d.text ? `[你发送了一张真实照片，附言：${d.text}]` : '[你发送了一张真实照片]';
               } else {
                 displayContent = `[图片描述: ${d.text || '（无描述）'}]`;
@@ -7843,16 +8040,21 @@ async function triggerOfflineReply() {
             } catch(e) {}
           } else if (h.contentType === 'share') {
             displayContent = formatShareContextText(h, h.senderType === 'user', (sessObj && (sessObj.customCharName || sessObj.name)) || '对方');
+            try {
+              const _sd = JSON.parse(h.content);
+              if (Array.isArray(_sd.imageData) && _sd.imageData.length && visionSendEnabled(api)) {
+                visionImageUrls = _sd.imageData.slice(0, 6);
+              }
+            } catch (e) {}
           }
 
           if (displayContent) {
-            if (visionImageUrl) {
+            if (visionImageUrls.length) {
+              const parts = [{ type: 'text', text: displayContent }];
+              visionImageUrls.forEach(function (u) { parts.push({ type: 'image_url', image_url: { url: u } }); });
               messagesToSend.push({
                 role: h.senderType === 'user' ? 'user' : 'assistant',
-                content: [
-                  { type: 'text', text: displayContent },
-                  { type: 'image_url', image_url: { url: visionImageUrl } }
-                ]
+                content: parts
               });
               window._visionUsedInRequest = true;
             } else {

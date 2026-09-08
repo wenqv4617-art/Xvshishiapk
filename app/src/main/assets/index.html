@@ -2721,6 +2721,23 @@
               </select>
             </div>
 
+            <!-- 分享链接配图送给模型：抓取小红书等帖子配图，压缩后随分享消息一起发给视觉模型 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <path d="M4 4h16v12H4z"/><path d="M2 20h20"/><circle cx="9" cy="9" r="1.6"/><path d="M4 14l4.5-4.5L13 14l3-3 4 4"/>
+                </svg> 分享链接配图发给模型
+              </label>
+              <select id="details-share-vision-count" style="padding:5px 8px; border:1px solid var(--border); border-radius:8px; font-size:11px; background:#fff;">
+                <option value="0">不附带图片</option>
+                <option value="1">附带 1 张</option>
+                <option value="2">附带 2 张</option>
+                <option value="3">附带 3 张</option>
+                <option value="5">附带 5 张</option>
+              </select>
+            </div>
+            <div style="font-size:10px; color:var(--text-secondary); padding: 0 0 6px 0; margin-top: -6px;">分享小红书等帖子时，抓取帖子配图并压缩后随消息一起发给视觉模型（仅在上方为「自动识别模型/强制发送」且模型支持视觉时生效；图片会占用较多 token，张数越多越贵）。</div>
+
             <!-- 线下赴约记录拼入线上上下文：开启后赴约模式下未总结的对话记录按时间线拼入线上对话上下文，参与自动总结轮数统计与向量检索 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0; border-top: 1px solid var(--border);">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
