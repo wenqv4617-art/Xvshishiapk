@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v62'; // v62: 真实照片视觉识别——图片压缩(1280/0.82)+视觉模型OpenAI格式发送+无视觉自动降级+可只发图不写描述；工作台fetch_url接入本地代理兜底; v1.3.1
+const CACHE_NAME = 'story-phone-v63'; // v63: 线下模式支持视觉发图与分享链接干净上下文；对话详情新增"真实照片发送给模型"三态开关(auto/on/off)；分享卡片多图缩略横滑; v1.3.2
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

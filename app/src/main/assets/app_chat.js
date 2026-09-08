@@ -1576,6 +1576,10 @@ function buildShareCardHTML(msgId, data) {
         ${desc ? `<div style="font-size:10.5px; color:var(--text-secondary); margin-top:4px; line-height:1.4; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;">${desc}</div>` : ''}
         ${author ? `<div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">@${author}</div>` : ''}
         <div style="font-size:9.5px; color:#9ca3af; margin-top:6px; padding-top:6px; border-top:1px dashed var(--border); word-break:break-all;">${escapeHtml(shareSiteName('', data.url))}</div>
+        ${(data.images && data.images.length > 1) ? `<div style="display:flex; gap:4px; margin-top:6px; overflow-x:auto;">${data.images.slice(0, 5).map(function (u) {
+          const s = String(u).replace(/"/g, '&quot;');
+          return `<img src="${s}" onclick="event.stopPropagation(); window.openShareLink('${String(u).replace(/'/g, '')}')" style="width:52px; height:52px; object-fit:cover; border-radius:6px; flex-shrink:0;" onerror="this.style.display='none'">`;
+        }).join('')}</div>` : ''}
       </div>
     </div>`;
 }
@@ -6643,6 +6647,8 @@ if (btnDialogDetails) {
       document.getElementById("details-translate-auto").checked = !!sess.translateAutoToggle;
       const tfEl = document.getElementById("details-translate-fallback");
       if (tfEl) tfEl.checked = !!sess.translateFallbackApi;
+      const vmEl = document.getElementById("details-vision-mode");
+      if (vmEl) vmEl.value = localStorage.getItem("api-vision-mode") || "auto";
       document.getElementById("details-multimedia-toggle").checked = !!sess.multimediaToggle;
       document.getElementById("details-allow-recall-toggle").checked = !!sess.allowCharRecall;
       document.getElementById("details-allow-reaction-toggle").checked = !!sess.allowCharReaction;
@@ -6808,6 +6814,10 @@ if (btnSaveDetails) {
     const translateAutoToggle = document.getElementById("details-translate-auto").checked;
     const translateFallbackToggleEl = document.getElementById("details-translate-fallback");
     const translateFallbackToggle = translateFallbackToggleEl ? translateFallbackToggleEl.checked : false;
+    const visionModeEl = document.getElementById("details-vision-mode");
+    if (visionModeEl) {
+      try { localStorage.setItem("api-vision-mode", visionModeEl.value || "auto"); } catch(e) {}
+    }
     const multimediaToggle = document.getElementById("details-multimedia-toggle").checked;
     const timePerceptionToggle = document.getElementById("details-time-toggle").checked;
     const allowCharRecall = document.getElementById("details-allow-recall-toggle").checked;
@@ -7773,12 +7783,39 @@ async function triggerOfflineReply() {
           prevTime = h.timestamp || prevTime;
 
           let displayContent = h.content;
+          let visionImageUrl = null;
           if (typeof displayContent === 'string') {
             displayContent = displayContent.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
           }
+          // 线下：真实照片同样支持视觉；分享链接转为干净摘要
+          if (h.contentType === 'image') {
+            try {
+              const d = JSON.parse(h.content);
+              const isRealPhoto = typeof d.url === 'string' && /^data:image\//i.test(d.url) && !/svg\+xml/i.test(d.url);
+              if (isRealPhoto && visionSendEnabled(api)) {
+                visionImageUrl = d.url;
+                displayContent = d.text ? `[你发送了一张真实照片，附言：${d.text}]` : '[你发送了一张真实照片]';
+              } else {
+                displayContent = `[图片描述: ${d.text || '（无描述）'}]`;
+              }
+            } catch(e) {}
+          } else if (h.contentType === 'share') {
+            displayContent = formatShareContextText(h, h.senderType === 'user', (sessObj && (sessObj.customCharName || sessObj.name)) || '对方');
+          }
 
           if (displayContent) {
-            messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: displayContent });
+            if (visionImageUrl) {
+              messagesToSend.push({
+                role: h.senderType === 'user' ? 'user' : 'assistant',
+                content: [
+                  { type: 'text', text: displayContent },
+                  { type: 'image_url', image_url: { url: visionImageUrl } }
+                ]
+              });
+              window._visionUsedInRequest = true;
+            } else {
+              messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: displayContent });
+            }
           }
         });
 
