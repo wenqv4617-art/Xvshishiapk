@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v63'; // v63: 线下模式支持视觉发图与分享链接干净上下文；对话详情新增"真实照片发送给模型"三态开关(auto/on/off)；分享卡片多图缩略横滑; v1.3.2
+const CACHE_NAME = 'story-phone-v64'; // v64: 线下模式分享链接支持——发送时识别并解析、气泡渲染分享卡片、上下文干净摘要; v1.3.3
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

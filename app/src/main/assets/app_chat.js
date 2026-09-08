@@ -7448,7 +7448,12 @@ async function renderOfflineMessages() {
       `;
     }
 
-    const displayContent = parsedCot.cleanText;
+    let displayContent = parsedCot.cleanText;
+    let shareCardHtml = null;
+    if (m.contentType === 'share') {
+      try { shareCardHtml = buildShareCardHTML(m.id, JSON.parse(m.content)); } catch (e) { shareCardHtml = null; }
+      if (shareCardHtml) displayContent = displayContent || '[分享链接]';
+    }
     if (!displayContent && !parsedCot.thought) {
       continue;
     }
@@ -7457,7 +7462,7 @@ async function renderOfflineMessages() {
     const beautifiedHtml = (window.cotSystem && typeof window.cotSystem.applyOfflineBeautifyRules === 'function')
       ? window.cotSystem.applyOfflineBeautifyRules(displayContent)
       : null;
-    const bodyContentHtml = beautifiedHtml !== null ? beautifiedHtml : escapeHtml(displayContent);
+    const bodyContentHtml = shareCardHtml !== null ? shareCardHtml : (beautifiedHtml !== null ? beautifiedHtml : escapeHtml(displayContent));
 
     card.innerHTML = `
       <div class="offline-select-checkbox" style="display: ${isOfflineMultiSelectMode ? 'flex' : 'none'};">
@@ -7669,6 +7674,41 @@ async function sendOfflineMessage() {
   if (!textEl) return;
   const content = textEl.value.trim();
   if (!content) return;
+
+  // 线下同样支持分享链接：识别后抓元数据并落库为分享卡片
+  const offShareUrl = extractShareUrl(content);
+  if (offShareUrl && isShareLinkText(content)) {
+    textEl.value = "";
+    textEl.style.height = "auto";
+    textEl.style.overflowY = "hidden";
+    showToast("正在解析分享链接…");
+    let meta = null;
+    try { meta = await fetchLinkMeta(offShareUrl); } catch (e) { meta = null; }
+    const shareData = {
+      url: (meta && meta.finalUrl) || offShareUrl,
+      rawUrl: offShareUrl,
+      site: (meta && meta.site) || "",
+      kind: (meta && meta.kind) || "web",
+      title: (meta && meta.title) || offShareUrl,
+      desc: (meta && meta.desc) || "",
+      author: (meta && meta.author) || "",
+      images: (meta && Array.isArray(meta.images)) ? meta.images.slice(0, 9) : [],
+      cover: (meta && meta.images && meta.images[0]) || "",
+      note: String(content).replace(offShareUrl, "").trim(),
+      ok: !(meta && meta.ok === false)
+    };
+    await db.offline_messages.add({
+      theaterId: isOfflineTheater ? activeTheaterId : 0,
+      sessionId: activeSessionId,
+      isTheater: isOfflineTheater ? 1 : 0,
+      senderType: 'user',
+      content: JSON.stringify(shareData),
+      contentType: 'share',
+      timestamp: Date.now()
+    });
+    await renderOfflineMessages();
+    return;
+  }
 
   const msg = {
     theaterId: isOfflineTheater ? activeTheaterId : 0,
