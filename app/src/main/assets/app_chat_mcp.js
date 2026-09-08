@@ -982,18 +982,26 @@
     // ==========================================
     //  5.2 当前正在播放的媒体（通知监听解析：歌名/歌手/来源App）
     // ==========================================
-    syncNowPlaying: function() {
+    syncNowPlaying: function(round) {
       const statusEl = document.getElementById("mcp-nowplaying-status");
       if (!statusEl) return;
+      round = round || 0;
       if (!(window.AndroidMCP && typeof window.AndroidMCP.getNowPlayingMedia === 'function')) {
         statusEl.innerText = "当前环境不支持原生媒体读取，请在 APK 壳中运行。";
         return;
       }
-      statusEl.innerText = "正在读取设备正在播放的媒体...";
+      // 第一轮先请求原生层"重绑监听服务+快照当前通知"，给已在播放的媒体一次补救机会
+      if (round === 0) {
+        try {
+          if (typeof window.AndroidMCP.refreshNowPlayingMedia === 'function') window.AndroidMCP.refreshNowPlayingMedia();
+        } catch(e) {}
+      }
+      statusEl.innerText = round === 0 ? "正在读取设备正在播放的媒体..." : "正在播放：仍未捕获，二次读取中...";
+      const finish = (text) => { statusEl.innerText = text; };
       try {
         const raw = window.AndroidMCP.getNowPlayingMedia();
         const data = JSON.parse(raw);
-        if (!data.ok) { statusEl.innerText = "读取失败：" + ((data && data.error) || "未知错误"); return; }
+        if (!data.ok) { finish("读取失败：" + ((data && data.error) || "未知错误")); return; }
         if (data.granted === false) {
           statusEl.innerHTML = "未开启\"通知使用权\"：<span style=\"color:#dc2626; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.openNowPlayingSettings()\">去系统设置开启</span>（能看到媒体通知即可）";
           return;
@@ -1002,19 +1010,22 @@
         const artist = data.artist || "";
         const app = data.appName || "";
         if (title) {
-          statusEl.innerText = "正在播放：" + title + (artist ? " - " + artist : "") + (app ? "（" + app + "）" : "");
+          finish("正在播放：" + title + (artist ? " - " + artist : "") + (app ? "（" + app + "）" : ""));
           try {
             localStorage.setItem("mcp_now_playing", JSON.stringify({
               title: title, artist: artist, app: app, playing: data.playing !== false, timestamp: Date.now()
             }));
           } catch(e) {}
-          showToast("已同步正在播放：" + title);
+          if (round === 0) showToast("已同步正在播放：" + title);
+        } else if (round < 2) {
+          // 给 requestRebind→onListenerConnected→快照 留出时间，再试一次
+          setTimeout(() => { try { this.syncNowPlaying(round + 1); } catch(e) {} }, 900);
         } else {
-          statusEl.innerText = (data.message || "当前没有检测到正在播放的媒体");
+          finish((data.message || "当前没有检测到正在播放的媒体") + "（若正在播放仍读不到，请确认媒体App的通知可见/试重开播放）");
           try { localStorage.removeItem("mcp_now_playing"); } catch(e) {}
         }
       } catch(e) {
-        statusEl.innerText = "读取失败：" + e.message;
+        finish("读取失败：" + e.message);
       }
     },
 

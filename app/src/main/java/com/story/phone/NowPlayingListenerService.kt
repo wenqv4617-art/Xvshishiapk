@@ -113,4 +113,38 @@ class NowPlayingListenerService : NotificationListenerService() {
             }
         } catch (e: Exception) {}
     }
+
+    /**
+     * 监听服务（重新）绑定成功后，立刻快照当前通知栏里的媒体通知。
+     * 解决"应用进程在播放开始后才启动/重装后服务未收到新通知"导致缓存为空的问题。
+     */
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        try { snapshotNowPlaying() } catch (e: Exception) { Log.e(TAG, "onListenerConnected 快照失败: " + e.message) }
+    }
+
+    /** 主动遍历当前通知，若存在媒体通知则刷新缓存（供重绑/快照触发） */
+    fun snapshotNowPlaying() {
+        try {
+            val list = activeNotifications ?: return
+            var newest: StatusBarNotification? = null
+            var newestTs = Long.MIN_VALUE
+            for (sbn in list) {
+                try {
+                    val n = sbn.notification
+                    if (n != null && isMediaNotification(n) && sbn.postTime > newestTs) {
+                        newest = sbn
+                        newestTs = sbn.postTime
+                    }
+                } catch (e: Exception) {}
+            }
+            if (newest != null) {
+                currentPlaying = buildJson(newest.notification, newest.packageName)
+                lastUpdateTs = System.currentTimeMillis()
+                Log.d(TAG, "快照媒体通知: $currentPlaying")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "snapshotNowPlaying 异常: " + e.message)
+        }
+    }
 }

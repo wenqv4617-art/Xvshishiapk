@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v52'; // v52: 试振诊断版——等连接+写帧就绪后再计时试振/实时状态显示/6s超时报错; v1.1.5
+const CACHE_NAME = 'story-phone-v53'; // v53: 正在播放主动快照——刷新时重绑通知监听并扫描当前媒体通知/二次读取兜底; v1.1.6
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

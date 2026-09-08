@@ -1281,6 +1281,25 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * 主动刷新"正在播放"：已授予通知使用权时，请求系统重绑监听服务，
+     * 触发 onListenerConnected 里的当前通知快照（解决进程晚启动/重装后缓存为空）。
+     */
+    @JavascriptInterface
+    fun refreshNowPlayingMedia(): String {
+        return try {
+            val cn = android.content.ComponentName(context, NowPlayingListenerService::class.java)
+            if (isNotificationListenerGranted()) {
+                android.service.notification.NotificationListenerService.requestRebind(cn)
+                "{\"ok\":true,\"rebind\":true}"
+            } else {
+                "{\"ok\":true,\"granted\":false}"
+            }
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"重绑请求失败\"}"
+        }
+    }
+
     /** 枚举活跃媒体会话（老系统可读；新系统无权限时返回 null） */
     private fun queryActiveSessions(): String? {
         return try {
