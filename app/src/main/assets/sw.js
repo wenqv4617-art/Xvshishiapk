@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v61'; // v61: 分享链接卡片——自动识别小红书/B站等链接→termux link-meta(3003)解析标题/封面/摘要→气泡卡片渲染+干净上下文；部署链路内置link-meta; v1.3.0
+const CACHE_NAME = 'story-phone-v62'; // v62: 真实照片视觉识别——图片压缩(1280/0.82)+视觉模型OpenAI格式发送+无视觉自动降级+可只发图不写描述；工作台fetch_url接入本地代理兜底; v1.3.1
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

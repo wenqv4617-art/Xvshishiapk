@@ -1607,6 +1607,45 @@ function formatShareContextText(msg, isUser, charName) {
   } catch (e) { return '[分享链接]'; }
 }
 
+// ===== 真实照片视觉发送（视觉模型直接读图；无视觉能力自动降级为文字描述） =====
+function isVisionModelName(n) {
+  return /(gpt-4o|gpt-4\.1|gpt-4-turbo|gpt-4-vision|claude-3|claude-4|gemini|qwen[^,]*vl|glm-4v|vl-|vision|o1|o3|o4|internvl|minicpm-v|llava|step-1v)/i.test(String(n || ''));
+}
+/** 是否把真实照片以视觉格式发给模型：auto=按模型名判断；on=强制；off=关闭（降级后自动置 off） */
+function visionSendEnabled(api) {
+  const mode = localStorage.getItem('api-vision-mode') || 'auto';
+  if (mode === 'off') return false;
+  if (mode === 'on') return true;
+  return isVisionModelName(api && api.model);
+}
+window.visionSendEnabled = visionSendEnabled;
+
+/** 图片压缩：最长边 maxSide，JPEG 质量 quality（供视觉模型发送，避免请求体过大） */
+function compressImageFile(file, maxSide, quality) {
+  return new Promise(function (resolve, reject) {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = function () {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = function () {
+        try {
+          const scale = Math.min(1, (maxSide || 1280) / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement('canvas');
+          canvas.width = w; canvas.height = h;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', quality || 0.82));
+        } catch (e) { reject(e); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function getMessagePreviewText(msg) {
   if (!msg) return '暂无对话消息';
   const ct = msg.contentType;
@@ -5059,6 +5098,7 @@ function bindChatAppEvents() {
 
           const prefix = `[MSG_ID: ${h.id}] `;
           let displayContent = h.content;
+          let visionImageUrl = null; // 真实照片（视觉模型可直接读图）
 
           // 从历史消息中物理剥离旧思维链（覆盖所有标签变体 + 未闭合兜底）
           if (typeof displayContent === 'string') {
@@ -5070,7 +5110,14 @@ function bindChatAppEvents() {
           } else if (h.contentType === 'image') {
             try {
               const data = JSON.parse(h.content);
-              displayContent = `[图片描述: ${data.text}]`;
+              const isRealPhoto = typeof data.url === 'string' && /^data:image\//i.test(data.url) && !/svg\+xml/i.test(data.url);
+              if (isRealPhoto && visionSendEnabled(api)) {
+                // 视觉模型：把真实照片以 OpenAI vision 格式随消息一起发送
+                visionImageUrl = data.url;
+                displayContent = data.text ? `[你发送了一张真实照片，附言：${data.text}]` : '[你发送了一张真实照片]';
+              } else {
+                displayContent = `[图片描述: ${data.text || '（无描述）'}]`;
+              }
             } catch(e) {}
           } else if (h.contentType === 'voice') {
             try {
@@ -5219,7 +5266,19 @@ function bindChatAppEvents() {
           }
 
           if (displayContent) {
-            messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
+            if (visionImageUrl) {
+              // 视觉格式：文本 + 真实图片（仅用户消息）
+              messagesToSend.push({
+                role: h.senderType === 'user' ? 'user' : 'assistant',
+                content: [
+                  { type: 'text', text: prefix + displayContent },
+                  { type: 'image_url', image_url: { url: visionImageUrl } }
+                ]
+              });
+              window._visionUsedInRequest = true;
+            } else {
+              messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
+            }
           }
         }
 
@@ -6077,7 +6136,15 @@ function bindChatAppEvents() {
         console.error(err);
         // 会话隔离：只在用户仍在原会话时才弹错误框，避免跨会话干扰
         if (activeSessionId === reqSessionId) {
-          showCustomAlert("API 发生错误", err.message);
+          // 视觉降级：本次带图且报错 → 自动关闭图片发送，下次仅发文字描述
+          if (window._visionUsedInRequest) {
+            window._visionUsedInRequest = false;
+            localStorage.setItem('api-vision-mode', 'off');
+            showCustomAlert("模型可能不支持图片，已自动降级",
+              (err.message || '') + "\n\n已切换为「仅文字描述」模式，请再点一次获取回复。若该模型其实支持视觉，可执行 localStorage.setItem('api-vision-mode','on') 重新开启。");
+          } else {
+            showCustomAlert("API 发生错误", err.message);
+          }
         }
       } finally {
         // 会话隔离：只在用户仍在原请求会话时才恢复 header 和按钮 UI
@@ -8798,16 +8865,18 @@ function bindMultimediaEvents() {
     btnImageSubmit.onclick = async () => {
       const fileInput = document.getElementById("image-file-input");
       const captionText = document.getElementById("image-input-text").value.trim();
+      const hasFile = !!(fileInput && fileInput.files && fileInput.files.length > 0);
 
-      if (!captionText) {
-        alert("为了让 AI 伙伴能看懂您的图片意图，请务必填写具体的画面场景描述！");
+      if (!captionText && !hasFile) {
+        alert("请选择一张照片，或填写画面场景描述！");
         return;
       }
 
       const processAndSend = async (imgUrl) => {
         const imgData = {
-          url: imgUrl, // 如果用户实际上传了图片，imgUrl 为 Base64 Data URL；如果没有上传，则是空字符串
-          text: captionText
+          url: imgUrl || "", // 实际上传则为 Base64 Data URL（真实照片）
+          text: captionText || (imgUrl ? "" : "（无描述）"),
+          realPhoto: !!imgUrl
         };
         await saveAndRenderMessage('user', JSON.stringify(imgData), 'image');
         
@@ -8819,7 +8888,13 @@ function bindMultimediaEvents() {
         document.getElementById("image-input-overlay").classList.remove("active");
       };
 
-      if (fileInput && fileInput.files && fileInput.files.length > 0) {
+      if (hasFile) {
+        // 先压缩（最长边1280 / JPEG 0.82），失败则回退原图
+        try {
+          const compressed = await compressImageFile(fileInput.files[0], 1280, 0.82);
+          await processAndSend(compressed);
+          return;
+        } catch (e) { console.warn("图片压缩失败，改用原图:", e); }
         const reader = new FileReader();
         reader.onload = async (e) => {
           await processAndSend(e.target.result);

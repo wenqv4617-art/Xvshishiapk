@@ -214,13 +214,34 @@
         try {
           var url = String(args.url || "");
           if (!/^https?:\/\//i.test(url)) return { ok: false, error: "仅支持 http/https 地址" };
-          var res = await fetch(url, {
-            method: String(args.method || "GET").toUpperCase(),
-            headers: (args.headers && typeof args.headers === "object") ? args.headers : {},
-            body: (args.body && args.method && args.method !== "GET") ? String(args.body) : undefined
-          });
-          var text = await res.text();
-          return { ok: true, status: res.status, body: text.slice(0, 8000) };
+          var method = String(args.method || "GET").toUpperCase();
+          var enc = encodeURIComponent(url);
+          var viaProxy = async function (base) {
+            var r = await fetch(base + enc);
+            return { status: r.status, text: await r.text() };
+          };
+          try {
+            var res = await fetch(url, {
+              method: method,
+              headers: (args.headers && typeof args.headers === "object") ? args.headers : {},
+              body: (args.body && method !== "GET") ? String(args.body) : undefined
+            });
+            var text = await res.text();
+            return { ok: true, status: res.status, body: text.slice(0, 8000) };
+          } catch (directErr) {
+            // WebView 沙箱/CORS 受限 → 本地代理兜底：先裸代理(3001)，再 link-meta(3003)
+            try {
+              var p1 = await viaProxy("http://127.0.0.1:3001/proxy?url=");
+              return { ok: true, status: p1.status, body: String(p1.text).slice(0, 8000), via: "cors-proxy:3001" };
+            } catch (e1) {
+              try {
+                var p2 = await viaProxy("http://127.0.0.1:3003/meta?url=");
+                return { ok: true, status: p2.status, body: String(p2.text).slice(0, 8000), via: "link-meta:3003" };
+              } catch (e2) {
+                return { ok: false, error: "抓取失败: " + directErr.message + "；本地代理也不可用（请先启动 cors-proxy 3001 / link-meta 3003）" };
+              }
+            }
+          }
         } catch (e) {
           return { ok: false, error: "抓取失败: " + e.message };
         }
