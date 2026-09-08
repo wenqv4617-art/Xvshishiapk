@@ -5236,7 +5236,7 @@
           </header>
           <div class="win-body" style="padding: 0 16px 16px 16px;">
             <div class="form-group" style="margin-bottom: 12px;">
-              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">选择本地图片 (若不选，系统将默认提供场景占位卡片)</label>
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">选择本地照片（视觉模型可直接看图；不选则发送场景占位卡片）</label>
               <div style="display:flex; gap:8px; align-items:center;">
                 <button type="button" class="btn btn-outline" onclick="document.getElementById('image-file-input').click()" style="padding:8px 12px; font-size:11px; border-radius:8px;">选择本地文件</button>
                 <span id="image-file-name-label" style="font-size:11px; color:var(--text-secondary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:140px;">未选择文件</span>
@@ -5244,8 +5244,8 @@
               <input type="file" id="image-file-input" accept="image/*" style="display:none;" onchange="document.getElementById('image-file-name-label').innerText = this.files[0] ? this.files[0].name : '未选择文件'">
             </div>
             <div class="form-group" style="margin-bottom: 20px;">
-              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">画面具体场景描述 (必填，用于 AI 识别感知)</label>
-              <textarea id="image-input-text" rows="3" placeholder="例如：一张我和他并肩坐在草坪上的自拍合照，背景是晚霞" style="border-radius: 10px; font-size: 13px; resize:none;"></textarea>
+              <label style="font-size: 11px; color: var(--text-secondary); font-weight:700;">画面说明（可选）</label>
+              <textarea id="image-input-text" rows="3" placeholder="可留空；若模型不支持看图，建议写一句说明，例如：一张我和他并肩坐在草坪上的自拍合照" style="border-radius: 10px; font-size: 13px; resize:none;"></textarea>
             </div>
             <div class="form-actions" style="display: flex; gap: 10px;">
               <button type="button" class="btn btn-outline" onclick="document.getElementById('image-input-overlay').classList.remove('active')" style="flex: 1; border-radius: 10px; height: 40px; font-size: 13px;">取消</button>
