@@ -1021,11 +1021,36 @@
           // 给 requestRebind→onListenerConnected→快照 留出时间，再试一次
           setTimeout(() => { try { this.syncNowPlaying(round + 1); } catch(e) {} }, 900);
         } else {
-          finish((data.message || "当前没有检测到正在播放的媒体") + "（若正在播放仍读不到，请确认媒体App的通知可见/试重开播放）");
+          statusEl.innerHTML = (data.message || "当前没有检测到正在播放的媒体") +
+            "　<span style=\"color:#6366f1; cursor:pointer; text-decoration:underline;\" onclick=\"mcpSystem.debugNowPlaying()\">诊断</span>";
           try { localStorage.removeItem("mcp_now_playing"); } catch(e) {}
         }
       } catch(e) {
         finish("读取失败：" + e.message);
+      }
+    },
+
+    /** 诊断"正在播放"为何读不到：看通知监听是否真的在收数据、媒体判定卡在哪一步 */
+    debugNowPlaying: function() {
+      const statusEl = document.getElementById("mcp-nowplaying-status");
+      if (!(window.AndroidMCP && typeof window.AndroidMCP.getNowPlayingDebug === 'function')) {
+        showToast("当前环境不支持诊断");
+        return;
+      }
+      try {
+        const d = JSON.parse(window.AndroidMCP.getNowPlayingDebug());
+        const lines = [
+          "【正在播放诊断】",
+          "通知使用权：" + (d.granted ? "已授予" : "未授予"),
+          "监听服务：" + (d.serviceAlive ? "已绑定（在收数据）" : "未绑定（系统没把服务拉起来）"),
+          "缓存媒体：" + (d.cachedPlaying ? d.cachedPlaying : "空"),
+          "最近收到通知：" + (d.lastAnyNotification || "（一条都没收到 → 系统没投递通知给本应用）"),
+          "Android SDK：" + d.sdkInt
+        ];
+        if (statusEl) statusEl.innerText = lines.join("\n");
+        showToast("诊断结果已显示");
+      } catch(e) {
+        showToast("诊断失败：" + e.message);
       }
     },
 
@@ -1993,6 +2018,72 @@
         document.body.removeChild(ta);
       } catch(e) {}
       if (done) done();
+    },
+
+    // ---- 蓝牙设备适配教程（内置提示词：可复制给 AI 或自己照做，用于适配任意 BLE 玩具/智能硬件）----
+
+    buildBtAdaptGuide: function() {
+      const L = [];
+      L.push("【任务：为我的蓝牙设备做协议逆向并接入叙事诗小手机】");
+      L.push("");
+      L.push("你是一名蓝牙（BLE）协议逆向与集成工程师。请按下面的固定流程，帮我把目标设备适配进「叙事诗小手机」App 的 MCP 中枢，让它能被 AI 角色用 [BLUETOOTH_CMD] 指令像放歌一样控制。");
+      L.push("");
+      L.push("一、先收集信息（缺什么就问，不要瞎猜）");
+      L.push("1. 设备蓝牙广播名、MAC 地址、品牌型号、官方 App 名称；");
+      L.push("2. 官方 App 能否正常控制它（能控说明协议可用，只是我们不知道帧格式）；");
+      L.push("3. 设备功能（震动/吮吸/加热/伸缩/多马达），是否有档位与花样模式。");
+      L.push("");
+      L.push("二、抓包 / 枚举（任选其一或组合）");
+      L.push("A. 小手机内自带工具（推荐先做）：MCP中枢→蓝牙→“扫描周围 BLE 设备”→ 找到设备 →“能力配置”→“发现服务”，会列出该设备全部 GATT 服务/特征与属性，重点记下带 write 的特征。");
+      L.push("B. 电脑端 bleak 脚本（Windows 有蓝牙即可）：扫描 scan.py → 枚举 gatt.py → 单发 oneshot.py / 持续 run_seg.py / 参考驱动器 bt_toy_driver.py。");
+      L.push("C. 官方 App 抓包（拿真实控制帧最稳）：安卓开发者选项开启“蓝牙 HCI 收集日志”→ 用官方 App 操作设备（每档/每种模式各点一遍）→ 导出 btsnoop_hci.log → 电脑 Wireshark 过滤 btatt，看 Write Command/Write Request 的 value（注意：联发科机型日志可能加密，换高通机型或用 nRF Connect 实时观察）。");
+      L.push("D. 官方 App 若为 H5/uni-app 壳：解包 APK，在前端 JS 里搜 ServiceConfigs / writeBLECharacteristicValue / 组包函数，可直接拿到 UUID 与帧格式（我们就是这样确认 ANKNI MR-Z 的）。");
+      L.push("");
+      L.push("三、判定帧结构（关键四点）");
+      L.push("1. 帧头/帧尾与长度字节；2. 强度/档位字节的位置与量程（0-100 还是 0-255）；3. 校验方式（常见：全部字节和取低8位 / 异或 / CRC16-XModem）；4. 是否需要开机握手包、是否需要周期续帧（keepalive）。");
+      L.push("验证方法：先用本 App“能力配置→试振”逐条试；单发一帧后如果只动 1~2 秒就停，说明是“保活型”，必须勾选保活并按 100~200ms 周期续帧。");
+      L.push("");
+      L.push("四、写入小手机（能力配置参数）");
+      L.push("- 设备类型：BLE；Service UUID / Characteristic UUID 填“发现服务”里带 write 的那一对；");
+      L.push("- 命令模板占位符：{value} 十进制、{value:byte}/{value:hex} 两位十六进制、{on}=1、{off}=0、{csum}=对前序全部字节累加取低8位（hex）；");
+      L.push("- 保活型设备：勾选“保活持续模式”，间隔 150ms；命令建议 vibrate(0-100) 与 stop；");
+      L.push("- 保存后：开“注入提示词”→ 点“复制AI提示词”→ 粘进角色卡；之后 AI 输出 [BLUETOOTH_CMD]{action:control,device:设备名,command:vibrate,value:80} 即可持续控制。");
+      L.push("");
+      L.push("五、已实测范本（可直接照抄结构）");
+      L.push("设备：ANKNI MR-Z（谜姬/安可尼，官方 App「醉清风」）");
+      L.push("广播名 ANKNI MR-Z；Service 0000DDDD-0000-1000-8000-00805F9B34FB；写特征 0000DDD1-0000-1000-8000-00805F9B34FB；");
+      L.push("帧：AA 08 01 <强度 0-100 的 hex> <校验和>，校验和=前面所有字节之和取低8位；");
+      L.push("强度 50 → AA080132E5；停止 → AA080100B3；模板 AA0801{value:hex}{csum}；");
+      L.push("特性：单帧只维持约 1~2 秒 → 必须保活续帧（150ms）；设备拒绝系统配对（免配对外设），不要用系统蓝牙“配对”，直接用 BLE 直连。");
+      L.push("");
+      L.push("六、注意事项（踩坑清单）");
+      L.push("1. BLE 玩具通常只允许一个主机连接：抓包/测试时确保官方 App 或另一台设备没连着它；");
+      L.push("2. 系统里提示“该设备不允许被配对”是正常的（免配对外设），不影响 App 直连控制；");
+      L.push("3. Android 12+ 需要“附近设备”权限；被拒绝后可在 App 内引导重新授权或跳系统设置开启；");
+      L.push("4. 若写入无反应：确认写的是 write 特征、写入类型用 write-with-response、数据帧含正确校验和；");
+      L.push("5. 若连接成功但无动作：先怀疑“需要握手/保活”，再怀疑强度字节位置或量程；");
+      L.push("6. 不要用别人的帧直接套自己的设备：同品牌不同型号的帧头/校验都可能不同，必须实测确认。");
+      L.push("");
+      L.push("七、请输出给我的结果（照此格式）");
+      L.push("1) 设备档案：广播名 / MAC / 服务 / 写特征 / 读特征 / 通知特征；");
+      L.push("2) 协议表：帧结构、字段含义、校验算法、是否需握手/保活；");
+      L.push("3) 命令集：命令名 + 模板（如 AA0801{value:hex}{csum}）+ 取值说明；");
+      L.push("4) 小手机配置参数：Service / Characteristic / 是否勾选保活 / 间隔 ms；");
+      L.push("5) 风险与兼容性提示（尤其是同品牌其它型号可能不通用）。");
+      return L.join("\n");
+    },
+
+    /** 在蓝牙面板的教程折叠区渲染教程文本 */
+    renderBtGuide: function() {
+      const el = document.getElementById("mcp-bt-guide");
+      if (!el) return;
+      if (!el.innerText || el.innerText.length < 20) el.innerText = this.buildBtAdaptGuide();
+    },
+
+    /** 一键复制完整蓝牙适配教程提示词 */
+    copyBtAdaptGuide: function() {
+      const text = this.buildBtAdaptGuide();
+      this._fallbackCopy(text, () => showToast("适配教程提示词已复制，可直接发给 AI 或照做适配其它蓝牙设备"));
     },
 
     /** 蓝牙权限引导：状态缺失→再次申请；被永久拒绝→跳系统设置手动开 */

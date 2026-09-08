@@ -1290,13 +1290,33 @@ class AndroidMcp private constructor(private val context: Context) {
         return try {
             val cn = android.content.ComponentName(context, NowPlayingListenerService::class.java)
             if (isNotificationListenerGranted()) {
+                // 双管齐下：请求系统重绑 + 若服务已在跑则直接让它快照当前通知栏
                 android.service.notification.NotificationListenerService.requestRebind(cn)
-                "{\"ok\":true,\"rebind\":true}"
+                NowPlayingListenerService.requestSnapshot()
+                "{\"ok\":true,\"rebind\":true,\"serviceAlive\":" + NowPlayingListenerService.isServiceAlive() + "}"
             } else {
                 "{\"ok\":true,\"granted\":false}"
             }
         } catch (e: Exception) {
             "{\"ok\":false,\"error\":\"重绑请求失败\"}"
+        }
+    }
+
+    /** 诊断信息：判断通知监听是否真的在收数据、媒体判定卡在哪一步 */
+    @JavascriptInterface
+    fun getNowPlayingDebug(): String {
+        return try {
+            JSONObject().apply {
+                put("ok", true)
+                put("granted", isNotificationListenerGranted())
+                put("serviceAlive", NowPlayingListenerService.isServiceAlive())
+                put("cachedPlaying", NowPlayingListenerService.currentPlaying ?: "")
+                put("lastUpdateTs", NowPlayingListenerService.lastUpdateTs)
+                put("lastAnyNotification", NowPlayingListenerService.lastAnyNotificationSummary)
+                put("sdkInt", Build.VERSION.SDK_INT)
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"诊断失败\"}"
         }
     }
 

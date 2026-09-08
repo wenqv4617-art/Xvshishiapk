@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v53'; // v53: 正在播放主动快照——刷新时重绑通知监听并扫描当前媒体通知/二次读取兜底; v1.1.6
+const CACHE_NAME = 'story-phone-v54'; // v54: 正在播放自诊断+识别增强(媒体样式动作/SUB_TEXT兜底)+蓝牙适配教程提示词内置可复制; v1.1.7
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

@@ -29,16 +29,36 @@ class NowPlayingListenerService : NotificationListenerService() {
         @Volatile
         var lastUpdateTs: Long = 0L
 
-        /** 判断通知是否为媒体通知（携带媒体会话 / TRANSPORT 分类，且带标题） */
+        /** 服务实例（用于外部主动触发快照；未绑定时为 null） */
+        @Volatile
+        private var instance: NowPlayingListenerService? = null
+
+        /** 诊断用：最近一条收到的任意通知摘要（判断监听是否真的在收数据） */
+        @Volatile
+        var lastAnyNotificationSummary: String = ""
+
+        /** 外部（AndroidMcp）主动请求快照当前通知栏媒体 */
+        fun requestSnapshot() {
+            try { instance?.snapshotNowPlaying() } catch (e: Exception) { Log.e(TAG, "requestSnapshot 失败: " + e.message) }
+        }
+
+        /** 服务是否已被系统绑定（诊断用） */
+        fun isServiceAlive(): Boolean = instance != null
+
+        /** 判断通知是否为媒体通知（携带媒体会话 / TRANSPORT 分类 / 媒体样式动作，且有标题或文本） */
         fun isMediaNotification(n: Notification): Boolean {
             return try {
                 val extras: Bundle = n.extras
                 val hasSession = extras.containsKey(Notification.EXTRA_MEDIA_SESSION)
-                val hasTitle = extras.containsKey(Notification.EXTRA_TITLE)
                 val isTransport = n.category == Notification.CATEGORY_TRANSPORT
-                // 注意：主流媒体 App（网易云/B站等）播放时都跑前台服务(FGS)，不可按 FGS 标志排除；
-                // 判断靠"媒体会话 Extra / TRANSPORT 分类 + 标题"（不依赖 Notification.style，兼容性更好）
-                (hasSession || isTransport) && hasTitle
+                val hasMediaStyleAction = n.actions?.any { a ->
+                    val t = a.title?.toString() ?: ""
+                    t.contains("播放") || t.contains("暂停") || t.contains("下一") || t.contains("上一") ||
+                        t.contains("Play", true) || t.contains("Pause", true)
+                } == true
+                val hasText = !extras.getString(Notification.EXTRA_TITLE).isNullOrBlank() ||
+                    !extras.getString(Notification.EXTRA_TEXT).isNullOrBlank()
+                (hasSession || isTransport || hasMediaStyleAction) && hasText
             } catch (e: Exception) {
                 false
             }
@@ -50,9 +70,12 @@ class NowPlayingListenerService : NotificationListenerService() {
                 val extras: Bundle = n.extras
                 val title = extras.getString(Notification.EXTRA_TITLE)?.takeIf { it.isNotBlank() }
                 val text = extras.getString(Notification.EXTRA_TEXT)?.takeIf { it.isNotBlank() }
-                val resolvedTitle = title ?: text
-                // 歌手/专辑：多数媒体 App 把"歌手 · 专辑"放进 EXTRA_TEXT；与标题相同则视为无歌手信息
-                val textLine = if (text != null && text != title && text != resolvedTitle) text else null
+                val subText = extras.getString(Notification.EXTRA_SUB_TEXT)?.takeIf { it.isNotBlank() }
+                val infoText = extras.getString(Notification.EXTRA_INFO_TEXT)?.takeIf { it.isNotBlank() }
+                val resolvedTitle = title ?: text ?: subText ?: infoText
+                // 歌手/专辑：多数媒体 App 把"歌手 · 专辑"放进 EXTRA_TEXT/SUB_TEXT；与标题相同则视为无歌手信息
+                val textLine = listOf(text, subText)
+                    .firstOrNull { it != null && it != title && it != resolvedTitle }
                 JSONObject().apply {
                     put("packageName", packageName)
                     put("appName", appNameOf(packageName))
@@ -86,12 +109,31 @@ class NowPlayingListenerService : NotificationListenerService() {
         }
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        instance = this
+    }
+
+    override fun onDestroy() {
+        if (instance === this) instance = null
+        super.onDestroy()
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         super.onNotificationPosted(sbn)
         sbn ?: return
         try {
             val n = sbn.notification
-            if (isMediaNotification(n)) {
+            val media = isMediaNotification(n)
+            // 诊断摘要：无论是否媒体，都记录最近一条，便于判断监听是否在收数据
+            try {
+                val extras = n.extras
+                lastAnyNotificationSummary = "pkg=${sbn.packageName}, media=$media, cat=${n.category}, " +
+                    "hasSession=${extras.containsKey(Notification.EXTRA_MEDIA_SESSION)}, " +
+                    "title=${extras.getString(Notification.EXTRA_TITLE) ?: ""}, " +
+                    "text=${extras.getString(Notification.EXTRA_TEXT) ?: ""}"
+            } catch (e: Exception) {}
+            if (media) {
                 currentPlaying = buildJson(n, sbn.packageName)
                 lastUpdateTs = System.currentTimeMillis()
                 Log.d(TAG, "媒体通知更新: $currentPlaying")
