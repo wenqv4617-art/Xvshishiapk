@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v69'; // v69: 工作台 fetch_url 改为返回可读正文(不再只看到 head 里的 meta)+JSON 接口自动结构化+JS 动态渲染页内嵌状态提取与提示; 修复工具调用小条执行完仍显示"执行中"; v1.3.8
+const CACHE_NAME = 'story-phone-v70'; // v70: 更新日志内容整理（8.30–9.8 每日一条，版本 v4.3–v4.12）；无功能变更; v1.3.9
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
