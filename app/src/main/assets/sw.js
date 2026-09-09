@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v72'; // v72: 修反查手机确认弹窗可被调度器重复叠加（askAndStart 防重入）; v1.4.1
+const CACHE_NAME = 'story-phone-v73'; // v73: 反查手机修复(退出对话页再跳转/关系网与人设入 prompt/输出解析兜底/报告前切回微信) + 开屏改羽毛笔与简约配色; v1.4.2
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

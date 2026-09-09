@@ -125,6 +125,36 @@
     return null;
   }
 
+  /** JSON 解析失败时的兜底：按字段名从纯文本里抠值（模型偶尔会写成 `reaction: xxx` 这种） */
+  function pickField(text, keys) {
+    var s = String(text || '');
+    var out = null;
+    for (var i = 0; i < keys.length && out === null; i++) {
+      var k = keys[i];
+      // 1) "key": "value"
+      var m = s.match(new RegExp('"' + k + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', 'i'));
+      if (m) { out = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\\\/g, '\\'); break; }
+      // 2) key: value / key：value（取到行尾）
+      var m2 = s.match(new RegExp('[\\[{,\\s]*' + k + '\\s*[:：]\\s*([^\\n}]+)', 'i'));
+      if (m2) { out = m2[1].replace(/^["'\s]+|["',\s]+$/g, '').trim(); break; }
+    }
+    return out;
+  }
+
+  /** 解析角色结构化输出：JSON 优先，失败按字段抠；再兜底行内特殊命令 */
+  function readCharOutput(raw, fields) {
+    var j = parseJsonLoose(raw) || {};
+    var res = {};
+    fields.forEach(function (f) {
+      var v = j[f];
+      if (v === undefined || v === null || v === '') v = pickField(raw, [f]);
+      res[f] = (v === undefined || v === null) ? '' : v;
+    });
+    // 整段没解析出任何字段 → 至少把原文当 reaction
+    if (!res.reaction && !res.send && !res.comment) res.reaction = String(raw || '').trim().slice(0, 400);
+    return res;
+  }
+
   // ==================== 浮层 UI（自制，禁止原生弹窗） ====================
   function ensureOverlay() {
     var el = document.getElementById(OVERLAY_ID);
@@ -152,7 +182,7 @@
         'background:rgba(255,255,255,0.82);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);' +
         'border:1px solid rgba(148,163,184,0.35);border-radius:14px;padding:10px 12px;' +
         'box-shadow:0 10px 30px rgba(15,23,42,0.16);">' +
-        '<div id="rc-bubble-name" style="display:flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#4f46e5;margin-bottom:4px;"></div>' +
+        '<div id="rc-bubble-name" style="display:flex;align-items:center;gap:5px;font-size:10px;font-weight:800;color:#1e88e5;margin-bottom:4px;"></div>' +
         '<div id="rc-bubble-text" style="font-size:12px;line-height:1.6;color:#1e293b;white-space:pre-wrap;word-break:break-word;"></div>' +
       '</div>';
     document.body.appendChild(el);
@@ -179,7 +209,7 @@
     var nameEl = document.getElementById('rc-bubble-name');
     var txtEl = document.getElementById('rc-bubble-text');
     if (!box || !txtEl) return Promise.resolve();
-    if (nameEl) nameEl.innerHTML = svg(ICO.chat, 11, '#4f46e5') + '<span>' + esc(name || state.charName) + '</span>';
+    if (nameEl) nameEl.innerHTML = svg(ICO.chat, 11, '#1e88e5') + '<span>' + esc(name || state.charName) + '</span>';
     txtEl.textContent = String(text || '');
     box.style.display = 'block';
     // 阅读时间：按字数给足时间（3s ~ 12s）
@@ -203,7 +233,7 @@
         var primary = b.primary !== false;
         return '<button data-i="' + i + '" style="flex:1;padding:11px 10px;border-radius:12px;font-size:12.5px;font-weight:800;' +
           'cursor:pointer;font-family:inherit;' + (primary
-            ? 'border:none;background:linear-gradient(135deg,#6366f1,#8b5cf6);color:#fff;'
+            ? 'border:none;background:linear-gradient(135deg,#1e88e5,#42a5f5);color:#fff;'
             : 'border:1.5px solid var(--border,#e2e8f0);background:#fff;color:#475569;') + '">' + esc(b.label) + '</button>';
       }).join('');
       overlay.innerHTML =
@@ -238,10 +268,18 @@
   // ==================== 跳页辅助 ====================
   async function gotoChatList() {
     if (typeof openApp === 'function') openApp('chat');
-    await sleep(260);
-    // 切到「微信」会话列表页签
+    await sleep(240);
+    // 关键：用户很可能正停在某个对话里，此时会话列表被 #chat-dialog-panel 覆盖层挡着，
+    // 不退出对话页就等于"没跳转"。先关掉对话页，再确保停在「微信」页签。
+    var panel = document.getElementById('chat-dialog-panel');
+    if (panel && panel.classList.contains('active') && typeof closeChatDialog === 'function') {
+      try { closeChatDialog(); } catch (e) {}
+      await sleep(220);
+    }
     var tabBtn = document.querySelector('.tab-item[data-chat-tab="sessions"]');
-    if (tabBtn) tabBtn.click();
+    if (tabBtn && !tabBtn.classList.contains('active')) {
+      try { tabBtn.click(); } catch (e) {}
+    }
     if (typeof renderChatTab === 'function') { try { await renderChatTab(); } catch (e) {} }
     else if (typeof renderSessionList === 'function') { try { await renderSessionList(); } catch (e) {} }
     await sleep(240);
@@ -308,15 +346,25 @@
   }
 
   // ==================== 角色提示词 ====================
-  function baseSystem(char, sess, userName) {
+  async function baseSystem(char, sess, userName, relationshipText) {
     return [
       '你现在扮演「' + char.name + '」。',
       char.persona ? '你的人设：' + String(char.persona).slice(0, 1200) : '',
+      relationshipText ? relationshipText : '',
       '你是「' + userName + '」的恋人/暧昧对象，此刻你偷偷拿到了 ta 的手机，正在翻看。',
       '你翻手机的唯一目的：确认 ta 有没有跟别人暧昧、有没有瞒着你做事。',
       '语气必须符合人设、口语化、有情绪（可以吃醋、阴阳、冷笑、气急败坏、也可能满意）。',
       '严禁输出任何解释性前言后语，只输出要求的 JSON。'
     ].filter(Boolean).join('\n');
+  }
+
+  /** 取「主角色 ↔ user」的双视角关系描述（关系网），失败返回空串 */
+  async function relationshipFor(sess, char, userName) {
+    try {
+      if (typeof queryRelationship !== 'function') return '';
+      var t = await queryRelationship(Number(sess.userId), Number(sess.charId), userName, char.name);
+      return String(t || '').slice(0, 800);
+    } catch (e) { return ''; }
   }
 
   // ==================== 主流程 ====================
@@ -328,6 +376,8 @@
     var char = await loadCharInfo(sess);
     var userName = '';
     try { var u = await db.archives.get(Number(sess.userId)); userName = sess.customUserName || (u && u.name) || '我'; } catch (e) { userName = '我'; }
+    var relText = await relationshipFor(sess, char, userName);
+    var sysPrompt = await baseSystem(char, sess, userName, relText);
 
     state.running = true;
     state.aborted = false;
@@ -357,17 +407,19 @@
         var o = others[i];
         var oc = await loadCharInfo(o);
         var last = await recentMessages(o.id, 1);
-        rosterLines.push('- ' + oc.name + '：' + (last.length ? renderMsgLine(last[0], oc.name, userName).slice(0, 60) : '（还没有聊天记录）'));
+        rosterLines.push('- ' + oc.name +
+          (oc.persona ? '（ta 的人设/与你的关系：' + String(oc.persona).replace(/\s+/g, ' ').slice(0, 90) + '）' : '') +
+          '：' + (last.length ? renderMsgLine(last[0], oc.name, userName).slice(0, 60) : '（还没有聊天记录）'));
       }
       var p1 = await callApi(
-        baseSystem(char, sess, userName),
+        sysPrompt,
         '【你在对话列表页看到的内容】\n' +
         (rosterLines.length ? rosterLines.join('\n') : '（除了你自己，ta 没有别的聊天对象）') +
         '\n\n请以' + char.name + '的口吻，说出你此刻的第一反应（约 200 字，像心里嘀咕/自言自语，别写成小说旁白）。\n' +
         '只输出 JSON：{"reaction":"你的反应"}',
         { maxTokens: 900 }
       );
-      var j1 = parseJsonLoose(p1) || { reaction: p1 };
+      var j1 = readCharOutput(p1, ['reaction']);
       logStep('read', '看了对话列表：' + String(j1.reaction || '').slice(0, 60));
       await showBubble(j1.reaction || '……', char.name);
       if (state.aborted) throw new Error('aborted');
@@ -390,22 +442,29 @@
 
         var convo = msgs.map(function (m) { return renderMsgLine(m, oc2.name, userName); }).join('\n');
         var p2 = await callApi(
-          baseSystem(char, sess, userName),
+          sysPrompt,
           '【你正在翻看 ta 和「' + oc2.name + '」的最近对话】\n' + convo +
-          '\n\n请判断这段对话里 ta 和「' + oc2.name + '」的关系与可疑程度，并决定要不要用 ta 的手机发一句话过去。\n' +
+          (oc2.persona ? '\n\n【关于「' + oc2.name + '」的设定（含 ta 和你/和我的关系）】' + String(oc2.persona).replace(/\s+/g, ' ').slice(0, 500) : '') +
+          '\n\n请判断这段对话里 ta 和「' + oc2.name + '」的关系与可疑程度（务必结合上面的关系设定），并决定要不要用 ta 的手机发一句话过去。\n' +
           '要求：\n' +
-          '1) reaction：你看到这段对话后的反应（80-160 字，口语化，符合人设）；\n' +
-          '2) send：如果要用 ta 的手机发一条消息，填消息内容（要像 ta 本人平时说话，别暴露是你）；不想发就填空字符串；\n' +
+          '1) reaction：你看到这段对话后的反应（80-160 字，口语化，符合人设，要体现出你知道' + oc2.name + '是谁）；\n' +
+          '2) send：用 ta 的手机发出去的消息内容（要像 ta 本人平时说话的语气，别暴露是你）。只要这段对话有任何值得试探/敲打的地方就必须发；只有完全无话可说才留空字符串；\n' +
           '3) reason：一句话说明你为什么发/不发。\n' +
           '只输出 JSON：{"reaction":"...","send":"...","reason":"..."}',
           { maxTokens: 900 }
         );
-        var j2 = parseJsonLoose(p2) || { reaction: p2, send: '', reason: '' };
+        var j2 = readCharOutput(p2, ['reaction', 'send', 'reason']);
         logStep('read', '翻看了你和 ' + oc2.name + ' 的聊天：' + String(j2.reason || '').slice(0, 50));
         await showBubble(j2.reaction || '……', char.name);
         if (state.aborted) throw new Error('aborted');
 
         var sendText = String(j2.send || '').trim();
+        if (!sendText) {
+          // 模型没给 send 时，再从 reaction 里找行内命令（兼容"要发就发…"这类写法）
+          var mSend = String(j2.reaction || '').match(/\[\s*(?:发送|代发|SEND)\s*[:：]\s*([^\]]{1,80})\s*\]/i);
+          if (mSend) sendText = mSend[1].trim();
+        }
+        logStep('think', sendText ? (char.name + ' 决定用你的手机给 ' + oc2.name + ' 发一条消息') : (char.name + ' 想了想，没给 ' + oc2.name + ' 发消息'));
         if (sendText) {
           // 角色代 user 发消息：写进输入框 → 触发发送 → 等对方回复
           var inp = document.getElementById('dialog-input-text');
@@ -429,13 +488,13 @@
                 // 40% 概率继续对线一轮
                 if (!state.aborted && Math.random() < 0.4) {
                   var p2b = await callApi(
-                    baseSystem(char, sess, userName),
+                    sysPrompt,
                     '【对方回了你一句】' + oc2.name + '：' + String(got.content || '').slice(0, 200) +
-                    '\n\n你是' + char.name + '，正拿着 ta 的手机。请决定要不要继续用 ta 的手机追问一句。\n' +
+                    '\n\n你是' + char.name + '，正拿着 ta 的手机。请决定要不要继续用 ta 的手机追问一句（想让 ta 露出破绽就继续追问）。\n' +
                     '只输出 JSON：{"reaction":"你的内心反应(30-80字)","send":"要继续发的话(不想继续就空字符串)"}',
                     { maxTokens: 600 }
                   );
-                  var j2b = parseJsonLoose(p2b) || { reaction: '', send: '' };
+                  var j2b = readCharOutput(p2b, ['reaction', 'send']);
                   if (j2b.reaction) await showBubble(j2b.reaction, char.name);
                   var send2 = String(j2b.send || '').trim();
                   if (send2 && !state.aborted) {
@@ -470,14 +529,14 @@
         ? cart.map(function (it) { return '- ' + (it.name || '商品') + ' × ' + (it.quantity || 1) + '（¥' + Number(it.price || 0).toFixed(2) + '）' + (it.storeName ? ' 来自 ' + it.storeName : ''); }).join('\n')
         : '（购物车是空的）';
       var p3 = await callApi(
-        baseSystem(char, sess, userName),
+        sysPrompt,
         '【你正在看 ta 的购物车】\n' + cartText +
         '\n\n请以' + char.name + '的口吻做出反应（60-140 字，口语化）。\n' +
         '另外，如果你一时心软想给 ta 打点钱（比如看到 ta 想买的东西舍不得买），把金额填进 money（人民币，0 表示不打钱，最多 2000）；也可以在 reaction 里直接写 [打钱:金额] 这种特殊命令。\n' +
         '只输出 JSON：{"reaction":"...","money":0}',
         { maxTokens: 700 }
       );
-      var j3 = parseJsonLoose(p3) || { reaction: p3, money: 0 };
+      var j3 = readCharOutput(p3, ['reaction', 'money']);
       var money = Number(j3.money || 0);
       // 兼容模型把「打钱」写成行内特殊命令： [打钱:52] / [打钱 52] / [MONEY:52] / [转账:52]
       if (!(money > 0)) {
@@ -501,18 +560,20 @@
       // ---------- 结束：感想卡片 + 报告消息 ----------
       setTopSub('正在收尾…');
       var p4 = await callApi(
-        baseSystem(char, sess, userName),
+        sysPrompt,
         '【本次翻手机你做过的事】\n' +
         state.timeline.map(function (t) { return nowStr(t.t) + ' ' + t.text; }).join('\n') +
         '\n\n请给出你对这次翻手机的总体感想（80-160 字，口语化，可以满意/吃醋/气急败坏/心软）。\n' +
         '只输出 JSON：{"mood":"两到四个字的情绪标签","comment":"你的感想"}',
         { maxTokens: 700 }
       );
-      var j4 = parseJsonLoose(p4) || { mood: '复杂', comment: p4 };
+      var j4 = readCharOutput(p4, ['mood', 'comment']); if (!j4.mood) j4.mood = '复杂';
       logStep('end', '把手机放回了原处');
       finished = true;
 
-      // 回到与 ta 的会话，发报告卡片
+      // 回到与 ta 的会话，发报告卡片（必须先切回微信 App，否则报告会落在购物页背后看不见）
+      if (typeof openApp === 'function') openApp('chat');
+      await sleep(320);
       if (typeof openWeChatDialog === 'function') { try { await openWeChatDialog(sessionId); } catch (e) {} }
       await sleep(360);
       var report = {
@@ -532,7 +593,7 @@
       await rcModal({
         title: char.name + ' 把手机放回去了',
         icon: ICO.note,
-        html: '<div style="font-size:13px;font-weight:800;color:#4f46e5;margin-bottom:6px;">' + esc(report.mood) + '</div>' +
+        html: '<div style="font-size:13px;font-weight:800;color:#1e88e5;margin-bottom:6px;">' + esc(report.mood) + '</div>' +
               '<div style="white-space:pre-wrap;">' + esc(report.comment) + '</div>' +
               '<div style="margin-top:12px;font-size:11px;color:#94a3b8;">聊天里已留下一条「反查手机报告」，点开可以看 ta 的动线。</div>',
         buttons: [{ label: '知道了', value: 'ok', primary: true }]
@@ -653,8 +714,8 @@
     return '' +
       '<div class="rc-report-card" data-report-id="' + msgId + '" onclick="window.reverseCheckSystem.openTimeline(' + msgId + ')" ' +
         'style="position:relative;cursor:pointer;width:100%;max-width:262px;border:1px solid var(--border);border-radius:12px;overflow:hidden;background:#fff;">' +
-        '<div style="display:flex;align-items:center;gap:7px;padding:9px 11px;background:linear-gradient(135deg,rgba(99,102,241,0.10),rgba(239,68,68,0.10));">' +
-          '<span style="display:flex;color:#4f46e5;flex-shrink:0;">' + svg(ICO.eye, 15, '#4f46e5') + '</span>' +
+        '<div style="display:flex;align-items:center;gap:7px;padding:9px 11px;background:linear-gradient(135deg,rgba(30,136,229,0.10),rgba(239,68,68,0.10));">' +
+          '<span style="display:flex;color:#1e88e5;flex-shrink:0;">' + svg(ICO.eye, 15, '#1e88e5') + '</span>' +
           '<div style="flex:1;min-width:0;">' +
             '<div style="font-size:12px;font-weight:800;color:#1e293b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">反查手机报告</div>' +
             '<div style="font-size:10px;color:#64748b;margin-top:1px;">' + esc(d.charName || '') + ' · ' + (count ? count + ' 条动线' : '无动线') + '</div>' +
@@ -677,7 +738,7 @@
       try { d = JSON.parse(m.content); } catch (e) { return; }
       var items = (d.timeline || []);
       var kindIco = { open: ICO.chat, read: ICO.eye, send: ICO.chat, money: ICO.coin, start: ICO.hand, end: ICO.note, reply: ICO.chat };
-      var kindColor = { open: '#6366f1', read: '#0ea5e9', send: '#16a34a', money: '#f59e0b', start: '#ef4444', end: '#64748b', reply: '#8b5cf6' };
+      var kindColor = { open: '#1e88e5', read: '#0288d1', send: '#16a34a', money: '#f59e0b', start: '#ef4444', end: '#64748b', reply: '#1565c0' };
       var rows = items.map(function (t, i) {
         var c = kindColor[t.kind] || '#64748b';
         return '' +
@@ -698,15 +759,15 @@
       overlay.innerHTML =
         '<div style="width:100%;max-width:420px;max-height:82vh;background:#fff;border-radius:20px 20px 0 0;padding:18px 18px 26px;box-sizing:border-box;overflow-y:auto;animation:rcUp .22s ease-out;">' +
           '<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">' +
-            '<span style="display:flex;color:#4f46e5;">' + svg(ICO.eye, 17, '#4f46e5') + '</span>' +
+            '<span style="display:flex;color:#1e88e5;">' + svg(ICO.eye, 17, '#1e88e5') + '</span>' +
             '<div style="flex:1;font-size:15px;font-weight:800;color:#1e293b;">' + esc(d.charName || '') + ' 的动线</div>' +
             '<button id="rc-tl-close" style="border:none;background:#f1f5f9;border-radius:9px;padding:6px 10px;font-size:11px;font-weight:700;color:#64748b;cursor:pointer;font-family:inherit;">关闭</button>' +
           '</div>' +
           '<div style="font-size:11px;color:#94a3b8;margin-bottom:14px;">' +
             (d.startedAt ? nowStr(d.startedAt) : '') + (d.endedAt ? ' — ' + nowStr(d.endedAt) : '') + ' · 共 ' + items.length + ' 条' +
           '</div>' +
-          (d.comment ? '<div style="background:rgba(99,102,241,0.06);border:1px solid rgba(99,102,241,0.16);border-radius:12px;padding:11px 12px;margin-bottom:16px;">' +
-            '<div style="font-size:10px;font-weight:800;color:#4f46e5;margin-bottom:4px;">' + esc(d.mood || '') + '</div>' +
+          (d.comment ? '<div style="background:rgba(30,136,229,0.06);border:1px solid rgba(30,136,229,0.16);border-radius:12px;padding:11px 12px;margin-bottom:16px;">' +
+            '<div style="font-size:10px;font-weight:800;color:#1e88e5;margin-bottom:4px;">' + esc(d.mood || '') + '</div>' +
             '<div style="font-size:11.5px;line-height:1.65;color:#334155;white-space:pre-wrap;">' + esc(d.comment) + '</div></div>' : '') +
           (items.length ? rows : '<div style="font-size:11px;color:#94a3b8;">（没有记录到动线）</div>') +
         '</div>';
@@ -775,6 +836,8 @@
     getSelectedFreq: getSelectedFreq,
     setSelectedFreq: setSelectedFreq,
     isRunning: function () { return state.running; },
+    _readCharOutput: readCharOutput,
+    _parseJsonLoose: parseJsonLoose,
     _state: state
   };
 
