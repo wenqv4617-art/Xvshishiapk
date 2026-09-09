@@ -200,14 +200,11 @@ let isAppClickEventsInitialized = false;
       box-sizing: border-box !important;
     }
     .app-icon span {
-      display: none !important;   /* 桌面图标只显示图标，名称在编辑模式下才出现 */
+      display: none !important;   /* 桌面图标只显示图标（与设计稿一致） */
       width: 100% !important;
       text-align: center !important;
       margin: 5px auto 0 auto !important;
       box-sizing: border-box !important;
-    }
-    .edit-mode .app-icon span {
-      display: block !important;
     }
     /* Dock 里是胶囊按钮（形状=全圆角），比桌面圆形按钮宽 */
     #dock-grid .app-icon .icon-wrapper {

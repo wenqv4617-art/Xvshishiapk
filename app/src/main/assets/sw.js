@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v81'; // v81: 桌面 M3 圆形图标+大时钟/照片/横幅/搜索条卡片+内置预设; v1.5.5
+const CACHE_NAME = 'story-phone-v82'; // v82: 桌面图标彻底不显示名称（与设计稿一致）; v1.5.6
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

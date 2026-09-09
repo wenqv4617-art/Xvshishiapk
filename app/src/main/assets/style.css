@@ -109,7 +109,7 @@ body {
   width: 26px;
   height: 26px;
 }
-/* 图标下不显示名称；长按进入编辑模式时才显示，方便辨认 */
+/* 图标下不显示名称（与设计稿一致）；span 仍保留在 DOM 里供无障碍朗读 */
 .app-icon span {
   display: none;
   font-size: 10.5px;
@@ -121,9 +121,6 @@ body {
   width: 100%;
   text-align: center;
   margin-top: 5px;
-}
-.edit-mode .app-icon span {
-  display: block;
 }
 
 #dock {
