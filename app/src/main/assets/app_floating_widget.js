@@ -33,6 +33,7 @@
     { appId: "music", label: "听歌" },
     { appId: "shopping", label: "购物" },
     { appId: "quicktravel", label: "快穿局" },
+    { appId: "yigui", label: "仪轨" },
     { special: "settings-api", label: "API 设置页" },
     { special: "settings-data", label: "数据管理页" }
   ];

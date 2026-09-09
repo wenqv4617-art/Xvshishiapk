@@ -33,7 +33,8 @@
     { key: 'music', label: '一起听歌', desc: '听歌陪听与歌曲推荐' },
     { key: 'shopping', label: '购物', desc: '商品/店铺生成与订单演出' },
     { key: 'quicktravel', label: '快穿局', desc: '快穿剧情的世界与分幕' },
-    { key: 'workbench', label: '工作台', desc: '工作台 Agent 的多轮工具调用' }
+    { key: 'workbench', label: '工作台', desc: '工作台 Agent 的多轮工具调用' },
+    { key: 'ritual', label: '仪轨', desc: '日程 / 穿着 / 随身物品 / 位置 的推演' }
   ];
 
   function getMap() {

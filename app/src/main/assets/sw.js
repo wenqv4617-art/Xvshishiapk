@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v75'; // v75: 点完偷看弹窗立刻离开聊天详情页(消除卡顿观感); v1.4.4
+const CACHE_NAME = 'story-phone-v76'; // v76: 新增「仪轨」应用(四维状态日历)+分享支持 X(推特)+情侣空间纪念日改纯倒数; v1.5.0
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -12,6 +12,7 @@ const ASSETS = [
   './chat.css',
   './sticker.css',
   './app_quicktravel.js',
+  './app_ritual.js',      // 仪轨（日程/穿着/随身物品/位置 四维状态）
   './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
   './app_workbench_agent.js', // 工作台 Agent 引擎（Skill/Agent 配置 + MCP http+sse + @引用 + 成熟模式渲染）
   './workbench.css',      // 工作台样式

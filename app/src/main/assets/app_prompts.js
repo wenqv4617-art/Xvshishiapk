@@ -568,6 +568,14 @@ ${relationshipDesc}`;
     });
   }
 
+  // === 仪轨：当天「四维状态」（日程/穿着/随身物品/位置）注入（会话详情开关控制，depth -470） ===
+  if (sess.ritualStateInContext === 1 && window.ritualSystem && typeof window.ritualSystem.buildPromptSegment === 'function') {
+    try {
+      const ritualSeg = await window.ritualSystem.buildPromptSegment(sess);
+      if (ritualSeg) segments.push({ depth: -470, content: ritualSeg });
+    } catch (e) { console.warn('仪轨状态注入失败:', e); }
+  }
+
   // 1.4 线上微信闲聊回复准则：深度 -500 (完美将自定义提示词注入行为准则层，保留微信底层功能规范)
   let customOnlineText = null;
   if (sess.customOnlinePromptText && sess.customOnlinePromptText.trim()) {

@@ -49,6 +49,7 @@ window.DESKTOP_PRESETS = {
 .app-icon[data-app="world_book"] .icon-wrapper svg { color: #2dd4bf !important; }/* 浅青绿 */
 .app-icon[data-app="music"] .icon-wrapper svg { color: #f472b6 !important; }      /* 樱花粉 */
 .app-icon[data-app="workbench"] .icon-wrapper svg { color: #22d3ee !important; } /* 工作台青 */
+.app-icon[data-app="yigui"] .icon-wrapper svg { color: #7c9cbf !important; }     /* 仪轨黛青 */
 .app-icon[data-app="shopping"] .icon-wrapper svg { color: #ff6b35 !important; }  /* 淘宝橙 */
 .app-icon[data-app="encounter"] .icon-wrapper svg { color: #a78bfa !important; } /* 邂逅紫 */
 .app-icon[data-app="settings"] .icon-wrapper svg { color: #64748b !important; }  /* 烟灰钛 */
@@ -415,12 +416,12 @@ window.DESKTOP_PRESETS = {
       null, null, "encounter", "deeptalk",
       null, null, "reader", "forum",
 
-      // === 第二页 (20~39) === 槽位 32-35 为四个应用，槽位 36 为工作台（原播放器组件已移除）
+      // === 第二页 (20~39) === 槽位 32-35 为四个应用，槽位 36 为工作台，槽位 37 为仪轨（原播放器组件已移除）
       null, null, null, null,
       null, null, null, null,
       null, null, null, null,
       "couples", "music", "shopping", "quicktravel",
-      "workbench", null, null, null
+      "workbench", "yigui", null, null
     ],
 
     // 底部 Dock 栏排布

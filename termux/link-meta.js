@@ -24,6 +24,7 @@
 'use strict';
 const http = require('http');
 const https = require('https');
+const tls = require('tls');
 
 const PORT = process.env.PORT || 3003;
 const MAX_REDIRECT = 8;
@@ -37,6 +38,7 @@ const MOBILE_UA = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleW
 
 const SITE_MAP = [
   [/xhslink\.cn|xiaohongshu\.com/i, '小红书'],
+  [/(?:^|\/\/)(?:www\.)?(?:x|twitter)\.com/i, 'X（推特）'],
   [/bilibili\.com|b23\.tv/i, '哔哩哔哩'],
   [/douyin\.com|iesdouyin/i, '抖音'],
   [/weibo\.(cn|com)/i, '微博'],
@@ -113,22 +115,59 @@ function toHttps(u) {
   return s;
 }
 
+// ---- 可选代理：境外站点（X/Twitter、GitHub 等）在手机上通常需要走代理 ----
+// 只要设置了 HTTPS_PROXY / ALL_PROXY（例如 Clash 的 http://127.0.0.1:7890），本服务就走 CONNECT 隧道。
+const PROXY_URL = process.env.HTTPS_PROXY || process.env.ALL_PROXY || process.env.https_proxy || '';
+
+/** 统一 GET：无代理直连；有代理时先 CONNECT 再在隧道上发 HTTPS 请求 */
+function rawGet(u, headers, onResp, onErr) {
+  const isHttps = u.protocol === 'https:';
+  const direct = (extra) => {
+    const lib = isHttps ? https : http;
+    const req = lib.request(Object.assign({
+      method: 'GET', headers, timeout: TIMEOUT_MS,
+      hostname: u.hostname, port: u.port || (isHttps ? 443 : 80),
+      path: u.pathname + u.search
+    }, extra || {}), onResp);
+    req.on('timeout', () => { req.destroy(); onErr(new Error('timeout')); });
+    req.on('error', onErr);
+    req.end();
+    return req;
+  };
+
+  let proxy = null;
+  if (PROXY_URL && isHttps) { try { proxy = new URL(PROXY_URL); } catch (e) { proxy = null; } }
+  if (!proxy) return direct();
+
+  const connectReq = http.request({
+    host: proxy.hostname, port: proxy.port || 80, method: 'CONNECT',
+    path: u.hostname + ':443', timeout: TIMEOUT_MS
+  });
+  connectReq.on('connect', (res, socket) => {
+    if (res.statusCode !== 200) { socket.destroy(); return onErr(new Error('proxy CONNECT ' + res.statusCode)); }
+    const tlsSock = tls.connect({ socket, servername: u.hostname }, () => {
+      direct({ createConnection: () => tlsSock, hostname: u.hostname, port: 443 });
+    });
+    tlsSock.on('error', onErr);
+  });
+  connectReq.on('timeout', () => { connectReq.destroy(); onErr(new Error('proxy timeout')); });
+  connectReq.on('error', onErr);
+  connectReq.end();
+  return connectReq;
+}
+
 /** 带重定向的 GET，返回 { finalUrl, body, status } */
 function fetchFollow(targetUrl, depth) {
   depth = depth || 0;
   return new Promise((resolve, reject) => {
     let u;
     try { u = new URL(targetUrl); } catch (e) { return reject(new Error('invalid url')); }
-    const lib = u.protocol === 'https:' ? https : http;
-    const req = lib.request(u, {
-      method: 'GET',
-      headers: {
-        'User-Agent': MOBILE_UA,
-        'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-        'Accept-Encoding': 'identity'
-      },
-      timeout: TIMEOUT_MS
+    let req = null;
+    req = rawGet(u, {
+      'User-Agent': MOBILE_UA,
+      'Accept': 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+      'Accept-Encoding': 'identity'
     }, (resp) => {
       const code = resp.statusCode || 0;
       if (code >= 300 && code < 400 && resp.headers.location) {
@@ -141,13 +180,13 @@ function fetchFollow(targetUrl, depth) {
       const chunks = [];
       resp.on('data', (c) => {
         size += c.length;
-        if (size > MAX_BYTES) { req.destroy(); return; }
+        if (size > MAX_BYTES) { if (req && req.destroy) req.destroy(); return; }
         chunks.push(c);
       });
       resp.on('end', () => {
         resolve({ finalUrl: u.toString(), status: code, body: Buffer.concat(chunks).toString('utf8') });
       });
-    });
+    }, reject);
     req.on('timeout', () => { req.destroy(); reject(new Error('timeout')); });
     req.on('error', reject);
     req.end();
@@ -412,19 +451,84 @@ function parseGeneric(html, finalUrl) {
   return out;
 }
 
+// ---------------- X / Twitter ----------------
+/** 从任意 x.com / twitter.com 链接里取推文 id */
+function tweetIdOf(url) {
+  const m = String(url || '').match(/(?:^|\/\/)(?:www\.|mobile\.)?(?:x|twitter)\.com\/[^/?#]+\/status(?:es)?\/(\d+)/i);
+  return m ? m[1] : '';
+}
+
+/**
+ * 推文解析：优先官方免鉴权接口 cdn.syndication.twimg.com（能拿到正文/作者/点赞/配图），
+ * 失败再由调用方回退页面 og 标签。注意：境外站点，手机需能直连 x.com / twimg.com。
+ */
+async function parseTweetById(id) {
+  const out = { title: '', desc: '', author: '', images: [], likedCount: null, commentCount: null, publishTime: 0 };
+  if (!id) return out;
+  const r = await fetchFollow('https://cdn.syndication.twimg.com/tweet-result?id=' + id + '&token=x&lang=zh');
+  const j = JSON.parse(r.body || '{}');
+  if (!j || !j.text) return out;
+  out.desc = tidyText(j.text, true);
+  out.title = out.desc.split('\n').filter(Boolean)[0] || out.desc;
+  if (out.title.length > 80) out.title = out.title.slice(0, 80) + '…';
+  if (j.user) {
+    out.author = (j.user.name || '') + (j.user.screen_name ? ' @' + j.user.screen_name : '');
+  }
+  out.likedCount = toInt(j.favorite_count);
+  out.commentCount = toInt(j.conversation_count);
+  out.publishTime = j.created_at ? (Date.parse(j.created_at) || 0) : 0;
+  const imgs = [];
+  (j.photos || []).forEach((p) => { if (p && p.url) imgs.push(toHttps(p.url)); });
+  (j.mediaDetails || []).forEach((mm) => {
+    if (mm && mm.media_url_https && (!mm.type || mm.type === 'photo')) imgs.push(toHttps(mm.media_url_https));
+  });
+  out.images = imgs.filter((u, i) => u && imgs.indexOf(u) === i).slice(0, MAX_IMAGES);
+  return out;
+}
+
 async function buildMeta(target) {
+  // X/Twitter 推文：先走官方免鉴权接口（x.com 页面本身是 JS 渲染 + 境外站点，优先这条更稳）
+  const tweetId = tweetIdOf(target);
+  if (tweetId) {
+    try {
+      const t = await parseTweetById(tweetId);
+      if (t && t.desc) {
+        return {
+          ok: true,
+          finalUrl: target,
+          site: 'X（推特）',
+          kind: 'tweet',
+          title: t.title || t.desc.slice(0, 80),
+          desc: t.desc,
+          author: t.author || '',
+          images: t.images || [],
+          likedCount: t.likedCount,
+          commentCount: t.commentCount,
+          publishTime: t.publishTime || 0,
+          tweetId: tweetId
+        };
+      }
+    } catch (e) {
+      // 接口不通（境外网络）→ 继续走通用页面解析
+    }
+  }
+
   const r = await fetchFollow(target);
   const html = r.body || '';
   const finalUrl = r.finalUrl;
   const site = siteOf(finalUrl) || siteOf(target);
   const isXhs = /xiaohongshu\.com|xhslink\.cn/i.test(finalUrl);
   const isXhsNote = /xiaohongshu\.com\/(discovery\/item|explore)\//i.test(finalUrl);
+  const isTweet = !!tweetIdOf(finalUrl) || !!tweetIdOf(target);
 
   let parsed;
   let kind = 'web';
   if (isXhs && isXhsNote) {
     parsed = parseXhsNote(html);
     kind = 'xhs-note';
+  } else if (isTweet) {
+    parsed = parseGeneric(html, finalUrl);
+    kind = 'tweet';
   } else {
     parsed = parseGeneric(html, finalUrl);
     kind = isXhs ? 'xhs-profile' : 'web';
@@ -454,6 +558,8 @@ async function buildMeta(target) {
     meta.comments = parsed.comments || [];
     meta.commentsHasMore = !!parsed.commentsHasMore;
   }
+  // 推文：页面 og 回退时也能带上推文 id，供卡片显示
+  if (kind === 'tweet') meta.tweetId = tweetIdOf(finalUrl) || tweetIdOf(target) || '';
   return meta;
 }
 

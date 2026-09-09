@@ -91,7 +91,7 @@
       // 1. 日程管理事件
       const btnCalAdd = document.getElementById("btn-couples-cal-add");
       if (btnCalAdd) {
-        btnCalAdd.onclick = () => this.addNewScheduleForm();
+        btnCalAdd.onclick = () => this.addAnniversaryForm();
       }
       const btnCalAi = document.getElementById("btn-couples-cal-ai");
       if (btnCalAi) {
@@ -370,7 +370,7 @@
       this.currentSubPage = pageId;
       document.getElementById(`page-couples-${pageId}`).classList.add("active");
 
-      if (pageId === 'calendar') this.renderCalendar();
+      if (pageId === 'calendar') this.renderAnniversaries();
       if (pageId === 'album') this.renderAlbum();
       if (pageId === 'handbook') this.renderHandbookShelf();
       if (pageId === 'whisper') this.renderWhisperChat();
@@ -840,6 +840,129 @@ ${historyText || "刚刚相见，倍感温润。"}`;
         this.renderCalendar();
         showToast("日程已删除");
       }
+    },
+
+    // ==========================================
+    // 纪念日（纯倒数）：只纪念，不再生成日程/生理期——日程能力已迁到「仪轨」应用
+    // ==========================================
+    async renderAnniversaries() {
+      const container = document.getElementById("couples-anniv-list");
+      if (!container) return;
+      const charId = Number(this.activeCharId);
+      const meId = Number(this.activeMeId);
+      let rows = [];
+      try {
+        rows = await db.ritual_anniversaries.where('charId').equals(charId).toArray();
+      } catch (e) {
+        try {
+          const all = await db.ritual_anniversaries.toArray();
+          rows = all.filter(r => Number(r.charId) === charId);
+        } catch (e2) { rows = []; }
+      }
+      rows = rows.filter(r => Number(r.meId) === meId);
+
+      const pad = n => String(n).padStart(2, '0');
+      const now = new Date();
+      const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const weeks = ["日", "一", "二", "三", "四", "五", "六"];
+      const items = rows.map(r => {
+        const d = new Date(r.date + 'T00:00:00');
+        const diff = Math.round((d.getTime() - todayMid.getTime()) / 86400000);
+        return Object.assign({}, r, { diff: diff, valid: !isNaN(d.getTime()) });
+      }).filter(r => r.valid);
+
+      items.sort((a, b) => {
+        const af = a.diff >= 0, bf = b.diff >= 0;
+        if (af !== bf) return af ? -1 : 1;          // 未来的在前
+        return af ? a.diff - b.diff : b.diff - a.diff;
+      });
+
+      if (!items.length) {
+        container.innerHTML =
+          '<div style="background:#fff; border:1.5px dashed #f3d4da; border-radius:16px; padding:30px 18px; text-align:center;">' +
+            '<div style="display:flex; justify-content:center; color:#f9a8b8; margin-bottom:10px;">' +
+              '<svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M8 2v4M16 2v4M3 10h18"/><path d="M12 13.6c.7-.9 2.2-.5 2.2.7 0 .9-1 1.7-2.2 2.5-1.2-.8-2.2-1.6-2.2-2.5 0-1.2 1.5-1.6 2.2-.7z" fill="currentColor" stroke="none"/></svg>' +
+            '</div>' +
+            '<div style="font-size:12.5px; color:#b8a0a8; line-height:1.75; margin-bottom:16px;">还没有纪念日。<br>把你们的第一次、生日、约定好的日子记下来吧。</div>' +
+            '<button id="couples-anniv-empty-add" style="padding:10px 20px; border:none; background:#ff8fa3; color:#fff; border-radius:11px; font-size:12.5px; font-weight:800; cursor:pointer; font-family:inherit;">添加纪念日</button>' +
+          '</div>';
+        const b = document.getElementById("couples-anniv-empty-add");
+        if (b) b.onclick = () => this.addAnniversaryForm();
+        return;
+      }
+
+      container.innerHTML = items.map(r => {
+        const d = new Date(r.date + 'T00:00:00');
+        const dateLabel = d.getFullYear() + '年' + (d.getMonth() + 1) + '月' + d.getDate() + '日 · 星期' + weeks[d.getDay()];
+        const isToday = r.diff === 0;
+        const big = isToday ? '就是今天' : (r.diff > 0 ? ('还有 ' + r.diff + ' 天') : ('已经 ' + Math.abs(r.diff) + ' 天'));
+        const accent = isToday ? '#e11d48' : (r.diff > 0 ? '#ff8fa3' : '#b9a7ad');
+        return '<div style="background:#fff; border:1px solid #f6e7ea; border-radius:16px; padding:14px 16px; position:relative; overflow:hidden;">' +
+            '<div style="position:absolute; left:0; top:0; bottom:0; width:3px; background:' + accent + ';"></div>' +
+            '<div style="display:flex; align-items:flex-start; justify-content:space-between; gap:10px;">' +
+              '<div style="flex:1; min-width:0;">' +
+                '<div style="font-size:14px; font-weight:800; color:#3d2b31; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">' + window.escapeHtml(r.title || '纪念日') + '</div>' +
+                '<div style="font-size:11px; color:#b8a0a8; margin-top:3px;">' + dateLabel + '</div>' +
+              '</div>' +
+              '<button data-anniv-del="' + r.id + '" title="删除" style="flex-shrink:0; display:flex; align-items:center; justify-content:center; width:28px; height:28px; border:none; background:#fff5f6; border-radius:9px; color:#f87171; cursor:pointer;">' +
+                '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>' +
+              '</button>' +
+            '</div>' +
+            '<div style="display:flex; align-items:baseline; gap:6px; margin-top:10px;">' +
+              '<span style="font-size:20px; font-weight:800; color:' + accent + '; letter-spacing:.5px;">' + big + '</span>' +
+            '</div>' +
+            (r.note ? '<div style="font-size:11.5px; color:#8a7a80; margin-top:7px; line-height:1.6;">' + window.escapeHtml(r.note) + '</div>' : '') +
+          '</div>';
+      }).join('');
+
+      container.querySelectorAll('[data-anniv-del]').forEach(btn => {
+        btn.onclick = () => this.deleteAnniversary(Number(btn.getAttribute('data-anniv-del')));
+      });
+    },
+
+    addAnniversaryForm() {
+      const pad = n => String(n).padStart(2, '0');
+      const now = new Date();
+      const defaultDate = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+      const formHtml = `
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div>
+            <label style="font-size:11px; font-weight:700; color:#8a7a80; display:block; margin-bottom:6px;">纪念日名称</label>
+            <input type="text" id="anniv-form-title" placeholder="例如：我们在一起的第一天" style="width:100%; box-sizing:border-box; padding:10px 12px; border:1.5px solid #f3d4da; border-radius:10px; font-size:13px; outline:none; font-family:inherit;">
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:700; color:#8a7a80; display:block; margin-bottom:6px;">日期</label>
+            <input type="date" id="anniv-form-date" value="${defaultDate}" style="width:100%; box-sizing:border-box; padding:10px 12px; border:1.5px solid #f3d4da; border-radius:10px; font-size:13px; outline:none; font-family:inherit;">
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:700; color:#8a7a80; display:block; margin-bottom:6px;">备注（可选）</label>
+            <textarea id="anniv-form-note" rows="2" placeholder="想说的话…" style="width:100%; box-sizing:border-box; padding:10px 12px; border:1.5px solid #f3d4da; border-radius:10px; font-size:12.5px; outline:none; resize:vertical; font-family:inherit;"></textarea>
+          </div>
+        </div>`;
+      this.showFrostedDialog("添加纪念日", formHtml, async () => {
+        const title = (document.getElementById("anniv-form-title").value || "").trim();
+        const date = (document.getElementById("anniv-form-date").value || "").trim();
+        const note = (document.getElementById("anniv-form-note").value || "").trim();
+        if (!title) { showToast("请填写纪念日名称"); return false; }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { showToast("请选择日期"); return false; }
+        await db.ritual_anniversaries.add({
+          charId: Number(this.activeCharId),
+          meId: Number(this.activeMeId),
+          title: title,
+          date: date,
+          note: note,
+          createdAt: Date.now()
+        });
+        this.renderAnniversaries();
+        showToast("纪念日已添加");
+      });
+    },
+
+    async deleteAnniversary(id) {
+      if (!confirm("确定要删除这个纪念日吗？")) return;
+      try { await db.ritual_anniversaries.delete(Number(id)); } catch (e) {}
+      this.renderAnniversaries();
+      showToast("纪念日已删除");
     },
 
     buildArcTimePicker() {

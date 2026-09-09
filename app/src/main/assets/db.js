@@ -395,3 +395,13 @@ db.version(40).stores({
   wb_agents: 'id++, name, description, systemPrompt, model, skills, builtin, enabled, updatedAt',
   wb_skills: 'id++, name, description, instructions, builtin, enabled, updatedAt'
 });
+
+// ============================================
+// Version 41：仪轨（日程/穿着/随身物品/位置 四维状态）+ 纪念日倒数
+// - ritual_states: 某主体（char/user）某一天的四维状态；[subjectType+subjectId+date] 复合索引便于按人按日取
+// - ritual_anniversaries: 纪念日（纯倒数，替代原情侣空间的"日程式纪念日"）
+// ============================================
+db.version(41).stores({
+  ritual_states: 'id++, meId, subjectType, subjectId, date, source, updatedAt, [subjectType+subjectId+date]',
+  ritual_anniversaries: 'id++, charId, meId, date, createdAt'
+});

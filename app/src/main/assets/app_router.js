@@ -270,7 +270,9 @@
         reader: "initReaderApp",
         forum: "initForumApp",
         couples: "initCouplesApp",
-        music: "initMusicApp"
+        music: "initMusicApp",
+        workbench: "initWorkbenchApp",
+        yigui: "initYiguiApp"
       };
       Object.keys(appInits).forEach(function (appId) {
         const fnName = appInits[appId];

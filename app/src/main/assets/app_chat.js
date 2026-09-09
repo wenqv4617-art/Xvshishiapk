@@ -1499,7 +1499,7 @@ function escapeHtml(str) {
 // ============================================================
 // 分享链接卡片：自动识别 + 服务端元数据解析（termux link-meta:3003 / cors-proxy:3001 兜底）
 // ============================================================
-const SHARE_LINK_HOST_RE = /(xhslink\.cn|xiaohongshu\.com|b23\.tv|bilibili\.com|douyin\.com|iesdouyin\.com|weibo\.(?:cn|com)|zhihu\.com|github\.com|youtu\.be|youtube\.com|taobao\.com|tmall\.com|tb\.cn|jd\.com|music\.163\.com|y\.qq\.com)/i;
+const SHARE_LINK_HOST_RE = /(xhslink\.cn|xiaohongshu\.com|x\.com|twitter\.com|b23\.tv|bilibili\.com|douyin\.com|iesdouyin\.com|weibo\.(?:cn|com)|zhihu\.com|github\.com|youtu\.be|youtube\.com|taobao\.com|tmall\.com|tb\.cn|jd\.com|music\.163\.com|y\.qq\.com)/i;
 
 function extractShareUrl(text) {
   if (typeof text !== 'string') return '';
@@ -6899,6 +6899,10 @@ if (btnDialogDetails) {
         window.reverseCheckSystem.setSelectedFreq(sess.reverseCheckFrequency || "medium");
       }
 
+      // 渲染「仪轨状态进入对话上下文」开关
+      const ritualStateToggle = document.getElementById("details-ritual-state-toggle");
+      if (ritualStateToggle) ritualStateToggle.checked = sess.ritualStateInContext === 1;
+
       // 渲染 TTS 语音开关与音色 ID，并绑定开关展开/收起
       const ttsToggle = document.getElementById("details-tts-toggle");
       const ttsVoiceContainer = document.getElementById("details-tts-voice-container");
@@ -7140,7 +7144,12 @@ if (btnSaveDetails) {
         return el && el.checked ? 1 : 0;
       })(),
       reverseCheckFrequency: (window.reverseCheckSystem && typeof window.reverseCheckSystem.getSelectedFreq === "function")
-        ? window.reverseCheckSystem.getSelectedFreq() : "medium"
+        ? window.reverseCheckSystem.getSelectedFreq() : "medium",
+      // 仪轨四维状态是否进入对话上下文
+      ritualStateInContext: (function () {
+        const el = document.getElementById("details-ritual-state-toggle");
+        return el && el.checked ? 1 : 0;
+      })()
     });
 
     activeSessionCharAvatar = charAvatar;

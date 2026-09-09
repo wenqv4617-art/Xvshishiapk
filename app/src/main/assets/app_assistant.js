@@ -39,6 +39,7 @@ const AppAssistant = {
     'encounter': '邂逅',
     'shopping': '购物',
     'quicktravel': '快穿局',
+    'yigui': '仪轨',
     'worldbook': '世界书'
   },
 
@@ -691,6 +692,7 @@ ${this.cssLibraryText}`;
       'encounter': () => openWin('encounter'),
       'shopping': () => openWin('shopping'),
       'quicktravel': () => openWin('quicktravel'),
+      'yigui': () => openWin('yigui'),
       'worldbook': () => openWin('world_book')
     };
 
