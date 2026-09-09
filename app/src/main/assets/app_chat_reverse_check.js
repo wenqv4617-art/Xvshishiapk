@@ -268,13 +268,20 @@
   // ==================== 跳页辅助 ====================
   async function gotoChatList() {
     if (typeof openApp === 'function') openApp('chat');
-    await sleep(240);
-    // 关键：用户很可能正停在某个对话里，此时会话列表被 #chat-dialog-panel 覆盖层挡着，
+    await sleep(200);
+    // 关键 1：用户是从「聊天详情」点立刻触发的，详情面板是独立覆盖层（z-index 400），
+    // 不关掉它会一直压在会话列表上面 → 看起来"卡在详情页"。
+    var details = document.getElementById('chat-details-panel');
+    if (details && details.classList.contains('active') && typeof closeChatDetails === 'function') {
+      try { closeChatDetails(); } catch (e) {}
+      await sleep(180);
+    }
+    // 关键 2：用户很可能正停在某个对话里，此时会话列表被 #chat-dialog-panel 挡着，
     // 不退出对话页就等于"没跳转"。先关掉对话页，再确保停在「微信」页签。
     var panel = document.getElementById('chat-dialog-panel');
     if (panel && panel.classList.contains('active') && typeof closeChatDialog === 'function') {
       try { closeChatDialog(); } catch (e) {}
-      await sleep(220);
+      await sleep(200);
     }
     var tabBtn = document.querySelector('.tab-item[data-chat-tab="sessions"]');
     if (tabBtn && !tabBtn.classList.contains('active')) {
@@ -283,6 +290,28 @@
     if (typeof renderChatTab === 'function') { try { await renderChatTab(); } catch (e) {} }
     else if (typeof renderSessionList === 'function') { try { await renderSessionList(); } catch (e) {} }
     await sleep(240);
+  }
+
+  /** 反查谁，就临时切到那个人设：否则界面停在人设 B，翻的是人设 A 的手机，看着像没反应 */
+  async function ensurePersonaFor(sess) {
+    try {
+      var cur = Number(localStorage.getItem('active_me_id') || 0);
+      if (!sess || Number(sess.userId) === cur) return 0;
+      localStorage.setItem('active_me_id', String(sess.userId));
+      if (typeof loadMyPersonas === 'function') { try { await loadMyPersonas(); } catch (e) {} }
+      if (typeof renderChatTab === 'function') { try { await renderChatTab(); } catch (e) {} }
+      await sleep(260);
+      return cur || 0;
+    } catch (e) { return 0; }
+  }
+
+  async function restorePersona(prev) {
+    if (!prev) return;
+    try {
+      localStorage.setItem('active_me_id', String(prev));
+      if (typeof loadMyPersonas === 'function') { try { await loadMyPersonas(); } catch (e) {} }
+      if (typeof renderChatTab === 'function') { try { await renderChatTab(); } catch (e) {} }
+    } catch (e) {}
   }
   async function gotoShoppingCart() {
     if (typeof openApp === 'function') openApp('shopping');
@@ -378,6 +407,9 @@
     try { var u = await db.archives.get(Number(sess.userId)); userName = sess.customUserName || (u && u.name) || '我'; } catch (e) { userName = '我'; }
     var relText = await relationshipFor(sess, char, userName);
     var sysPrompt = await baseSystem(char, sess, userName, relText);
+    // 反查谁就临时切到那个人设（人设 A 的角色在被切到人设 B 后照样能被翻）
+    var prevPersona = await ensurePersonaFor(sess);
+    var personaRestored = false;
 
     state.running = true;
     state.aborted = false;
@@ -448,7 +480,8 @@
           '\n\n请判断这段对话里 ta 和「' + oc2.name + '」的关系与可疑程度（务必结合上面的关系设定），并决定要不要用 ta 的手机发一句话过去。\n' +
           '要求：\n' +
           '1) reaction：你看到这段对话后的反应（80-160 字，口语化，符合人设，要体现出你知道' + oc2.name + '是谁）；\n' +
-          '2) send：用 ta 的手机发出去的消息内容（要像 ta 本人平时说话的语气，别暴露是你）。只要这段对话有任何值得试探/敲打的地方就必须发；只有完全无话可说才留空字符串；\n' +
+          '2) send：用 ta 的手机发出去的消息内容（要像 ta 本人平时说话的语气）。只要这段对话有任何值得试探/敲打的地方就必须发；只有完全无话可说才留空字符串；\n' +
+          '   发什么由你的性格和当前情绪决定，可以是：试探、阴阳、冷嘲、突然亲昵、约见面、故意找茬、假装顺路、装作 ta 的口吻敷衍；\n' +
           '3) reason：一句话说明你为什么发/不发。\n' +
           '只输出 JSON：{"reaction":"...","send":"...","reason":"..."}',
           { maxTokens: 900 }
@@ -490,11 +523,18 @@
                   var p2b = await callApi(
                     sysPrompt,
                     '【对方回了你一句】' + oc2.name + '：' + String(got.content || '').slice(0, 200) +
-                    '\n\n你是' + char.name + '，正拿着 ta 的手机。请决定要不要继续用 ta 的手机追问一句（想让 ta 露出破绽就继续追问）。\n' +
-                    '只输出 JSON：{"reaction":"你的内心反应(30-80字)","send":"要继续发的话(不想继续就空字符串)"}',
-                    { maxTokens: 600 }
+                    '\n\n你是' + char.name + '，正拿着 ta 的手机。现在轮到你决定下一步——真实的人这时候反应五花八门，请挑一个符合你性格和当前情绪的：\n' +
+                    '· 继续伪装成 ta 敷衍/圆谎/转移话题；\n' +
+                    '· 忍不住阴阳或敲打对方；\n' +
+                    '· 被问得烦了，索性摊牌表明自己是' + char.name + '；\n' +
+                    '· 发一句整蛊/恶作剧的消息（比如乱说 ta 的糗事、瞎编行程）；\n' +
+                    '· 或者直接不回了（send 留空）。\n' +
+                    '同时判断对方有没有察觉到不对劲（真人的察觉往往是模糊的：可能只是"你今天说话怪怪的"，也可能完全没发现）。\n' +
+                    '只输出 JSON：{"notice":"对方是否察觉(是/否)+一句依据","reaction":"你的内心反应(30-80字)","send":"要继续发的话(不想继续就空字符串)"}',
+                    { maxTokens: 700 }
                   );
-                  var j2b = readCharOutput(p2b, ['reaction', 'send']);
+                  var j2b = readCharOutput(p2b, ['notice', 'reaction', 'send']);
+                  if (j2b.notice) logStep('reply', oc2.name + ' 的反应：' + String(j2b.notice).slice(0, 50));
                   if (j2b.reaction) await showBubble(j2b.reaction, char.name);
                   var send2 = String(j2b.send || '').trim();
                   if (send2 && !state.aborted) {
@@ -508,8 +548,14 @@
                       logStep('send', '又补了一句给 ' + oc2.name + '：' + send2.slice(0, 60));
                       await sleep(700);
                       var before2 = Date.now();
-                      if (replyBtn) { replyBtn.click(); await waitForCharReply(os.id, before2, 90000); }
+                      if (replyBtn) {
+                        replyBtn.click();
+                        var got2 = await waitForCharReply(os.id, before2, 90000);
+                        if (got2) logStep('reply', oc2.name + ' 又回：' + String(got2.content || '').slice(0, 50));
+                      }
                     }
+                  } else if (!state.aborted) {
+                    logStep('think', char.name + ' 决定不再回复 ' + oc2.name + '');
                   }
                 }
               }
@@ -598,6 +644,9 @@
               '<div style="margin-top:12px;font-size:11px;color:#94a3b8;">聊天里已留下一条「反查手机报告」，点开可以看 ta 的动线。</div>',
         buttons: [{ label: '知道了', value: 'ok', primary: true }]
       });
+      // 感想卡片看完后，把人设切回用户原来的那个
+      await restorePersona(prevPersona);
+      personaRestored = true;
     } catch (e) {
       overlay.style.display = 'none';
       if (state.aborted || (e && e.name === 'AbortError')) {
@@ -612,6 +661,7 @@
         });
       }
     } finally {
+      if (!personaRestored) { try { await restorePersona(prevPersona); } catch (e) {} }
       state.running = false;
       state.aborted = false;
       state.abortCtrl = null;

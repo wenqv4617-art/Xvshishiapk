@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v73'; // v73: 反查手机修复(退出对话页再跳转/关系网与人设入 prompt/输出解析兜底/报告前切回微信) + 开屏改羽毛笔与简约配色; v1.4.2
+const CACHE_NAME = 'story-phone-v74'; // v74: 反查手机立即关闭聊天详情+临时切人设+对线行为多样化; 开屏羽毛笔重绘; v1.4.3
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
