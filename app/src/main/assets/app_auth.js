@@ -172,6 +172,8 @@ function showLoginScreen() {
   const phone = document.getElementById("phone-container");
   if (overlay) overlay.style.display = "flex";
   if (phone) phone.style.display = "none";
+  // 开屏动画收束：无论落到登录页还是桌面，首屏已就绪就补满进度条并淡出
+  if (window.bootSplash && typeof window.bootSplash.ready === "function") window.bootSplash.ready();
 }
 
 function hideLoginScreen() {
@@ -179,6 +181,8 @@ function hideLoginScreen() {
   const phone = document.getElementById("phone-container");
   if (overlay) overlay.style.display = "none";
   if (phone) phone.style.display = "block";
+  // 已登录 → 直接进桌面：开屏动画在此收束
+  if (window.bootSplash && typeof window.bootSplash.ready === "function") window.bootSplash.ready();
 }
 
 // 用户手动登录动作

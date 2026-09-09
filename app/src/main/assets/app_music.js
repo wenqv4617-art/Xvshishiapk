@@ -2191,11 +2191,8 @@
       if (typeof showToast === 'function') showToast("AI 伙伴正在同频思考回复...");
 
       try {
-        const activePresetId = localStorage.getItem("global_api_preset_id");
-        if (!activePresetId) throw new Error("未配置 API 预设，请先前往设置配置");
-
-        const api = await db.api_presets.get(Number(activePresetId));
-        if (!api || !api.url) throw new Error("API 预设无效");
+        const api = await window.apiRoutes.resolve("music");
+        if (!api || !api.url) throw new Error("未配置 API 预设，请先前往设置配置");
 
         let basePrompt = "";
         if (mainSession && typeof buildGlobalSystemPrompt === 'function') {

@@ -2255,6 +2255,11 @@
   };
   WB.getApiPreset = async function () {
     try {
+      // 专用页签若为「工作台」指定了预设，优先用它；否则沿用工作台自己的模型选择
+      if (window.apiRoutes && typeof window.apiRoutes.getFeatureId === "function" && window.apiRoutes.getFeatureId("workbench") > 0) {
+        var own = await window.apiRoutes.resolve("workbench");
+        if (own) return own;
+      }
       var presets = await db.api_presets.toArray();
       if (!presets.length) return null;
       var name = localStorage.getItem('wb_model_name');

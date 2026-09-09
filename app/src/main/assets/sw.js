@@ -1,9 +1,12 @@
-const CACHE_NAME = 'story-phone-v70'; // v70: 更新日志内容整理（8.30–9.8 每日一条，版本 v4.3–v4.12）；无功能变更; v1.3.9
+const CACHE_NAME = 'story-phone-v71'; // v71: 开屏启动动画 + API 协议设置「专用」页签(12 个功能位独立预设) + 反查手机(角色偷看 user 手机全流程/动线时间轴); v1.4.0
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
   './index.html',
   './manifest.json',
+  './app_splash.js',      // 开屏启动动画（通用路径 SVG + 进度条，无 emoji）
+  './app_api_routes.js',  // 专用 API 路由（按功能指定预设）
+  './app_chat_reverse_check.js', // 反查手机（角色偷看 user 手机）
   './style.css',
   './app.css',
   './chat.css',

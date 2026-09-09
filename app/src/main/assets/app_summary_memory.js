@@ -599,8 +599,7 @@ async function rebuildDialogueVectors(sessionId, progressCb) {
   return built;
 }
 async function generateSummaryForRounds(sessionId, startRound, endRound, customPrompt) {
-  const presetId = localStorage.getItem("global_api_preset_id");
-  const api = await db.api_presets.get(Number(presetId));
+  const api = await window.apiRoutes.resolve("memory");
   if (!api) throw new Error("无法加载 API 配置，总结失败。");
 
   // 严格时间线合并：线上未总结消息 + 未存档线下赴约记录（开关开启时），按时间戳排序分组为轮次。
@@ -1315,8 +1314,7 @@ async function generateCoreMemoryFromAI(sessionId) {
   btn.innerText = "正在记忆提炼中...";
 
   try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
+    const api = await window.apiRoutes.resolve("memory");
     if (!api) throw new Error("请配置全局 API 预设");
 
     const summaries = await db.summaries.where('sessionId').equals(sessionId).toArray();

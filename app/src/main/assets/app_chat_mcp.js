@@ -2297,10 +2297,12 @@
         (async () => {
           try {
             // 读取全局 API preset 设置（与 app_chat.js 中发信时读取相同的配置）
+            // 走「专用 → 全局」路由（聊天功能位），保证后台主动发信用的是同一套配置
+            let apiConfig = (window.apiRoutes && typeof window.apiRoutes.resolve === "function")
+              ? await window.apiRoutes.resolve("chat") : null;
             const currentApiId = parseInt(localStorage.getItem("global_api_preset_id") || "0");
-            let apiConfig = null;
             
-            if (currentApiId > 0 && typeof db !== 'undefined' && db.api_presets) {
+            if (!apiConfig && currentApiId > 0 && typeof db !== 'undefined' && db.api_presets) {
               apiConfig = await db.api_presets.get(currentApiId);
             }
             

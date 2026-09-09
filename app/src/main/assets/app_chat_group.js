@@ -730,8 +730,7 @@
       if (!isCommandMatched) {
         showToast("群助手正在解析脑电波中...");
         try {
-          const presetId = localStorage.getItem("global_api_preset_id");
-          const api = await db.api_presets.get(Number(presetId));
+          const api = await window.apiRoutes.resolve("chat");
           if (!api) throw new Error();
 
           const botSystem = `【机器人扮演要求】

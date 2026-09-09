@@ -417,8 +417,7 @@ async function triggerDeeptalkAIResponse() {
   titleEl.classList.add("header-typing");
 
   try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
+    const api = await window.apiRoutes.resolve("deeptalk");
     if (!api) throw new Error("API 预设异常，请前往设置面板检查配置");
 
     const talk = await db.deeptalks.get(activeDeeptalkId);
@@ -783,8 +782,7 @@ async function summarizeDeeptalkSession() {
 ${historyText}`;
 
   try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
+    const api = await window.apiRoutes.resolve("deeptalk");
     if (!api) throw new Error("无法读取 API 配置");
 
     const response = await fetch(`${api.url}/chat/completions`, {
@@ -859,8 +857,7 @@ window.triggerManualThought = async function(btnEl) {
       dialogText += `[${h.senderType === 'user' ? '用户' : char?.name}]: ${h.content}\n`;
     });
 
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
+    const api = await window.apiRoutes.resolve("deeptalk");
     if (!api) throw new Error("无法读取 API 预设，请检查设置。");
 
     const prompt = `你是一个深层心理探索器。根据以下深谈中产生的对话切片记录：

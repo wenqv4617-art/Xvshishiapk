@@ -278,8 +278,60 @@
   <script src="./app_crypto.js"></script>
   <script src="./app_auth.js" defer></script>
   <script src="./app_local_deploy.js" defer></script>
+  <!-- 开屏启动动画样式（禁止 emoji：全部为通用路径 SVG + 进度条） -->
+  <style id="boot-splash-style">
+    #boot-splash {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 100000;
+      display: flex; align-items: center; justify-content: center;
+      background: linear-gradient(160deg, #f8fafc 0%, #eef2ff 46%, #f0fdf4 100%);
+      transition: opacity 0.44s ease, transform 0.44s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #boot-splash.boot-splash-hide { opacity: 0; transform: scale(1.045); pointer-events: none; }
+    #boot-splash .boot-splash-inner { display: flex; flex-direction: column; align-items: center; width: 220px; }
+    #boot-splash .boot-splash-logo {
+      width: 66px; height: 66px; color: #4f46e5;
+      animation: bootLogoIn 0.62s cubic-bezier(0.2, 0.8, 0.25, 1) both,
+                 bootLogoBreath 2.4s ease-in-out 0.62s infinite;
+    }
+    #boot-splash .boot-splash-title {
+      margin-top: 18px; font-size: 17px; font-weight: 800; letter-spacing: 3px; color: #1e293b;
+      animation: bootFadeUp 0.5s ease-out 0.18s both;
+    }
+    #boot-splash .boot-splash-sub {
+      margin-top: 7px; font-size: 11px; font-weight: 600; letter-spacing: 1px; color: #94a3b8;
+      animation: bootFadeUp 0.5s ease-out 0.3s both;
+    }
+    #boot-splash .boot-splash-bar {
+      margin-top: 24px; width: 152px; height: 3px; border-radius: 99px;
+      background: rgba(99, 102, 241, 0.14); overflow: hidden;
+      animation: bootFadeUp 0.5s ease-out 0.4s both;
+    }
+    #boot-splash .boot-splash-bar > i {
+      display: block; height: 100%; width: 0; border-radius: 99px;
+      background: linear-gradient(90deg, #6366f1, #22c55e);
+      transition: width 0.26s ease-out;
+    }
+    @keyframes bootLogoIn { from { opacity: 0; transform: translateY(10px) scale(0.9); } to { opacity: 1; transform: none; } }
+    @keyframes bootLogoBreath { 0%, 100% { opacity: 1; } 50% { opacity: 0.76; } }
+    @keyframes bootFadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  </style>
 </head>
 <body>
+  <!-- 开屏启动动画：手机轮廓 + 对话气泡（通用路径 SVG），下方进度条 -->
+  <div id="boot-splash">
+    <div class="boot-splash-inner">
+      <svg class="boot-splash-logo" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="16" y="7" width="32" height="50" rx="7"/>
+        <path d="M28.5 11.5h7"/>
+        <path d="M23 24h18a3 3 0 0 1 3 3v10a3 3 0 0 1-3 3h-8.5l-6.5 5.2V40H23a3 3 0 0 1-3-3V27a3 3 0 0 1 3-3z"/>
+        <path d="M27.5 31.5h.01M32 31.5h.01M36.5 31.5h.01"/>
+      </svg>
+      <div class="boot-splash-title">叙事诗小手机</div>
+      <div class="boot-splash-sub">正在唤醒你的手机</div>
+      <div class="boot-splash-bar"><i id="boot-splash-bar-fill"></i></div>
+    </div>
+  </div>
   <!-- 全局 PWA 自研毛玻璃防绕过登录系统遮罩层 -->
   <div id="auth-login-overlay" style="position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: linear-gradient(135deg, #fef2f2 0%, #f0fdf4 50%, #eff6ff 100%); display: flex; align-items: center; justify-content: center; z-index: 99999; box-sizing: border-box; padding: 20px;">
     <div style="background: rgba(255, 255, 255, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); width: 330px; border-radius: 20px; padding: 30px; box-shadow: 0 10px 40px rgba(0,0,0,0.05); border: 1.5px solid rgba(255,255,255,0.6); text-align: center; box-sizing: border-box;">
@@ -711,6 +763,18 @@
 
           <!-- 二级：API 设置 -->
           <div id="settings-lv2-api" class="settings-lv2-panel" style="display:none;">
+            <!-- 页签：链接（全局预设）/ 专用（按功能单独指定预设） -->
+            <div class="form-group">
+              <label>预设用途</label>
+              <div id="api-mode-tabs" style="display:flex; gap:8px; margin-bottom:4px;">
+                <button type="button" class="btn api-mode-tab active" data-mode="link" style="flex:1;">链接</button>
+                <button type="button" class="btn btn-outline api-mode-tab" data-mode="dedicated" style="flex:1;">专用</button>
+              </div>
+              <div style="font-size:10px; color:var(--text-secondary);">「链接」里保存的是全局预设；「专用」可让每个功能单独用某个预设，没选的自动跟随链接。</div>
+            </div>
+
+            <!-- ===== 链接：原有全局预设配置 ===== -->
+            <div id="api-mode-link">
             <div class="form-group">
               <label>配置预设</label>
               <div class="preset-row">
@@ -766,6 +830,15 @@
               <button id="btn-test-api" class="btn btn-outline">测试连接</button>
               <button id="btn-save-preset" class="btn">保存预设</button>
               <button id="btn-apply-global" class="btn btn-primary">应用到全局</button>
+            </div>
+            </div>
+
+            <!-- ===== 专用：按功能指定预设（未选则跟随链接里的全局预设） ===== -->
+            <div id="api-mode-dedicated" style="display:none;">
+              <div id="api-dedicated-list"></div>
+              <div class="form-actions" style="margin-top:4px;">
+                <button id="btn-reset-dedicated" class="btn btn-outline" style="width:100%;">全部恢复为「跟随链接」</button>
+              </div>
             </div>
           </div>
 
@@ -3010,6 +3083,31 @@
                 <div id="details-mounted-stickers" style="flex:1;font-size:12px;color:var(--text-secondary);padding:6px 10px;background:var(--surface);border-radius:8px;border:1.5px solid var(--border);min-height:18px;">暂无挂载</div>
                 <button id="btn-details-sticker-mount" class="btn btn-outline" type="button" style="padding:8px 12px;flex-shrink:0;font-size:12px;">选择</button>
               </div>
+            </div>
+            <!-- 反查手机：允许对方查看你的手机 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/>
+                </svg> 允许对方查看你的手机
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-reverse-check-toggle">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div id="details-reverse-check-freq" style="display:none;">
+              <div style="font-size:10px; color:var(--text-secondary); margin:-4px 0 8px;">开启后，对方会趁你不注意翻看你的手机（会弹窗问你是否同意）。</div>
+              <div style="display:flex; gap:8px;">
+                <button type="button" class="btn btn-outline rc-freq-btn" data-freq="high" style="flex:1;">高频</button>
+                <button type="button" class="btn btn-outline rc-freq-btn" data-freq="medium" style="flex:1;">中频</button>
+                <button type="button" class="btn btn-outline rc-freq-btn" data-freq="low" style="flex:1;">低频</button>
+              </div>
+              <div id="rc-freq-desc" style="font-size:10px; color:var(--text-secondary); margin-top:7px; line-height:1.55;">高频：每 10 分钟检查一次，距上次翻手机超过 30 分钟就自动触发。</div>
+              <button id="btn-reverse-check-now" class="btn btn-outline" type="button" style="width:100%; margin-top:10px; display:flex; align-items:center; justify-content:center; gap:6px;">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
+                立刻触发一次
+              </button>
             </div>
             <div class="form-actions" style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
               <button id="btn-save-details" class="btn btn-primary" style="width:100%;">保存当前会话配置</button>
@@ -6276,6 +6374,10 @@
       </div> <!-- phone-container 结束 -->
 
   <script src="db.js"></script>
+  <!-- 开屏启动动画（进度条由 bootSplash.ready() 收束；初始化异常也有 6s 兜底） -->
+  <script src="app_splash.js"></script>
+  <!-- 专用 API 路由：按功能解析生效的 API 预设（专用优先，未设置则跟随链接里的全局） -->
+  <script src="app_api_routes.js"></script>
   <!-- URL 禁止列表（加密，勿手改；由 tools/urlban-tool.js 生成/维护）与前端拦截模块 -->
   <script src="url_ban_list.js"></script>
   <script src="app_url_ban.js"></script>
@@ -6314,6 +6416,8 @@
   <script src="app_forum_messages.js"></script>
   <script src="app_chat_focus.js"></script>
   <script src="app_chat_check_phone.js"></script>
+  <!-- 反查手机：角色偷看 user 手机（自动跳页 + 即时调用查手机 API + 动线时间轴） -->
+  <script src="app_chat_reverse_check.js"></script>
   <script src="app_chat_group.js"></script>
   <script src="app_chat_archives.js"></script>
   <script src="app_chat_search.js"></script>

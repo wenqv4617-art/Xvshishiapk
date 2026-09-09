@@ -1374,9 +1374,7 @@
 
   async function qtGetApi() {
     try {
-      const presetId = localStorage.getItem('global_api_preset_id');
-      if (!presetId) return null;
-      const api = await db.api_presets.get(Number(presetId));
+      const api = (window.apiRoutes && typeof window.apiRoutes.resolve === 'function') ? await window.apiRoutes.resolve('quicktravel') : null;
       if (!api || !api.url || !api.key) return null;
       return { url: api.url.replace(/\/$/, ''), key: api.key, model: api.model || 'gpt-4o-mini' };
     } catch (e) { return null; }

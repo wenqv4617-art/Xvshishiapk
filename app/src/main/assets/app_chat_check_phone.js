@@ -231,10 +231,8 @@ ${recentContextText || "暂无近期对话。"}
   // opts: { maxTokens?: number, temperature?: number }
   async function callCheckPhoneApi(systemPrompt, userPrompt, fallbackFn, opts) {
     try {
-      const presetId = localStorage.getItem("global_api_preset_id");
-      if (!presetId) throw new Error("未配置全局 API 预设");
-      const api = await db.api_presets.get(Number(presetId));
-      if (!api) throw new Error("未找到全局 API 预设");
+      const api = await window.apiRoutes.resolve("checkphone");
+      if (!api) throw new Error("未配置「查手机」API 预设（设置 - API 协议设置）");
 
       const body = {
         model: api.model,
@@ -278,10 +276,8 @@ ${recentContextText || "暂无近期对话。"}
 
   async function fetchGeneratedCheckPhoneContent(systemPrompt, userPrompt, fallbackFn, opts) {
     try {
-      const presetId = localStorage.getItem("global_api_preset_id");
-      if (!presetId) throw new Error("未配置全局 API 预设");
-      const api = await db.api_presets.get(Number(presetId));
-      if (!api) throw new Error("未找到全局 API 预设");
+      const api = await window.apiRoutes.resolve("checkphone");
+      if (!api) throw new Error("未配置「查手机」API 预设（设置 - API 协议设置）");
 
       const body = {
         model: api.model,

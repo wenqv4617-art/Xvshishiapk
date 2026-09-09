@@ -1148,10 +1148,10 @@ ${syncIdentityContext}
 }
 
 async function forumCallAI(systemPrompt, userPrompt) {
-  const presetId = localStorage.getItem("global_api_preset_id");
-  if (!presetId) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
-  const api = await db.api_presets.get(Number(presetId));
-  if (!api) throw new Error("API 配置预设未找到");
+  const api = (window.apiRoutes && typeof window.apiRoutes.resolve === "function")
+    ? await window.apiRoutes.resolve("forum")
+    : await db.api_presets.get(Number(localStorage.getItem("global_api_preset_id")));
+  if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
 
   if (typeof window.fwCallLLM === "function") {
     try {

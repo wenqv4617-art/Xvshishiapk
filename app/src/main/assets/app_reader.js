@@ -1569,7 +1569,12 @@ async function deleteReaderPreset(id) {
 // ==========================================
 //             10. 通用底层桥接器
 // ==========================================
-async function getActiveApiPreset() {
+async function getActiveApiPreset(feature) {
+  // 按功能位解析（默认「阅读」）：专用优先，未设置则跟随链接里的全局预设
+  if (window.apiRoutes && typeof window.apiRoutes.resolve === "function") {
+    const p = await window.apiRoutes.resolve(feature || "reader");
+    if (p) return p;
+  }
   const presetId = localStorage.getItem("global_api_preset_id");
   if (!presetId) throw new Error("未配置全局 API 预设，请前往系统设置配置！");
   return await db.api_presets.get(Number(presetId));

@@ -19,6 +19,23 @@ function initSettingsApp() {
   initVConsoleSetting();     // 初始化调试控制台开关状态
   initBackgroundSetting();   // 初始化后台运行开关状态
 
+  // 绑定：API 页签（链接 / 专用）
+  document.querySelectorAll('.api-mode-tab').forEach(function (t) {
+    t.onclick = function () { switchApiMode(t.getAttribute('data-mode')); };
+  });
+  switchApiMode(localStorage.getItem('api-mode-tab') || 'link');
+  const btnResetDedicated = document.getElementById('btn-reset-dedicated');
+  if (btnResetDedicated) {
+    btnResetDedicated.onclick = function () {
+      showCustomConfirm('恢复默认', '确定把所有功能都改回「跟随链接」吗？', function () {
+        if (!window.apiRoutes) return;
+        window.apiRoutes.FEATURES.forEach(function (f) { window.apiRoutes.clearFeature(f.key); });
+        renderDedicatedApiPanel();
+        if (typeof showToast === 'function') showToast('已全部恢复为跟随链接');
+      });
+    };
+  }
+
   // 绑定：二级面板中深谈预设设置的保存、删除与表单反馈
   document.getElementById("btn-save-deeptalk-preset").onclick = saveDeeptalkPreset;
   document.getElementById("btn-delete-deeptalk-preset").onclick = deleteDeeptalkPreset;
@@ -527,6 +544,8 @@ async function loadPresetsList() {
     select.value = activeId;
     loadPresetToForm(Number(activeId));
   }
+  // 预设增删改后，同步刷新「专用」页签的下拉（全局预设名也可能变化）
+  if (document.getElementById('api-dedicated-list')) renderDedicatedApiPanel();
 }
 
 async function loadPresetToForm(id) {
@@ -542,6 +561,72 @@ async function loadPresetToForm(id) {
   const modelSelect = document.getElementById("api-model-select");
   modelSelect.innerHTML = `<option value="${preset.model || ""}">${preset.model || "默认模型"}</option>`;
 }
+
+// ==========================================
+// 1.5 API 页签：「链接」（全局预设）/「专用」（按功能指定预设）
+// ==========================================
+async function renderDedicatedApiPanel() {
+  const box = document.getElementById('api-dedicated-list');
+  if (!box || !window.apiRoutes) return;
+  const presets = await window.apiRoutes.listPresets();
+  const globalId = window.apiRoutes.getGlobalId();
+  let globalName = '';
+  for (let i = 0; i < presets.length; i++) if (Number(presets[i].id) === Number(globalId)) globalName = presets[i].name;
+  const followLabel = '跟随链接' + (globalName ? '（' + globalName + '）' : '（尚未设置全局预设）');
+
+  let html = '';
+  if (!presets.length) {
+    html += '<div style="font-size:11px; color:var(--text-secondary); padding:10px 0 14px;">还没有任何 API 预设。请先切到「链接」页新建并保存一个预设。</div>';
+  }
+  window.apiRoutes.FEATURES.forEach(function (f) {
+    const cur = window.apiRoutes.getFeatureId(f.key);
+    let opts = '<option value="0"' + (cur > 0 ? '' : ' selected') + '>' + escapeHtml(followLabel) + '</option>';
+    let curName = '';
+    presets.forEach(function (p) {
+      const sel = (Number(p.id) === cur) ? ' selected' : '';
+      if (Number(p.id) === cur) curName = p.name;
+      opts += '<option value="' + p.id + '"' + sel + '>' + escapeHtml(p.name) + (p.model ? '（' + escapeHtml(p.model) + '）' : '') + '</option>';
+    });
+    html +=
+      '<div class="form-group">' +
+        '<label>' + escapeHtml(f.label) + '</label>' +
+        '<select class="api-dedicated-select" data-feature="' + f.key + '">' + opts + '</select>' +
+        '<div style="font-size:10px; color:var(--text-secondary); margin-top:4px;">' +
+          escapeHtml(f.desc) + ' · 当前：' + escapeHtml(cur > 0 ? (curName || '专用预设已失效') : '跟随链接') +
+        '</div>' +
+      '</div>';
+  });
+  box.innerHTML = html;
+  box.querySelectorAll('.api-dedicated-select').forEach(function (sel) {
+    sel.onchange = function () {
+      const key = sel.getAttribute('data-feature');
+      window.apiRoutes.setFeatureId(key, sel.value);
+      if (typeof showToast === 'function') {
+        showToast(Number(sel.value) > 0
+          ? '已为「' + window.apiRoutes.featureLabel(key) + '」指定专用预设'
+          : '「' + window.apiRoutes.featureLabel(key) + '」已恢复为跟随链接');
+      }
+      renderDedicatedApiPanel();
+    };
+  });
+}
+
+function switchApiMode(mode) {
+  const link = document.getElementById('api-mode-link');
+  const ded = document.getElementById('api-mode-dedicated');
+  const m = mode === 'dedicated' ? 'dedicated' : 'link';
+  if (link) link.style.display = m === 'dedicated' ? 'none' : '';
+  if (ded) ded.style.display = m === 'dedicated' ? 'block' : 'none';
+  document.querySelectorAll('.api-mode-tab').forEach(function (t) {
+    const on = t.getAttribute('data-mode') === m;
+    t.classList.toggle('active', on);
+    t.classList.toggle('btn-outline', !on);
+  });
+  try { localStorage.setItem('api-mode-tab', m); } catch (e) {}
+  if (m === 'dedicated') renderDedicatedApiPanel();
+}
+window.switchApiMode = switchApiMode;
+window.renderDedicatedApiPanel = renderDedicatedApiPanel;
 
 document.getElementById("api-presets-select").onchange = (e) => {
   if (e.target.value) {

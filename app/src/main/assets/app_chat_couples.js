@@ -307,8 +307,7 @@
         document.getElementById("couples-mood-bubble-user").innerText = "同步频率中...";
 
         try {
-          const presetId = localStorage.getItem("global_api_preset_id");
-          const api = await db.api_presets.get(Number(presetId));
+          const api = await window.apiRoutes.resolve("couples");
           if (!api) throw new Error("API未就绪");
 
           let historyText = "";
@@ -735,8 +734,7 @@
       showToast("正在检索恋爱羁绊与生活，推演全天日程计划...");
 
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) throw new Error("API未配置");
 
         const char = await db.archives.get(Number(this.activeCharId));
@@ -1081,8 +1079,7 @@ ${historyText || "刚刚相见，倍感温润。"}`;
         const addPhoto = async (dataUrl) => {
           let charThought = "每次看起这张合照，心里总是格外踏实。";
           try {
-            const presetId = localStorage.getItem("global_api_preset_id");
-            const api = await db.api_presets.get(Number(presetId));
+            const api = await window.apiRoutes.resolve("couples");
             const char = await db.archives.get(Number(this.activeCharId));
             if (api && char) {
               const prompt = `你现在是 [${char.name}]，用户在相册里珍藏了一张照片：“${desc}”，请写下 15 字以内的一句话对该照片的心声感想，不准说废话和括号描述。`;
@@ -1135,8 +1132,7 @@ ${historyText || "刚刚相见，倍感温润。"}`;
       showToast("正在检索你们在主时空的恋爱点记，AI构思合影中...");
 
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) throw new Error("API未配置");
 
         const char = await db.archives.get(Number(this.activeCharId));
@@ -1252,8 +1248,7 @@ ${historyText || "刚刚相见，倍感温润。"}`;
         const photo = await db.table('couples_albums').get(photoId);
         if (!photo) return;
 
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) return;
 
         const char = await db.archives.get(Number(this.activeCharId));
@@ -1775,8 +1770,7 @@ ${historyText || "刚刚相见，倍感温润。"}`;
       showToast("正在检索最近总结，AI 构思手账配文中...");
 
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         const char = await db.archives.get(Number(this.activeCharId));
 
         const prompt = `【手账配文代写任务】：
@@ -1996,8 +1990,7 @@ ${historyText || "刚刚相见，倍感温润。"}`;
     // 调用 LLM 总结一段悄悄话话题
     async summarizeWhisperTopic(topic, topicMsgs) {
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) return "";
 
         const char = await db.archives.get(Number(this.activeCharId));
@@ -2182,8 +2175,7 @@ ${historyText}`;
       let parts = []; // 声明在函数顶级作用域，防止 try 块作用域穿透与 ReferenceError
 
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) throw new Error("API未配置");
 
         const char = await db.archives.get(Number(this.activeCharId));
@@ -2648,8 +2640,7 @@ ${commandInstruction}`;
       showToast("正在感应TA对未来的深处期待，悄悄撰写心愿中...");
 
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) throw new Error("API未配置");
 
         const char = await db.archives.get(Number(this.activeCharId));
@@ -2915,8 +2906,7 @@ ${commandInstruction}`;
       showToast("AI 正在根据本页手账风格，智能挑选最衬托的贴纸...");
 
       try {
-        const presetId = localStorage.getItem("global_api_preset_id");
-        const api = await db.api_presets.get(Number(presetId));
+        const api = await window.apiRoutes.resolve("couples");
         if (!api) throw new Error("API未就绪");
 
         const char = await db.archives.get(Number(this.activeCharId));

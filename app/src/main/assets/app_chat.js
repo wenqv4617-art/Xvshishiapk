@@ -1775,9 +1775,13 @@ function getShareVisionMaxImages() {
 }
 window.getShareVisionMaxImages = getShareVisionMaxImages;
 
-/** 取当前全局 API 预设（用于判断是否视觉模型） */
-async function getActiveApiPreset() {
+/** 取当前生效的 API 预设（默认按「聊天」功能位解析：专用优先，未设置则跟随链接里的全局） */
+async function getFeatureApiPreset(feature) {
   try {
+    if (window.apiRoutes && typeof window.apiRoutes.resolve === 'function') {
+      const p = await window.apiRoutes.resolve(feature || 'chat');
+      if (p) return p;
+    }
     const presetId = localStorage.getItem('global_api_preset_id');
     if (!presetId) return null;
     return await db.api_presets.get(Number(presetId));
@@ -1855,6 +1859,10 @@ function getMessagePreviewText(msg) {
   if (ct === 'share') {
     try { const d = JSON.parse(content); return '[分享] ' + (d.title || d.url || ''); }
     catch (e) { return '[分享链接]'; }
+  }
+  if (ct === 'reverse_check_report') {
+    try { const d = JSON.parse(content); return '[反查手机报告] ' + (d.mood || '') + (d.comment ? '：' + String(d.comment).slice(0, 24) : ''); }
+    catch (e) { return '[反查手机报告]'; }
   }
   if (ct === 'transfer') return '[微信转账]';
   if (ct === 'red_envelope') return '[微信红包]';
@@ -2919,6 +2927,12 @@ async function renderDialogMessages(isInitial = true) {
     if (m.contentType === 'share') {
       try { contentHtml = buildShareCardHTML(m.id, JSON.parse(m.content)); }
       catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[分享链接]</div>`; }
+    } else if (m.contentType === 'reverse_check_report') {
+      try {
+        contentHtml = (window.reverseCheckSystem && window.reverseCheckSystem.buildReportCardHTML)
+          ? window.reverseCheckSystem.buildReportCardHTML(m.id, JSON.parse(m.content))
+          : `<div style="font-size:12px; color:var(--text-secondary);">[反查手机报告]</div>`;
+      } catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[反查手机报告]</div>`; }
     } else if (m.contentType === 'image') {
       try {
         const data = JSON.parse(m.content);
@@ -3686,6 +3700,12 @@ async function appendMessageToDOM(msg) {
   if (msg.contentType === 'share') {
     try { contentHtml = buildShareCardHTML(msg.id, JSON.parse(msg.content)); }
     catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[分享链接]</div>`; }
+  } else if (msg.contentType === 'reverse_check_report') {
+    try {
+      contentHtml = (window.reverseCheckSystem && window.reverseCheckSystem.buildReportCardHTML)
+        ? window.reverseCheckSystem.buildReportCardHTML(msg.id, JSON.parse(msg.content))
+        : `<div style="font-size:12px; color:var(--text-secondary);">[反查手机报告]</div>`;
+    } catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[反查手机报告]</div>`; }
   } else if (msg.contentType === 'image') {
     try {
       const data = JSON.parse(msg.content);
@@ -4998,7 +5018,7 @@ function bindChatAppEvents() {
             // 帖子配图送入视觉模型（仅视觉模型且张数设置 > 0 时才下载压缩）
             if (meta && Array.isArray(meta.images) && meta.images.length && shareData.ok) {
               try {
-                const _api = await getActiveApiPreset();
+                const _api = await getFeatureApiPreset("chat");
                 if (visionSendEnabled(_api) && getShareVisionMaxImages() > 0) {
                   showToast("正在抓取帖子配图…");
                   const imgs = await buildShareImageData(meta.images, _api);
@@ -5060,10 +5080,8 @@ function bindChatAppEvents() {
         onlineAbortController = new AbortController();
         window._visionUsedInRequest = false; // 每次请求重置视觉标记，避免上一次的带图状态污染降级判断
         onlineAbortController._reqSessionId = reqSessionId; // 标记本次请求所属会话
-        const presetId = localStorage.getItem("global_api_preset_id");
-        if (!presetId) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
-        const api = await db.api_presets.get(Number(presetId));
-        if (!api) throw new Error("所选的 API 预设可能已被删除，请重新配置！");
+        const api = await getFeatureApiPreset("chat");
+        if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
 
         // === 【微信交易引擎核心逻辑】：AI自动拦截并收取/拆开玩家发送的交易，并生成对应的灰色系统卡片 ===
         const rawList = await db.messages.where('sessionId').equals(activeSessionId).toArray();
@@ -5442,6 +5460,16 @@ function bindChatAppEvents() {
                 visionImageUrls = _sd.imageData.slice(0, 6);
               }
             } catch (e) {}
+          } else if (h.contentType === 'reverse_check_report') {
+            // 反查手机报告：把角色当时的动线与感想还原成可读上下文
+            try {
+              const rc = JSON.parse(h.content);
+              const rcLines = ['[你之前偷偷翻过 ' + _chatMyName + ' 的手机，这里是当时的记录]'];
+              if (rc.mood) rcLines.push('当时的情绪：' + rc.mood);
+              if (rc.comment) rcLines.push('当时的感想：' + String(rc.comment).slice(0, 300));
+              (rc.timeline || []).slice(0, 12).forEach(function (t) { rcLines.push('- ' + String(t.text || '').slice(0, 80)); });
+              displayContent = rcLines.join('\n');
+            } catch (e) { displayContent = '[反查手机报告]'; }
           }
 
           // 核心 Few-shot 历史格式对齐
@@ -6857,6 +6885,20 @@ if (btnDialogDetails) {
       const mpShareToggle = document.getElementById("details-allow-miniprogram-share");
       if (mpShareToggle) mpShareToggle.checked = !!sess.allowMiniprogramShare;
 
+      // 渲染「反查手机」开关 + 频率（未开启时收起频率选择）
+      const rcToggle = document.getElementById("details-reverse-check-toggle");
+      const rcFreqBox = document.getElementById("details-reverse-check-freq");
+      if (rcToggle) {
+        rcToggle.checked = sess.reverseCheckEnabled === 1;
+        if (rcFreqBox) rcFreqBox.style.display = rcToggle.checked ? "block" : "none";
+        rcToggle.onchange = function () {
+          if (rcFreqBox) rcFreqBox.style.display = this.checked ? "block" : "none";
+        };
+      }
+      if (window.reverseCheckSystem && typeof window.reverseCheckSystem.setSelectedFreq === "function") {
+        window.reverseCheckSystem.setSelectedFreq(sess.reverseCheckFrequency || "medium");
+      }
+
       // 渲染 TTS 语音开关与音色 ID，并绑定开关展开/收起
       const ttsToggle = document.getElementById("details-tts-toggle");
       const ttsVoiceContainer = document.getElementById("details-tts-voice-container");
@@ -7091,7 +7133,14 @@ if (btnSaveDetails) {
       minSentenceCount: minSentenceCount,
       maxSentenceCount: maxSentenceCount,
       customTimeData: JSON.stringify(timeData),
-      customTimeSavedAt: Date.now() // 核心写入：场景自定义时间的物理起始基准时间戳
+      customTimeSavedAt: Date.now(), // 核心写入：场景自定义时间的物理起始基准时间戳
+      // 反查手机：允许对方查看你的手机 + 频率（透明字段，不进 schema）
+      reverseCheckEnabled: (function () {
+        const el = document.getElementById("details-reverse-check-toggle");
+        return el && el.checked ? 1 : 0;
+      })(),
+      reverseCheckFrequency: (window.reverseCheckSystem && typeof window.reverseCheckSystem.getSelectedFreq === "function")
+        ? window.reverseCheckSystem.getSelectedFreq() : "medium"
     });
 
     activeSessionCharAvatar = charAvatar;
@@ -7887,7 +7936,7 @@ async function sendOfflineMessage() {
     // 帖子配图送入视觉模型（线下链路同样支持）
     if (meta && Array.isArray(meta.images) && meta.images.length && shareData.ok) {
       try {
-        const _api = await getActiveApiPreset();
+        const _api = await getFeatureApiPreset("chat");
         if (visionSendEnabled(_api) && getShareVisionMaxImages() > 0) {
           showToast("正在抓取帖子配图…");
           const imgs = await buildShareImageData(meta.images, _api);
@@ -7954,10 +8003,8 @@ async function triggerOfflineReply() {
   try {
     offlineAbortController = new AbortController();
     window._visionUsedInRequest = false;
-    const presetId = localStorage.getItem("global_api_preset_id");
-    if (!presetId) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置！");
-    const api = await db.api_presets.get(Number(presetId));
-    if (!api) throw new Error("所选的 API 预设可能已被删除，请重新配置！");
+    const api = await getFeatureApiPreset("chat");
+    if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置！");
 
     let offlineMsgs = [];
         let carryMemory = false;
@@ -8046,6 +8093,15 @@ async function triggerOfflineReply() {
                 visionImageUrls = _sd.imageData.slice(0, 6);
               }
             } catch (e) {}
+          } else if (h.contentType === 'reverse_check_report') {
+            try {
+              const rc = JSON.parse(h.content);
+              const rcLines = ['[你之前偷偷翻过 ' + ((sessObj && (sessObj.customUserName || '我')) || '我') + ' 的手机，这里是当时的记录]'];
+              if (rc.mood) rcLines.push('当时的情绪：' + rc.mood);
+              if (rc.comment) rcLines.push('当时的感想：' + String(rc.comment).slice(0, 300));
+              (rc.timeline || []).slice(0, 12).forEach(function (t) { rcLines.push('- ' + String(t.text || '').slice(0, 80)); });
+              displayContent = rcLines.join('\n');
+            } catch (e) { displayContent = '[反查手机报告]'; }
           }
 
           if (displayContent) {
@@ -8470,8 +8526,7 @@ async function endAppointment() {
     header.innerText = "正在多维总结中...";
 
     try {
-      const presetId = localStorage.getItem("global_api_preset_id");
-      const api = await db.api_presets.get(Number(presetId));
+      const api = await getFeatureApiPreset("memory");
       if (!api) throw new Error("无法加载全局 API 预设，无法同步记忆。");
 
       // 核心：仅总结"尚未被线上对话跟随总结"的赴约记录（mergedArchived!==1）。
@@ -8800,8 +8855,7 @@ async function regenerateArchiveSummary(timestampKey) {
   const masterArc = list[0];
   if (!masterArc.rawMessages) throw new Error("该存盘对白已损坏，无法重新提炼");
 
-  const presetId = localStorage.getItem("global_api_preset_id");
-  const api = await db.api_presets.get(Number(presetId));
+  const api = await getFeatureApiPreset("memory");
   if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置’中配置！");
 
   const sess = await db.sessions.get(activeSessionId);
@@ -9281,8 +9335,7 @@ function shouldAutoTranslateText(text) {
 /** 单次调用翻译接口：整段文本 → 中文（返回 null 表示未配置/失败） */
 async function translateTextOnce(text) {
   if (!text) return null;
-  const presetId = localStorage.getItem("global_api_preset_id");
-  const api = await db.api_presets.get(Number(presetId));
+  const api = await getFeatureApiPreset("chat");
   if (!api) throw new Error("请先在设置中配置 API！");
 
   const prompt = `你是一个精准信达雅的翻译官。请把下面这一整段内容无损翻译为流畅自然的简体中文。
@@ -9333,8 +9386,7 @@ async function translateTextsBatch(texts) {
   const out = texts.map(t => String(t == null ? "" : t));
   if (payload.length === 0) return out;
 
-  const presetId = localStorage.getItem("global_api_preset_id");
-  const api = await db.api_presets.get(Number(presetId));
+  const api = await getFeatureApiPreset("chat");
   if (!api) throw new Error("请先在设置中配置 API！");
 
   const prompt = `你是一个精准信达雅的翻译官。下面是一个 JSON 字符串数组，每个元素是一条待翻译的文本（可能已含中文）。
@@ -9433,8 +9485,7 @@ async function translateChatMessage(msgId, isOffline = false) {
   // 2. 发起 API 实时翻译
   showToast("正在翻译台词中...");
   try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
+    const api = await getFeatureApiPreset("chat");
     if (!api) throw new Error("请先在设置中配置 API！");
 
     const translatePrompt = `你是一个精准信达雅的专业同声翻译官。请将以下对话/文本内容无损翻译为流畅自然的中文。
@@ -9501,8 +9552,7 @@ async function batchTranslateMessages(isOffline = false) {
   showToast(`正在批量翻译 ${msgIds.length} 条选中的消息...`);
 
   try {
-    const presetId = localStorage.getItem("global_api_preset_id");
-    const api = await db.api_presets.get(Number(presetId));
+    const api = await getFeatureApiPreset("chat");
     if (!api) throw new Error("请先在设置中配置 API！");
 
     const untranslatedList = [];
