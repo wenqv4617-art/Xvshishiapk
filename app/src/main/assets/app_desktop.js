@@ -81,14 +81,71 @@ function migrateDesktopPageSize() {
   try { localStorage.setItem("desktop-page-size", String(DESKTOP_PAGE_SIZE)); } catch (e) {}
 }
 
-/** 行数随主题变化；用 1fr 让网格等于容器高度（薄秋主题），清透凉夏沿用原来的内容高度 */
+/** 主题可以带一套「设计稿尺寸」（存 beautify-desktop-metrics），按手机宽度等比缩放 */
+function getDesktopMetrics() {
+  try {
+    const m = JSON.parse(localStorage.getItem("beautify-desktop-metrics"));
+    if (m && Number(m.designW) > 0) return m;
+  } catch (e) {}
+  return null;
+}
+/** 设计稿单位 → 实际像素的缩放比（s = 手机宽度 / 设计稿宽度） */
+function desktopScale(metrics) {
+  const m = metrics || getDesktopMetrics();
+  if (!m) return 1;
+  const phone = document.getElementById("phone-container");
+  const w = (phone && phone.clientWidth) || document.documentElement.clientWidth || window.innerWidth || m.designW;
+  return w / Number(m.designW);
+}
+
+/** 行数随主题变化；薄秋用设计稿尺寸（固定行高 + 顶部留白），其它主题沿用原来的 1fr 拉伸 */
 function applyDesktopGridMetrics() {
   const desktop = document.getElementById("desktop");
   const grid = document.getElementById("desktop-grid");
   if (!desktop || !grid) return;
-  // 行数随主题变化，必须由 JS 写 inline !important（CSS 里不能写 repeat(var(--n), …)）
+  const m = getDesktopMetrics();
+  const s = desktopScale(m);
+
+  if (m) {
+    // === 设计稿模式（薄秋）：4 列 × N 行，行高/间距/边距全部按设计稿等比缩放 ===
+    const padL = Math.round((m.padL || 20) * s);
+    const padR = Math.round((m.padR || 20) * s);
+    const top = Math.round((m.top || 0) * s);
+    const rowH = Math.round((m.rowH || 91) * s);
+    const gapY = Math.round((m.gapY || 5) * s);
+    const gapX = Math.round((m.gapX || 9) * s);
+    const icon = Math.round((m.icon || 56) * s);
+    // --desk-s 要写在 #phone-container 上：dock 是 #desktop 的兄弟节点，也要跟着缩放
+    const scope = document.getElementById("phone-container") || document.documentElement;
+    [desktop, grid, scope, document.documentElement].forEach((el) => {
+      if (!el || !el.style) return;
+      el.style.setProperty("--desk-s", String(s));
+      el.style.setProperty("--desktop-icon", icon + "px");
+      el.style.setProperty("--desktop-cell", rowH + "px");
+    });
+    grid.style.setProperty("grid-template-columns", "repeat(" + DESKTOP_COLS + ", minmax(0, 1fr))", "important");
+    grid.style.setProperty("grid-template-rows", "none", "important");
+    grid.style.setProperty("grid-auto-rows", rowH + "px", "important");
+    grid.style.setProperty("gap", gapY + "px " + gapX + "px", "important");
+    grid.style.setProperty("padding", top + "px " + padR + "px 0 " + padL + "px", "important");
+    grid.style.setProperty("box-sizing", "border-box", "important");
+    grid.style.setProperty("align-content", "start", "important");
+    grid.style.setProperty("width", "100%", "important");
+    grid.style.setProperty("max-width", "100%", "important");
+    grid.style.setProperty("margin", "0", "important");
+    return;
+  }
+
+  // === 默认模式（清透凉夏等）：保持原版行为，1fr 行高 ===
+  // 先把设计稿模式留下的 inline 覆盖清干净，否则切回旧主题会沿用薄秋的间距/行高
+  ["grid-template-columns", "grid-auto-rows", "gap", "padding", "align-content", "width", "max-width", "margin"].forEach(function (prop) {
+    grid.style.removeProperty(prop);
+  });
+  [desktop, grid, document.getElementById("phone-container"), document.documentElement].forEach(function (el) {
+    if (el && el.style) { el.style.removeProperty("--desk-s"); }
+  });
   grid.style.setProperty("grid-template-rows", "repeat(" + DESKTOP_ROWS + ", 1fr)", "important");
-  // 用真实渲染出来的槽位高度反推图标尺寸（薄秋主题会把槽位撑满整行）
+  // 用真实渲染出来的槽位高度反推图标尺寸
   const slot = grid.querySelector(".desktop-slot");
   const rowH = slot ? slot.getBoundingClientRect().height : 0;
   if (!rowH) {
@@ -908,6 +965,12 @@ function tileSheet(opts) {
   return mask;
 }
 
+/** 卡片内部的尺寸按设计稿比例缩放 */
+function tileScale(box) {
+  const v = parseFloat(getComputedStyle(box).getPropertyValue("--desk-s"));
+  return v > 0 && isFinite(v) ? v : 1;
+}
+
 window.desktopTiles = {
   /** 挂载一张卡片，返回容器元素 */
   mount(slot, wData) {
@@ -926,21 +989,25 @@ window.desktopTiles = {
 
   /** 大号实时时钟 + 可编辑的一行小字（年月日 / 天气等） */
   clock(box, cfg) {
+    const s = tileScale(box);
     const key = "clock-" + (cfg.key || "main");
     box.style.display = "flex";
     box.style.flexDirection = "column";
-    box.style.alignItems = "center";
-    box.style.justifyContent = "center";
-    box.style.gap = "8px";
+    box.style.alignItems = "flex-start";
+    box.style.justifyContent = "flex-start";
+    box.style.gap = Math.round(8 * s) + "px";
+    // 设计稿里时间文字在 x=101（整块从 x=23 开始），所以左边留 78 个设计单位
+    box.style.paddingLeft = Math.round(78 * s) + "px";
+    box.style.paddingTop = Math.round(2 * s) + "px";
     box.style.overflow = "hidden";
     box.style.cursor = "pointer";
 
     const t = document.createElement("div");
-    const maxSize = cfg.size || 76;
+    const maxSize = Math.round((cfg.size || 114) * s);
     t.style.cssText = "font-weight:700;line-height:1;letter-spacing:-0.02em;white-space:nowrap;" +
       "color:" + (cfg.color || "#6B6275") + ";font-variant-numeric:tabular-nums;";
     const sub = document.createElement("div");
-    sub.style.cssText = "font-size:12.5px;font-weight:600;letter-spacing:0.04em;color:" + (cfg.subColor || "#A79FAE") +
+    sub.style.cssText = "font-size:" + Math.max(10, Math.round(13 * s)) + "px;font-weight:600;letter-spacing:0.04em;color:" + (cfg.subColor || "#A79FAE") +
       ";white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;";
     box.appendChild(t);
     box.appendChild(sub);
@@ -952,12 +1019,12 @@ window.desktopTiles = {
     };
     // 按卡片可用宽度收缩字号：宁可小一点，也不许换行把下面挤走
     const fit = () => {
-      const w = box.clientWidth;
-      if (!w) return;
+      const w = box.clientWidth - Math.round(78 * s) - 4;
+      if (w <= 0) return;
       let fs = maxSize;
       t.style.fontSize = fs + "px";
       let guard = 0;
-      while (t.scrollWidth > w - 8 && fs > 20 && guard++ < 60) {
+      while (t.scrollWidth > w && fs > 20 && guard++ < 60) {
         fs -= 2;
         t.style.fontSize = fs + "px";
       }
@@ -1003,8 +1070,9 @@ window.desktopTiles = {
 
   /** 照片卡片：点击上传并持久保存 */
   photo(box, cfg) {
+    const s = tileScale(box);
     const key = "photo-" + (cfg.key || "a");
-    const radius = cfg.radius === undefined ? 26 : cfg.radius;
+    const radius = Math.round((cfg.radius === undefined ? 26 : cfg.radius) * s);
     const wrap = document.createElement("div");
     wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + radius + "px;overflow:hidden;cursor:pointer;" +
       "background:" + (cfg.emptyBg || "rgba(243,238,248,.8)") + ";display:flex;align-items:center;justify-content:center;box-sizing:border-box;";
@@ -1012,10 +1080,11 @@ window.desktopTiles = {
       const src = tileGet(key, "");
       if (src) {
         wrap.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
-          '<div style="position:absolute;left:0;right:0;bottom:0;padding:7px 8px;font-size:10px;font-weight:700;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(15,23,42,0),rgba(15,23,42,.55));">点击更换</div>';
+          '<div style="position:absolute;left:0;right:0;bottom:0;padding:' + Math.round(7 * s) + 'px 8px;font-size:' + Math.max(9, Math.round(10 * s)) + 'px;font-weight:700;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(15,23,42,0),rgba(15,23,42,.55));">点击更换</div>';
       } else {
-        wrap.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:7px;color:#A08FB8;">' +
-          TILE_ICON.plus + '<span style="font-size:11px;font-weight:700;">' + (cfg.hint || "添加照片") + '</span></div>';
+        wrap.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:' + Math.round(7 * s) + 'px;color:#A08FB8;">' +
+          '<span style="display:flex;width:' + Math.round(26 * s) + 'px;height:' + Math.round(26 * s) + 'px;">' + TILE_ICON.plus + '</span>' +
+          '<span style="font-size:' + Math.max(10, Math.round(11 * s)) + 'px;font-weight:700;">' + (cfg.hint || "添加照片") + '</span></div>';
       }
     };
     render();
@@ -1033,9 +1102,10 @@ window.desktopTiles = {
 
   /** 横幅卡片：背景图 + 可编辑标题/副标题 */
   banner(box, cfg) {
+    const s = tileScale(box);
     const key = "banner-" + (cfg.key || "main");
     const wrap = document.createElement("div");
-    wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + (cfg.radius === undefined ? 28 : cfg.radius) + "px;overflow:hidden;" +
+    wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + Math.round((cfg.radius === undefined ? 28 : cfg.radius) * s) + "px;overflow:hidden;" +
       "background:rgba(243,238,248,.8);display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;box-sizing:border-box;";
     const render = () => {
       let data = {};
@@ -1048,9 +1118,9 @@ window.desktopTiles = {
       wrap.style.backgroundPosition = "center";
       wrap.innerHTML =
         '<div style="position:absolute;inset:0;background:' + (img ? "linear-gradient(180deg,rgba(15,23,42,.05),rgba(15,23,42,.55))" : "linear-gradient(135deg,#FBEFE3,#EFE6F8)") + ';"></div>' +
-        '<div style="position:relative;padding:16px 18px;color:' + (img ? "#fff" : "#1B1B1F") + ';">' +
-          '<div style="font-size:20px;font-weight:800;letter-spacing:1px;text-shadow:' + (img ? "0 2px 8px rgba(0,0,0,.35)" : "none") + ';">' + (title || "叙事诗") + '</div>' +
-          (sub ? '<div style="font-size:11.5px;margin-top:5px;opacity:.86;line-height:1.5;">' + sub + '</div>' : '') +
+        '<div style="position:relative;padding:' + Math.round(16 * s) + 'px ' + Math.round(18 * s) + 'px;color:' + (img ? "#fff" : "#1B1B1F") + ';">' +
+          '<div style="font-size:' + Math.round(22 * s) + 'px;font-weight:800;letter-spacing:1px;text-shadow:' + (img ? "0 2px 8px rgba(0,0,0,.35)" : "none") + ';">' + (title || "叙事诗") + '</div>' +
+          (sub ? '<div style="font-size:' + Math.max(10, Math.round(12 * s)) + 'px;margin-top:' + Math.round(5 * s) + 'px;opacity:.86;line-height:1.5;">' + sub + '</div>' : '') +
         '</div>';
     };
     render();
@@ -1100,11 +1170,12 @@ window.desktopTiles = {
     box.style.display = "flex";
     box.style.alignItems = "center";
     const bar = document.createElement("div");
-    bar.style.cssText = "width:100%;height:56px;border-radius:28px;background:#fff;box-shadow:0 3px 12px rgba(55,87,186,.12);" +
-      "display:flex;align-items:center;gap:10px;padding:0 18px;box-sizing:border-box;cursor:pointer;color:#464651;";
-    bar.innerHTML = '<span style="display:flex;color:#A08FB8;flex-shrink:0;">' + TILE_ICON.search + '</span>' +
-      '<span style="flex:1;min-width:0;font-size:13px;color:#9A93A5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (cfg.label || "搜索歌曲") + '</span>' +
-      '<span style="display:flex;color:#9A93A5;flex-shrink:0;">' + TILE_ICON.mic + '</span>';
+    const s = tileScale(box);
+    bar.style.cssText = "width:100%;height:100%;border-radius:" + Math.round(28 * s) + "px;background:#fff;box-shadow:0 3px 12px rgba(140,130,150,.12);" +
+      "display:flex;align-items:center;gap:" + Math.round(10 * s) + "px;padding:0 " + Math.round(18 * s) + "px;box-sizing:border-box;cursor:pointer;color:#464651;";
+    bar.innerHTML = '<span style="display:flex;width:' + Math.round(20 * s) + 'px;height:' + Math.round(20 * s) + 'px;color:#A08FB8;flex-shrink:0;">' + TILE_ICON.search + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:' + Math.max(11, Math.round(14 * s)) + 'px;color:#9A93A5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (cfg.label || "搜索歌曲") + '</span>' +
+      '<span style="display:flex;width:' + Math.round(18 * s) + 'px;height:' + Math.round(18 * s) + 'px;color:#9A93A5;flex-shrink:0;">' + TILE_ICON.mic + '</span>';
     bar.onclick = (e) => {
       if (isDesktopEditMode) return;
       e.stopPropagation();
@@ -1188,6 +1259,12 @@ function renderLayout(container, layoutArray, slotClass) {
 
       slot.style.gridColumn = `span ${actualW}`;
       slot.style.gridRow = `span ${wData.heightSpan || 1}`;
+      // 设计稿模式：卡片可以带固定高度（设计稿单位），顶部对齐，多余行高留在下方
+      if (isDesktopType && wData.fixedH) {
+        const sc = desktopScale();
+        slot.style.setProperty("height", Math.round(Number(wData.fixedH) * sc) + "px", "important");
+        slot.style.alignSelf = "start";
+      }
 
       if (wData.tile && window.desktopTiles) {
         // 内置卡片（时钟/照片/横幅/搜索条）：由运行时直接挂载

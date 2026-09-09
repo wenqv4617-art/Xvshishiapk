@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v84'; // v84: 薄秋主题(默认,7行,设计稿图标+淡彩)/清透凉夏完全恢复原样(5行); v1.5.8
+const CACHE_NAME = 'story-phone-v85'; // v85: 薄秋按设计稿1:1等比缩放(尺寸/间距/位置)/切主题几何彻底重置; v1.5.9
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

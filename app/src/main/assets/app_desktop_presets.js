@@ -439,41 +439,52 @@ window.DESKTOP_PRESETS = {
     name: "薄秋",
     rows: 7,            // 4 列 × 7 行 = 每页 28 格
     pageSize: 28,
+    /* 设计稿尺寸（412×892 的画布）：所有几何按手机宽度等比缩放，不另做适配 */
+    metrics: {
+      designW: 412,
+      top: 50,          // 第一行距桌面顶部的留白
+      rowH: 91,         // 行高（设计稿单位）
+      gapY: 7,          // 行间距
+      gapX: 9,          // 列间距
+      padL: 23,         // 左边距（设计稿里照片在 x=23）
+      padR: 16,         // 右边距
+      icon: 56,         // 圆形图标按钮直径
+      dockBtnW: 80,     // dock 按钮宽（首尾两个按设计稿放 100）
+      dockBtnH: 56      // dock 按钮高
+    },
     confirmText: "确定要应用【薄秋】主题吗？桌面会换成 7 行布局（大时钟 / 照片卡 / 圆形图标 / 横幅 / 搜索条），壁纸换成淡彩纯色底。",
     wallpaper: "",
     dockOpacity: "72",
-    activeCss: `/* 薄秋 — 淡彩配色 · 4 列 × 7 行 */
+    activeCss: `/* 薄秋 — 淡彩配色 · 按 412 宽设计稿等比缩放（几何由 metrics 驱动） */
 /* 底色：奶油 → 淡紫 → 淡蓝 的极淡渐变 */
 #phone-container {
   background-color: #FBF8F4 !important;
   background-image: linear-gradient(160deg, #FDF9F3 0%, #F8F4FA 52%, #F2F6FA 100%) !important;
   background-size: cover !important;
 }
-/* 桌面铺满整屏，7 行等分，绝不把 dock 挤出去 */
+/* 桌面本身不留白，全部由网格按设计稿的边距决定；滚动条不占宽度 */
 #desktop {
-  padding: 12px 16px 4px 16px !important;
-  display: flex !important;
-  flex-direction: column !important;
-  min-height: 0 !important;
-  overflow: hidden !important;
+  padding: 0 !important;
+  scrollbar-width: none !important;
 }
-#desktop-grid {
-  flex: 1 1 auto !important;
-  min-height: 0 !important;
-  gap: 8px 10px !important;
+#desktop::-webkit-scrollbar {
+  width: 0 !important;
+  display: none !important;
 }
+/* 槽位不锁比例，高度由设计稿行高决定；图标贴行顶部 */
 .desktop-slot {
   aspect-ratio: auto !important;
   height: 100% !important;
+  align-items: flex-start !important;
+}
+.app-icon {
+  width: 100% !important;
 }
 
 /* 圆形图标按钮：淡彩底 + 同色系图标 + 极轻投影 */
-.app-icon {
-  width: var(--desktop-cell, 76px) !important;
-}
 .app-icon .icon-wrapper {
-  width: var(--desktop-icon, 54px) !important;
-  height: var(--desktop-icon, 54px) !important;
+  width: var(--desktop-icon, 56px) !important;
+  height: var(--desktop-icon, 56px) !important;
   border-radius: 50% !important;
   background: #FFFFFF !important;
   border: none !important;
@@ -525,33 +536,44 @@ window.DESKTOP_PRESETS = {
 .app-icon[data-app="settings"] .icon-wrapper { background: #F2F3F6 !important; }
 .app-icon[data-app="settings"] .icon-wrapper svg { color: #8A8FA0 !important; }
 
-/* Dock：淡彩胶囊 */
+/* Dock：按设计稿 100 / 80 / 80 / 100 × 56 的胶囊 */
 #dock {
-  padding: 8px 10px calc(14px + env(safe-area-inset-bottom, 0px)) 10px !important;
+  padding: calc(8px * var(--desk-s, 1)) calc(10px * var(--desk-s, 1)) calc(14px + env(safe-area-inset-bottom, 0px)) calc(10px * var(--desk-s, 1)) !important;
 }
 .dock-container {
   background-color: rgba(255, 255, 255, 0.82) !important;
   border: 1px solid rgba(232, 228, 238, 0.9) !important;
-  border-radius: 24px !important;
-  height: 68px !important;
-  padding: 0 10px !important;
+  border-radius: calc(28px * var(--desk-s, 1)) !important;
+  height: calc(56px * var(--desk-s, 1)) !important;
+  padding: 0 calc(12px * var(--desk-s, 1)) !important;
   box-shadow: 0 6px 18px rgba(140, 130, 150, 0.10) !important;
 }
 #dock-grid {
-  gap: 8px !important;
+  gap: calc(8px * var(--desk-s, 1)) !important;
 }
 #dock-grid > .dock-slot {
-  width: 76px !important;
-  flex: 0 0 76px !important;
+  width: calc(80px * var(--desk-s, 1)) !important;
+  flex: 0 0 calc(80px * var(--desk-s, 1)) !important;
+  aspect-ratio: auto !important;
+  height: 100% !important;
+}
+#dock-grid > .dock-slot:first-child,
+#dock-grid > .dock-slot:last-child {
+  width: calc(100px * var(--desk-s, 1)) !important;
+  flex: 0 0 calc(100px * var(--desk-s, 1)) !important;
+}
+#dock-grid .app-icon {
+  width: 100% !important;
 }
 #dock-grid .app-icon .icon-wrapper {
-  width: 70px !important;
-  height: 50px !important;
-  border-radius: 25px !important;
+  width: 100% !important;
+  height: calc(56px * var(--desk-s, 1)) !important;
+  border-radius: calc(28px * var(--desk-s, 1)) !important;
+  box-shadow: 0 2px 8px rgba(140, 130, 150, 0.10) !important;
 }
 #dock-grid .app-icon .icon-wrapper svg {
-  width: 22px !important;
-  height: 22px !important;
+  width: 24px !important;
+  height: 24px !important;
 }
 
 /* 翻页指示器：淡彩小胶囊 */
@@ -572,11 +594,10 @@ window.DESKTOP_PRESETS = {
   background-color: #A08FB8 !important;
 }
 
-/* 翻页滑入 */
-@keyframes thinAutumnPageInR { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
-@keyframes thinAutumnPageInL { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
-#desktop-grid.page-anim-r { animation: thinAutumnPageInR 0.24s cubic-bezier(0.2, 0.8, 0.25, 1); }
-#desktop-grid.page-anim-l { animation: thinAutumnPageInL 0.24s cubic-bezier(0.2, 0.8, 0.25, 1); }`,
+/* 翻页滑入（只用淡入，不做位移，避免把内容推出屏幕） */
+@keyframes thinAutumnPageIn { from { opacity: 0; } to { opacity: 1; } }
+#desktop-grid.page-anim-r,
+#desktop-grid.page-anim-l { animation: thinAutumnPageIn 0.22s ease-out; }`,
     /* 设计稿里的 Material Symbols 图标（切到别的主题会自动还原成原生图标） */
     iconOverrides: {
       world_book: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM437-141v-82q-35 0-59-26t-24-61v-44L149-559q-5 20-7 39.5t-2 39.5q0 130 84.5 227T437-141Zm294-108q44-48 66.5-107.5T820-480q0-106-58-192.5T607-799v18q0 35-24 61t-59 26h-87v87q0 17-13.5 28T393-568h-83v88h258q17 0 28 13t11 30v127h43q29 0 51 17t30 44Z\"/></svg>",
@@ -602,15 +623,17 @@ window.DESKTOP_PRESETS = {
         tile: "clock",
         widthSpan: 4,
         heightSpan: 2,
-        config: { size: 88, colon: ":", color: "#6B6275", subColor: "#A79FAE" }
+        fixedH: 114,     // 设计稿：时钟文字 57 → 再大一倍
+        config: { size: 114, colon: ":", color: "#6B6275", subColor: "#A79FAE" }
       },
-      // 三张照片卡片（点击上传，持久保存）
+      // 三张照片卡片（点击上传，持久保存），高度按设计稿 182 / 240
       tile_thin_autumn_photo_a: {
         id: "tile_thin_autumn_photo_a",
         name: "照片 · 左上",
         tile: "photo",
         widthSpan: 2,
         heightSpan: 2,
+        fixedH: 182,
         config: { key: "a", maxPx: 900 }
       },
       tile_thin_autumn_photo_b: {
@@ -619,6 +642,7 @@ window.DESKTOP_PRESETS = {
         tile: "photo",
         widthSpan: 2,
         heightSpan: 2,
+        fixedH: 182,
         config: { key: "b", maxPx: 900 }
       },
       tile_thin_autumn_photo_c: {
@@ -627,69 +651,71 @@ window.DESKTOP_PRESETS = {
         tile: "photo",
         widthSpan: 2,
         heightSpan: 3,
+        fixedH: 240,
         config: { key: "c", maxPx: 1200 }
       },
-      // 第二页横幅（背景图 + 可编辑文字）
+      // 第二页横幅（背景图 + 可编辑文字），设计稿 380×223
       tile_thin_autumn_banner: {
         id: "tile_thin_autumn_banner",
         name: "叙事诗横幅",
         tile: "banner",
         widthSpan: 4,
-        heightSpan: 2,
+        heightSpan: 3,
+        fixedH: 223,
         config: { key: "main", title: "叙事诗", sub: "这是我们的漫长的叙事史诗", radius: 28 }
       },
-      // 第二页搜索条（点击跳听歌搜索）
+      // 第二页搜索条（点击跳听歌搜索），设计稿 380×56
       tile_thin_autumn_search: {
         id: "tile_thin_autumn_search",
         name: "搜索条",
         tile: "search",
         widthSpan: 4,
         heightSpan: 1,
+        fixedH: 56,
         config: { label: "搜索歌曲" }
       }
     },
 
     // 卡片落位（28 格/页的槽位号）
     placedDesktop: {
-      "0": "tile_thin_autumn_clock",     // 第一页 第1-2行 整宽
-      "8": "tile_thin_autumn_photo_a",   // 第一页 第3-4行 左两列
-      "18": "tile_thin_autumn_photo_b",  // 第一页 第5-6行 右两列
-      "28": "tile_thin_autumn_banner",   // 第二页 第1-2行 整宽
-      "36": "tile_thin_autumn_search",   // 第二页 第3行 整宽
-      "42": "tile_thin_autumn_photo_c"   // 第二页 第4-6行 右两列
+      "4": "tile_thin_autumn_clock",     // 第一页 第2-3行 整宽（设计稿 y=150）
+      "12": "tile_thin_autumn_photo_a",  // 第一页 第4-5行 左两列（y=337）
+      "22": "tile_thin_autumn_photo_b",  // 第一页 第6-7行 右两列（y=535）
+      "28": "tile_thin_autumn_banner",   // 第二页 第1-3行 整宽（y=57）
+      "40": "tile_thin_autumn_search",   // 第二页 第4行 整宽（y=343）
+      "46": "tile_thin_autumn_photo_c"   // 第二页 第5-7行 右两列（y=443）
     },
 
-    // 两页图标排布（每页 28 格：4 列 × 7 行）
+    // 两页图标排布（每页 28 格：4 列 × 7 行；行位置按设计稿 y=150/337/428/519/535/637… 对齐）
     desktopLayout: [
       // === 第一页 ===
-      // 第1-2行：大时钟（4×2，覆盖 0-7）
+      // 第1行：空（设计稿顶部留白）
+      null, null, null, null,
+      // 第2-3行：大时钟（4×2，覆盖 4-11）
       null, null, null, null,
       null, null, null, null,
-      // 第3行：照片 A（2×2，覆盖 8,9,12,13） + 世界书 + 设置
+      // 第4行：照片 A（2×2，覆盖 12,13,16,17） + 世界书 + 设置
       null, null, "world_book", "settings",
-      // 第4行：照片 A 继续 + 档案库 + 聊天
+      // 第5行：照片 A 继续 + 档案库 + 聊天
       null, null, "archive", "chat",
-      // 第5行：听歌 + 阅读 + 照片 B（2×2，覆盖 18,19,22,23）
+      // 第6行：听歌 + 阅读 + 照片 B（2×2，覆盖 22,23,26,27）
       "music", "reader", null, null,
-      // 第6行：仪轨 + 购物 + 照片 B 继续
+      // 第7行：仪轨 + 购物 + 照片 B 继续
       "yigui", "shopping", null, null,
-      // 第7行：留空
-      null, null, null, null,
 
       // === 第二页 ===
-      // 第1-2行：叙事诗横幅（4×2，覆盖 28-35）
+      // 第1-3行：叙事诗横幅（4×3，覆盖 28-39）
       null, null, null, null,
       null, null, null, null,
-      // 第3行：搜索条（4×1，覆盖 36-39）
       null, null, null, null,
-      // 第4行：深谈 + 情侣空间 + 照片 C（2×3，覆盖 42,43,46,47,50,51）
+      // 第4行：搜索条（4×1，覆盖 40-43）
+      null, null, null, null,
+      // 第5行：深谈 + 情侣空间 + 照片 C（2×3，覆盖 46,47,50,51,54,55）
       "deeptalk", "couples", null, null,
-      // 第5行：邂逅 + 论坛 + 照片 C 继续
+      // 第6行：邂逅 + 论坛 + 照片 C 继续
       "encounter", "forum", null, null,
-      // 第6行：工作台 + 快穿局 + 照片 C 继续
-      "workbench", "quicktravel", null, null,
-      // 第7行：留空
-      null, null, null, null
+      // 第7行：工作台 + 快穿局 + 照片 C 继续
+      "workbench", "quicktravel", null, null
     ],
 
     // 底部 Dock 栏排布（与设计稿一致：设置 / 聊天 / 档案库 / 世界书）
@@ -730,6 +756,12 @@ function applyPresetCore(preset, silent) {
     // 2.5 主题图标覆盖：薄秋用设计稿里的 Material Symbols；其它主题清空，回到原生图标
     try {
       localStorage.setItem("beautify-icon-overrides", JSON.stringify(preset.iconOverrides || {}));
+    } catch(e) {}
+
+    // 2.6 设计稿尺寸（薄秋）：几何按 412 宽设计稿等比缩放；其它主题清空，回到原版行为
+    try {
+      if (preset.metrics) localStorage.setItem("beautify-desktop-metrics", JSON.stringify(preset.metrics));
+      else localStorage.removeItem("beautify-desktop-metrics");
     } catch(e) {}
 
     // 3. 写入内置小部件库
