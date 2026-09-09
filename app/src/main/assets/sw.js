@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v82'; // v82: 桌面图标彻底不显示名称（与设计稿一致）; v1.5.6
+const CACHE_NAME = 'story-phone-v83'; // v83: 桌面行数随预设切换(清透凉夏仍5行)/时钟自适应不换行/首开默认M3; v1.5.7
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

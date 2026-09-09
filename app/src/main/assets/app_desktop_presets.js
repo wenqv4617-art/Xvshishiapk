@@ -7,6 +7,8 @@ window.DESKTOP_PRESETS = {
   clear_cool_summer: {
     name: "清透凉夏 (Ins拟物风)",
     confirmText: "确定要应用【清透凉夏】UI预设吗？这将会更新您的桌面布局、背景壁纸与全局注入样式。",
+    rows: 5,            // 这个预设是按 4 列 × 5 行（每页 20 格）设计的，不能改成 7 行
+    pageSize: 20,
     wallpaper: "./images/wallpaper_summer.jpg",
     dockOpacity: "35",
     activeCss: `@import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@700&display=swap');
@@ -435,6 +437,7 @@ window.DESKTOP_PRESETS = {
    * ============================================================ */
   narrative_desktop: {
     name: "叙事诗 · 桌面 (M3)",
+    rows: 7,            // 4 列 × 7 行 = 每页 28 格
     pageSize: 28,
     confirmText: "确定要应用【叙事诗 · 桌面】吗？这会替换桌面两页的图标与卡片（时钟 / 照片 / 横幅 / 搜索条），并把壁纸换成纯色底。",
     wallpaper: "",
@@ -448,14 +451,18 @@ window.DESKTOP_PRESETS = {
   padding: 14px 16px 4px 16px !important;
 }
 
-/* 圆形「elevated」图标按钮：白底 + 淡蓝投影 + 主题色图标 */
+/* 圆形「elevated」图标按钮：白底 + 淡蓝投影 + 主题色图标，尺寸跟随 7 行网格自适应 */
 .app-icon .icon-wrapper {
+  width: var(--desktop-icon, 56px) !important;
+  height: var(--desktop-icon, 56px) !important;
   background: linear-gradient(180deg, #FFFFFF 0%, #F3F3F9 100%) !important;
   border: none !important;
   border-radius: 50% !important;
   box-shadow: 0 3px 10px rgba(55, 87, 186, 0.14), 0 1px 2px rgba(15, 23, 42, 0.05) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
+  margin-bottom: 0 !important;
+  transition: transform 0.16s ease !important;
 }
 .app-icon .icon-wrapper svg {
   width: 26px !important;
@@ -466,21 +473,33 @@ window.DESKTOP_PRESETS = {
 .app-icon:active .icon-wrapper {
   transform: scale(0.94) !important;
 }
+/* 与设计稿一致：桌面图标不显示名称（span 仍保留在 DOM 中供读屏） */
 .app-icon span {
-  color: #1B1B1F !important;
-  font-size: 10.5px !important;
-  font-weight: 700 !important;
-  text-shadow: none !important;
+  display: none !important;
 }
 
-/* Dock：胶囊按钮 + 淡描边 */
+/* Dock：72×52 胶囊按钮 + 淡描边 */
+#dock {
+  padding: 10px 10px calc(16px + env(safe-area-inset-bottom, 0px)) 10px !important;
+}
 .dock-container {
   background-color: rgba(255, 255, 255, 0.78) !important;
   border: 1px solid rgba(198, 197, 210, 0.45) !important;
   border-radius: 26px !important;
+  height: 72px !important;
+  padding: 0 10px !important;
   box-shadow: 0 6px 20px rgba(55, 87, 186, 0.10) !important;
 }
+#dock-grid {
+  gap: 8px !important;
+}
+#dock-grid > .dock-slot {
+  width: 78px !important;
+  flex: 0 0 78px !important;
+}
 #dock-grid .app-icon .icon-wrapper {
+  width: 72px !important;
+  height: 52px !important;
   border-radius: 26px !important;
   box-shadow: 0 2px 8px rgba(55, 87, 186, 0.12) !important;
 }
@@ -504,7 +523,7 @@ window.DESKTOP_PRESETS = {
         tile: "clock",
         widthSpan: 4,
         heightSpan: 2,
-        config: { size: 104, colon: "：", color: "#3757BA" }
+        config: { size: 88, colon: "：", color: "#3757BA" }
       },
       // 三张照片卡片（点击上传，持久保存）
       tile_narrative_photo_a: {
@@ -599,21 +618,23 @@ window.DESKTOP_PRESETS = {
   }
 };
 
-window.applyBuiltinThemePreset = function(specifiedKey) {
-  const select = document.getElementById("beautify-builtin-preset-select");
-  const key = specifiedKey || (select ? select.value : "");
-  if (!key) {
-    if (typeof showToast === "function") showToast("请先选择一个系统内置 UI 预设");
-    return;
-  }
-
+/** 静默应用预设（不弹确认框），用于「全新安装默认用 M3 桌面」 */
+window.applyPresetSilently = function(key) {
   const preset = window.DESKTOP_PRESETS[key];
-  if (!preset) {
-    if (typeof showToast === "function") showToast("未找到对应的预设配置");
-    return;
-  }
+  if (!preset) return false;
+  applyPresetCore(preset);
+  return true;
+};
 
-  const executeApply = () => {
+/** 预设核心：行数/页宽 → 壁纸 → 全局 CSS → 小部件库 → 卡片落位 → 桌面排版 → 重绘 */
+function applyPresetCore(preset, silent) {
+    // 0. 先定行数/页宽：每个预设自带规格（M3 桌面 7 行 28 格；清透凉夏 5 行 20 格），
+    //    这样旧预设的小部件跨行/排版不会被 7 行网格打乱
+    const rows = preset.rows || 5;
+    const pageSize = preset.pageSize || (4 * rows);
+    if (typeof window.setDesktopGridRows === "function") window.setDesktopGridRows(rows);
+    try { localStorage.setItem("desktop-page-size", String(pageSize)); } catch(e) {}
+
     // 1. 设置背景与 Dock 不透明度（wallpaper:"" 表示清空壁纸，走纯色底）
     if (Object.prototype.hasOwnProperty.call(preset, "wallpaper")) {
       localStorage.setItem("beautify-wallpaper", preset.wallpaper || "");
@@ -664,22 +685,34 @@ window.applyBuiltinThemePreset = function(specifiedKey) {
       localStorage.setItem("dock-layout-v3", JSON.stringify(preset.dockLayout));
     }
     // 迁移标记：预设已按当前页宽写入，避免随后又被 migrateDesktopPageSize 二次重排
-    try { localStorage.setItem("desktop-page-size", String(window.DESKTOP_PAGE_SIZE || 20)); } catch(e) {}
+    try { localStorage.setItem("desktop-page-size", String(window.DESKTOP_PAGE_SIZE || pageSize)); } catch(e) {}
 
-    if (typeof showToast === "function") {
+    if (!silent && typeof showToast === "function") {
       showToast(`已成功应用预设: ${preset.name}`);
     }
 
     // 6. 立即触发全局重绘
     if (typeof window.applyGlobalSettingsOnLoad === "function") window.applyGlobalSettingsOnLoad();
     if (typeof window.loadDesktopLayout === "function") window.loadDesktopLayout();
-    if (typeof window.loadBeautifyForm === "function") window.loadBeautifyForm();
-  };
+    if (!silent && typeof window.loadBeautifyForm === "function") window.loadBeautifyForm();
+}
 
+window.applyBuiltinThemePreset = function(specifiedKey) {
+  const select = document.getElementById("beautify-builtin-preset-select");
+  const key = specifiedKey || (select ? select.value : "");
+  if (!key) {
+    if (typeof showToast === "function") showToast("请先选择一个系统内置 UI 预设");
+    return;
+  }
+  const preset = window.DESKTOP_PRESETS[key];
+  if (!preset) {
+    if (typeof showToast === "function") showToast("未找到对应的预设配置");
+    return;
+  }
   // 使用系统自研卡片 Confirm，彻底弃用原生 confirm 弹窗
   if (typeof showCustomConfirm === "function") {
-    showCustomConfirm("应用UI主题预设", preset.confirmText || `确定要应用【${preset.name}】UI预设吗？`, executeApply);
+    showCustomConfirm("应用UI主题预设", preset.confirmText || `确定要应用【${preset.name}】UI预设吗？`, () => applyPresetCore(preset, false));
   } else {
-    executeApply();
+    applyPresetCore(preset, false);
   }
 };

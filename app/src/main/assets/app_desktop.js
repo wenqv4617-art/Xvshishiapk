@@ -6,11 +6,32 @@ let isDesktopEditMode = false;
 let currentDesktopPage = 0;
 let lastRenderedDesktopPage = -1;   // 用于翻页滑入动效的方向判定
 
-// ===== 桌面网格规格：4 列 × 7 行（每页 28 格），旧版为 4 列 × 5 行（每页 20 格）=====
+// ===== 桌面网格规格：列数固定 4，行数随桌面风格变化 =====
+//   M3 桌面（默认）= 4 列 × 7 行 = 每页 28 格
+//   清透凉夏等旧预设 = 4 列 × 5 行 = 每页 20 格（不能改，否则它的小部件排版会乱）
 const DESKTOP_COLS = 4;
-const DESKTOP_ROWS = 7;
-const DESKTOP_PAGE_SIZE = DESKTOP_COLS * DESKTOP_ROWS;   // 28
-const DESKTOP_LEGACY_PAGE_SIZE = 20;                     // 旧版每页 20 格，仅用于迁移
+const DESKTOP_DEFAULT_ROWS = 7;
+const DESKTOP_LEGACY_PAGE_SIZE = 20;                     // 旧版每页 20 格（4 列 × 5 行）
+let DESKTOP_ROWS = DESKTOP_DEFAULT_ROWS;
+let DESKTOP_PAGE_SIZE = DESKTOP_COLS * DESKTOP_ROWS;
+
+/** 当前桌面行数（存 localStorage，随预设切换） */
+function getDesktopRows() {
+  let r = 0;
+  try { r = parseInt(localStorage.getItem("desktop-rows"), 10) || 0; } catch (e) {}
+  if (!r) r = DESKTOP_DEFAULT_ROWS;
+  return Math.max(3, Math.min(10, r));
+}
+/** 切换桌面行数（同步页宽），预设切换时调用 */
+function setDesktopGridRows(rows) {
+  const r = Math.max(3, Math.min(10, parseInt(rows, 10) || DESKTOP_DEFAULT_ROWS));
+  DESKTOP_ROWS = r;
+  DESKTOP_PAGE_SIZE = DESKTOP_COLS * r;
+  window.DESKTOP_PAGE_SIZE = DESKTOP_PAGE_SIZE;
+  try { localStorage.setItem("desktop-rows", String(r)); } catch (e) {}
+  return r;
+}
+window.setDesktopGridRows = setDesktopGridRows;
 
 /** 把一份「旧页宽」的扁平布局按页重排到当前页宽，保持每一页的图标仍留在该页 */
 function remapDesktopLayout(arr, fromSize, toSize) {
@@ -29,13 +50,13 @@ window.remapDesktopLayout = remapDesktopLayout;
 window.DESKTOP_PAGE_SIZE = DESKTOP_PAGE_SIZE;
 window.DESKTOP_LEGACY_PAGE_SIZE = DESKTOP_LEGACY_PAGE_SIZE;
 
-/** 一次性幂等迁移：桌面布局与小部件槽位从 20 格/页 换成 28 格/页 */
+/** 一次性幂等迁移：桌面布局与小部件槽位从旧页宽换成当前页宽 */
 function migrateDesktopPageSize() {
   let stored = 0;
   try { stored = parseInt(localStorage.getItem("desktop-page-size"), 10) || 0; } catch (e) {}
   if (stored === DESKTOP_PAGE_SIZE) return;
   const fromSize = stored > 0 ? stored : DESKTOP_LEGACY_PAGE_SIZE;
-  if (fromSize === DESKTOP_PAGE_SIZE) return;
+  if (fromSize === DESKTOP_PAGE_SIZE) { try { localStorage.setItem("desktop-page-size", String(DESKTOP_PAGE_SIZE)); } catch (e) {} return; }
 
   try {
     const raw = JSON.parse(localStorage.getItem("desktop-layout-v3"));
@@ -60,11 +81,13 @@ function migrateDesktopPageSize() {
   try { localStorage.setItem("desktop-page-size", String(DESKTOP_PAGE_SIZE)); } catch (e) {}
 }
 
-/** 4 列 × 7 行必须刚好装进一屏：按可用高度算出图标尺寸并写进 CSS 变量 */
+/** 4 列 × N 行必须刚好装进一屏：按可用高度算出图标尺寸并写进 CSS 变量 */
 function applyDesktopGridMetrics() {
   const desktop = document.getElementById("desktop");
   const grid = document.getElementById("desktop-grid");
   if (!desktop || !grid) return;
+  // 行数随风格变化，必须由 JS 写 inline !important（CSS 里不能写 repeat(var(--n), …)）
+  grid.style.setProperty("grid-template-rows", "repeat(" + DESKTOP_ROWS + ", minmax(44px, 1fr))", "important");
   const cs = getComputedStyle(desktop);
   const avail = desktop.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
   if (!avail || avail < 120) {
@@ -81,6 +104,7 @@ function applyDesktopGridMetrics() {
   const rowH = (avail - (DESKTOP_ROWS - 1) * gapY) / DESKTOP_ROWS;
   const icon = Math.max(36, Math.min(56, Math.floor(rowH - labelH)));
   const cell = Math.max(52, Math.min(80, Math.floor(rowH)));
+  grid.style.setProperty("grid-template-rows", "repeat(" + DESKTOP_ROWS + ", minmax(" + (icon + 18) + "px, 1fr))", "important");
   [desktop, grid].forEach((el) => {
     el.style.setProperty("--desktop-icon", icon + "px");
     el.style.setProperty("--desktop-cell", cell + "px");
@@ -111,7 +135,7 @@ let isAppClickEventsInitialized = false;
     #desktop-grid {
       display: grid !important;
       grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-      grid-template-rows: repeat(7, minmax(var(--desktop-min-row, 52px), 1fr)) !important;
+      /* 行数与行高由 applyDesktopGridMetrics() 写 inline !important（随桌面风格变化） */
       gap: var(--desktop-gap-y, 10px) var(--desktop-gap-x, 10px) !important;
       min-height: 0 !important;
       flex: 1 1 auto !important;
@@ -129,7 +153,7 @@ let isAppClickEventsInitialized = false;
       flex-direction: row !important;
       justify-content: center !important;
       align-items: center !important;
-      gap: 8px !important;
+      gap: 18px !important;
       width: auto !important;
       max-width: 100% !important;
       margin: 0 auto !important;
@@ -138,8 +162,8 @@ let isAppClickEventsInitialized = false;
     }
     #dock-grid > .dock-slot {
       /* 固定每个 dock 槽位宽度，确保 4 个图标在 dock 中均匀居中 */
-      width: 78px !important;
-      flex: 0 0 78px !important;
+      width: 64px !important;
+      flex: 0 0 64px !important;
       aspect-ratio: 1 / 1 !important;
     }
     
@@ -193,27 +217,15 @@ let isAppClickEventsInitialized = false;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
-      width: var(--desktop-icon, 56px) !important;
-      height: var(--desktop-icon, 56px) !important;
-      border-radius: 50% !important;
-      margin: 0 auto !important;
+      margin: 0 auto 8px auto !important;
       box-sizing: border-box !important;
     }
     .app-icon span {
-      display: none !important;   /* 桌面图标只显示图标（与设计稿一致） */
+      display: block !important;   /* 基础外观保留名称；M3 桌面由预设的 activeCss 隐藏 */
       width: 100% !important;
       text-align: center !important;
-      margin: 5px auto 0 auto !important;
+      margin: 0 auto !important;
       box-sizing: border-box !important;
-    }
-    /* Dock 里是胶囊按钮（形状=全圆角），比桌面圆形按钮宽 */
-    #dock-grid .app-icon .icon-wrapper {
-      width: 72px !important;
-      height: 52px !important;
-      border-radius: 26px !important;
-    }
-    #dock-grid .app-icon {
-      width: 78px !important;
     }
     .edit-mode .app-icon {
       /* 仅在编辑模式下激活触控阻断，以便进行拖动重排 */
@@ -439,7 +451,9 @@ function loadDesktopLayout() {
   const grid = document.getElementById("desktop-grid");
   const dock = document.getElementById("dock-grid");
 
-  // 0. 每页 20 格 → 28 格（4 列 × 7 行）的一次性幂等迁移
+  // 0. 读取当前桌面风格的行数 / 页宽（M3 桌面 7 行 28 格；清透凉夏等旧预设 5 行 20 格）
+  DESKTOP_ROWS = getDesktopRows();
+  DESKTOP_PAGE_SIZE = DESKTOP_COLS * DESKTOP_ROWS;
   migrateDesktopPageSize();
 
   // 1. 读取并平滑迁移老用户的非网格版布局数据，自动将其校准为 v3 版吸附格式
@@ -454,6 +468,12 @@ function loadDesktopLayout() {
       // 老数据迁移后同样写回 v3，避免后续 isAppAlreadyPlaced / placeAppOnSlot 读到 null
       while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
       localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
+    } else if (!window.__defaultPresetApplied && typeof window.applyPresetSilently === "function"
+               && window.DESKTOP_PRESETS && window.DESKTOP_PRESETS.narrative_desktop) {
+      // 全新安装：默认就是「叙事诗 · 桌面 (M3)」——大时钟 + 照片卡 + 圆形图标
+      window.__defaultPresetApplied = true;
+      window.applyPresetSilently("narrative_desktop");
+      return loadDesktopLayout();
     } else {
             desktopLayout = Array(DESKTOP_PAGE_SIZE * 2).fill(null); // 两页，每页 4 列 × 7 行
             // 规则：chat / world_book / archive 只放 Dock 栏，不占主页面格子
@@ -920,25 +940,41 @@ window.desktopTiles = {
     return box;
   },
 
-  /** 大号实时时钟 */
+  /** 大号实时时钟（字号按卡片宽度自适应，绝不换行） */
   clock(box, cfg) {
     box.style.display = "flex";
     box.style.alignItems = "center";
     box.style.justifyContent = "center";
+    box.style.overflow = "hidden";
     const t = document.createElement("div");
-    const size = cfg.size || 104;
-    t.style.cssText = "font-size:" + size + "px;font-weight:700;line-height:1;letter-spacing:2px;" +
+    const maxSize = cfg.size || 88;
+    t.style.cssText = "font-weight:700;line-height:1;letter-spacing:1px;white-space:nowrap;" +
       "color:" + (cfg.color || "#3757BA") + ";font-variant-numeric:tabular-nums;text-shadow:0 6px 22px rgba(55,87,186,.18);";
     box.appendChild(t);
+    // 按卡片可用宽度收缩字号：宁可小一点，也不许换行把下面挤走
+    const fit = () => {
+      const w = box.clientWidth;
+      if (!w) return;
+      let fs = maxSize;
+      t.style.fontSize = fs + "px";
+      let guard = 0;
+      while (t.scrollWidth > w - 4 && fs > 22 && guard++ < 60) {
+        fs -= 2;
+        t.style.fontSize = fs + "px";
+      }
+    };
     const tick = () => {
       if (t.__dead) return;
       const n = new Date();
       t.textContent = String(n.getHours()).padStart(2, "0") + (cfg.colon || "：") + String(n.getMinutes()).padStart(2, "0");
+      fit();
       // 首次同步绘制时节点可能还没进 DOM（renderLayout 末尾才 appendChild），
       // 所以只在「已挂载过」之后才用 isConnected 判断是否已被移除并自停。
       if (t.__armed && !t.isConnected) { t.__dead = true; clearInterval(t.__timer); }
     };
     tick();
+    // 进 DOM 之后再量两次，保证第一次就得到正确的字号
+    requestAnimationFrame(() => { fit(); requestAnimationFrame(fit); });
     t.__armed = true;
     t.__timer = setInterval(tick, 15000);
   },
