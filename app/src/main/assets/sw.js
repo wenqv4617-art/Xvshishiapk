@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v74'; // v74: 反查手机立即关闭聊天详情+临时切人设+对线行为多样化; 开屏羽毛笔重绘; v1.4.3
+const CACHE_NAME = 'story-phone-v75'; // v75: 点完偷看弹窗立刻离开聊天详情页(消除卡顿观感); v1.4.4
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

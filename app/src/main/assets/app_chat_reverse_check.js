@@ -399,6 +399,15 @@
   // ==================== 主流程 ====================
   async function runReverseCheck(sessionId) {
     if (state.running) return;
+    // 用户点完弹窗就立刻离开详情页/对话页：不要让人盯着聊天详情发呆（真机反馈的"卡住"）
+    try {
+      if (typeof openApp === 'function') openApp('chat');
+      var dPanel = document.getElementById('chat-details-panel');
+      if (dPanel && dPanel.classList.contains('active') && typeof closeChatDetails === 'function') closeChatDetails();
+      var cPanel = document.getElementById('chat-dialog-panel');
+      if (cPanel && cPanel.classList.contains('active') && typeof closeChatDialog === 'function') closeChatDialog();
+    } catch (e) {}
+
     var sess = await loadSession(sessionId);
     if (!sess) { if (typeof showToast === 'function') showToast('找不到该会话'); return; }
 
