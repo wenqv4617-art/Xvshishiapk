@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v78'; // v78: 衣柜衣架轨道+摆动动效/档案性别字段/手动记录补生理期与生病; v1.5.2
+const CACHE_NAME = 'story-phone-v79'; // v79: 仪轨 Bento 方块墙/备忘录待办/衣柜透明底大图+编辑; v1.5.3
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

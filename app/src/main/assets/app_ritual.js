@@ -16,7 +16,6 @@
   'use strict';
 
   var LS_SUBJECT = 'yigui-subject';        // 记住上次看的人： "user:7" / "char:100"
-  var LS_EXPAND = 'yigui-expanded';        // 折叠状态
   var LS_WARDROBE_CATS = 'yigui-wardrobe-cats-'; // + subjectKey
   var DEFAULT_CATS = ['上装', '下装', '外套', '鞋', '配饰', '其他'];
 
@@ -30,7 +29,6 @@
     currentState: null,
     loading: false,
     monthIndex: {},
-    expanded: { schedule: true, attire: false, belongings: false, location: false, special: false, note: false },
     wardrobe: { open: false, cat: '上装', cats: DEFAULT_CATS.slice(), items: [] }
   };
 
@@ -66,6 +64,9 @@
     heart: '<path d="M12 20.3l-1.3-1.2C6 14.7 3 12 3 8.7A4.7 4.7 0 0 1 7.7 4c1.6 0 3.1.8 4.3 2.1A5.6 5.6 0 0 1 16.3 4 4.7 4.7 0 0 1 21 8.7c0 3.3-3 6-7.7 10.4z"/>',
     pill: '<path d="M10.5 20.5a5 5 0 0 1-7-7l6-6a5 5 0 0 1 7 7z"/><path d="M8.5 8.5l7 7"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
+    list: '<path d="M8.5 6.5h12M8.5 12h12M8.5 17.5h12"/><path d="M3.5 6.5h.01M3.5 12h.01M3.5 17.5h.01"/>',
+    memo: '<path d="M6 3h9l5 5v13H6z"/><path d="M14 3v5h5"/><path d="M9.5 12.5h6M9.5 16h4"/>',
+    image: '<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/>',
     wardrobe: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 3v18M7 8h2M15 8h2"/>'
   };
 
@@ -191,16 +192,17 @@
   // ==================== 底部抽屉 / 卡片（自制，无原生弹窗） ====================
   function sheet(opts) {
     var el = document.createElement('div');
+    var tone = opts.tone || null;
     el.className = 'yg-sheet-mask';
     el.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:100700;display:flex;align-items:flex-end;justify-content:center;' +
       'background:rgba(15,23,42,0.42);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);';
     el.innerHTML =
-      '<div class="yg-sheet-card" style="width:100%;max-width:440px;max-height:86vh;overflow-y:auto;background:#fff;border-radius:20px 20px 0 0;' +
+      '<div class="yg-sheet-card" style="width:100%;max-width:440px;max-height:86vh;overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:contain;background:#fff;border-radius:20px 20px 0 0;' +
         'padding:16px 14px 26px;box-sizing:border-box;animation:ygUp .22s cubic-bezier(.2,.8,.25,1);">' +
         '<div style="width:36px;height:4px;border-radius:99px;background:#e2e8f0;margin:0 auto 14px;"></div>' +
         '<div style="display:flex;align-items:center;gap:8px;padding:0 2px;margin-bottom:12px;">' +
-          '<span style="display:flex;color:#1e88e5;">' + svg(opts.icon || ICO.note, 17, '#1e88e5') + '</span>' +
-          '<div style="flex:1;font-size:15px;font-weight:800;color:#1e293b;">' + esc(opts.title || '') + '</div>' +
+          '<span style="display:flex;color:' + (tone ? tone.icon : '#1e88e5') + ';' + (tone ? 'background:' + tone.tint + ';border-radius:10px;padding:5px;' : '') + '">' + svg(opts.icon || ICO.note, 17, tone ? tone.icon : '#1e88e5') + '</span>' +
+          '<div style="flex:1;font-size:15px;font-weight:800;color:' + (tone ? tone.accent : '#1e293b') + ';">' + esc(opts.title || '') + '</div>' +
           '<button class="yg-sheet-close" style="border:none;background:#f1f5f9;border-radius:9px;padding:6px 9px;color:#64748b;cursor:pointer;display:flex;">' +
             svg(ICO.close, 13, '#64748b') + '</button>' +
         '</div>' +
@@ -346,24 +348,49 @@
     });
   }
 
-  // ==================== 折叠入口 ====================
-  function saveExpanded() {
-    try { localStorage.setItem(LS_EXPAND, JSON.stringify(state.expanded)); } catch (e) {}
+  // ==================== Bento 方块 ====================
+  // 参考 Bento Grid 规范：一个 2 列网格，不同 span 表达信息优先级（hero 2×2 / 宽条 2×1 / 小方块 1×1），
+  // 统一圆角、内边距与字号节奏，配色只用淡彩（颜色用来分组，不用来补偿层级）。
+  var TONE = {
+    schedule: { tint: '#eef4ff', border: '#dbe7fb', accent: '#2f6fd0', icon: '#3b82f6' },
+    attire: { tint: '#f4f0ff', border: '#e4dcfb', accent: '#6a55c8', icon: '#8b5cf6' },
+    belongings: { tint: '#ecfaf6', border: '#d3f0e7', accent: '#1a8a70', icon: '#10b981' },
+    location: { tint: '#fff6e9', border: '#fbe6c7', accent: '#b0742a', icon: '#f59e0b' },
+    special: { tint: '#fff1f4', border: '#fbdae3', accent: '#c2415c', icon: '#f43f5e' },
+    memo: { tint: '#f2f9ec', border: '#dcefd2', accent: '#4c7a3c', icon: '#65a30d' }
+  };
+  function ensureDayStyle() {
+    if (document.getElementById('ygDayStyle')) return;
+    var st = document.createElement('style');
+    st.id = 'ygDayStyle';
+    st.textContent =
+      '.yg-tile{transition:transform .16s ease,box-shadow .16s ease;}' +
+      '.yg-tile:active{transform:scale(.972);}' +
+      '.yg-tile-chev{display:flex;color:#b9c4d2;flex-shrink:0;}' +
+      '.yg-tile-more{font-size:10px;font-weight:800;color:#94a3b8;}' +
+      '.yg-bento{display:grid;grid-template-columns:1fr 1fr;gap:10px;grid-auto-rows:minmax(78px,auto);}';
+    document.head.appendChild(st);
   }
-  function entryHtml(key, icon, title, summary, bodyHtml) {
-    var open = !!state.expanded[key];
-    return '<div class="yg-entry" style="background:#fff;border:1px solid ' + (open ? '#dbe7f3' : '#eef2f7') + ';border-radius:16px;margin-bottom:10px;overflow:hidden;' +
-        'transition:border-color .18s;">' +
-      '<div class="yg-entry-head" data-k="' + key + '" style="display:flex;align-items:center;gap:11px;padding:12px 13px;cursor:pointer;user-select:none;">' +
-        '<span style="width:34px;height:34px;border-radius:11px;background:' + (open ? 'rgba(30,136,229,0.12)' : 'rgba(30,136,229,0.07)') + ';display:flex;align-items:center;justify-content:center;flex-shrink:0;color:#1e88e5;">' + svg(icon, 17, '#1e88e5') + '</span>' +
-        '<div style="flex:1;min-width:0;">' +
-          '<div style="font-size:13.5px;font-weight:800;color:#1e293b;">' + esc(title) + '</div>' +
-          '<div style="font-size:11px;color:#94a3b8;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + summary + '</div>' +
-        '</div>' +
-        '<span style="display:flex;color:#cbd5e1;flex-shrink:0;transition:transform .2s;' + (open ? 'transform:rotate(180deg);' : '') + '">' + svg(ICO.chevronDown, 16, '#cbd5e1') + '</span>' +
+  /** 一个方块：k=类型 icon=图标 title=标题 c/r=grid 占位 badge=右上角小标 preview=内容 */
+  function bento(k, icon, title, c, r, badge, preview) {
+    var t = TONE[k] || TONE.schedule;
+    return '<div class="yg-tile" data-k="' + k + '" style="grid-column:' + c + ';grid-row:' + r + ';background:' + t.tint + ';border:1px solid ' + t.border + ';' +
+        'border-radius:18px;padding:11px 12px;box-sizing:border-box;display:flex;flex-direction:column;gap:7px;cursor:pointer;overflow:hidden;min-width:0;">' +
+      '<div style="display:flex;align-items:center;gap:6px;min-width:0;">' +
+        '<span style="width:24px;height:24px;border-radius:8px;background:rgba(255,255,255,.78);display:flex;align-items:center;justify-content:center;flex-shrink:0;">' + svg(icon, 13, t.icon) + '</span>' +
+        '<span style="flex:1;min-width:0;font-size:11px;font-weight:800;color:' + t.accent + ';letter-spacing:.4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(title) + '</span>' +
+        (badge || '') +
+        '<span class="yg-tile-chev">' + svg('<path d="M9 18l6-6-6-6"/>', 11, '#b9c4d2') + '</span>' +
       '</div>' +
-      (open ? '<div style="padding:0 13px 13px;">' + bodyHtml + '</div>' : '') +
+      '<div style="flex:1;min-width:0;font-size:11.5px;line-height:1.62;color:#4a5568;overflow:hidden;">' + preview + '</div>' +
     '</div>';
+  }
+  function badgePill(text, tone) {
+    var t = TONE[tone] || TONE.schedule;
+    return '<span style="flex-shrink:0;font-size:9.5px;font-weight:800;color:' + t.accent + ';background:rgba(255,255,255,.85);border-radius:7px;padding:2px 6px;">' + esc(text) + '</span>';
+  }
+  function twoLines(s) {
+    return '<div style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">' + esc(s) + '</div>';
   }
 
   function scheduleHtml(list) {
@@ -387,10 +414,15 @@
   }
 
   function skeletonHtml() {
-    var bar = '<div style="height:11px;border-radius:6px;background:linear-gradient(90deg,#f1f5f9,#e2e8f0,#f1f5f9);background-size:200% 100%;animation:ygShimmer 1.1s linear infinite;"></div>';
-    return '<div style="background:#fff;border:1px solid #eef2f7;border-radius:16px;padding:13px;margin-bottom:10px;">' + bar + '<div style="height:7px;"></div>' + bar + '<div style="height:7px;"></div>' + bar + '</div>' +
-      '<div style="background:#fff;border:1px solid #eef2f7;border-radius:16px;padding:13px;margin-bottom:10px;">' + bar + '</div>' +
-      '<div style="background:#fff;border:1px solid #eef2f7;border-radius:16px;padding:13px;">' + bar + '</div>';
+    var bar = '<div style="height:11px;border-radius:6px;background:linear-gradient(90deg,rgba(255,255,255,.5),rgba(255,255,255,.9),rgba(255,255,255,.5));background-size:200% 100%;animation:ygShimmer 1.1s linear infinite;"></div>';
+    return '<div class="yg-bento">' +
+      '<div style="grid-column:1 / 3;grid-row:1 / 3;background:#eef4ff;border:1px solid #dbe7fb;border-radius:18px;padding:13px;display:flex;flex-direction:column;gap:9px;">' + bar + bar + bar + '</div>' +
+      '<div style="grid-column:1 / 2;grid-row:3 / 4;background:#f4f0ff;border:1px solid #e4dcfb;border-radius:18px;padding:13px;">' + bar + '</div>' +
+      '<div style="grid-column:2 / 3;grid-row:3 / 4;background:#ecfaf6;border:1px solid #d3f0e7;border-radius:18px;padding:13px;">' + bar + '</div>' +
+      '<div style="grid-column:1 / 3;grid-row:4 / 5;background:#fff6e9;border:1px solid #fbe6c7;border-radius:18px;padding:13px;">' + bar + '</div>' +
+      '<div style="grid-column:1 / 2;grid-row:5 / 6;background:#fff1f4;border:1px solid #fbdae3;border-radius:18px;padding:13px;">' + bar + '</div>' +
+      '<div style="grid-column:2 / 3;grid-row:5 / 6;background:#f2f9ec;border:1px solid #dcefd2;border-radius:18px;padding:13px;">' + bar + '</div>' +
+      '</div>';
   }
 
   /** 兼容旧数据：belongings 可能是字符串 */
@@ -415,6 +447,17 @@
     };
   }
 
+  /** 备忘录待办：兼容旧数据，统一为 [{id,text,done}] */
+  function normalizeTodos(v) {
+    if (!Array.isArray(v)) return [];
+    return v.map(function (x, i) {
+      if (typeof x === 'string') return { id: 't' + i, text: x, done: false };
+      return { id: String((x && x.id) || ('t' + i)), text: String((x && x.text) || (x && x.content) || ''), done: !!(x && x.done) };
+    }).filter(function (x) { return x.text; });
+  }
+  /** 备忘录正文：新字段 memo 优先，兼容旧的 note */
+  function memoTextOf(rec) { return String((rec && (rec.memo || rec.note)) || ''); }
+
   // ==================== 当日视图 ====================
   async function renderDay() {
     var box = document.getElementById('yigui-day');
@@ -438,6 +481,7 @@
     }
 
     if (!state.subject) { box.innerHTML = '<div style="padding:24px 0;text-align:center;color:#94a3b8;font-size:12px;">请先选择人物</div>'; return; }
+    ensureDayStyle();
     if (state.loading) { box.innerHTML = skeletonHtml(); return; }
 
     var rec = null;
@@ -456,14 +500,16 @@
 
     if (!rec) {
       box.innerHTML =
-        '<div style="background:#fff;border:1px dashed #e2e8f0;border-radius:16px;padding:26px 18px;text-align:center;">' +
-          '<div style="display:flex;justify-content:center;color:#cbd5e1;margin-bottom:10px;">' + svg(ICO.calendar, 30, '#cbd5e1') + '</div>' +
-          '<div style="font-size:12.5px;color:#94a3b8;line-height:1.7;margin-bottom:14px;">' +
-            (isUser ? '这一天还没有记录。<br>可以自己写，也可以让 AI 按人设推演。' : '这一天还没有' + esc(state.subject.name) + '的状态记录。<br>让 AI 依据人设与剧情推演一下？') +
+        '<div style="background:linear-gradient(180deg,#f7fbff,#fff 70%);border:1px dashed #dbe7fb;border-radius:20px;padding:28px 18px;text-align:center;">' +
+          '<div style="display:flex;justify-content:center;margin-bottom:12px;">' +
+            '<span style="width:54px;height:54px;border-radius:19px;background:#eef4ff;display:flex;align-items:center;justify-content:center;">' + svg(ICO.calendar, 26, '#3b82f6') + '</span>' +
+          '</div>' +
+          '<div style="font-size:12.5px;color:#94a3b8;line-height:1.8;margin-bottom:16px;">' +
+            (isUser ? '这一天还没有记录。<br>可以自己写（日程 / 穿着 / 随身 / 位置 / 情况 / 备忘录），也可以让 AI 按人设推演。' : '这一天还没有' + esc(state.subject.name) + '的状态记录。<br>让 AI 依据人设与剧情推演一下？') +
           '</div>' +
           '<div style="display:flex;gap:8px;justify-content:center;">' +
-            '<button id="yg-empty-ai" style="display:flex;align-items:center;gap:6px;padding:10px 16px;border:none;background:#1e88e5;color:#fff;border-radius:11px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;">' + svg(ICO.spark, 13, '#fff') + 'AI 推演</button>' +
-            '<button id="yg-empty-manual" style="display:flex;align-items:center;gap:6px;padding:10px 16px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:11px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;">' + svg(ICO.edit, 13, '#475569') + '自己写</button>' +
+            '<button id="yg-empty-ai" style="display:flex;align-items:center;gap:6px;padding:11px 18px;border:none;background:#2f6fd0;color:#fff;border-radius:13px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;">' + svg(ICO.spark, 13, '#fff') + 'AI 推演</button>' +
+            '<button id="yg-empty-manual" style="display:flex;align-items:center;gap:6px;padding:11px 18px;border:1.5px solid #dbe7fb;background:#fff;color:#2f6fd0;border-radius:13px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;">' + svg(ICO.edit, 13, '#2f6fd0') + '自己写</button>' +
           '</div>' +
         '</div>';
       var b1 = document.getElementById('yg-empty-ai'); if (b1) b1.onclick = function () { generateState(ds); };
@@ -479,37 +525,50 @@
       ? '<span style="font-size:9.5px;font-weight:800;color:#1e88e5;background:rgba(30,136,229,.10);padding:2px 6px;border-radius:6px;">AI 推演</span>'
       : '<span style="font-size:9.5px;font-weight:800;color:#64748b;background:#f1f5f9;padding:2px 6px;border-radius:6px;">手动填写</span>';
 
+    var todos = normalizeTodos(rec.todos);
+    var todoDone = todos.filter(function (t) { return t.done; }).length;
+    var memoText = memoTextOf(rec);
+
     var specialSummary = [];
     if (sp.menstruation.on) specialSummary.push('生理期' + (sp.menstruation.level ? '·' + sp.menstruation.level : ''));
     if (sp.illness.on) specialSummary.push(sp.illness.name || '身体不适');
-    var specialBody =
-      '<div style="display:flex;flex-direction:column;gap:12px;">' +
-        (allowMen
-          ? '<div style="background:#fff5f7;border:1px solid #ffe0e7;border-radius:12px;padding:11px 12px;">' +
-              '<div style="display:flex;align-items:center;justify-content:space-between;">' +
-                '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#c2415c;">' + svg(ICO.heart, 14, '#c2415c') + '生理期</span>' +
-                '<span style="font-size:11px;font-weight:800;color:' + (sp.menstruation.on ? '#c2415c' : '#cbd5e1') + ';">' + (sp.menstruation.on ? '进行中' : '无') + '</span>' +
-              '</div>' +
-              (sp.menstruation.on ? '<div style="font-size:11.5px;color:#8a5b67;margin-top:6px;line-height:1.6;">' +
-                (sp.menstruation.level ? '状态：' + esc(sp.menstruation.level) + '<br>' : '') +
-                (sp.menstruation.note ? esc(sp.menstruation.note) : '') + '</div>' : '') +
-            '</div>'
-          : '') +
-        '<div style="background:#f6f8ff;border:1px solid #e3e9fb;border-radius:12px;padding:11px 12px;">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;">' +
-            '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#3b5bdb;">' + svg(ICO.pill, 14, '#3b5bdb') + '生病 / 不适</span>' +
-            '<span style="font-size:11px;font-weight:800;color:' + (sp.illness.on ? '#3b5bdb' : '#cbd5e1') + ';">' + (sp.illness.on ? '进行中' : '无') + '</span>' +
-          '</div>' +
-          (sp.illness.on ? '<div style="font-size:11.5px;color:#5a6b96;margin-top:6px;line-height:1.6;">' +
-            (sp.illness.name ? '症状：' + esc(sp.illness.name) + '<br>' : '') +
-            (sp.illness.level ? '程度：' + esc(sp.illness.level) + '<br>' : '') +
-            (sp.illness.note ? esc(sp.illness.note) : '') + '</div>' : '') +
-        '</div>' +
-        '<button id="yg-special-edit" style="width:100%;padding:11px;border:1.5px solid #e2e8f0;background:#fff;border-radius:11px;font-size:12px;font-weight:800;color:#475569;cursor:pointer;font-family:inherit;">编辑今天的情况</button>' +
-      '</div>';
 
+    // 此刻正在进行的日程（用于 hero 方块高亮 + 位置方块角标）
+    var nowMin = (function () { var n = new Date(); return n.getHours() * 60 + n.getMinutes(); })();
+    var nowItem = null;
+    for (var qi = 0; qi < schedule.length; qi++) {
+      var qrg = rangeOf(schedule[qi].time);
+      if (qrg.from >= 0 && nowMin >= qrg.from && nowMin < qrg.to) { nowItem = schedule[qi]; break; }
+    }
+
+    var schedPreview = schedule.length
+      ? schedule.slice(0, 3).map(function (it, i) {
+          var isNow = nowItem === it;
+          return '<div style="display:flex;gap:7px;align-items:baseline;' + (i ? 'margin-top:5px;' : '') + '">' +
+            '<span style="flex-shrink:0;min-width:33px;font-size:10px;font-weight:800;color:' + (isNow ? '#2f6fd0' : '#8ea2bd') + ';">' + esc(String(it.time || '').split('-')[0]) + '</span>' +
+            '<span style="flex:1;min-width:0;font-size:11.5px;line-height:1.5;color:' + (isNow ? '#1e3a8a' : '#4a5568') + ';font-weight:' + (isNow ? 700 : 400) + ';white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (it.place ? esc(it.place) + ' · ' : '') + esc(it.content) + '</span>' +
+          '</div>';
+        }).join('') + (schedule.length > 3 ? '<div class="yg-tile-more" style="margin-top:6px;">还有 ' + (schedule.length - 3) + ' 条…</div>' : '')
+      : '<span style="color:#9db0c9;">今天还没有安排</span>';
+
+    var attirePreview = rec.attire ? twoLines(rec.attire) : '<span style="color:#b3bcd8;">还没记录穿着</span>';
+    var belongPreview = belongings.length
+      ? '<div style="font-size:11.5px;line-height:1.65;">' + esc(belongings.slice(0, 3).map(function (b) { return b.name; }).join('、')) + (belongings.length > 3 ? ' 等' : '') + '</div>'
+      : '<span style="color:#a9c9bf;">还没记录随身物品</span>';
+    var locPreview = rec.location ? twoLines(rec.location) : '<span style="color:#d0b391;">还没记录位置</span>';
+    var spPreview = specialSummary.length
+      ? '<div style="display:flex;flex-wrap:wrap;gap:5px;">' + specialSummary.map(function (x) {
+          return '<span style="font-size:10px;font-weight:800;color:#c2415c;background:rgba(255,255,255,.88);border-radius:7px;padding:2px 6px;">' + esc(x) + '</span>';
+        }).join('') + '</div>'
+      : '<span style="color:#d3a9b6;">' + (allowMen ? '生理期 / 生病都没记' : '身体都还好') + '</span>';
+    var memoPreview = (memoText || todos.length)
+      ? (memoText ? twoLines(memoText) : '') +
+        (todos.length ? '<div style="display:flex;align-items:center;gap:4px;' + (memoText ? 'margin-top:6px;' : '') + 'font-size:10.5px;font-weight:800;color:#4c7a3c;">' + svg(ICO.check, 10, '#65a30d') + todoDone + '/' + todos.length + ' 已完成</div>' : '')
+      : '<span style="color:#b5c9a8;">还没有备忘</span>';
+
+    ensureDayStyle();
     box.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px;">' +
         '<div style="display:flex;align-items:center;gap:6px;">' + srcTag +
           '<span style="font-size:10.5px;color:#cbd5e1;">' + (rec.updatedAt ? new Date(rec.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '') + '</span>' +
         '</div>' +
@@ -518,51 +577,19 @@
           '<button id="yg-del-btn" style="display:flex;align-items:center;gap:4px;padding:6px 10px;border:1.5px solid #fecaca;background:#fff;border-radius:9px;font-size:11px;font-weight:700;color:#ef4444;cursor:pointer;font-family:inherit;">' + svg(ICO.trash, 12, '#ef4444') + '删除</button>' +
         '</div>' +
       '</div>' +
-      entryHtml('schedule', ICO.clock, '今日日程', schedule.length ? (schedule.length + ' 项 · ' + esc(String(schedule[0].content).slice(0, 18))) : '还没有安排', scheduleHtml(schedule)) +
-      entryHtml('attire', ICO.shirt, '穿着', rec.attire ? esc(String(rec.attire).slice(0, 30)) : '未记录',
-        (rec.attire ? '<div style="font-size:12.5px;line-height:1.72;color:#334155;margin-bottom:10px;">' + esc(rec.attire) + '</div>' : '<div style="font-size:12px;color:#cbd5e1;margin-bottom:10px;">今天还没记录穿着</div>') +
-        '<button id="yg-open-wardrobe" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:10px;border:1.5px solid #e2e8f0;background:#fff;border-radius:11px;font-size:12px;font-weight:800;color:#475569;cursor:pointer;font-family:inherit;">' + svg(ICO.wardrobe, 13, '#475569') + '打开衣柜</button>') +
-      entryHtml('belongings', ICO.bag, '随身物品', belongings.length ? (belongings.length + ' 件 · ' + esc(belongings.slice(0, 3).map(function (b) { return b.name; }).join('、'))) : '未记录',
-        belongings.length
-          ? '<div style="display:flex;flex-direction:column;gap:7px;">' + belongings.map(function (b, i) {
-              return '<div class="yg-belong" data-i="' + i + '" style="display:flex;align-items:center;gap:9px;padding:9px 11px;background:#f8fafc;border-radius:11px;cursor:pointer;">' +
-                '<span style="display:flex;color:#64748b;flex-shrink:0;">' + svg(ICO.box, 14, '#64748b') + '</span>' +
-                '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(b.name) + '</span>' +
-                (b.note ? '<span style="font-size:10px;color:#94a3b8;flex-shrink:0;">详情</span>' : '') +
-                '<span style="display:flex;color:#cbd5e1;flex-shrink:0;">' + svg('<path d="M9 18l6-6-6-6"/>', 12, '#cbd5e1') + '</span>' +
-              '</div>';
-            }).join('') + '</div>'
-          : '<div style="font-size:12px;color:#cbd5e1;">今天还没记录随身物品</div>') +
-      entryHtml('location', ICO.pin, '当前位置', rec.location ? esc(String(rec.location).slice(0, 30)) : '未记录',
-        rec.location ? '<div style="font-size:12.5px;line-height:1.72;color:#334155;">' + esc(rec.location) + '</div>' : '<div style="font-size:12px;color:#cbd5e1;">今天还没记录位置</div>') +
-      entryHtml('special', ICO.heart, '今天的情况', specialSummary.length ? specialSummary.join(' · ') : (allowMen ? '生理期 / 生病 都可以记在这里' : '生病 / 不适 可以记在这里'), specialBody) +
-      (rec.note ? entryHtml('note', ICO.note, '备注', esc(String(rec.note).slice(0, 30)), '<div style="font-size:12.5px;line-height:1.72;color:#334155;">' + esc(rec.note) + '</div>') : '');
+      '<div class="yg-bento">' +
+        bento('schedule', ICO.clock, '今日日程', '1 / 3', '1 / 3', schedule.length ? badgePill(schedule.length + ' 项', 'schedule') : '', schedPreview) +
+        bento('attire', ICO.shirt, '穿着', '1 / 2', '3 / 4', '', attirePreview) +
+        bento('belongings', ICO.bag, '随身物品', '2 / 3', '3 / 4', belongings.length ? badgePill(belongings.length + ' 件', 'belongings') : '', belongPreview) +
+        bento('location', ICO.pin, '当前位置', '1 / 3', '4 / 5', nowItem && nowItem.place ? badgePill('此刻', 'location') : '', locPreview) +
+        bento('special', ICO.heart, '今天的情况', '1 / 2', '5 / 6', '', spPreview) +
+        bento('memo', ICO.memo, '备忘录', '2 / 3', '5 / 6', todos.length ? badgePill(todos.length + ' 条', 'memo') : '', memoPreview) +
+      '</div>';
 
-    // 折叠交互
-    box.querySelectorAll('.yg-entry-head').forEach(function (h) {
-      h.onclick = function () {
-        var k = h.getAttribute('data-k');
-        state.expanded[k] = !state.expanded[k];
-        saveExpanded();
-        renderDay();
-      };
+    // 方块 → 精美详情卡片
+    box.querySelectorAll('.yg-tile').forEach(function (tile) {
+      tile.onclick = function () { openDayDetail(tile.getAttribute('data-k')); };
     });
-    // 随身物品详情
-    box.querySelectorAll('.yg-belong').forEach(function (row) {
-      row.onclick = function () {
-        var b = belongings[Number(row.getAttribute('data-i'))];
-        if (!b) return;
-        sheet({
-          title: b.name, icon: ICO.box,
-          body: '<div style="font-size:12.5px;line-height:1.8;color:#334155;">' +
-            (b.note ? esc(b.note) : '<span style="color:#cbd5e1;">这件物品还没有详情，点「编辑」补上吧。</span>') + '</div>'
-        });
-      };
-    });
-    var wb = document.getElementById('yg-open-wardrobe');
-    if (wb) wb.onclick = function () { openWardrobe(); };
-    var spBtn = document.getElementById('yg-special-edit');
-    if (spBtn) spBtn.onclick = function () { openSpecialEditor(ds); };
     var eb = document.getElementById('yg-edit-btn'); if (eb) eb.onclick = function () { openEditor(ds); };
     var del = document.getElementById('yg-del-btn');
     if (del) del.onclick = async function () {
@@ -573,6 +600,149 @@
       await refreshMonth();
       await renderDay();
     };
+  }
+
+  // ==================== 方块详情卡片 ====================
+  function cardSection(title, inner, tint) {
+    return '<div style="background:' + (tint || '#fff') + ';border:1px solid rgba(148,163,184,.16);border-radius:16px;padding:13px;margin-bottom:10px;">' +
+      (title ? '<div style="font-size:10.5px;font-weight:800;color:#94a3b8;letter-spacing:.5px;margin-bottom:8px;">' + esc(title) + '</div>' : '') +
+      inner + '</div>';
+  }
+  function iconOf(kind) {
+    return kind === 'schedule' ? ICO.clock : (kind === 'attire' ? ICO.shirt : (kind === 'belongings' ? ICO.bag : (kind === 'location' ? ICO.pin : (kind === 'special' ? ICO.heart : ICO.memo))));
+  }
+  function bigCard(kind, title, inner) {
+    var t = TONE[kind] || TONE.schedule;
+    return '<div style="background:linear-gradient(180deg,' + t.tint + ',#fff 62%);border:1px solid ' + t.border + ';border-radius:18px;padding:16px;margin-bottom:12px;">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">' +
+        '<span style="width:30px;height:30px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;">' + svg(iconOf(kind), 15, t.icon) + '</span>' +
+        '<div style="font-size:13px;font-weight:800;color:' + t.accent + ';">' + esc(title) + '</div>' +
+      '</div>' + inner + '</div>';
+  }
+
+  function openDayDetail(kind) {
+    var ds = state.selectedDate || todayStr();
+    var rec = state.currentState;
+    if (!rec) return;
+    var allowMen = canMenstruate(state.subject);
+    var schedule = normalizeSchedule(rec.schedule);
+    var belongings = normalizeBelongings(rec.belongings);
+    var sp = specialOf(rec, allowMen);
+    var todos = normalizeTodos(rec.todos);
+    var memoText = memoTextOf(rec);
+    var t = TONE[kind] || TONE.schedule;
+    var body = '';
+    var title = '';
+
+    if (kind === 'schedule') {
+      title = '今日日程';
+      body = bigCard('schedule', prettyDate(ds) + ' 的安排', scheduleHtml(schedule));
+    } else if (kind === 'attire') {
+      title = '穿着';
+      body = bigCard('attire', '今天穿什么', rec.attire
+        ? '<div style="font-size:13px;line-height:1.85;color:#334155;">' + esc(rec.attire) + '</div>'
+        : '<div style="font-size:12.5px;color:#94a3b8;line-height:1.8;">今天还没记录穿着。<br>可以从衣柜里挑一件「记入今天穿着」。</div>') +
+        '<button id="yg-open-wardrobe" style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:12px;border:none;background:#6a55c8;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">' + svg(ICO.wardrobe, 14, '#fff') + '打开衣柜</button>';
+    } else if (kind === 'belongings') {
+      title = '随身物品';
+      body = bigCard('belongings', '今天带着的东西', belongings.length
+        ? '<div style="display:flex;flex-direction:column;gap:8px;">' + belongings.map(function (b, i) {
+            return '<div class="yg-belong" data-i="' + i + '" style="display:flex;align-items:center;gap:9px;padding:11px 12px;background:#fff;border:1px solid rgba(148,163,184,.16);border-radius:13px;cursor:pointer;">' +
+              '<span style="display:flex;color:#1a8a70;flex-shrink:0;">' + svg(ICO.box, 15, '#1a8a70') + '</span>' +
+              '<span style="flex:1;min-width:0;font-size:12.5px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(b.name) + '</span>' +
+              (b.note ? '<span style="font-size:10px;color:#94a3b8;flex-shrink:0;">详情</span>' : '') +
+              '<span style="display:flex;color:#cbd5e1;flex-shrink:0;">' + svg('<path d="M9 18l6-6-6-6"/>', 12, '#cbd5e1') + '</span>' +
+            '</div>';
+          }).join('') + '</div>'
+        : '<div style="font-size:12.5px;color:#94a3b8;">今天还没记录随身物品。</div>');
+    } else if (kind === 'location') {
+      title = '当前位置';
+      body = bigCard('location', '此刻在哪', rec.location
+        ? '<div style="font-size:13px;line-height:1.85;color:#334155;">' + esc(rec.location) + '</div>'
+        : '<div style="font-size:12.5px;color:#94a3b8;">今天还没记录位置。</div>');
+    } else if (kind === 'special') {
+      title = '今天的情况';
+      body = bigCard('special', '身体状态',
+        (allowMen
+          ? '<div style="background:#fff;border:1px solid #fbdae3;border-radius:14px;padding:12px;margin-bottom:9px;">' +
+              '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+                '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#c2415c;">' + svg(ICO.heart, 14, '#c2415c') + '生理期</span>' +
+                '<span style="font-size:11px;font-weight:800;color:' + (sp.menstruation.on ? '#c2415c' : '#cbd5e1') + ';">' + (sp.menstruation.on ? '进行中' : '无') + '</span>' +
+              '</div>' +
+              (sp.menstruation.on ? '<div style="font-size:12px;color:#8a5b67;margin-top:7px;line-height:1.7;">' +
+                (sp.menstruation.level ? '状态：' + esc(sp.menstruation.level) + '<br>' : '') + (sp.menstruation.note ? esc(sp.menstruation.note) : '') + '</div>' : '') +
+            '</div>'
+          : '') +
+        '<div style="background:#fff;border:1px solid #e3e9fb;border-radius:14px;padding:12px;">' +
+          '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+            '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#3b5bdb;">' + svg(ICO.pill, 14, '#3b5bdb') + '生病 / 不适</span>' +
+            '<span style="font-size:11px;font-weight:800;color:' + (sp.illness.on ? '#3b5bdb' : '#cbd5e1') + ';">' + (sp.illness.on ? '进行中' : '无') + '</span>' +
+          '</div>' +
+          (sp.illness.on ? '<div style="font-size:12px;color:#5a6b96;margin-top:7px;line-height:1.7;">' +
+            (sp.illness.name ? '症状：' + esc(sp.illness.name) + '<br>' : '') +
+            (sp.illness.level ? '程度：' + esc(sp.illness.level) + '<br>' : '') +
+            (sp.illness.note ? esc(sp.illness.note) : '') + '</div>' : '') +
+        '</div>') +
+        '<button id="yg-special-edit" style="display:block;width:100%;margin-top:11px;padding:12px;border:none;background:#c2415c;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">编辑今天的情况</button>';
+    } else if (kind === 'memo') {
+      title = '备忘录';
+      var doneN = todos.filter(function (x) { return x.done; }).length;
+      body = bigCard('memo', state.subject.type === 'user' ? '我的备忘与待办' : state.subject.name + ' 的备忘与待办',
+        (memoText
+          ? '<div style="background:#fff;border:1px solid rgba(148,163,184,.16);border-radius:14px;padding:12px;margin-bottom:9px;font-size:12.5px;line-height:1.85;color:#334155;white-space:pre-wrap;">' + esc(memoText) + '</div>'
+          : '') +
+        (todos.length
+          ? '<div style="display:flex;flex-direction:column;gap:8px;">' + todos.map(function (x) {
+              return '<div class="yg-todo" data-id="' + esc(x.id) + '" style="display:flex;align-items:center;gap:10px;padding:11px 12px;background:#fff;border:1px solid rgba(148,163,184,.16);border-radius:13px;cursor:pointer;">' +
+                '<span class="yg-todo-box" style="width:19px;height:19px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;' +
+                  (x.done ? 'background:#65a30d;border:1.5px solid #65a30d;' : 'background:#fff;border:1.5px solid #cbd5e1;') + '">' + (x.done ? svg(ICO.check, 11, '#fff') : '') + '</span>' +
+                '<span style="flex:1;min-width:0;font-size:12.5px;line-height:1.5;color:' + (x.done ? '#9aa7b8' : '#334155') + ';' + (x.done ? 'text-decoration:line-through;' : '') + '">' + esc(x.text) + '</span>' +
+              '</div>';
+            }).join('') + '</div>' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px;font-size:10.5px;color:#94a3b8;">' +
+              '<span>' + doneN + ' / ' + todos.length + ' 已完成</span><span>点一下就能打勾</span></div>'
+          : '<div style="font-size:12.5px;color:#94a3b8;">还没有待办。</div>') +
+        '<div style="display:flex;gap:8px;margin-top:12px;">' +
+          '<button id="yg-memo-add" style="flex:1.2;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:none;background:#4c7a3c;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">' + svg(ICO.plus, 13, '#fff') + '添加待办</button>' +
+          '<button id="yg-memo-edit" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:1.5px solid #dcefd2;background:#fff;border-radius:13px;font-size:12.5px;font-weight:800;color:#4c7a3c;cursor:pointer;font-family:inherit;">' + svg(ICO.edit, 13, '#4c7a3c') + '编辑</button>' +
+        '</div>');
+    }
+
+    var el = sheet({ title: title, icon: iconOf(kind), tone: t, body: body });
+
+    // 随身物品逐件详情
+    el.querySelectorAll('.yg-belong').forEach(function (row) {
+      row.onclick = function () {
+        var b = belongings[Number(row.getAttribute('data-i'))];
+        if (!b) return;
+        sheet({
+          title: b.name, icon: ICO.box,
+          body: '<div style="font-size:12.5px;line-height:1.85;color:#334155;">' +
+            (b.note ? esc(b.note) : '<span style="color:#cbd5e1;">这件物品还没有详情，点「编辑」补上吧。</span>') + '</div>'
+        });
+      };
+    });
+    var wb = el.querySelector('#yg-open-wardrobe');
+    if (wb) wb.onclick = function () { closeSheet(el); openWardrobe(); };
+    var spBtn = el.querySelector('#yg-special-edit');
+    if (spBtn) spBtn.onclick = function () { closeSheet(el); openSpecialEditor(ds); };
+    // 备忘录：打勾 / 加待办 / 编辑
+    el.querySelectorAll('.yg-todo').forEach(function (row) {
+      row.onclick = async function () {
+        var id = row.getAttribute('data-id');
+        var list = normalizeTodos(rec.todos);
+        list.forEach(function (x) { if (String(x.id) === String(id)) x.done = !x.done; });
+        rec.todos = list; rec.updatedAt = Date.now();
+        try { await saveState(rec); } catch (e) {}
+        closeSheet(el);
+        await renderDay();
+        openDayDetail('memo');
+      };
+    });
+    var mAdd = el.querySelector('#yg-memo-add');
+    if (mAdd) mAdd.onclick = function () { closeSheet(el); addTodoCard(ds, 'memo'); };
+    var mEdit = el.querySelector('#yg-memo-edit');
+    if (mEdit) mEdit.onclick = function () { closeSheet(el); openMemoEditor(ds); };
   }
 
   // ==================== 特殊情况（生理期 / 生病） ====================
@@ -661,6 +831,119 @@
     };
   }
 
+  // ==================== 备忘录（备忘正文 + 待办清单） ====================
+  function ensureRecord(ds) {
+    var rec = state.currentState;
+    if (!rec || rec.date !== ds) {
+      rec = { meId: myMeId(), subjectType: state.subject.type, subjectId: Number(state.subject.id), date: ds, schedule: [], attire: '', belongings: [], location: '', note: '', special: {}, todos: [], source: 'manual' };
+    }
+    if (!Array.isArray(rec.todos)) rec.todos = normalizeTodos(rec.todos);
+    return rec;
+  }
+  function todoRowHtml(x, i) {
+    return '<div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;">' +
+      '<label style="display:flex;align-items:center;cursor:pointer;flex-shrink:0;">' +
+        '<input type="checkbox" class="yg-td-done" ' + (x.done ? 'checked' : '') + ' style="width:17px;height:17px;accent-color:#65a30d;">' +
+      '</label>' +
+      '<input class="yg-td-text" value="' + esc(x.text) + '" style="flex:1;min-width:0;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:10px;padding:9px 11px;font-size:12.5px;color:#334155;font-family:inherit;outline:none;">' +
+      '<button class="yg-td-del" style="flex-shrink:0;border:1.5px solid #f1f5f9;background:#fff;border-radius:10px;padding:8px 9px;color:#cbd5e1;cursor:pointer;display:flex;font-family:inherit;">' + svg(ICO.trash, 13, '#cbd5e1') + '</button>' +
+    '</div>';
+  }
+  function todoListHtml(todos) {
+    return '<div id="yg-td-list">' + (todos.length
+      ? todos.map(todoRowHtml).join('')
+      : '<div style="font-size:12px;color:#94a3b8;padding:2px 0 8px;">还没有待办，下面加一条吧。</div>') + '</div>';
+  }
+  function bindTodoList(root) {
+    root.querySelectorAll('.yg-td-del').forEach(function (b) {
+      b.onclick = function () {
+        var row = b.parentNode;
+        row.parentNode.removeChild(row);
+      };
+    });
+  }
+  function readTodoList(root) {
+    var out = [];
+    root.querySelectorAll('#yg-td-list > div').forEach(function (row, i) {
+      var txt = row.querySelector('.yg-td-text');
+      var cb = row.querySelector('.yg-td-done');
+      var v = txt ? txt.value.trim() : '';
+      if (!v) return;
+      out.push({ id: 't' + Date.now() + '_' + i, text: v.slice(0, 80), done: !!(cb && cb.checked) });
+    });
+    return out;
+  }
+  /** 备忘录编辑卡：备忘正文 + 待办清单 */
+  function openMemoEditor(ds) {
+    var rec = ensureRecord(ds);
+    var todos = normalizeTodos(rec.todos);
+    var el = sheet({
+      title: prettyDate(ds) + ' · 备忘录', icon: ICO.memo, tone: TONE.memo,
+      body:
+        '<div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:6px;">备忘 / 心情</div>' +
+        '<textarea id="yg-memo-text" rows="3" placeholder="随手记点什么，比如「今天想去买花」" style="width:100%;box-sizing:border-box;border:1.5px solid #dcefd2;border-radius:13px;padding:11px 12px;font-size:12.5px;line-height:1.7;color:#334155;font-family:inherit;outline:none;resize:vertical;margin-bottom:14px;">' + esc(memoTextOf(rec)) + '</textarea>' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">' +
+          '<div style="font-size:11px;font-weight:800;color:#64748b;">待办清单</div>' +
+          '<div style="font-size:10px;color:#a8b4c2;">' + (state.subject.type === 'user' ? '你加的待办会同步给角色' : '角色的待办 TA 自己知道') + '</div>' +
+        '</div>' +
+        todoListHtml(todos) +
+        '<button id="yg-td-add" style="display:flex;align-items:center;justify-content:center;gap:5px;width:100%;padding:10px;border:1.5px dashed #c9e2b8;background:#fbfdf8;border-radius:12px;font-size:12px;font-weight:800;color:#4c7a3c;cursor:pointer;font-family:inherit;margin-bottom:14px;">' + svg(ICO.plus, 12, '#4c7a3c') + '加一条待办</button>' +
+        '<button id="yg-memo-save" style="width:100%;padding:12px;border:none;background:#4c7a3c;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">保存</button>'
+    });
+    bindTodoList(el);
+    el.querySelector('#yg-td-add').onclick = function () {
+      var list = el.querySelector('#yg-td-list');
+      if (list.querySelector('.yg-td-text') && !list.querySelector('.yg-td-text').value && list.children.length === 1) { list.querySelector('.yg-td-text').focus(); return; }
+      var wrap = document.createElement('div');
+      wrap.innerHTML = todoRowHtml({ id: 'new', text: '', done: false }, 0);
+      var row = wrap.firstChild;
+      list.appendChild(row);
+      bindTodoList(el);
+      var inp = row.querySelector('.yg-td-text');
+      if (inp) inp.focus();
+      var empty = list.querySelector('div[style*="还没有待办"]');
+      if (empty) empty.remove();
+    };
+    el.querySelector('#yg-memo-save').onclick = async function () {
+      rec.memo = el.querySelector('#yg-memo-text').value.trim().slice(0, 600);
+      rec.note = rec.memo;                    // 兼容旧字段
+      rec.todos = readTodoList(el);
+      rec.updatedAt = Date.now();
+      if (!rec.source) rec.source = 'manual';
+      try { await saveState(rec); } catch (e) { await confirmCard({ title: '保存失败', message: e.message }); return; }
+      closeSheet(el);
+      toast('备忘录已保存');
+      await refreshMonth();
+      await renderDay();
+    };
+  }
+  /** 快速添加一条待办（不动其它字段） */
+  function addTodoCard(ds) {
+    var rec = ensureRecord(ds);
+    var el = sheet({
+      title: '添加待办', icon: ICO.plus, tone: TONE.memo,
+      body:
+        '<input id="yg-todo-new" placeholder="要做什么？例如：记得给妈妈打电话" style="width:100%;box-sizing:border-box;border:1.5px solid #dcefd2;border-radius:12px;padding:11px 12px;font-size:13px;color:#334155;font-family:inherit;outline:none;margin-bottom:12px;">' +
+        '<button id="yg-todo-save" style="width:100%;padding:12px;border:none;background:#4c7a3c;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">添加</button>'
+    });
+    var inp = el.querySelector('#yg-todo-new');
+    setTimeout(function () { try { inp.focus(); } catch (e) {} }, 60);
+    el.querySelector('#yg-todo-save').onclick = async function () {
+      var v = inp.value.trim();
+      if (!v) { toast('请输入待办内容'); return; }
+      var list = normalizeTodos(rec.todos);
+      list.push({ id: 't' + Date.now(), text: v.slice(0, 80), done: false });
+      rec.todos = list; rec.updatedAt = Date.now();
+      if (!rec.source) rec.source = 'manual';
+      try { await saveState(rec); } catch (e) { await confirmCard({ title: '保存失败', message: e.message }); return; }
+      closeSheet(el);
+      toast('已添加待办');
+      await refreshMonth();
+      await renderDay();
+      openDayDetail('memo');
+    };
+  }
+
   // ==================== 衣柜 ====================
   function catIcon(cat) {
     if (/上装|上衣|T恤|衬衫/.test(cat)) return ICO.shirt;
@@ -697,8 +980,9 @@
       '@keyframes ygTapSwing{0%{transform:rotate(0) scale(1)}25%{transform:rotate(-11deg) scale(1.05)}55%{transform:rotate(8deg) scale(1.03)}80%{transform:rotate(-3deg) scale(1.01)}100%{transform:rotate(0) scale(1)}}' +
       '.yg-hang{transform-origin:top center;animation:ygSwing .95s cubic-bezier(.36,.07,.19,.97) both;}' +
       '.yg-hang.tapped{animation:ygTapSwing .62s cubic-bezier(.36,.07,.19,.97);}' +
-      '.yg-hang-card{transition:transform .18s ease,box-shadow .18s ease;}' +
-      '.yg-hang:active .yg-hang-card{transform:scale(.95);box-shadow:0 2px 8px rgba(15,23,42,.08);}' +
+      '.yg-hang-card{transition:transform .18s ease;display:flex;align-items:center;justify-content:center;}' +
+      '.yg-hang-card img{width:100%;height:100%;object-fit:contain;display:block;filter:drop-shadow(0 12px 18px rgba(15,23,42,.18));}' +
+      '.yg-hang:active .yg-hang-card{transform:scale(.94);}' +
       '.yg-rail::-webkit-scrollbar{display:none;}' +
       '.yg-rail{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}' +
       '.yg-hang{scroll-snap-align:center;}';
@@ -745,18 +1029,18 @@
         esc(c) + (n ? '<span style="font-size:10px;font-weight:800;' + (on ? 'color:#dbeafe;' : 'color:#b6c2d1;') + '">' + n + '</span>' : '') + '</div>';
     }).join('') + '<div class="yg-wcat-add" style="flex-shrink:0;display:flex;align-items:center;gap:4px;padding:7px 12px;border-radius:99px;font-size:12px;font-weight:800;cursor:pointer;background:#fff;color:#1e88e5;border:1px dashed #bcd9f2;">' + svg(ICO.plus, 11, '#1e88e5') + '类别</div>';
 
-    // 衣架轨道：每件衣物 = 挂钩 + 连接杆 + 卡片，加载时依次摆动
+    // 衣架轨道：每件衣物 = 挂钩 + 连接杆 + 图片卡片，加载时依次摆动
     var hangers = items.length ? items.map(function (it, i) {
       var img = it.image
-        ? '<img src="' + esc(it.image) + '" style="width:100%;height:100%;object-fit:cover;display:block;">'
-        : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fbfcfe,#f1f5f9);color:#b9c7d6;">' + svg(catIcon(it.category), 34, '#b9c7d6') + '</div>';
-      return '<div class="yg-hang" data-id="' + it.id + '" style="animation-delay:' + (i * 70) + 'ms;flex-shrink:0;width:96px;display:flex;flex-direction:column;align-items:center;cursor:pointer;">' +
-          '<svg viewBox="0 0 44 30" width="38" height="26" fill="none" stroke="#b7c3d0" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">' +
+        ? '<img src="' + esc(it.image) + '">'
+        : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fbfcfe,#f0f4f9);border-radius:24px;">' + svg(catIcon(it.category), 58, '#b9c7d6') + '</div>';
+      return '<div class="yg-hang" data-id="' + it.id + '" style="animation-delay:' + (i * 70) + 'ms;flex-shrink:0;width:164px;display:flex;flex-direction:column;align-items:center;cursor:pointer;">' +
+          '<svg viewBox="0 0 44 30" width="54" height="36" fill="none" stroke="#b7c3d0" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">' +
             '<path d="M22 9V7a3 3 0 1 1 3-3"/><path d="M22 9 5 22h34z"/></svg>' +
-          '<div style="width:1.5px;height:8px;background:linear-gradient(180deg,#d7dee7,transparent);"></div>' +
-          '<div class="yg-hang-card" style="width:86px;height:86px;border-radius:16px;overflow:hidden;border:1px solid #eef2f7;background:#fff;box-shadow:0 6px 16px rgba(15,23,42,.06);">' + img + '</div>' +
-          '<div style="font-size:11px;font-weight:700;color:#334155;margin-top:7px;width:92px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(it.name || '未命名') + '</div>' +
-          (it.note ? '<div style="font-size:9.5px;color:#a8b4c2;width:92px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(String(it.note).slice(0, 14)) + '</div>' : '') +
+          '<div style="width:1.5px;height:10px;background:linear-gradient(180deg,#d7dee7,transparent);"></div>' +
+          '<div class="yg-hang-card" style="width:150px;height:150px;">' + img + '</div>' +
+          '<div style="font-size:12px;font-weight:700;color:#334155;margin-top:8px;width:156px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(it.name || '未命名') + '</div>' +
+          (it.note ? '<div style="font-size:10px;color:#a8b4c2;width:156px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(String(it.note).slice(0, 16)) + '</div>' : '') +
         '</div>';
     }).join('') : '';
 
@@ -777,11 +1061,11 @@
               '<span style="display:flex;align-items:center;gap:4px;font-size:10.5px;color:#c3cdd9;">' + svg('<path d="M5 12h14M15 8l4 4-4 4"/>', 11, '#c3cdd9') + '轻点查看详情</span>' +
             '</div>' +
             '<div style="flex:1;overflow:hidden;position:relative;">' +
-              '<div class="yg-rail" style="height:100%;display:flex;align-items:center;overflow-x:auto;overflow-y:hidden;padding:0 14px;">' +
-                '<div style="position:relative;display:flex;gap:14px;align-items:flex-start;flex:0 0 auto;width:max-content;min-width:100%;box-sizing:border-box;padding-top:2px;">' +
-                  '<div style="position:absolute;left:-14px;right:-14px;top:6px;height:6px;border-radius:99px;background:linear-gradient(180deg,#e7dcc9,#cbb99a);box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 2px 6px rgba(120,100,70,.14);"></div>' +
+              '<div class="yg-rail" style="height:100%;display:flex;align-items:flex-start;overflow-x:auto;overflow-y:hidden;padding:0 14px;">' +
+                '<div style="position:relative;display:flex;gap:18px;align-items:flex-start;flex:0 0 auto;width:max-content;min-width:100%;box-sizing:border-box;padding-top:10px;">' +
+                  '<div style="position:absolute;left:-14px;right:-14px;top:14px;height:6px;border-radius:99px;background:linear-gradient(180deg,#e7dcc9,#cbb99a);box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 2px 6px rgba(120,100,70,.14);"></div>' +
                   hangers +
-                  '<div style="position:absolute;left:-14px;right:-14px;bottom:-30px;height:2px;border-radius:2px;background:linear-gradient(90deg,rgba(203,185,154,0),rgba(203,185,154,.5),rgba(203,185,154,0));"></div>' +
+                  '<div style="position:absolute;left:-14px;right:-14px;bottom:-24px;height:2px;border-radius:2px;background:linear-gradient(90deg,rgba(203,185,154,0),rgba(203,185,154,.5),rgba(203,185,154,0));"></div>' +
                 '</div>' +
               '</div>' +
             '</div>'
@@ -869,17 +1153,21 @@
     reader.readAsDataURL(file);
   }
 
-  function addWardrobeItem() {
+  function addWardrobeItem(edit) {
+    var isEdit = !!(edit && edit.id);
     var el = sheet({
-      title: '添加衣物 · ' + state.wardrobe.cat, icon: ICO.wardrobe,
+      title: (isEdit ? '编辑衣物' : '添加衣物') + ' · ' + state.wardrobe.cat, icon: isEdit ? ICO.edit : ICO.wardrobe, tone: TONE.attire,
       body:
         '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">名称</div>' +
-          '<input id="yg-wi-name" placeholder="例如：米白色针织开衫" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;"></div>' +
+          '<input id="yg-wi-name" value="' + esc(isEdit ? (edit.name || '') : '') + '" placeholder="例如：米白色针织开衫" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;"></div>' +
         '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">详情（可选）</div>' +
-          '<textarea id="yg-wi-note" rows="2" placeholder="例如：羊毛混纺，袖口有点松，她最喜欢这件" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:10px 12px;font-size:12.5px;font-family:inherit;outline:none;resize:vertical;"></textarea></div>' +
-        '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">图片（可选，不上传就用内置图标）</div>' +
+          '<textarea id="yg-wi-note" rows="3" placeholder="例如：羊毛混纺，袖口有点松，她最喜欢这件" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:10px 12px;font-size:12.5px;font-family:inherit;outline:none;resize:vertical;">' + esc(isEdit ? (edit.note || '') : '') + '</textarea></div>' +
+        '<div style="margin-bottom:12px;"><div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">图片（推荐透明底 PNG，会自动去底显示）</div>' +
           '<div style="display:flex;align-items:center;gap:10px;">' +
-            '<div id="yg-wi-preview" style="width:64px;height:64px;border-radius:12px;border:1.5px dashed #cbd5e1;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#f8fafc;color:#b9c7d6;flex-shrink:0;">' + svg(catIcon(state.wardrobe.cat), 26, '#b9c7d6') + '</div>' +
+            '<div id="yg-wi-preview" style="width:86px;height:86px;border-radius:14px;display:flex;align-items:center;justify-content:center;overflow:hidden;background:#f8fafc;color:#b9c7d6;flex-shrink:0;' + (isEdit && edit.image ? '' : 'border:1.5px dashed #cbd5e1;') + '">' +
+              (isEdit && edit.image
+                ? '<img src="' + esc(edit.image) + '" style="width:100%;height:100%;object-fit:contain;display:block;">'
+                : svg(catIcon(state.wardrobe.cat), 32, '#b9c7d6')) + '</div>' +
             '<div style="flex:1;display:flex;flex-direction:column;gap:6px;">' +
               '<button id="yg-wi-pick" style="padding:9px;border:1.5px solid #e2e8f0;background:#fff;border-radius:10px;font-size:12px;font-weight:700;color:#475569;cursor:pointer;font-family:inherit;">选择 PNG 图片</button>' +
               '<button id="yg-wi-clear" style="padding:9px;border:1.5px solid #eef2f7;background:#fff;border-radius:10px;font-size:11.5px;font-weight:700;color:#94a3b8;cursor:pointer;font-family:inherit;">清除图片</button>' +
@@ -887,9 +1175,9 @@
           '</div>' +
           '<input type="file" id="yg-wi-file" accept="image/png,image/*" style="display:none;">' +
         '</div>' +
-        '<button id="yg-wi-save" style="width:100%;padding:12px;border:none;background:#1e88e5;border-radius:12px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">保存</button>'
+        '<button id="yg-wi-save" style="width:100%;padding:12px;border:none;background:#6a55c8;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">' + (isEdit ? '保存修改' : '保存') + '</button>'
     });
-    var imgData = '';
+    var imgData = isEdit ? (edit.image || '') : '';
     var prev = el.querySelector('#yg-wi-preview');
     var fileInput = el.querySelector('#yg-wi-file');
     el.querySelector('#yg-wi-pick').onclick = function () { fileInput.click(); };
@@ -897,44 +1185,56 @@
       if (!fileInput.files || !fileInput.files[0]) return;
       readImageFile(fileInput.files[0], function (dataUrl) {
         imgData = dataUrl;
-        prev.innerHTML = '<img src="' + esc(dataUrl) + '" style="width:100%;height:100%;object-fit:cover;">';
-        prev.style.borderStyle = 'solid';
-        prev.style.borderColor = '#e2e8f0';
+        prev.innerHTML = '<img src="' + esc(dataUrl) + '" style="width:100%;height:100%;object-fit:contain;display:block;">';
+        prev.style.borderStyle = 'none';
       });
     };
     el.querySelector('#yg-wi-clear').onclick = function () {
       imgData = '';
-      prev.innerHTML = svg(catIcon(state.wardrobe.cat), 26, '#b9c7d6');
+      prev.innerHTML = svg(catIcon(state.wardrobe.cat), 32, '#b9c7d6');
       prev.style.borderStyle = 'dashed';
       prev.style.borderColor = '#cbd5e1';
     };
     el.querySelector('#yg-wi-save').onclick = async function () {
       var name = el.querySelector('#yg-wi-name').value.trim();
       if (!name) { toast('请填写衣物名称'); return; }
+      var row = {
+        subjectType: state.subject.type, subjectId: Number(state.subject.id),
+        category: isEdit ? (edit.category || state.wardrobe.cat) : state.wardrobe.cat,
+        name: name,
+        note: el.querySelector('#yg-wi-note').value.trim().slice(0, 300),
+        image: imgData
+      };
       try {
-        await db.ritual_wardrobe.add({
-          subjectType: state.subject.type, subjectId: Number(state.subject.id),
-          category: state.wardrobe.cat, name: name,
-          note: el.querySelector('#yg-wi-note').value.trim().slice(0, 300),
-          image: imgData, createdAt: Date.now()
-        });
+        if (isEdit) { row.id = Number(edit.id); row.createdAt = edit.createdAt || Date.now(); await db.ritual_wardrobe.put(row); }
+        else { row.createdAt = Date.now(); await db.ritual_wardrobe.add(row); }
       } catch (e) { await confirmCard({ title: '保存失败', message: e.message }); return; }
       closeSheet(el);
-      toast('已添加到衣柜');
+      toast(isEdit ? '已保存修改' : '已添加到衣柜');
       renderWardrobe();
     };
   }
 
   function openWardrobeItem(it) {
+    var t = TONE.attire;
     var el = sheet({
-      title: it.name || '衣物', icon: catIcon(it.category),
+      title: it.name || '衣物', icon: catIcon(it.category), tone: t,
       body:
-        (it.image ? '<div style="width:100%;max-height:240px;border-radius:14px;overflow:hidden;margin-bottom:12px;background:#f8fafc;"><img src="' + esc(it.image) + '" style="width:100%;display:block;object-fit:contain;"></div>' : '') +
-        '<div style="font-size:10.5px;color:#94a3b8;margin-bottom:8px;">类别：' + esc(it.category || '') + '</div>' +
-        '<div style="font-size:12.5px;line-height:1.75;color:#334155;">' + (it.note ? esc(it.note) : '<span style="color:#cbd5e1;">还没有详情</span>') + '</div>' +
+        '<div style="display:flex;align-items:center;justify-content:center;min-height:170px;max-height:44vh;padding:6px 0 12px;">' +
+          (it.image
+            ? '<img src="' + esc(it.image) + '" style="max-width:100%;max-height:42vh;width:auto;height:auto;object-fit:contain;display:block;filter:drop-shadow(0 14px 22px rgba(15,23,42,.18));">'
+            : '<div style="width:160px;height:160px;border-radius:26px;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fbfcfe,#f0f4f9);">' + svg(catIcon(it.category), 66, '#b9c7d6') + '</div>') +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">' +
+          '<span style="font-size:10px;font-weight:800;color:' + t.accent + ';background:' + t.tint + ';border-radius:7px;padding:3px 7px;">' + esc(it.category || '未分类') + '</span>' +
+          (it.createdAt ? '<span style="font-size:10px;color:#c3cdd9;">' + new Date(it.createdAt).toLocaleDateString('zh-CN') + ' 加入</span>' : '') +
+        '</div>' +
+        '<div style="font-size:12.5px;line-height:1.8;color:#334155;background:#f8fafc;border-radius:13px;padding:12px;">' +
+          (it.note ? esc(it.note) : '<span style="color:#cbd5e1;">还没有详情，点「编辑」补上吧。</span>') + '</div>' +
         '<div style="display:flex;gap:8px;margin-top:16px;">' +
-          '<button id="yg-wi-wear" style="flex:1.2;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:none;background:#1e88e5;border-radius:12px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">' + svg(ICO.check, 13, '#fff') + '记入今天穿着</button>' +
-          '<button id="yg-wi-del" style="flex:0.8;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:1.5px solid #fecaca;background:#fff;border-radius:12px;font-size:12.5px;font-weight:800;color:#ef4444;cursor:pointer;font-family:inherit;">' + svg(ICO.trash, 13, '#ef4444') + '删除</button>' +
+          '<button id="yg-wi-wear" style="flex:1.2;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:none;background:#6a55c8;border-radius:13px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">' + svg(ICO.check, 13, '#fff') + '记入今天穿着</button>' +
+          '<button id="yg-wi-edit" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:1.5px solid #e4dcfb;background:#fff;border-radius:13px;font-size:12.5px;font-weight:800;color:#6a55c8;cursor:pointer;font-family:inherit;">' + svg(ICO.edit, 13, '#6a55c8') + '编辑</button>' +
+          '<button id="yg-wi-del" style="flex:0.7;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:1.5px solid #fecaca;background:#fff;border-radius:13px;font-size:12.5px;font-weight:800;color:#ef4444;cursor:pointer;font-family:inherit;">' + svg(ICO.trash, 13, '#ef4444') + '</button>' +
         '</div>'
     });
     el.querySelector('#yg-wi-wear').onclick = async function () {
@@ -953,6 +1253,7 @@
       await refreshMonth();
       await renderDay();
     };
+    el.querySelector('#yg-wi-edit').onclick = function () { closeSheet(el); addWardrobeItem(it); };
     el.querySelector('#yg-wi-del').onclick = async function () {
       var ok = await confirmCard({ title: '删除这件衣物？', message: '「' + (it.name || '') + '」会从衣柜里移除。', danger: true, okText: '删除', icon: ICO.trash });
       if (!ok) return;
@@ -1122,6 +1423,8 @@
         '"belongings":[{"name":"手机","note":"屏幕裂了一道，还舍不得换"}],' +
         '"location":"此刻在哪里（具体地点 + 一句环境描写）",' +
         '"special":{"menstruation":{"on":false,"level":"","note":""},"illness":{"on":false,"name":"","level":"","note":""}},' +
+        '"memo":"一句话备忘（今天想做的事、想说的话、心情）",' +
+        '"todos":[{"text":"今天要做的一件具体小事","done":false},{"text":"另一件已经做完的事","done":true}],' +
         '"note":"一句话心情或小插曲"}\n' +
         '要求：\n' +
         '1) schedule 给 5-7 条，每条必须同时有时间段（HH:MM-HH:MM）、地点、事件三样；内容具体、有生活质感，能体现人设；\n' +
@@ -1130,7 +1433,8 @@
         (allowMen
           ? '4) special 里：生理期只有女性才可能为 true（不确定就填 false）；生病按剧情判断（没有就填 false）；\n'
           : '4) special 里的 menstruation 必须一律为 false（' + s.name + ' 是男性，不存在生理期）；生病按剧情判断；\n') +
-        '5) 全部用中文，不要 emoji，不要括号动作描写。';
+        '5) memo 是' + s.name + '自己的备忘录，todos 是' + s.name + '自己的待办（2-5 条，必须具体、是这一两天真要做的事，比如「把上周的图改完」「给猫换猫砂」）；\n' +
+        '6) 全部用中文，不要 emoji，不要括号动作描写。';
       var raw = await callAI(sys, usr);
       var parsed = parseJsonLoose(raw);
       if (!parsed || typeof parsed !== 'object') throw new Error('模型没有返回可解析的 JSON');
@@ -1143,6 +1447,8 @@
       }).filter(function (it) { return it.content; }).slice(0, 10) : [];
       var belongings = normalizeBelongings(parsed.belongings).slice(0, 10);
       var sp = (parsed.special && typeof parsed.special === 'object') ? parsed.special : {};
+      var todos = normalizeTodos(parsed.todos).slice(0, 8).map(function (x, i) { return { id: 't' + Date.now() + '_' + i, text: x.text.slice(0, 80), done: !!x.done }; });
+      var memo = String(parsed.memo || parsed.note || '').slice(0, 600);
       var rec = {
         meId: myMeId(),
         subjectType: s.type, subjectId: Number(s.id), date: ds,
@@ -1156,7 +1462,9 @@
             : { on: false, level: '', note: '' },
           illness: { on: !!(sp.illness && sp.illness.on), name: String((sp.illness && sp.illness.name) || '').slice(0, 60), level: String((sp.illness && sp.illness.level) || '').slice(0, 60), note: String((sp.illness && sp.illness.note) || '').slice(0, 200) }
         },
-        note: String(parsed.note || '').slice(0, 300),
+        memo: memo,
+        note: memo,
+        todos: todos,
         source: 'ai',
         updatedAt: Date.now()
       };
@@ -1211,6 +1519,9 @@
     };
     var allowMen = canMenstruate(s);
     var spEdit = specialOf(rec, allowMen);
+    var todosText = normalizeTodos(rec.todos).map(function (x) {
+      return (x.done ? '[x] ' : '') + x.text;
+    }).join('\n');
     var el = sheet({
       title: prettyDate(ds) + ' · ' + s.name,
       icon: ICO.edit,
@@ -1221,7 +1532,9 @@
         field('当前位置', 'yg-f-location', rec.location || '', '例如：公司 12 楼靠窗的工位，窗外在下小雨', 2) +
         '<div style="font-size:11px;font-weight:800;color:#64748b;margin:14px 0 8px;">今天的情况</div>' +
         specialFieldsHtml(spEdit, allowMen) +
-        field('备注 / 心情', 'yg-f-note', rec.note || '', '可选', 2) +
+        '<div style="font-size:11px;font-weight:800;color:#64748b;margin:14px 0 8px;">备忘录</div>' +
+        field('备忘 / 心情', 'yg-f-note', memoTextOf(rec), '可选', 2) +
+        field('待办清单（一行一条，已完成的以 [x] 开头）', 'yg-f-todos', todosText, '买花\n[x] 交房租', 4) +
         '<div style="display:flex;gap:8px;margin-top:6px;">' +
           '<button id="yg-f-ai" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:1.5px solid #e2e8f0;background:#fff;border-radius:12px;font-size:12.5px;font-weight:800;color:#475569;cursor:pointer;font-family:inherit;">' + svg(ICO.spark, 14, '#475569') + '让 AI 重写</button>' +
           '<button id="yg-f-save" style="flex:1.2;padding:12px;border:none;background:#1e88e5;border-radius:12px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">保存</button>' +
@@ -1242,13 +1555,19 @@
         var p = l.split('|');
         return { name: p[0].trim(), note: p.slice(1).join('|').trim() };
       }).filter(function (b) { return b.name; });
+      var todos = q('yg-f-todos').split('\n').map(function (l) { return l.trim(); }).filter(Boolean).map(function (l, i) {
+        var done = /^\[x\]\s*/i.test(l);
+        return { id: 't' + Date.now() + '_' + i, text: l.replace(/^\[x\]\s*/i, '').slice(0, 80), done: done };
+      }).filter(function (x) { return x.text; });
       var rec = {
         meId: myMeId(),
         subjectType: s.type, subjectId: Number(s.id), date: ds,
         schedule: schedule, belongings: belongings,
         attire: q('yg-f-attire').slice(0, 600),
         location: q('yg-f-location').slice(0, 400),
-        note: q('yg-f-note').slice(0, 300),
+        memo: q('yg-f-note').slice(0, 600),
+        note: q('yg-f-note').slice(0, 600),
+        todos: todos,
         special: readSpecialFields(el, allowMen),
         source: 'manual', updatedAt: Date.now()
       };
@@ -1322,12 +1641,29 @@
         var sp = specialOf(rec, canMenstruate({ gender: subjGender }));
         if (sp.menstruation.on) lines.push('  生理期：' + [sp.menstruation.level, sp.menstruation.note].filter(Boolean).join('；') + '（请对' + (p.isMe ? '用户' : p.name) + '多加照顾，别安排剧烈活动）');
         if (sp.illness.on) lines.push('  身体不适：' + [sp.illness.name, sp.illness.level, sp.illness.note].filter(Boolean).join('；') + '（回复要体现出状态不佳）');
-        if (rec.note) lines.push('  备注：' + rec.note);
+        // 备忘录与待办：char 知道自己的，也同步知道 user 的
+        var memoText = memoTextOf(rec);
+        var todos = normalizeTodos(rec.todos);
+        if (p.isMe) {
+          if (memoText) lines.push('  用户的备忘录：' + memoText);
+          if (todos.length) {
+            var pend = todos.filter(function (x) { return !x.done; });
+            var done = todos.filter(function (x) { return x.done; });
+            lines.push('  用户今天的待办（你要记住，聊天时可以自然地关心、提醒或追问进度）：' +
+              todos.map(function (x) { return (x.done ? '[已完成] ' : '[未完成] ') + x.text; }).join('；') +
+              (pend.length ? '（还有 ' + pend.length + ' 项没做）' : '（都做完了）') +
+              (done.length ? '' : ''));
+          }
+        } else {
+          if (memoText) lines.push('  你自己的备忘录：' + memoText);
+          if (todos.length) lines.push('  你自己的待办：' + todos.map(function (x) { return (x.done ? '[已完成] ' : '[未完成] ') + x.text; }).join('；') + '（这些是你自己的事，可以主动提到）');
+        }
         if (lines.length) out.push('【' + p.name + '（' + (p.isMe ? '用户' : '角色') + '）今天的真实状态 · ' + prettyDate(ds) + '】\n' + lines.join('\n'));
       }
       if (!out.length) return '';
       return '以下是你们今天的真实生活状态（由仪轨记录）：\n' + out.join('\n') +
-        '\n【铁律】如果对话涉及"你现在在做什么 / 在哪 / 穿着 / 带着什么"，必须以标了 ★ 的此刻状态为准，不能与之矛盾；也不要生硬复述这些条目，自然融入即可。';
+        '\n【铁律】如果对话涉及"你现在在做什么 / 在哪 / 穿着 / 带着什么"，必须以标了 ★ 的此刻状态为准，不能与之矛盾；' +
+        '备忘录与待办也要当真：用户交代过或写进待办的事，你要记得，可以自然地问起进度或提醒，但不要生硬复述；也不要生硬复述这些条目，自然融入即可。';
     } catch (e) { return ''; }
   }
 
@@ -1337,10 +1673,6 @@
     if (!body) return;
     if (!state.inited) {
       state.inited = true;
-      try {
-        var ex = localStorage.getItem(LS_EXPAND);
-        if (ex) state.expanded = Object.assign(state.expanded, JSON.parse(ex) || {});
-      } catch (e) {}
       var now = new Date();
       state.viewYear = now.getFullYear();
       state.viewMonth = now.getMonth();
