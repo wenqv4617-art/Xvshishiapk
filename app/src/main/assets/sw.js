@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v80'; // v80: 桌面 4列x7行(每页28格)+翻页指示器重做; v1.5.4
+const CACHE_NAME = 'story-phone-v81'; // v81: 桌面 M3 圆形图标+大时钟/照片/横幅/搜索条卡片+内置预设; v1.5.5
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

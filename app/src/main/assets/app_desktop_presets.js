@@ -426,6 +426,176 @@ window.DESKTOP_PRESETS = {
 
     // 底部 Dock 栏排布
     dockLayout: ["settings", "chat", "archive", "world_book"]
+  },
+
+  /* ============================================================
+   * 叙事诗 · 桌面（M3 Expressive，shape=full / seed #0B57D0）
+   * 按 M3E Canvas 设计稿落地：大时钟 + 照片卡片 + 圆形图标按钮 + 横幅 + 搜索条
+   * 页宽 28 格（4 列 × 7 行），槽位号即按 28 编写，不做重排
+   * ============================================================ */
+  narrative_desktop: {
+    name: "叙事诗 · 桌面 (M3)",
+    pageSize: 28,
+    confirmText: "确定要应用【叙事诗 · 桌面】吗？这会替换桌面两页的图标与卡片（时钟 / 照片 / 横幅 / 搜索条），并把壁纸换成纯色底。",
+    wallpaper: "",
+    dockOpacity: "78",
+    activeCss: `/* 叙事诗 · 桌面 — Material 3 Expressive（shape=full, seed #0B57D0） */
+#phone-container {
+  background-color: #F9F9FF !important;
+  background-image: none !important;
+}
+#desktop {
+  padding: 14px 16px 4px 16px !important;
+}
+
+/* 圆形「elevated」图标按钮：白底 + 淡蓝投影 + 主题色图标 */
+.app-icon .icon-wrapper {
+  background: linear-gradient(180deg, #FFFFFF 0%, #F3F3F9 100%) !important;
+  border: none !important;
+  border-radius: 50% !important;
+  box-shadow: 0 3px 10px rgba(55, 87, 186, 0.14), 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+.app-icon .icon-wrapper svg {
+  width: 26px !important;
+  height: 26px !important;
+  color: #3757BA !important;
+  filter: none !important;
+}
+.app-icon:active .icon-wrapper {
+  transform: scale(0.94) !important;
+}
+.app-icon span {
+  color: #1B1B1F !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+  text-shadow: none !important;
+}
+
+/* Dock：胶囊按钮 + 淡描边 */
+.dock-container {
+  background-color: rgba(255, 255, 255, 0.78) !important;
+  border: 1px solid rgba(198, 197, 210, 0.45) !important;
+  border-radius: 26px !important;
+  box-shadow: 0 6px 20px rgba(55, 87, 186, 0.10) !important;
+}
+#dock-grid .app-icon .icon-wrapper {
+  border-radius: 26px !important;
+  box-shadow: 0 2px 8px rgba(55, 87, 186, 0.12) !important;
+}
+
+/* 翻页指示器 */
+#desktop-page-indicator {
+  background: rgba(255, 255, 255, 0.78) !important;
+  border: 1px solid rgba(198, 197, 210, 0.45) !important;
+}
+.page-dot {
+  background-color: rgba(55, 87, 186, 0.22) !important;
+}
+.page-dot.active {
+  background-color: #3757BA !important;
+}`,
+    widgets: {
+      // 顶部大时钟（4 列 × 2 行）
+      tile_narrative_clock: {
+        id: "tile_narrative_clock",
+        name: "大时钟",
+        tile: "clock",
+        widthSpan: 4,
+        heightSpan: 2,
+        config: { size: 104, colon: "：", color: "#3757BA" }
+      },
+      // 三张照片卡片（点击上传，持久保存）
+      tile_narrative_photo_a: {
+        id: "tile_narrative_photo_a",
+        name: "照片 · 左上",
+        tile: "photo",
+        widthSpan: 2,
+        heightSpan: 2,
+        config: { key: "a", maxPx: 900 }
+      },
+      tile_narrative_photo_b: {
+        id: "tile_narrative_photo_b",
+        name: "照片 · 右下",
+        tile: "photo",
+        widthSpan: 2,
+        heightSpan: 2,
+        config: { key: "b", maxPx: 900 }
+      },
+      tile_narrative_photo_c: {
+        id: "tile_narrative_photo_c",
+        name: "照片 · 竖版",
+        tile: "photo",
+        widthSpan: 2,
+        heightSpan: 3,
+        config: { key: "c", maxPx: 1200 }
+      },
+      // 第二页横幅（背景图 + 可编辑文字）
+      tile_narrative_banner: {
+        id: "tile_narrative_banner",
+        name: "叙事诗横幅",
+        tile: "banner",
+        widthSpan: 4,
+        heightSpan: 2,
+        config: { key: "main", title: "叙事诗", sub: "这是我们的漫长的叙事史诗", radius: 28 }
+      },
+      // 第二页搜索条（点击跳听歌搜索）
+      tile_narrative_search: {
+        id: "tile_narrative_search",
+        name: "搜索条",
+        tile: "search",
+        widthSpan: 4,
+        heightSpan: 1,
+        config: { label: "搜索歌曲" }
+      }
+    },
+
+    // 卡片落位（28 格/页的槽位号）
+    placedDesktop: {
+      "0": "tile_narrative_clock",     // 第一页 第1-2行 整宽
+      "8": "tile_narrative_photo_a",   // 第一页 第3-4行 左两列
+      "18": "tile_narrative_photo_b",  // 第一页 第5-6行 右两列
+      "28": "tile_narrative_banner",   // 第二页 第1-2行 整宽
+      "36": "tile_narrative_search",   // 第二页 第3行 整宽
+      "42": "tile_narrative_photo_c"   // 第二页 第4-6行 右两列
+    },
+
+    // 两页图标排布（每页 28 格：4 列 × 7 行）
+    desktopLayout: [
+      // === 第一页 ===
+      // 第1-2行：大时钟（4×2，覆盖 0-7）
+      null, null, null, null,
+      null, null, null, null,
+      // 第3行：照片 A（2×2，覆盖 8,9,12,13） + 世界书 + 设置
+      null, null, "world_book", "settings",
+      // 第4行：照片 A 继续 + 档案库 + 聊天
+      null, null, "archive", "chat",
+      // 第5行：听歌 + 阅读 + 照片 B（2×2，覆盖 18,19,22,23）
+      "music", "reader", null, null,
+      // 第6行：仪轨 + 购物 + 照片 B 继续
+      "yigui", "shopping", null, null,
+      // 第7行：留空
+      null, null, null, null,
+
+      // === 第二页 ===
+      // 第1-2行：叙事诗横幅（4×2，覆盖 28-35）
+      null, null, null, null,
+      null, null, null, null,
+      // 第3行：搜索条（4×1，覆盖 36-39）
+      null, null, null, null,
+      // 第4行：深谈 + 情侣空间 + 照片 C（2×3，覆盖 42,43,46,47,50,51）
+      "deeptalk", "couples", null, null,
+      // 第5行：邂逅 + 论坛 + 照片 C 继续
+      "encounter", "forum", null, null,
+      // 第6行：工作台 + 快穿局 + 照片 C 继续
+      "workbench", "quicktravel", null, null,
+      // 第7行：留空
+      null, null, null, null
+    ],
+
+    // 底部 Dock 栏排布（与设计稿一致：设置 / 聊天 / 档案库 / 世界书）
+    dockLayout: ["settings", "chat", "archive", "world_book"]
   }
 };
 
@@ -444,9 +614,9 @@ window.applyBuiltinThemePreset = function(specifiedKey) {
   }
 
   const executeApply = () => {
-    // 1. 设置背景与 Dock 不透明度
-    if (preset.wallpaper) {
-      localStorage.setItem("beautify-wallpaper", preset.wallpaper);
+    // 1. 设置背景与 Dock 不透明度（wallpaper:"" 表示清空壁纸，走纯色底）
+    if (Object.prototype.hasOwnProperty.call(preset, "wallpaper")) {
+      localStorage.setItem("beautify-wallpaper", preset.wallpaper || "");
     }
     if (preset.dockOpacity) {
       localStorage.setItem("beautify-dock-opacity", preset.dockOpacity);
@@ -465,9 +635,9 @@ window.applyBuiltinThemePreset = function(specifiedKey) {
       localStorage.setItem("beautify-widgets", JSON.stringify(existingWidgets));
     }
 
-    // 4. 设置桌面摆放小部件（预设按旧版每页 20 格的槽位号编写，按页重排到当前页宽）
+    // 4. 设置桌面摆放小部件（preset.pageSize 未写时按旧版每页 20 格，按页重排到当前页宽）
     if (preset.placedDesktop) {
-      const from = window.DESKTOP_LEGACY_PAGE_SIZE || 20;
+      const from = preset.pageSize || window.DESKTOP_LEGACY_PAGE_SIZE || 20;
       const to = window.DESKTOP_PAGE_SIZE || 20;
       let placed = preset.placedDesktop;
       if (from !== to) {
@@ -484,8 +654,9 @@ window.applyBuiltinThemePreset = function(specifiedKey) {
 
     // 5. 设置桌面与 Dock 排版
     if (preset.desktopLayout) {
+      const from = preset.pageSize || window.DESKTOP_LEGACY_PAGE_SIZE || 20;
       const remapped = typeof window.remapDesktopLayout === "function"
-        ? window.remapDesktopLayout(preset.desktopLayout, window.DESKTOP_LEGACY_PAGE_SIZE || 20, window.DESKTOP_PAGE_SIZE || 20)
+        ? window.remapDesktopLayout(preset.desktopLayout, from, window.DESKTOP_PAGE_SIZE || 20)
         : preset.desktopLayout;
       localStorage.setItem("desktop-layout-v3", JSON.stringify(remapped));
     }

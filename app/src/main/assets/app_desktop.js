@@ -77,14 +77,14 @@ function applyDesktopGridMetrics() {
   }
   applyDesktopGridMetrics._retried = false;
   const gapY = 10;
-  const labelH = 24;                        // 名称一行 + 间距（图标块总高 = 图标 + 19）
+  const labelH = 24;                        // 编辑模式下会显示名称，行高留出余量
   const rowH = (avail - (DESKTOP_ROWS - 1) * gapY) / DESKTOP_ROWS;
-  const icon = Math.max(36, Math.min(58, Math.floor(rowH - labelH)));
+  const icon = Math.max(36, Math.min(56, Math.floor(rowH - labelH)));
   const cell = Math.max(52, Math.min(80, Math.floor(rowH)));
   [desktop, grid].forEach((el) => {
     el.style.setProperty("--desktop-icon", icon + "px");
     el.style.setProperty("--desktop-cell", cell + "px");
-    el.style.setProperty("--desktop-min-row", (icon + 19) + "px");
+    el.style.setProperty("--desktop-min-row", (icon + 18) + "px");
     el.style.setProperty("--desktop-gap-y", gapY + "px");
     el.style.setProperty("--desktop-gap-x", "10px");
   });
@@ -129,7 +129,7 @@ let isAppClickEventsInitialized = false;
       flex-direction: row !important;
       justify-content: center !important;
       align-items: center !important;
-      gap: 18px !important;
+      gap: 8px !important;
       width: auto !important;
       max-width: 100% !important;
       margin: 0 auto !important;
@@ -138,8 +138,8 @@ let isAppClickEventsInitialized = false;
     }
     #dock-grid > .dock-slot {
       /* 固定每个 dock 槽位宽度，确保 4 个图标在 dock 中均匀居中 */
-      width: 64px !important;
-      flex: 0 0 64px !important;
+      width: 78px !important;
+      flex: 0 0 78px !important;
       aspect-ratio: 1 / 1 !important;
     }
     
@@ -193,17 +193,30 @@ let isAppClickEventsInitialized = false;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
-      width: var(--desktop-icon, 52px) !important;
-      height: var(--desktop-icon, 52px) !important;
-      margin: 0 auto 6px auto !important;
+      width: var(--desktop-icon, 56px) !important;
+      height: var(--desktop-icon, 56px) !important;
+      border-radius: 50% !important;
+      margin: 0 auto !important;
       box-sizing: border-box !important;
     }
     .app-icon span {
-      display: block !important;
+      display: none !important;   /* 桌面图标只显示图标，名称在编辑模式下才出现 */
       width: 100% !important;
       text-align: center !important;
-      margin: 0 auto !important;
+      margin: 5px auto 0 auto !important;
       box-sizing: border-box !important;
+    }
+    .edit-mode .app-icon span {
+      display: block !important;
+    }
+    /* Dock 里是胶囊按钮（形状=全圆角），比桌面圆形按钮宽 */
+    #dock-grid .app-icon .icon-wrapper {
+      width: 72px !important;
+      height: 52px !important;
+      border-radius: 26px !important;
+    }
+    #dock-grid .app-icon {
+      width: 78px !important;
     }
     .edit-mode .app-icon {
       /* 仅在编辑模式下激活触控阻断，以便进行拖动重排 */
@@ -811,6 +824,248 @@ function getPlacedWidget(type, index) {
   } catch(e) {}
   return null;
 }
+// ============================================================
+//  桌面内置卡片（时钟 / 照片 / 横幅 / 搜索条）
+//  这些卡片由 renderLayout 直接挂载，不是 HTML 字符串小部件；
+//  内容存 localStorage（键前缀 desktop-tile-），重启后仍在，也会随自动备份一起走。
+// ============================================================
+const TILE_KEY_PREFIX = "desktop-tile-";
+const TILE_ICON = {
+  plus: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  image: '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M4 17l5-4.5 4 3.5 3-2.5 4 3.5"/></svg>',
+  search: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.2-3.2"/></svg>',
+  mic: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>'
+};
+
+function tileGet(key, fallback) {
+  try { const v = localStorage.getItem(TILE_KEY_PREFIX + key); return v === null ? fallback : v; } catch (e) { return fallback; }
+}
+function tileSet(key, value) {
+  try { localStorage.setItem(TILE_KEY_PREFIX + key, value); } catch (e) {}
+}
+/** 选一张图并压到最长边 maxPx 的 dataURL（PNG 保留透明） */
+function tilePickImage(maxPx, cb) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/*";
+  input.style.display = "none";
+  document.body.appendChild(input);
+  input.onchange = () => {
+    const file = input.files && input.files[0];
+    input.remove();
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onerror = () => { if (typeof showToast === "function") showToast("图片读取失败"); };
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => { if (typeof showToast === "function") showToast("图片解析失败"); };
+      img.onload = () => {
+        try {
+          const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const cv = document.createElement("canvas");
+          cv.width = w; cv.height = h;
+          const ctx = cv.getContext("2d");
+          ctx.clearRect(0, 0, w, h);
+          ctx.drawImage(img, 0, 0, w, h);
+          const isPng = /image\/png/i.test(file.type);
+          cb(cv.toDataURL(isPng ? "image/png" : "image/jpeg", 0.86));
+        } catch (err) { if (typeof showToast === "function") showToast("图片处理失败：" + err.message); }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+/** 自制卡片弹层（项目禁止原生弹窗） */
+function tileSheet(opts) {
+  const mask = document.createElement("div");
+  mask.style.cssText = "position:fixed;inset:0;z-index:100900;display:flex;align-items:center;justify-content:center;padding:22px;box-sizing:border-box;background:rgba(15,23,42,.42);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);";
+  mask.innerHTML =
+    '<div style="width:100%;max-width:340px;background:#fff;border-radius:24px;padding:18px;box-sizing:border-box;box-shadow:0 24px 60px rgba(15,23,42,.28);">' +
+      '<div style="font-size:15px;font-weight:800;color:#1B1B1F;margin-bottom:12px;">' + (opts.title || "") + '</div>' +
+      '<div class="tile-sheet-body">' + (opts.body || "") + '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:16px;">' +
+        '<button data-v="0" style="flex:1;padding:11px;border-radius:14px;border:1.5px solid #E2E2E8;background:#fff;color:#464651;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">取消</button>' +
+        '<button data-v="1" style="flex:1.2;padding:11px;border-radius:14px;border:none;background:#3757BA;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">' + (opts.okText || "保存") + '</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelectorAll("button[data-v]").forEach((b) => {
+    b.onclick = () => {
+      const ok = b.getAttribute("data-v") === "1";
+      if (ok && typeof opts.onOk === "function") opts.onOk(mask);
+      close();
+    };
+  });
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+  if (typeof opts.onReady === "function") opts.onReady(mask, close);
+  return mask;
+}
+
+window.desktopTiles = {
+  /** 挂载一张卡片，返回容器元素 */
+  mount(slot, wData) {
+    const type = wData.tile;
+    const cfg = wData.config || {};
+    slot.classList.add("has-widget");
+    const box = document.createElement("div");
+    // 同时带上 desktop-widget-container：长按编辑、拖拽落点判定等既有逻辑都认这个类
+    box.className = "desktop-widget-container desktop-tile desktop-tile-" + type;
+    box.style.cssText = "width:100%;height:100%;box-sizing:border-box;";
+    slot.appendChild(box);
+    const fn = this[type];
+    if (typeof fn === "function") { try { fn.call(this, box, cfg, wData); } catch (e) { console.warn("[桌面卡片]", type, e); } }
+    return box;
+  },
+
+  /** 大号实时时钟 */
+  clock(box, cfg) {
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    const t = document.createElement("div");
+    const size = cfg.size || 104;
+    t.style.cssText = "font-size:" + size + "px;font-weight:700;line-height:1;letter-spacing:2px;" +
+      "color:" + (cfg.color || "#3757BA") + ";font-variant-numeric:tabular-nums;text-shadow:0 6px 22px rgba(55,87,186,.18);";
+    box.appendChild(t);
+    const tick = () => {
+      if (t.__dead) return;
+      const n = new Date();
+      t.textContent = String(n.getHours()).padStart(2, "0") + (cfg.colon || "：") + String(n.getMinutes()).padStart(2, "0");
+      // 首次同步绘制时节点可能还没进 DOM（renderLayout 末尾才 appendChild），
+      // 所以只在「已挂载过」之后才用 isConnected 判断是否已被移除并自停。
+      if (t.__armed && !t.isConnected) { t.__dead = true; clearInterval(t.__timer); }
+    };
+    tick();
+    t.__armed = true;
+    t.__timer = setInterval(tick, 15000);
+  },
+
+  /** 照片卡片：点击上传并持久保存 */
+  photo(box, cfg) {
+    const key = "photo-" + (cfg.key || "a");
+    const radius = cfg.radius === undefined ? 26 : cfg.radius;
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + radius + "px;overflow:hidden;cursor:pointer;" +
+      "background:" + (cfg.emptyBg || "rgba(224,224,252,.6)") + ";display:flex;align-items:center;justify-content:center;box-sizing:border-box;";
+    const render = () => {
+      const src = tileGet(key, "");
+      if (src) {
+        wrap.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
+          '<div style="position:absolute;left:0;right:0;bottom:0;padding:7px 8px;font-size:10px;font-weight:700;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(15,23,42,0),rgba(15,23,42,.55));">点击更换</div>';
+      } else {
+        wrap.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:7px;color:#3757BA;">' +
+          TILE_ICON.plus + '<span style="font-size:11px;font-weight:700;">' + (cfg.hint || "添加照片") + '</span></div>';
+      }
+    };
+    render();
+    wrap.onclick = (e) => {
+      if (isDesktopEditMode) return;          // 编辑模式下交给拖拽/删除
+      e.stopPropagation();
+      tilePickImage(cfg.maxPx || 900, (dataUrl) => {
+        tileSet(key, dataUrl);
+        render();
+        if (typeof showToast === "function") showToast("照片已保存");
+      });
+    };
+    box.appendChild(wrap);
+  },
+
+  /** 横幅卡片：背景图 + 可编辑标题/副标题 */
+  banner(box, cfg) {
+    const key = "banner-" + (cfg.key || "main");
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + (cfg.radius === undefined ? 28 : cfg.radius) + "px;overflow:hidden;" +
+      "background:rgba(224,224,252,.6);display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;box-sizing:border-box;";
+    const render = () => {
+      let data = {};
+      try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
+      const title = data.title !== undefined ? data.title : (cfg.title || "");
+      const sub = data.sub !== undefined ? data.sub : (cfg.sub || "");
+      const img = data.img || "";
+      wrap.style.backgroundImage = img ? "url(" + img + ")" : "none";
+      wrap.style.backgroundSize = "cover";
+      wrap.style.backgroundPosition = "center";
+      wrap.innerHTML =
+        '<div style="position:absolute;inset:0;background:' + (img ? "linear-gradient(180deg,rgba(15,23,42,.05),rgba(15,23,42,.55))" : "linear-gradient(135deg,#E0E0FC,#FFD8E7)") + ';"></div>' +
+        '<div style="position:relative;padding:16px 18px;color:' + (img ? "#fff" : "#1B1B1F") + ';">' +
+          '<div style="font-size:20px;font-weight:800;letter-spacing:1px;text-shadow:' + (img ? "0 2px 8px rgba(0,0,0,.35)" : "none") + ';">' + (title || "叙事诗") + '</div>' +
+          (sub ? '<div style="font-size:11.5px;margin-top:5px;opacity:.86;line-height:1.5;">' + sub + '</div>' : '') +
+        '</div>';
+    };
+    render();
+    wrap.onclick = (e) => {
+      if (isDesktopEditMode) return;
+      e.stopPropagation();
+      let data = {};
+      try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
+      const title = data.title !== undefined ? data.title : (cfg.title || "");
+      const sub = data.sub !== undefined ? data.sub : (cfg.sub || "");
+      let newImg = data.img || "";
+      tileSheet({
+        title: "编辑横幅",
+        okText: "保存",
+        body:
+          '<div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">标题</div>' +
+          '<input id="tile-bn-title" value="' + String(title).replace(/"/g, "&quot;") + '" style="width:100%;box-sizing:border-box;border:1.5px solid #E2E2E8;border-radius:12px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;margin-bottom:12px;">' +
+          '<div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">副标题</div>' +
+          '<input id="tile-bn-sub" value="' + String(sub).replace(/"/g, "&quot;") + '" style="width:100%;box-sizing:border-box;border:1.5px solid #E2E2E8;border-radius:12px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;margin-bottom:12px;">' +
+          '<div style="display:flex;gap:8px;">' +
+            '<button id="tile-bn-pick" style="flex:1;padding:11px;border:1.5px solid #E0E0FC;background:#fff;border-radius:12px;font-size:12px;font-weight:800;color:#3757BA;cursor:pointer;font-family:inherit;">选择背景图</button>' +
+            '<button id="tile-bn-clear" style="flex:1;padding:11px;border:1.5px solid #F9DEDC;background:#fff;border-radius:12px;font-size:12px;font-weight:800;color:#B3261E;cursor:pointer;font-family:inherit;">清除背景</button>' +
+          '</div>',
+        onReady: (mask) => {
+          mask.querySelector("#tile-bn-pick").onclick = () => {
+            tilePickImage(1200, (dataUrl) => { newImg = dataUrl; if (typeof showToast === "function") showToast("背景图已选好，点保存生效"); });
+          };
+          mask.querySelector("#tile-bn-clear").onclick = () => { newImg = ""; };
+        },
+        onOk: (mask) => {
+          const next = {
+            title: mask.querySelector("#tile-bn-title").value.slice(0, 24),
+            sub: mask.querySelector("#tile-bn-sub").value.slice(0, 40),
+            img: newImg
+          };
+          tileSet(key, JSON.stringify(next));
+          render();
+          if (typeof showToast === "function") showToast("横幅已保存");
+        }
+      });
+    };
+    box.appendChild(wrap);
+  },
+
+  /** 搜索条：点一下跳到听歌并聚焦搜索框 */
+  search(box, cfg) {
+    box.style.display = "flex";
+    box.style.alignItems = "center";
+    const bar = document.createElement("div");
+    bar.style.cssText = "width:100%;height:56px;border-radius:28px;background:#fff;box-shadow:0 3px 12px rgba(55,87,186,.12);" +
+      "display:flex;align-items:center;gap:10px;padding:0 18px;box-sizing:border-box;cursor:pointer;color:#464651;";
+    bar.innerHTML = '<span style="display:flex;color:#3757BA;flex-shrink:0;">' + TILE_ICON.search + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:13px;color:#767682;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (cfg.label || "搜索歌曲") + '</span>' +
+      '<span style="display:flex;color:#767682;flex-shrink:0;">' + TILE_ICON.mic + '</span>';
+    bar.onclick = (e) => {
+      if (isDesktopEditMode) return;
+      e.stopPropagation();
+      try {
+        if (typeof openApp === "function") openApp("music");
+        setTimeout(() => {
+          if (window.musicSystem && typeof window.musicSystem.switchTab === "function") window.musicSystem.switchTab("search");
+          const inp = document.getElementById("ncm-search-keyword");
+          if (inp) { try { inp.focus(); } catch (err) {} }
+        }, 320);
+      } catch (err) {}
+    };
+    box.appendChild(bar);
+  }
+};
+
 function renderLayout(container, layoutArray, slotClass) {
   container.innerHTML = "";
   
@@ -873,19 +1128,24 @@ function renderLayout(container, layoutArray, slotClass) {
       slot.style.gridColumn = `span ${actualW}`;
       slot.style.gridRow = `span ${wData.heightSpan || 1}`;
 
-      const widgetDiv = document.createElement("div");
-      widgetDiv.className = "desktop-widget-container";
-      widgetDiv.innerHTML = wData.html;
-      
-      // 强制促使组件内部嵌套 script 在运行态重新注入执行
-      const scripts = widgetDiv.querySelectorAll("script");
-      scripts.forEach(oldScript => {
-        const newScript = document.createElement("script");
-        newScript.text = oldScript.innerHTML;
-        oldScript.parentNode.replaceChild(newScript, oldScript);
-      });
+      if (wData.tile && window.desktopTiles) {
+        // 内置卡片（时钟/照片/横幅/搜索条）：由运行时直接挂载
+        window.desktopTiles.mount(slot, wData);
+      } else {
+        const widgetDiv = document.createElement("div");
+        widgetDiv.className = "desktop-widget-container";
+        widgetDiv.innerHTML = wData.html;
 
-      slot.appendChild(widgetDiv);
+        // 强制促使组件内部嵌套 script 在运行态重新注入执行
+        const scripts = widgetDiv.querySelectorAll("script");
+        scripts.forEach(oldScript => {
+          const newScript = document.createElement("script");
+          newScript.text = oldScript.innerHTML;
+          oldScript.parentNode.replaceChild(newScript, oldScript);
+        });
+
+        slot.appendChild(widgetDiv);
+      }
 
       // 编辑模式下显示红色叉号 (去 Emoji 风格)
       if (isDesktopEditMode) {
