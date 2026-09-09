@@ -1222,10 +1222,15 @@ function resetInitialUI() {
     "settings-enter-send", "desktop-layout-v3", "dock-layout-v3",
     "placed-widgets-desktop", "placed-widgets-dock", "beautify-widgets",
     "beautify-active-css", "custom-css-presets",
+    "beautify-icon-overrides", "desktop-rows", "desktop-page-size",
     FONT_STORE_KEY, FONT_ACTIVE_KEY,
     "cs_store_pol_img", "cs_store_top_img", "cs_store_dlg_img_1", "cs_store_dlg_img_2"
   ];
   keys.forEach(k => { try { localStorage.removeItem(k); } catch (e) {} });
+  // 桌面卡片（时钟小字 / 照片 / 横幅）里的数据也一并清掉，回到第一次打开的状态
+  try {
+    Object.keys(localStorage).filter(k => k.indexOf("desktop-tile-") === 0).forEach(k => localStorage.removeItem(k));
+  } catch (e) {}
   // 移除注入的字体样式
   const styleEl = document.getElementById("custom-font-style");
   if (styleEl) styleEl.remove();
@@ -1577,6 +1582,9 @@ function exportBeautifyPack() {
       wallpaper: localStorage.getItem("beautify-wallpaper"),
       customIcons: localStorage.getItem("beautify-custom-icons"),
       activeCss: localStorage.getItem("beautify-active-css"),
+      iconOverrides: localStorage.getItem("beautify-icon-overrides"),
+      desktopRows: localStorage.getItem("desktop-rows"),
+      desktopPageSize: localStorage.getItem("desktop-page-size"),
       cssPresets: localStorage.getItem("custom-css-presets"),
       placedWidgetsDesktop: localStorage.getItem("placed-widgets-desktop"),
       placedWidgetsDock: localStorage.getItem("placed-widgets-dock"),
@@ -1638,6 +1646,9 @@ function importBeautifyPack(e) {
         if (data.wallpaper) localStorage.setItem("beautify-wallpaper", data.wallpaper);
         if (data.customIcons) localStorage.setItem("beautify-custom-icons", data.customIcons);
         if (data.activeCss) localStorage.setItem("beautify-active-css", data.activeCss);
+        if (data.iconOverrides !== undefined) localStorage.setItem("beautify-icon-overrides", data.iconOverrides);
+        if (data.desktopRows) localStorage.setItem("desktop-rows", data.desktopRows);
+        if (data.desktopPageSize) localStorage.setItem("desktop-page-size", data.desktopPageSize);
         if (data.cssPresets) localStorage.setItem("custom-css-presets", data.cssPresets);
         if (data.placedWidgetsDesktop) localStorage.setItem("placed-widgets-desktop", data.placedWidgetsDesktop);
         if (data.placedWidgetsDock) localStorage.setItem("placed-widgets-dock", data.placedWidgetsDock);
@@ -2029,6 +2040,9 @@ async function exportBackup() {
         beautifyWallpaper: localStorage.getItem("beautify-wallpaper"),
         customIcons: localStorage.getItem("beautify-custom-icons"),
         activeCss: localStorage.getItem("beautify-active-css"),
+        iconOverrides: localStorage.getItem("beautify-icon-overrides"),
+        desktopRows: localStorage.getItem("desktop-rows"),
+        desktopPageSize: localStorage.getItem("desktop-page-size"),
         cssPresets: localStorage.getItem("custom-css-presets"),
         placedWidgetsDesktop: localStorage.getItem("placed-widgets-desktop"),
         placedWidgetsDock: localStorage.getItem("placed-widgets-dock"),
@@ -2347,6 +2361,9 @@ async function performImportTransaction(rawData) {
       beautifyWallpaper: "beautify-wallpaper",
       customIcons: "beautify-custom-icons",
       activeCss: "beautify-active-css",
+      iconOverrides: "beautify-icon-overrides",
+      desktopRows: "desktop-rows",
+      desktopPageSize: "desktop-page-size",
       cssPresets: "custom-css-presets",
       placedWidgetsDesktop: "placed-widgets-desktop",
       placedWidgetsDock: "placed-widgets-dock",

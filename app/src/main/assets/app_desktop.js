@@ -81,16 +81,17 @@ function migrateDesktopPageSize() {
   try { localStorage.setItem("desktop-page-size", String(DESKTOP_PAGE_SIZE)); } catch (e) {}
 }
 
-/** 4 列 × N 行必须刚好装进一屏：按可用高度算出图标尺寸并写进 CSS 变量 */
+/** 行数随主题变化；用 1fr 让网格等于容器高度（薄秋主题），清透凉夏沿用原来的内容高度 */
 function applyDesktopGridMetrics() {
   const desktop = document.getElementById("desktop");
   const grid = document.getElementById("desktop-grid");
   if (!desktop || !grid) return;
-  // 行数随风格变化，必须由 JS 写 inline !important（CSS 里不能写 repeat(var(--n), …)）
-  grid.style.setProperty("grid-template-rows", "repeat(" + DESKTOP_ROWS + ", minmax(44px, 1fr))", "important");
-  const cs = getComputedStyle(desktop);
-  const avail = desktop.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
-  if (!avail || avail < 120) {
+  // 行数随主题变化，必须由 JS 写 inline !important（CSS 里不能写 repeat(var(--n), …)）
+  grid.style.setProperty("grid-template-rows", "repeat(" + DESKTOP_ROWS + ", 1fr)", "important");
+  // 用真实渲染出来的槽位高度反推图标尺寸（薄秋主题会把槽位撑满整行）
+  const slot = grid.querySelector(".desktop-slot");
+  const rowH = slot ? slot.getBoundingClientRect().height : 0;
+  if (!rowH) {
     // 桌面还没显示（开屏期间 display:none）时测不到高度，稍后重试一次
     if (!applyDesktopGridMetrics._retried) {
       applyDesktopGridMetrics._retried = true;
@@ -99,18 +100,11 @@ function applyDesktopGridMetrics() {
     return;
   }
   applyDesktopGridMetrics._retried = false;
-  const gapY = 10;
-  const labelH = 24;                        // 编辑模式下会显示名称，行高留出余量
-  const rowH = (avail - (DESKTOP_ROWS - 1) * gapY) / DESKTOP_ROWS;
-  const icon = Math.max(36, Math.min(56, Math.floor(rowH - labelH)));
-  const cell = Math.max(52, Math.min(80, Math.floor(rowH)));
-  grid.style.setProperty("grid-template-rows", "repeat(" + DESKTOP_ROWS + ", minmax(" + (icon + 18) + "px, 1fr))", "important");
+  const icon = Math.max(28, Math.min(56, Math.floor(rowH - 12)));
+  const cell = Math.max(48, Math.min(80, Math.floor(rowH)));
   [desktop, grid].forEach((el) => {
     el.style.setProperty("--desktop-icon", icon + "px");
     el.style.setProperty("--desktop-cell", cell + "px");
-    el.style.setProperty("--desktop-min-row", (icon + 18) + "px");
-    el.style.setProperty("--desktop-gap-y", gapY + "px");
-    el.style.setProperty("--desktop-gap-x", "10px");
   });
 }
 window.applyDesktopGridMetrics = applyDesktopGridMetrics;
@@ -134,11 +128,10 @@ let isAppClickEventsInitialized = false;
     }
     #desktop-grid {
       display: grid !important;
-      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-      /* 行数与行高由 applyDesktopGridMetrics() 写 inline !important（随桌面风格变化） */
-      gap: var(--desktop-gap-y, 10px) var(--desktop-gap-x, 10px) !important;
-      min-height: 0 !important;
-      flex: 1 1 auto !important;
+      grid-template-columns: repeat(4, 1fr) !important;
+      /* 行数随主题变化（薄秋 7 行 / 清透凉夏 5 行），由 applyDesktopGridMetrics() 写 inline !important */
+      gap: 16px 12px !important;
+      min-height: auto !important;
       width: 100% !important;
       max-width: 100% !important;
       margin: 0 auto !important;
@@ -173,6 +166,7 @@ let isAppClickEventsInitialized = false;
       justify-content: center !important;
       align-items: center !important;
       width: 100% !important;
+      aspect-ratio: 4 / 5 !important; /* 黄金比例锁，防止拉伸 */
       border-radius: 18px !important;
       transition: background-color 0.15s ease, border-color 0.15s ease !important;
       box-sizing: border-box !important;
@@ -181,15 +175,6 @@ let isAppClickEventsInitialized = false;
       margin: 0 !important;
       padding: 0 !important;
     }
-    /* 桌面槽位交给 7 行等分的高度决定（不再锁比例，否则 7 行会溢出） */
-    .desktop-slot {
-      aspect-ratio: auto !important;
-      height: 100% !important;
-    }
-    .dock-slot {
-      aspect-ratio: 1 / 1 !important; /* 黄金比例锁，防止拉伸 */
-    }
-
     /* 当槽位摆放了自定义小部件组件时，解除比例限制，由小部件本身的行高列宽完全决定占位大小 */
     .desktop-slot.has-widget {
       aspect-ratio: auto !important;
@@ -202,9 +187,8 @@ let isAppClickEventsInitialized = false;
       align-items: center !important;
       justify-content: center !important;
       text-align: center !important;
-      width: var(--desktop-cell, 72px) !important; /* 由 applyDesktopGridMetrics 按 7 行可用高度算出 */
-      max-width: 100% !important;
-      height: auto !important;
+      width: 72px !important; /* 核心修正：固定宽度为标准的72px，绝不使用 100% 从而杜绝追加到body时膨胀 */
+      height: auto !important; /* 核心修正：高度完全自适应，绝不使用 100% 从而杜绝追加到body时膨胀 */
       margin: 0 !important;
       padding: 0 !important;
       box-sizing: border-box !important;
@@ -217,11 +201,11 @@ let isAppClickEventsInitialized = false;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
-      margin: 0 auto 8px auto !important;
+      margin: 0 auto 6px auto !important;
       box-sizing: border-box !important;
     }
     .app-icon span {
-      display: block !important;   /* 基础外观保留名称；M3 桌面由预设的 activeCss 隐藏 */
+      display: block !important;
       width: 100% !important;
       text-align: center !important;
       margin: 0 auto !important;
@@ -233,7 +217,7 @@ let isAppClickEventsInitialized = false;
       cursor: grab;
     }
     .app-icon.dragging {
-      width: var(--desktop-cell, 72px) !important;
+      width: 72px !important;
       height: auto !important;
       opacity: 0.82;
       transform: scale(1.15) !important;
@@ -469,10 +453,10 @@ function loadDesktopLayout() {
       while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
       localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
     } else if (!window.__defaultPresetApplied && typeof window.applyPresetSilently === "function"
-               && window.DESKTOP_PRESETS && window.DESKTOP_PRESETS.narrative_desktop) {
+               && window.DESKTOP_PRESETS && window.DESKTOP_PRESETS.thin_autumn) {
       // 全新安装：默认就是「叙事诗 · 桌面 (M3)」——大时钟 + 照片卡 + 圆形图标
       window.__defaultPresetApplied = true;
-      window.applyPresetSilently("narrative_desktop");
+      window.applyPresetSilently("thin_autumn");
       return loadDesktopLayout();
     } else {
             desktopLayout = Array(DESKTOP_PAGE_SIZE * 2).fill(null); // 两页，每页 4 列 × 7 行
@@ -907,7 +891,7 @@ function tileSheet(opts) {
       '<div class="tile-sheet-body">' + (opts.body || "") + '</div>' +
       '<div style="display:flex;gap:8px;margin-top:16px;">' +
         '<button data-v="0" style="flex:1;padding:11px;border-radius:14px;border:1.5px solid #E2E2E8;background:#fff;color:#464651;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">取消</button>' +
-        '<button data-v="1" style="flex:1.2;padding:11px;border-radius:14px;border:none;background:#3757BA;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">' + (opts.okText || "保存") + '</button>' +
+        '<button data-v="1" style="flex:1.2;padding:11px;border-radius:14px;border:none;background:#9B87B8;color:#fff;font-size:12.5px;font-weight:800;cursor:pointer;font-family:inherit;">' + (opts.okText || "保存") + '</button>' +
       '</div>' +
     '</div>';
   document.body.appendChild(mask);
@@ -940,17 +924,32 @@ window.desktopTiles = {
     return box;
   },
 
-  /** 大号实时时钟（字号按卡片宽度自适应，绝不换行） */
+  /** 大号实时时钟 + 可编辑的一行小字（年月日 / 天气等） */
   clock(box, cfg) {
+    const key = "clock-" + (cfg.key || "main");
     box.style.display = "flex";
+    box.style.flexDirection = "column";
     box.style.alignItems = "center";
     box.style.justifyContent = "center";
+    box.style.gap = "8px";
     box.style.overflow = "hidden";
+    box.style.cursor = "pointer";
+
     const t = document.createElement("div");
-    const maxSize = cfg.size || 88;
-    t.style.cssText = "font-weight:700;line-height:1;letter-spacing:1px;white-space:nowrap;" +
-      "color:" + (cfg.color || "#3757BA") + ";font-variant-numeric:tabular-nums;text-shadow:0 6px 22px rgba(55,87,186,.18);";
+    const maxSize = cfg.size || 76;
+    t.style.cssText = "font-weight:700;line-height:1;letter-spacing:-0.02em;white-space:nowrap;" +
+      "color:" + (cfg.color || "#6B6275") + ";font-variant-numeric:tabular-nums;";
+    const sub = document.createElement("div");
+    sub.style.cssText = "font-size:12.5px;font-weight:600;letter-spacing:0.04em;color:" + (cfg.subColor || "#A79FAE") +
+      ";white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;";
     box.appendChild(t);
+    box.appendChild(sub);
+
+    const autoSub = () => {
+      const n = new Date();
+      const wk = ["日", "一", "二", "三", "四", "五", "六"][n.getDay()];
+      return n.getFullYear() + "年" + (n.getMonth() + 1) + "月" + n.getDate() + "日 星期" + wk;
+    };
     // 按卡片可用宽度收缩字号：宁可小一点，也不许换行把下面挤走
     const fit = () => {
       const w = box.clientWidth;
@@ -958,7 +957,7 @@ window.desktopTiles = {
       let fs = maxSize;
       t.style.fontSize = fs + "px";
       let guard = 0;
-      while (t.scrollWidth > w - 4 && fs > 22 && guard++ < 60) {
+      while (t.scrollWidth > w - 8 && fs > 20 && guard++ < 60) {
         fs -= 2;
         t.style.fontSize = fs + "px";
       }
@@ -966,17 +965,40 @@ window.desktopTiles = {
     const tick = () => {
       if (t.__dead) return;
       const n = new Date();
-      t.textContent = String(n.getHours()).padStart(2, "0") + (cfg.colon || "：") + String(n.getMinutes()).padStart(2, "0");
+      t.textContent = String(n.getHours()).padStart(2, "0") + (cfg.colon || ":") + String(n.getMinutes()).padStart(2, "0");
+      let data = {};
+      try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
+      const custom = typeof data.sub === "string" ? data.sub.trim() : "";
+      sub.textContent = custom || autoSub();
       fit();
       // 首次同步绘制时节点可能还没进 DOM（renderLayout 末尾才 appendChild），
       // 所以只在「已挂载过」之后才用 isConnected 判断是否已被移除并自停。
       if (t.__armed && !t.isConnected) { t.__dead = true; clearInterval(t.__timer); }
     };
     tick();
-    // 进 DOM 之后再量两次，保证第一次就得到正确的字号
     requestAnimationFrame(() => { fit(); requestAnimationFrame(fit); });
     t.__armed = true;
-    t.__timer = setInterval(tick, 15000);
+    t.__timer = setInterval(tick, 20000);
+
+    box.onclick = (e) => {
+      if (isDesktopEditMode) return;
+      e.stopPropagation();
+      let data = {};
+      try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
+      tileSheet({
+        title: "时钟下面的一行小字",
+        okText: "保存",
+        body:
+          '<div style="font-size:11px;font-weight:800;color:#8b8f9c;margin-bottom:6px;">留空则自动显示今天的年月日与星期</div>' +
+          '<input id="tile-ck-sub" value="' + String(data.sub || "").replace(/"/g, "&quot;") + '" placeholder="例如：9月9日 · 晴 24℃" style="width:100%;box-sizing:border-box;border:1.5px solid #E8E4EE;border-radius:12px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;">',
+        onOk: (mask) => {
+          const v = mask.querySelector("#tile-ck-sub").value.trim().slice(0, 40);
+          tileSet(key, JSON.stringify({ sub: v }));
+          tick();
+          if (typeof showToast === "function") showToast(v ? "已保存" : "已恢复自动日期");
+        }
+      });
+    };
   },
 
   /** 照片卡片：点击上传并持久保存 */
@@ -985,14 +1007,14 @@ window.desktopTiles = {
     const radius = cfg.radius === undefined ? 26 : cfg.radius;
     const wrap = document.createElement("div");
     wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + radius + "px;overflow:hidden;cursor:pointer;" +
-      "background:" + (cfg.emptyBg || "rgba(224,224,252,.6)") + ";display:flex;align-items:center;justify-content:center;box-sizing:border-box;";
+      "background:" + (cfg.emptyBg || "rgba(243,238,248,.8)") + ";display:flex;align-items:center;justify-content:center;box-sizing:border-box;";
     const render = () => {
       const src = tileGet(key, "");
       if (src) {
         wrap.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
           '<div style="position:absolute;left:0;right:0;bottom:0;padding:7px 8px;font-size:10px;font-weight:700;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(15,23,42,0),rgba(15,23,42,.55));">点击更换</div>';
       } else {
-        wrap.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:7px;color:#3757BA;">' +
+        wrap.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;gap:7px;color:#A08FB8;">' +
           TILE_ICON.plus + '<span style="font-size:11px;font-weight:700;">' + (cfg.hint || "添加照片") + '</span></div>';
       }
     };
@@ -1014,7 +1036,7 @@ window.desktopTiles = {
     const key = "banner-" + (cfg.key || "main");
     const wrap = document.createElement("div");
     wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + (cfg.radius === undefined ? 28 : cfg.radius) + "px;overflow:hidden;" +
-      "background:rgba(224,224,252,.6);display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;box-sizing:border-box;";
+      "background:rgba(243,238,248,.8);display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;box-sizing:border-box;";
     const render = () => {
       let data = {};
       try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
@@ -1025,7 +1047,7 @@ window.desktopTiles = {
       wrap.style.backgroundSize = "cover";
       wrap.style.backgroundPosition = "center";
       wrap.innerHTML =
-        '<div style="position:absolute;inset:0;background:' + (img ? "linear-gradient(180deg,rgba(15,23,42,.05),rgba(15,23,42,.55))" : "linear-gradient(135deg,#E0E0FC,#FFD8E7)") + ';"></div>' +
+        '<div style="position:absolute;inset:0;background:' + (img ? "linear-gradient(180deg,rgba(15,23,42,.05),rgba(15,23,42,.55))" : "linear-gradient(135deg,#FBEFE3,#EFE6F8)") + ';"></div>' +
         '<div style="position:relative;padding:16px 18px;color:' + (img ? "#fff" : "#1B1B1F") + ';">' +
           '<div style="font-size:20px;font-weight:800;letter-spacing:1px;text-shadow:' + (img ? "0 2px 8px rgba(0,0,0,.35)" : "none") + ';">' + (title || "叙事诗") + '</div>' +
           (sub ? '<div style="font-size:11.5px;margin-top:5px;opacity:.86;line-height:1.5;">' + sub + '</div>' : '') +
@@ -1049,7 +1071,7 @@ window.desktopTiles = {
           '<div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">副标题</div>' +
           '<input id="tile-bn-sub" value="' + String(sub).replace(/"/g, "&quot;") + '" style="width:100%;box-sizing:border-box;border:1.5px solid #E2E2E8;border-radius:12px;padding:10px 12px;font-size:13px;font-family:inherit;outline:none;margin-bottom:12px;">' +
           '<div style="display:flex;gap:8px;">' +
-            '<button id="tile-bn-pick" style="flex:1;padding:11px;border:1.5px solid #E0E0FC;background:#fff;border-radius:12px;font-size:12px;font-weight:800;color:#3757BA;cursor:pointer;font-family:inherit;">选择背景图</button>' +
+            '<button id="tile-bn-pick" style="flex:1;padding:11px;border:1.5px solid #EDE6F2;background:#fff;border-radius:12px;font-size:12px;font-weight:800;color:#9B87B8;cursor:pointer;font-family:inherit;">选择背景图</button>' +
             '<button id="tile-bn-clear" style="flex:1;padding:11px;border:1.5px solid #F9DEDC;background:#fff;border-radius:12px;font-size:12px;font-weight:800;color:#B3261E;cursor:pointer;font-family:inherit;">清除背景</button>' +
           '</div>',
         onReady: (mask) => {
@@ -1080,9 +1102,9 @@ window.desktopTiles = {
     const bar = document.createElement("div");
     bar.style.cssText = "width:100%;height:56px;border-radius:28px;background:#fff;box-shadow:0 3px 12px rgba(55,87,186,.12);" +
       "display:flex;align-items:center;gap:10px;padding:0 18px;box-sizing:border-box;cursor:pointer;color:#464651;";
-    bar.innerHTML = '<span style="display:flex;color:#3757BA;flex-shrink:0;">' + TILE_ICON.search + '</span>' +
-      '<span style="flex:1;min-width:0;font-size:13px;color:#767682;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (cfg.label || "搜索歌曲") + '</span>' +
-      '<span style="display:flex;color:#767682;flex-shrink:0;">' + TILE_ICON.mic + '</span>';
+    bar.innerHTML = '<span style="display:flex;color:#A08FB8;flex-shrink:0;">' + TILE_ICON.search + '</span>' +
+      '<span style="flex:1;min-width:0;font-size:13px;color:#9A93A5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (cfg.label || "搜索歌曲") + '</span>' +
+      '<span style="display:flex;color:#9A93A5;flex-shrink:0;">' + TILE_ICON.mic + '</span>';
     bar.onclick = (e) => {
       if (isDesktopEditMode) return;
       e.stopPropagation();
@@ -1106,6 +1128,12 @@ function renderLayout(container, layoutArray, slotClass) {
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
+  } catch(e) {}
+
+  // 主题图标覆盖（例如「薄秋」主题用设计稿里的 Material Symbols 图标）
+  let themeIcons = {};
+  try {
+    themeIcons = JSON.parse(localStorage.getItem("beautify-icon-overrides")) || {};
   } catch(e) {}
 
   const isDesktopType = slotClass === "desktop-slot";
@@ -1198,9 +1226,10 @@ function renderLayout(container, layoutArray, slotClass) {
         div.className = "app-icon";
         div.setAttribute("data-app", id);
         
-        // 渲染美化过或原生的图标
+        // 渲染美化过或原生的图标（主题可以覆盖图标：beautify-icon-overrides，如「薄秋」用的 Material Symbols）
         const customImg = customIcons[id];
-        const iconHtml = customImg ? `<img src="${customImg}" class="custom-icon-img" style="width:100%; height:100%; object-fit:cover; border-radius:18px;">` : info.svg;
+        const themeIcon = (themeIcons && themeIcons[id]) || null;
+        const iconHtml = customImg ? `<img src="${customImg}" class="custom-icon-img" style="width:100%; height:100%; object-fit:cover; border-radius:18px;">` : (themeIcon || info.svg);
 
         // 核心：若为 Dock 栏图标，直接过滤擦除 Span 文本标签，仅保留 icon-wrapper 的 SVG 渲染
         const nameHtml = isDesktopType ? `<span>${info.name}</span>` : "";

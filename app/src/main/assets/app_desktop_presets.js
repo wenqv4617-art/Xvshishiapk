@@ -431,119 +431,198 @@ window.DESKTOP_PRESETS = {
   },
 
   /* ============================================================
-   * 叙事诗 · 桌面（M3 Expressive，shape=full / seed #0B57D0）
-   * 按 M3E Canvas 设计稿落地：大时钟 + 照片卡片 + 圆形图标按钮 + 横幅 + 搜索条
-   * 页宽 28 格（4 列 × 7 行），槽位号即按 28 编写，不做重排
+   * 薄秋（默认主题）—— M3E Canvas 设计稿落地 + 淡彩配色
+   * 大时钟（下面一行可编辑小字）+ 照片卡片 + 圆形图标按钮 + 横幅 + 搜索条
+   * 4 列 × 7 行 = 每页 28 格；所有视觉只写在本主题的 activeCss 里，绝不影响清透凉夏
    * ============================================================ */
-  narrative_desktop: {
-    name: "叙事诗 · 桌面 (M3)",
+  thin_autumn: {
+    name: "薄秋",
     rows: 7,            // 4 列 × 7 行 = 每页 28 格
     pageSize: 28,
-    confirmText: "确定要应用【叙事诗 · 桌面】吗？这会替换桌面两页的图标与卡片（时钟 / 照片 / 横幅 / 搜索条），并把壁纸换成纯色底。",
+    confirmText: "确定要应用【薄秋】主题吗？桌面会换成 7 行布局（大时钟 / 照片卡 / 圆形图标 / 横幅 / 搜索条），壁纸换成淡彩纯色底。",
     wallpaper: "",
-    dockOpacity: "78",
-    activeCss: `/* 叙事诗 · 桌面 — Material 3 Expressive（shape=full, seed #0B57D0） */
+    dockOpacity: "72",
+    activeCss: `/* 薄秋 — 淡彩配色 · 4 列 × 7 行 */
+/* 底色：奶油 → 淡紫 → 淡蓝 的极淡渐变 */
 #phone-container {
-  background-color: #F9F9FF !important;
-  background-image: none !important;
+  background-color: #FBF8F4 !important;
+  background-image: linear-gradient(160deg, #FDF9F3 0%, #F8F4FA 52%, #F2F6FA 100%) !important;
+  background-size: cover !important;
 }
+/* 桌面铺满整屏，7 行等分，绝不把 dock 挤出去 */
 #desktop {
-  padding: 14px 16px 4px 16px !important;
+  padding: 12px 16px 4px 16px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+#desktop-grid {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  gap: 8px 10px !important;
+}
+.desktop-slot {
+  aspect-ratio: auto !important;
+  height: 100% !important;
 }
 
-/* 圆形「elevated」图标按钮：白底 + 淡蓝投影 + 主题色图标，尺寸跟随 7 行网格自适应 */
+/* 圆形图标按钮：淡彩底 + 同色系图标 + 极轻投影 */
+.app-icon {
+  width: var(--desktop-cell, 76px) !important;
+}
 .app-icon .icon-wrapper {
-  width: var(--desktop-icon, 56px) !important;
-  height: var(--desktop-icon, 56px) !important;
-  background: linear-gradient(180deg, #FFFFFF 0%, #F3F3F9 100%) !important;
-  border: none !important;
+  width: var(--desktop-icon, 54px) !important;
+  height: var(--desktop-icon, 54px) !important;
   border-radius: 50% !important;
-  box-shadow: 0 3px 10px rgba(55, 87, 186, 0.14), 0 1px 2px rgba(15, 23, 42, 0.05) !important;
+  background: #FFFFFF !important;
+  border: none !important;
+  box-shadow: 0 2px 10px rgba(120, 110, 130, 0.10) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   margin-bottom: 0 !important;
   transition: transform 0.16s ease !important;
 }
-.app-icon .icon-wrapper svg {
-  width: 26px !important;
-  height: 26px !important;
-  color: #3757BA !important;
-  filter: none !important;
-}
 .app-icon:active .icon-wrapper {
-  transform: scale(0.94) !important;
+  transform: scale(0.93) !important;
+}
+.app-icon .icon-wrapper svg {
+  width: 24px !important;
+  height: 24px !important;
+  filter: none !important;
 }
 /* 与设计稿一致：桌面图标不显示名称（span 仍保留在 DOM 中供读屏） */
 .app-icon span {
   display: none !important;
 }
+/* 每个应用的淡彩底色与图标色（马卡龙 / 莫兰迪） */
+.app-icon[data-app="chat"] .icon-wrapper { background: #EAF3FF !important; }
+.app-icon[data-app="chat"] .icon-wrapper svg { color: #6E96CB !important; }
+.app-icon[data-app="deeptalk"] .icon-wrapper { background: #F0EBFF !important; }
+.app-icon[data-app="deeptalk"] .icon-wrapper svg { color: #8F82D2 !important; }
+.app-icon[data-app="reader"] .icon-wrapper { background: #FFF4E8 !important; }
+.app-icon[data-app="reader"] .icon-wrapper svg { color: #C79463 !important; }
+.app-icon[data-app="forum"] .icon-wrapper { background: #E8F7F1 !important; }
+.app-icon[data-app="forum"] .icon-wrapper svg { color: #5FAE96 !important; }
+.app-icon[data-app="couples"] .icon-wrapper { background: #FFEDF3 !important; }
+.app-icon[data-app="couples"] .icon-wrapper svg { color: #D07E9A !important; }
+.app-icon[data-app="archive"] .icon-wrapper { background: #EEF1FF !important; }
+.app-icon[data-app="archive"] .icon-wrapper svg { color: #7C8CD6 !important; }
+.app-icon[data-app="world_book"] .icon-wrapper { background: #E9F6F7 !important; }
+.app-icon[data-app="world_book"] .icon-wrapper svg { color: #5FA8AD !important; }
+.app-icon[data-app="music"] .icon-wrapper { background: #FFEFF6 !important; }
+.app-icon[data-app="music"] .icon-wrapper svg { color: #C97BA6 !important; }
+.app-icon[data-app="shopping"] .icon-wrapper { background: #FFF1E9 !important; }
+.app-icon[data-app="shopping"] .icon-wrapper svg { color: #D08A6A !important; }
+.app-icon[data-app="encounter"] .icon-wrapper { background: #F2EEFF !important; }
+.app-icon[data-app="encounter"] .icon-wrapper svg { color: #9186CE !important; }
+.app-icon[data-app="quicktravel"] .icon-wrapper { background: #EDF6EE !important; }
+.app-icon[data-app="quicktravel"] .icon-wrapper svg { color: #6FA97A !important; }
+.app-icon[data-app="workbench"] .icon-wrapper { background: #EAF4FA !important; }
+.app-icon[data-app="workbench"] .icon-wrapper svg { color: #6E9CBF !important; }
+.app-icon[data-app="yigui"] .icon-wrapper { background: #F6F1E7 !important; }
+.app-icon[data-app="yigui"] .icon-wrapper svg { color: #A08B63 !important; }
+.app-icon[data-app="settings"] .icon-wrapper { background: #F2F3F6 !important; }
+.app-icon[data-app="settings"] .icon-wrapper svg { color: #8A8FA0 !important; }
 
-/* Dock：72×52 胶囊按钮 + 淡描边 */
+/* Dock：淡彩胶囊 */
 #dock {
-  padding: 10px 10px calc(16px + env(safe-area-inset-bottom, 0px)) 10px !important;
+  padding: 8px 10px calc(14px + env(safe-area-inset-bottom, 0px)) 10px !important;
 }
 .dock-container {
-  background-color: rgba(255, 255, 255, 0.78) !important;
-  border: 1px solid rgba(198, 197, 210, 0.45) !important;
-  border-radius: 26px !important;
-  height: 72px !important;
+  background-color: rgba(255, 255, 255, 0.82) !important;
+  border: 1px solid rgba(232, 228, 238, 0.9) !important;
+  border-radius: 24px !important;
+  height: 68px !important;
   padding: 0 10px !important;
-  box-shadow: 0 6px 20px rgba(55, 87, 186, 0.10) !important;
+  box-shadow: 0 6px 18px rgba(140, 130, 150, 0.10) !important;
 }
 #dock-grid {
   gap: 8px !important;
 }
 #dock-grid > .dock-slot {
-  width: 78px !important;
-  flex: 0 0 78px !important;
+  width: 76px !important;
+  flex: 0 0 76px !important;
 }
 #dock-grid .app-icon .icon-wrapper {
-  width: 72px !important;
-  height: 52px !important;
-  border-radius: 26px !important;
-  box-shadow: 0 2px 8px rgba(55, 87, 186, 0.12) !important;
+  width: 70px !important;
+  height: 50px !important;
+  border-radius: 25px !important;
+}
+#dock-grid .app-icon .icon-wrapper svg {
+  width: 22px !important;
+  height: 22px !important;
 }
 
-/* 翻页指示器 */
+/* 翻页指示器：淡彩小胶囊 */
 #desktop-page-indicator {
-  background: rgba(255, 255, 255, 0.78) !important;
-  border: 1px solid rgba(198, 197, 210, 0.45) !important;
+  height: auto !important;
+  width: fit-content !important;
+  margin: 2px auto 8px auto !important;
+  padding: 5px 10px !important;
+  gap: 6px !important;
+  border-radius: 99px !important;
+  background: rgba(255, 255, 255, 0.82) !important;
+  box-shadow: 0 2px 8px rgba(140, 130, 150, 0.10) !important;
 }
 .page-dot {
-  background-color: rgba(55, 87, 186, 0.22) !important;
+  background-color: rgba(160, 150, 170, 0.28) !important;
 }
 .page-dot.active {
-  background-color: #3757BA !important;
-}`,
+  background-color: #A08FB8 !important;
+}
+
+/* 翻页滑入 */
+@keyframes thinAutumnPageInR { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@keyframes thinAutumnPageInL { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+#desktop-grid.page-anim-r { animation: thinAutumnPageInR 0.24s cubic-bezier(0.2, 0.8, 0.25, 1); }
+#desktop-grid.page-anim-l { animation: thinAutumnPageInL 0.24s cubic-bezier(0.2, 0.8, 0.25, 1); }`,
+    /* 设计稿里的 Material Symbols 图标（切到别的主题会自动还原成原生图标） */
+    iconOverrides: {
+      world_book: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M324-111.5Q251-143 197-197t-85.5-127Q80-397 80-480t31.5-156Q143-709 197-763t127-85.5Q397-880 480-880t156 31.5Q709-817 763-763t85.5 127Q880-563 880-480t-31.5 156Q817-251 763-197t-127 85.5Q563-80 480-80t-156-31.5ZM437-141v-82q-35 0-59-26t-24-61v-44L149-559q-5 20-7 39.5t-2 39.5q0 130 84.5 227T437-141Zm294-108q44-48 66.5-107.5T820-480q0-106-58-192.5T607-799v18q0 35-24 61t-59 26h-87v87q0 17-13.5 28T393-568h-83v88h258q17 0 28 13t11 30v127h43q29 0 51 17t30 44Z\"/></svg>",
+      settings: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M421-80q-14 0-25-9t-13-23l-15-94q-19-7-40-19t-37-25l-86 40q-14 6-28 1.5T155-226L97-330q-8-13-4.5-27t15.5-23l80-59q-2-9-2.5-20.5T185-480q0-9 .5-20.5T188-521l-80-59q-12-9-15.5-23t4.5-27l58-104q8-13 22-17.5t28 1.5l86 40q16-13 37-25t40-18l15-95q2-14 13-23t25-9h118q14 0 25 9t13 23l15 94q19 7 40.5 18.5T669-710l86-40q14-6 27.5-1.5T804-734l59 104q8 13 4.5 27.5T852-580l-80 57q2 10 2.5 21.5t.5 21.5q0 10-.5 21t-2.5 21l80 58q12 8 15.5 22.5T863-330l-58 104q-8 13-22 17.5t-28-1.5l-86-40q-16 13-36.5 25.5T592-206l-15 94q-2 14-13 23t-25 9H421Zm15-60h88l14-112q33-8 62.5-25t53.5-41l106 46 40-72-94-69q4-17 6.5-33.5T715-480q0-17-2-33.5t-7-33.5l94-69-40-72-106 46q-23-26-52-43.5T538-708l-14-112h-88l-14 112q-34 7-63.5 24T306-642l-106-46-40 72 94 69q-4 17-6.5 33.5T245-480q0 17 2.5 33.5T254-413l-94 69 40 72 106-46q24 24 53.5 41t62.5 25l14 112Zm44-210q54 0 92-38t38-92q0-54-38-92t-92-38q-54 0-92 38t-38 92q0 54 38 92t92 38Zm0-130Z\"/></svg>",
+      archive: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M300-200q-24 0-42-18t-18-42v-560q0-24 18-42t42-18h440q24 0 42 18t18 42v560q0 24-18 42t-42 18H300Zm0-60h440v-560H300v560ZM180-80q-24 0-42-18t-18-42v-590q0-12.75 8.68-21.38 8.67-8.62 21.5-8.62 12.82 0 21.32 8.62 8.5 8.63 8.5 21.38v590h470q12.75 0 21.38 8.68 8.62 8.67 8.62 21.5 0 12.82-8.62 21.32Q662.75-80 650-80H180Zm120-180v-560 560Z\"/></svg>",
+      chat: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M240-240 131-131q-14 14-32.5 6.34Q80-132.31 80-152v-668q0-24 18-42t42-18h680q24 0 42 18t18 42v520q0 24-18 42t-42 18H240Zm-26-60h606v-520H140v600l74-80Zm-74 0v-520 520Z\"/></svg>",
+      music: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M124.5-163.5Q81-207 81-270t43.5-106.5Q168-420 231-420q28 0 50.5 8t39.5 22v-345q0-11 7-19t18-10l419-70q14-2 24.5 6.5T800-805v455q0 63-43.5 106.5T650-200q-63 0-106.5-43.5T500-350q0-63 43.5-106.5T650-500q28 0 50.5 8t39.5 22v-184l-359 60v324q0 63-43.5 106.5T231-120q-63 0-106.5-43.5Z\"/></svg>",
+      reader: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M132-120q-24 0-42-18t-18-42v-600q0-24 18-42t42-18h696q24 0 42 18t18 42v600q0 24-18 42t-42 18H132Zm0-60h696v-600H132v600Zm228-100q17 0 28.5-11.5T400-320q0-17-11.5-28.5T360-360H240q-17 0-28.5 11.5T200-320q0 17 11.5 28.5T240-280h120Zm222-193-29-29q-12-12-28-11.5T497-501q-11 12-11.5 28t11.5 28l64 64q9 9 21 9t21-9l149-149q12-12 12-28t-12-28q-12-12-28.5-12T695-586L582-473Zm-222 33q17 0 28.5-11.5T400-480q0-17-11.5-28.5T360-520H240q-17 0-28.5 11.5T200-480q0 17 11.5 28.5T240-440h120Zm0-160q17 0 28.5-11.5T400-640q0-17-11.5-28.5T360-680H240q-17 0-28.5 11.5T200-640q0 17 11.5 28.5T240-600h120ZM132-180v-600 600Z\"/></svg>",
+      yigui: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M700-200h-90q-12.75 0-21.37-8.68-8.63-8.67-8.63-21.5 0-12.82 8.63-21.32 8.62-8.5 21.37-8.5h90v-90q0-12.75 8.68-21.38 8.67-8.62 21.5-8.62 12.82 0 21.32 8.62 8.5 8.63 8.5 21.38v90h90q12.75 0 21.38 8.68 8.62 8.67 8.62 21.5 0 12.82-8.62 21.32-8.63 8.5-21.38 8.5h-90v90q0 12.75-8.68 21.37-8.67 8.63-21.5 8.63-12.82 0-21.32-8.63Q700-97.25 700-110v-90Zm-520 40q-24 0-42-18t-18-42v-540q0-24 18-42t42-18h65v-28q0-13.6 9-22.8 9-9.2 23.02-9.2t23.5 9.2Q310-861.6 310-848v28h260v-28q0-13.6 9-22.8 9-9.2 23.02-9.2t23.5 9.2Q635-861.6 635-848v28h65q24 0 42 18t18 42v269q0 12.75-8.68 21.37-8.67 8.63-21.5 8.63-12.82 0-21.32-8.63-8.5-8.62-8.5-21.37v-79H180v350h290q12.75 0 21.38 8.68 8.62 8.67 8.62 21.5 0 12.82-8.62 21.32-8.63 8.5-21.38 8.5H180Zm0-470h520v-130H180v130Zm0 0v-130 130Z\"/></svg>",
+      shopping: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M236-102.21q-21-21.21-21-51T236.21-204q21.21-21 51-21T338-203.79q21 21.21 21 51T337.79-102q-21.21 21-51 21T236-102.21Zm400 0q-21-21.21-21-51T636.21-204q21.21-21 51-21T738-203.79q21 21.21 21 51T737.79-102q-21.21 21-51 21T636-102.21ZM235-741l110 228h288l125-228H235Zm-30-60h589.07q22.97 0 34.95 21 11.98 21-.02 42L694-495q-11 19-28.56 30.5T627-453H324l-56 104h461q12.75 0 21.38 8.68 8.62 8.67 8.62 21.5 0 12.82-8.62 21.32-8.63 8.5-21.38 8.5H277q-42 0-60.5-28t.5-63l64-118-152-322H81q-12.75 0-21.37-8.68-8.63-8.67-8.63-21.5 0-12.82 8.63-21.32Q68.25-880 81-880h68q9 0 16.2 4.43 7.2 4.44 10.8 12.57l29 62Zm140 288h288-288Z\"/></svg>",
+      deeptalk: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M850.33-123q-5.33 0-10.83-2t-10.5-7L721-240H300q-24.75 0-42.37-17.63Q240-275.25 240-300v-80h440q24.75 0 42.38-17.63Q740-415.25 740-440v-280h80q24.75 0 42.38 17.62Q880-684.75 880-660v507q0 14-9.5 22t-20.17 8ZM140-425l75-75h405v-320H140v395Zm-30.33 103Q99-322 89.5-330q-9.5-8-9.5-22v-468q0-24.75 17.63-42.38Q115.25-880 140-880h480q24.75 0 42.38 17.62Q680-844.75 680-820v320q0 24.75-17.62 42.37Q644.75-440 620-440H240L131-331q-5 5-10.5 7t-10.83 2ZM140-500v-320 320Z\"/></svg>",
+      couples: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"m562-110 248-78q0-20-15.5-34T758-235H549q-16 1-31.5-2t-30.5-8l-66-20q-12-4-18-16t-2-24q4-12 15.28-18t23.72-1l64 21q11 4 22.5 6t22.5 2h56q2 0 0 0 0-21-14-36.5T557-355l-218-83h-84v238l307 90Zm-13 57-294-84q-2 27-22.5 42T195-80h-95q-24.75 0-42.37-17.63Q40-115.25 40-140v-298q0-24.75 17.63-42.38Q75.25-498 100-498h238q5.33 0 10.67 1 5.33 1 10.33 3l218 82q42 16 66.5 46t24.5 71h90q50.83 0 86.42 37Q880-221 880-170q0 11-5.5 20T859-138L583-53q-8.17 2-17.09 2Q557-51 549-53Zm-449-87h94v-298h-94v298Zm524-344.5q-11-4.5-20-12.5L482-616q-29.32-27.74-49.66-61.49Q412-711.24 412-751q0-53 35-91t87-38q34 0 62 17.5t50 43.5q22-26 50-43.5t62-17.5q52 0 87 38t35 91q0 39.66-20.5 73.33T810-616L688-497q-9 8-19.81 12.5-10.82 4.5-22 4.5-11.19 0-22.19-4.5Zm22-54.5 120-119q20.12-19.85 37.06-42.32T820-751q0-28-17.5-48.5T758-820q-20 0-37 11t-30 27l-21.66 27.14Q660.38-744 646.19-744q-14.19 0-23.26-10.86L601-782q-13-16-30-27t-37-11q-27 0-44.5 20.5T472-751q0 28.21 16.94 50.68T526-658l120 119Zm0-188Z\"/></svg>",
+      encounter: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M169.86-485Q132-485 106-511.14t-26-64Q80-613 106.14-639t64-26Q208-665 234-638.86t26 64Q260-537 233.86-511t-64 26ZM291-681.14q-26-26.14-26-64T291.14-809q26.14-26 64-26T419-808.86q26 26.14 26 64T418.86-681q-26.14 26-64 26T291-681.14Zm250 0q-26-26.14-26-64T541.14-809q26.14-26 64-26T669-808.86q26 26.14 26 64T668.86-681q-26.14 26-64 26T541-681.14ZM789.86-485Q752-485 726-511.14t-26-64Q700-613 726.14-639t64-26Q828-665 854-638.86t26 64Q880-537 853.86-511t-64 26ZM266-75q-42 0-69-31.53-27-31.52-27-74.47 0-42 25.5-74.5T250-318q22-22 41-46.5t36-50.5q29-44 65-82t88-38q52 0 88.5 38t65.5 83q17 26 35.5 50t40.5 46q29 30 54.5 62.5T790-181q0 42.95-27 74.47Q736-75 694-75q-54 0-107-9t-107-9q-54 0-107 9t-107 9Z\"/></svg>",
+      forum: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M30-240q-12.75 0-21.37-8.63Q0-257.25 0-270v-23q0-38.57 41.5-62.78Q83-380 150.38-380q12.16 0 23.39.5t22.23 2.15q-8 17.35-12 35.17-4 17.81-4 37.18v65H30Zm240 0q-12.75 0-21.37-8.63Q240-257.25 240-270v-35q0-32 17.5-58.5T307-410q32-20 76.5-30t96.5-10q53 0 97.5 10t76.5 30q32 20 49 46.5t17 58.5v35q0 12.75-8.62 21.37Q702.75-240 690-240H270Zm510 0v-65q0-19.86-3.5-37.43T765-377.27q11-1.73 22.17-2.23 11.17-.5 22.83-.5 67.5 0 108.75 23.77T960-293v23q0 12.75-8.62 21.37Q942.75-240 930-240H780Zm-480-60h360v-6q0-37-50.5-60.5T480-390q-79 0-129.5 23.5T300-305v5ZM149.57-410q-28.57 0-49.07-20.56Q80-451.13 80-480q0-29 20.56-49.5Q121.13-550 150-550q29 0 49.5 20.5t20.5 49.93q0 28.57-20.5 49.07T149.57-410Zm660 0q-28.57 0-49.07-20.56Q740-451.13 740-480q0-29 20.56-49.5Q781.13-550 810-550q29 0 49.5 20.5t20.5 49.93q0 28.57-20.5 49.07T809.57-410ZM480-480q-50 0-85-35t-35-85q0-51 35-85.5t85-34.5q51 0 85.5 34.5T600-600q0 50-34.5 85T480-480Zm.35-60Q506-540 523-557.35t17-43Q540-626 522.85-643t-42.5-17q-25.35 0-42.85 17.15t-17.5 42.5q0 25.35 17.35 42.85t43 17.5ZM480-300Zm0-300Z\"/></svg>",
+      workbench: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M740-149 517-371l57-57 223 223q12 12 12 28t-12 28q-12 12-28.5 12T740-149Zm-593-28.5q0-16.5 12-28.5l261-261-107-107-2 2q-9 9-21 9t-21-9l-23-23v97q0 10-9.5 13.5T220-488L102-606q-7-7-3.5-16.5T112-632h98l-27-27q-9-9-9-21t9-21l110-110q17-17 37-23t44-6q21 0 36 5.5t32 18.5q5 5 5.5 11t-4.5 11l-95 95 27 27q9 9 9 21t-9 21l-3 3 104 104 122-122q-8-13-12.5-30t-4.5-36q0-53 38.5-91.5T711-841q8 0 14.5.5T737-838q6 3 7.5 9.5T741-817l-61 61q-5 5-5 11t5 11l53 53q5 5 11 5t11-5l59-59q5-5 13-4t11 8q2 6 2.5 12.5t.5 14.5q0 53-38.5 91.5T711-579q-18 0-31-2.5t-24-7.5L215-148q-12 12-28 11.5T159-149q-12-12-12-28.5Z\"/></svg>",
+      quicktravel: "<svg viewBox=\"0 -960 960 960\"><path fill=\"currentColor\" d=\"M232-247h239v-14q0-18-9-32t-23-19q-32-11-50-14.5t-35-3.5q-19 0-40.5 4.5T265-312q-15 5-24 19t-9 32v14Zm361-67h120q11 0 18-7t7-18q0-11-7-18t-18-7H593q-11 0-18 7t-7 18q0 11 7 18t18 7Zm-200.5-65.5Q408-395 408-418t-15.5-38.5Q377-472 354-472t-38.5 15.5Q300-441 300-418t15.5 38.5Q331-364 354-364t38.5-15.5ZM593-427h120q11 0 18-7t7-18q0-11-7-18t-18-7H593q-11 0-18 7t-7 18q0 11 7 18t18 7ZM140-80q-24 0-42-18t-18-42v-480q0-24 18-42t42-18h250v-140q0-24 18-42t42-18h60q24 0 42 18t18 42v140h250q24 0 42 18t18 42v480q0 24-18 42t-42 18H140Zm0-60h680v-480H570v30q0 28-18 44t-42 16h-60q-24 0-42-16t-18-44v-30H140v480Zm310-450h60v-230h-60v230Zm30 210Z\"/></svg>",
+    },
     widgets: {
-      // 顶部大时钟（4 列 × 2 行）
-      tile_narrative_clock: {
-        id: "tile_narrative_clock",
+      // 顶部大时钟（4 列 × 2 行），下面一行小字可点开编辑
+      tile_thin_autumn_clock: {
+        id: "tile_thin_autumn_clock",
         name: "大时钟",
         tile: "clock",
         widthSpan: 4,
         heightSpan: 2,
-        config: { size: 88, colon: "：", color: "#3757BA" }
+        config: { size: 88, colon: ":", color: "#6B6275", subColor: "#A79FAE" }
       },
       // 三张照片卡片（点击上传，持久保存）
-      tile_narrative_photo_a: {
-        id: "tile_narrative_photo_a",
+      tile_thin_autumn_photo_a: {
+        id: "tile_thin_autumn_photo_a",
         name: "照片 · 左上",
         tile: "photo",
         widthSpan: 2,
         heightSpan: 2,
         config: { key: "a", maxPx: 900 }
       },
-      tile_narrative_photo_b: {
-        id: "tile_narrative_photo_b",
+      tile_thin_autumn_photo_b: {
+        id: "tile_thin_autumn_photo_b",
         name: "照片 · 右下",
         tile: "photo",
         widthSpan: 2,
         heightSpan: 2,
         config: { key: "b", maxPx: 900 }
       },
-      tile_narrative_photo_c: {
-        id: "tile_narrative_photo_c",
+      tile_thin_autumn_photo_c: {
+        id: "tile_thin_autumn_photo_c",
         name: "照片 · 竖版",
         tile: "photo",
         widthSpan: 2,
@@ -551,8 +630,8 @@ window.DESKTOP_PRESETS = {
         config: { key: "c", maxPx: 1200 }
       },
       // 第二页横幅（背景图 + 可编辑文字）
-      tile_narrative_banner: {
-        id: "tile_narrative_banner",
+      tile_thin_autumn_banner: {
+        id: "tile_thin_autumn_banner",
         name: "叙事诗横幅",
         tile: "banner",
         widthSpan: 4,
@@ -560,8 +639,8 @@ window.DESKTOP_PRESETS = {
         config: { key: "main", title: "叙事诗", sub: "这是我们的漫长的叙事史诗", radius: 28 }
       },
       // 第二页搜索条（点击跳听歌搜索）
-      tile_narrative_search: {
-        id: "tile_narrative_search",
+      tile_thin_autumn_search: {
+        id: "tile_thin_autumn_search",
         name: "搜索条",
         tile: "search",
         widthSpan: 4,
@@ -572,12 +651,12 @@ window.DESKTOP_PRESETS = {
 
     // 卡片落位（28 格/页的槽位号）
     placedDesktop: {
-      "0": "tile_narrative_clock",     // 第一页 第1-2行 整宽
-      "8": "tile_narrative_photo_a",   // 第一页 第3-4行 左两列
-      "18": "tile_narrative_photo_b",  // 第一页 第5-6行 右两列
-      "28": "tile_narrative_banner",   // 第二页 第1-2行 整宽
-      "36": "tile_narrative_search",   // 第二页 第3行 整宽
-      "42": "tile_narrative_photo_c"   // 第二页 第4-6行 右两列
+      "0": "tile_thin_autumn_clock",     // 第一页 第1-2行 整宽
+      "8": "tile_thin_autumn_photo_a",   // 第一页 第3-4行 左两列
+      "18": "tile_thin_autumn_photo_b",  // 第一页 第5-6行 右两列
+      "28": "tile_thin_autumn_banner",   // 第二页 第1-2行 整宽
+      "36": "tile_thin_autumn_search",   // 第二页 第3行 整宽
+      "42": "tile_thin_autumn_photo_c"   // 第二页 第4-6行 右两列
     },
 
     // 两页图标排布（每页 28 格：4 列 × 7 行）
@@ -647,6 +726,11 @@ function applyPresetCore(preset, silent) {
     if (preset.activeCss) {
       localStorage.setItem("beautify-active-css", preset.activeCss);
     }
+
+    // 2.5 主题图标覆盖：薄秋用设计稿里的 Material Symbols；其它主题清空，回到原生图标
+    try {
+      localStorage.setItem("beautify-icon-overrides", JSON.stringify(preset.iconOverrides || {}));
+    } catch(e) {}
 
     // 3. 写入内置小部件库
     if (preset.widgets) {

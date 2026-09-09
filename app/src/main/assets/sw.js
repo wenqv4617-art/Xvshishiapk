@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v83'; // v83: 桌面行数随预设切换(清透凉夏仍5行)/时钟自适应不换行/首开默认M3; v1.5.7
+const CACHE_NAME = 'story-phone-v84'; // v84: 薄秋主题(默认,7行,设计稿图标+淡彩)/清透凉夏完全恢复原样(5行); v1.5.8
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
