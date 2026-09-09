@@ -405,3 +405,11 @@ db.version(41).stores({
   ritual_states: 'id++, meId, subjectType, subjectId, date, source, updatedAt, [subjectType+subjectId+date]',
   ritual_anniversaries: 'id++, charId, meId, date, createdAt'
 });
+
+// ============================================
+// Version 42：仪轨 · 衣柜（每个角色/用户单独管理衣物）
+// - ritual_wardrobe: 某主体某个类别下的一件衣物（image 为可选 data URL，空则用内置占位图标）
+// ============================================
+db.version(42).stores({
+  ritual_wardrobe: 'id++, subjectType, subjectId, category, name, createdAt'
+});

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v76'; // v76: 新增「仪轨」应用(四维状态日历)+分享支持 X(推特)+情侣空间纪念日改纯倒数; v1.5.0
+const CACHE_NAME = 'story-phone-v77'; // v77: 仪轨折叠入口/随身详情/特殊情况/衣柜/日程带地点+此刻感知; v1.5.1
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

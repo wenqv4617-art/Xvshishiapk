@@ -6345,7 +6345,7 @@
         </div> <!-- 工作台应用(win-workbench)结束 -->
 
         <!-- 仪轨：日程 / 穿着 / 随身物品 / 位置 四维状态（简约日历） -->
-        <div id="win-yigui" class="app-window" style="overflow:hidden; background:#f7f8fa;">
+        <div id="win-yigui" class="app-window" style="overflow:hidden; background:#f7f8fa; position:relative;">
           <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.55)); border-bottom:1px solid rgba(148,163,184,0.22);">
             <button class="btn-icon" id="yigui-close-btn" style="color:#475569;">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -6370,6 +6370,8 @@
             <div id="yigui-day-title" style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;"></div>
             <div id="yigui-day"></div>
           </div>
+          <!-- 衣柜（全屏覆盖层，JS 渲染） -->
+          <div id="yigui-wardrobe" style="display:none; position:absolute; inset:0; z-index:20;"></div>
         </div> <!-- 仪轨应用(win-yigui)结束 -->
 
             </div> <!-- app-window-container 结束 -->
