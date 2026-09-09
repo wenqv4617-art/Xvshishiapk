@@ -364,12 +364,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
 // 应用壁纸与全局注入 CSS 的渲染挂载
 function applyGlobalSettingsOnLoad() {
-  // 背景壁纸应用
-  const bg = localStorage.getItem("beautify-wallpaper");
+  // 背景壁纸应用（新版壁纸存在 IndexedDB，localStorage 里只留一个 asset:wallpaper 标记）
+  const bg = localStorage.getItem("beautify-wallpaper") || "";
   const phone = document.getElementById("phone-container");
-  if (phone) {
-    if (bg) {
-      phone.style.backgroundImage = `url(${bg})`;
+  const applyBg = (val) => {
+    if (!phone) return;
+    if (val) {
+      phone.style.backgroundImage = `url(${val})`;
       phone.style.backgroundSize = "cover";
       phone.style.backgroundPosition = "center";
     } else {
@@ -377,7 +378,18 @@ function applyGlobalSettingsOnLoad() {
       phone.style.backgroundColor = "var(--bg-main)";
     }
     // 主题样式要能区分「有壁纸」和「没壁纸」：有壁纸时主题不能再用 !important 覆盖背景
-    phone.classList.toggle("has-wallpaper", !!bg);
+    phone.classList.toggle("has-wallpaper", !!val);
+  };
+  if (bg === "asset:wallpaper") {
+    tileAssetGet("wallpaper").then(function (v) { applyBg(v || ""); });
+  } else {
+    applyBg(bg);
+    // 老版本的大 dataURL 壁纸：自动搬进数据库，给 localStorage 腾出空间
+    if (bg.indexOf("data:image") === 0 && bg.length > 20000) {
+      tileAssetSet("wallpaper", bg).then(function (ok) {
+        if (ok) { try { localStorage.setItem("beautify-wallpaper", "asset:wallpaper"); } catch (e) {} }
+      });
+    }
   }
 
   // 底部 Dock 栏不透明度配置即时拉动渲染
@@ -966,6 +978,20 @@ function tileAssetSet(key, dataUrl) {
     fallback();
   });
 }
+/** 清掉某张图片（内存缓存 + 数据库 + localStorage 退路） */
+function tileAssetDel(key) {
+  delete tileAssetCache[key];
+  try { localStorage.removeItem("desktop-tile-asset-" + key); } catch (e) {}
+  try { if (typeof db !== "undefined" && db.assets) return db.assets.delete(key); } catch (e) {}
+  return Promise.resolve();
+}
+window.tileAssetGet = tileAssetGet;
+window.tileAssetSet = tileAssetSet;
+window.tileAssetDel = tileAssetDel;
+window.tileAssetClearCache = function (key) {
+  if (key === undefined) { Object.keys(tileAssetCache).forEach(function (k) { delete tileAssetCache[k]; }); }
+  else { delete tileAssetCache[key]; }
+};
 /** 把旧版存在 localStorage 里的照片/横幅图搬进 IndexedDB（一次性） */
 function migrateTileAssetsToDb() {
   if (window.__tileAssetMigrated) return;
@@ -996,7 +1022,9 @@ function migrateTileAssetsToDb() {
     });
   } catch (e) {}
 }
-/** 选一张图并压到最长边 maxPx 的 dataURL（PNG 保留透明） */
+/** 选一张图并压到最长边 maxPx 的 dataURL（PNG 保留透明）
+ *  解码优先用 createImageBitmap（内存占用远低于把整张图塞进 dataURL），
+ *  失败再退回 blob URL + Image，两边都不行才报错并说明可能是不支持的格式。 */
 function tilePickImage(maxPx, cb) {
   const input = document.createElement("input");
   input.type = "file";
@@ -1007,31 +1035,70 @@ function tilePickImage(maxPx, cb) {
     const file = input.files && input.files[0];
     input.remove();
     if (!file) return;
-    const reader = new FileReader();
-    reader.onerror = () => { if (typeof showToast === "function") showToast("图片读取失败"); };
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onerror = () => { if (typeof showToast === "function") showToast("图片解析失败"); };
-      img.onload = () => {
-        try {
-          const scale = Math.min(1, maxPx / Math.max(img.width, img.height));
-          const w = Math.max(1, Math.round(img.width * scale));
-          const h = Math.max(1, Math.round(img.height * scale));
-          const cv = document.createElement("canvas");
-          cv.width = w; cv.height = h;
-          const ctx = cv.getContext("2d");
-          ctx.clearRect(0, 0, w, h);
-          ctx.drawImage(img, 0, 0, w, h);
-          const isPng = /image\/png/i.test(file.type);
-          cb(cv.toDataURL(isPng ? "image/png" : "image/jpeg", 0.86));
-        } catch (err) { if (typeof showToast === "function") showToast("图片处理失败：" + err.message); }
-      };
-      img.src = e.target.result;
-    };
-    reader.readAsDataURL(file);
+    tileEncodeImage(file, maxPx).then((out) => {
+      if (out) { cb(out); return; }
+      if (typeof showToast === "function") {
+        showToast("这张图片解析失败：可能是 HEIC/WebP 等本机不支持的格式，或文件已损坏，换一张试试");
+      }
+    });
   };
   input.click();
 }
+/** File → dataURL（按最长边 maxPx 缩放，PNG 保持 PNG） */
+function tileEncodeImage(file, maxPx) {
+  const isPng = /image\/png/i.test(file.type);
+  const encode = (src, w, h) => {
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    const ctx = cv.getContext("2d");
+    ctx.clearRect(0, 0, w, h);
+    ctx.drawImage(src, 0, 0, w, h);
+    return cv.toDataURL(isPng ? "image/png" : "image/jpeg", 0.86);
+  };
+  const viaBitmap = async () => {
+    if (typeof createImageBitmap !== "function") return null;
+    let bmp = null;
+    try { bmp = await createImageBitmap(file); } catch (e) { return null; }
+    try {
+      const scale = Math.min(1, maxPx / Math.max(bmp.width, bmp.height));
+      const w = Math.max(1, Math.round(bmp.width * scale));
+      const h = Math.max(1, Math.round(bmp.height * scale));
+      let src = bmp;
+      if (w !== bmp.width || h !== bmp.height) {
+        try {
+          const resized = await createImageBitmap(file, { resizeWidth: w, resizeHeight: h, resizeQuality: "high" });
+          src = resized;
+        } catch (e) { /* 不支持 resize 参数就直接缩放原图 */ }
+      }
+      const out = encode(src, w, h);
+      if (src !== bmp && src.close) src.close();
+      if (bmp.close) bmp.close();
+      return out;
+    } catch (e) { if (bmp && bmp.close) bmp.close(); return null; }
+  };
+  const viaImage = () => new Promise((resolve) => {
+    let url = "";
+    try { url = URL.createObjectURL(file); } catch (e) { return resolve(null); }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxPx / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+        const w = Math.max(1, Math.round((img.naturalWidth || img.width) * scale));
+        const h = Math.max(1, Math.round((img.naturalHeight || img.height) * scale));
+        resolve(encode(img, w, h));
+      } catch (e) { resolve(null); }
+      finally { URL.revokeObjectURL(url); }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+  return (async () => {
+    let out = await viaBitmap();
+    if (!out) out = await viaImage();
+    return out;
+  })();
+}
+window.tileEncodeImage = tileEncodeImage;
 /** 自制卡片弹层（项目禁止原生弹窗） */
 function tileSheet(opts) {
   const mask = document.createElement("div");

@@ -304,6 +304,9 @@ function initSettingsApp() {
   const btnCleanAvatars = document.getElementById("btn-clean-redundant-avatars");
   if (btnCleanAvatars) btnCleanAvatars.onclick = cleanRedundantAvatars;
 
+  const btnManageImages = document.getElementById("btn-manage-images");
+  if (btnManageImages) btnManageImages.onclick = openImageManager;
+
   // 绑定：数据管理 (7块隔离导出/导入功能)
   document.getElementById("btn-export-beautify").onclick = exportBeautifyPack;
   document.getElementById("btn-import-beautify").onclick = () => document.getElementById("file-import-beautify").click();
@@ -818,16 +821,20 @@ document.getElementById("btn-test-api").onclick = async () => {
 // ==========================================
 function loadBeautifyForm() {
   const bgUrl = localStorage.getItem("beautify-wallpaper") || "";
-  document.getElementById("beautify-bg-url").value = bgUrl.startsWith("data:") ? "[本地上传背景]" : bgUrl;
-  
-  // 渲染壁纸预览
+  const isLocalBg = bgUrl.startsWith("data:") || bgUrl === "asset:wallpaper";
+  document.getElementById("beautify-bg-url").value = isLocalBg ? "[本地上传背景]" : bgUrl;
+
+  // 渲染壁纸预览（新版壁纸存在 IndexedDB，需要异步取回）
   const bgPreview = document.getElementById("beautify-bg-preview");
-  if (bgPreview) {
-    if (bgUrl) {
-      bgPreview.innerHTML = `<img src="${bgUrl}" style="width:100%; height:100%; object-fit:cover;">`;
-    } else {
-      bgPreview.innerHTML = '<span style="font-size: 9px; color: var(--text-secondary); text-align: center;">无预览</span>';
-    }
+  const paintBgPreview = (src) => {
+    if (!bgPreview) return;
+    if (src) bgPreview.innerHTML = `<img src="${src}" style="width:100%; height:100%; object-fit:cover;">`;
+    else bgPreview.innerHTML = '<span style="font-size: 9px; color: var(--text-secondary); text-align: center;">无预览</span>';
+  };
+  if (bgUrl === "asset:wallpaper" && typeof window.tileAssetGet === "function") {
+    window.tileAssetGet("wallpaper").then((v) => paintBgPreview(v || ""));
+  } else {
+    paintBgPreview(bgUrl);
   }
 
   // 渲染不透明度数据
@@ -880,32 +887,43 @@ async function saveBeautifyConfig() {
   // 保存背景
   if (bgInput === "[本地上传背景]") {
     const src = tempBgFile || tempBgBlob;
-    if (src) {
-      // 逐级降规格重压，直到 localStorage 写得进去（手机存储吃紧时也不会静默失败）
-      const ladder = [[1280, 0.82], [1080, 0.75], [900, 0.7], [720, 0.62], [600, 0.55]];
-      let saved = false;
-      for (let i = 0; i < ladder.length; i++) {
-        const dataURL = await encodeImageFile(src, ladder[i][0], ladder[i][1]);
-        if (!dataURL) break;
-        try {
-          localStorage.setItem("beautify-wallpaper", dataURL);
-          saved = true;
-          break;
-        } catch (err) { /* 继续缩小再试 */ }
-      }
-      if (!saved) {
-        showToast("壁纸保存失败：手机存储空间不足，请先清理后再试");
-        return;
-      }
-    } else {
+    if (!src) {
       showToast("没有读取到壁纸文件，请重新选择");
       return;
     }
+    // 压一次就够：1280/q0.82 足够清晰，且存进 IndexedDB 不受 localStorage 5MB 限制
+    let dataURL = await encodeImageFile(src, 1280, 0.82);
+    if (!dataURL) dataURL = await encodeImageFile(src, 1080, 0.75);
+    if (!dataURL) {
+      showToast("壁纸读取失败，请换一张图片（HEIC 等格式可能不被支持）");
+      return;
+    }
+    let savedToDb = false;
+    if (typeof window.tileAssetSet === "function") {
+      savedToDb = await window.tileAssetSet("wallpaper", dataURL);
+    }
+    if (savedToDb) {
+      try { localStorage.setItem("beautify-wallpaper", "asset:wallpaper"); } catch (err) {}
+    } else {
+      // 数据库不可用时退回 localStorage：逐级压缩直到写得进去
+      const ladder = [[1080, 0.75], [900, 0.7], [720, 0.62], [600, 0.55]];
+      let saved = false;
+      for (let i = 0; i < ladder.length; i++) {
+        const d = await encodeImageFile(src, ladder[i][0], ladder[i][1]);
+        if (!d) break;
+        try { localStorage.setItem("beautify-wallpaper", d); saved = true; break; } catch (err) { /* 继续缩小 */ }
+      }
+      if (!saved) {
+        showToast("壁纸保存失败：存储空间不足，可在下方「图片管理」里清理后再试");
+        return;
+      }
+    }
   } else if (bgInput) {
     try { localStorage.setItem("beautify-wallpaper", bgInput); }
-    catch (err) { showToast("壁纸保存失败：手机存储空间不足"); return; }
+    catch (err) { showToast("壁纸保存失败：存储空间不足"); return; }
   } else {
     localStorage.removeItem("beautify-wallpaper");
+    if (typeof window.tileAssetDel === "function") window.tileAssetDel("wallpaper");
   }
 
   // 保存不透明度
@@ -1850,7 +1868,23 @@ async function computeStorageUsage() {
     const widgetsStr = localStorage.getItem("beautify-widgets") || "";
     const momentSettingsStr = localStorage.getItem("moment_settings") || "";
 
-    const beautifyBaseBytes = new Blob([wallpaperStr + customIconsStr + cssPresetsStr + activeCssStr + widgetsStr + momentSettingsStr]).size;
+    // 桌面图片（IndexedDB assets）与衣柜图片也计入「图片」一栏
+    let assetsBytes = 0;
+    try {
+      if (db.assets) {
+        const assetRows = await db.assets.toArray();
+        assetsBytes = new Blob([JSON.stringify(assetRows.map((r) => r.data || ""))]).size;
+      }
+    } catch (e) {}
+    let wardrobeBytes = 0;
+    try {
+      if (db.ritual_wardrobe) {
+        const wr = await db.ritual_wardrobe.toArray();
+        wardrobeBytes = new Blob([JSON.stringify(wr.map((r) => r.image || ""))]).size;
+      }
+    } catch (e) {}
+
+    const beautifyBaseBytes = new Blob([wallpaperStr + customIconsStr + cssPresetsStr + activeCssStr + widgetsStr + momentSettingsStr]).size + assetsBytes + wardrobeBytes;
     const stickersBytes = new Blob([JSON.stringify(sticker_groups) + JSON.stringify(sticker_items)]).size;
     const totalBeautifyBytes = beautifyBaseBytes + stickersBytes;
 
@@ -1902,8 +1936,29 @@ async function computeStorageUsage() {
 }
 
 // === 大二进制 Blob / File 原生编解码转换层 ===
-/** 把图片（File/Blob）按最长边 maxW、质量 q 压成 JPEG dataURL；失败返回 null */
+/** 把图片（File/Blob）按最长边 maxW、质量 q 压成 JPEG dataURL；失败返回 null
+ *  优先用桌面卡片那套解码器（createImageBitmap + blob URL，内存友好） */
 function encodeImageFile(file, maxW, q) {
+  if (typeof window.tileEncodeImage === "function") {
+    return window.tileEncodeImage(file, maxW).then(function (out) {
+      if (!out) return null;
+      if (q >= 0.8 || out.indexOf("data:image/jpeg") < 0) return out;
+      // 需要更低质量时，用已有的 dataURL 再压一次
+      return new Promise(function (resolve) {
+        const img = new Image();
+        img.onload = function () {
+          try {
+            const cv = document.createElement("canvas");
+            cv.width = img.width; cv.height = img.height;
+            cv.getContext("2d").drawImage(img, 0, 0);
+            resolve(cv.toDataURL("image/jpeg", q));
+          } catch (e) { resolve(out); }
+        };
+        img.onerror = function () { resolve(out); };
+        img.src = out;
+      });
+    });
+  }
   return new Promise((resolve) => {
     const img = new Image();
     const reader = new FileReader();
@@ -2660,6 +2715,184 @@ async function compressImageBase64(source, maxWidth = 200, quality = 0.75, force
   });
 }
 window.compressImageBase64 = compressImageBase64;
+
+// ==========================================
+// 图片管理：列出所有地方的图片（缩略图 + 大小），可多选删除
+// 覆盖 localStorage（壁纸 / 自定义图标 / 组件图）、IndexedDB（桌面卡片图 / 衣柜 / 头像）
+// ==========================================
+const IMG_LABELS = {
+  "beautify-wallpaper": "桌面壁纸",
+  "beautify-custom-icons": "自定义应用图标",
+  "cs_store_top_img": "组件图 · 顶部照片条",
+  "cs_store_pol_img": "组件图 · 拍立得",
+  "cs_store_dlg_img_1": "组件图 · 对话头像 1",
+  "cs_store_dlg_img_2": "组件图 · 对话头像 2"
+};
+const ASSET_LABELS = {
+  "wallpaper": "桌面壁纸",
+  "banner-main": "桌面横幅背景",
+  "photo-a": "桌面照片卡 · 左上",
+  "photo-b": "桌面照片卡 · 右下",
+  "photo-c": "桌面照片卡 · 竖版"
+};
+function humanSize(n) {
+  const bytes = Math.round((n || 0) * 0.75);   // dataURL 大约 4/3 膨胀
+  if (bytes < 1024) return bytes + " B";
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + " KB";
+  return (bytes / 1024 / 1024).toFixed(2) + " MB";
+}
+/** 收集所有存着图片的地方 */
+async function collectStoredImages() {
+  const out = [];
+  const push = (o) => { if (o.data && String(o.data).indexOf("data:") === 0) out.push(o); };
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    const v = localStorage.getItem(k) || "";
+    if (v.indexOf("data:image") === 0) {
+      push({ src: "ls", key: k, data: v, label: IMG_LABELS[k] || (k.indexOf("desktop-tile-asset-") === 0 ? "桌面图片 · " + k.slice(20) : k) });
+    } else if (v.charAt(0) === "{" || v.charAt(0) === "[") {
+      try {
+        const obj = JSON.parse(v);
+        Object.keys(obj).forEach((f) => {
+          if (typeof obj[f] === "string" && obj[f].indexOf("data:image") === 0) {
+            push({ src: "ls-json", key: k, field: f, data: obj[f], label: (IMG_LABELS[k] || k) + " · " + f });
+          }
+        });
+      } catch (e) {}
+    }
+  }
+  try {
+    const rows = await db.assets.toArray();
+    rows.forEach((r) => push({ src: "asset", key: r.key, data: r.data, label: ASSET_LABELS[r.key] || ("桌面图片 · " + r.key) }));
+  } catch (e) {}
+  try {
+    const rows = await db.ritual_wardrobe.toArray();
+    rows.forEach((r) => push({ src: "wardrobe", id: r.id, data: r.image, label: "衣柜 · " + (r.name || "") }));
+  } catch (e) {}
+  try {
+    const rows = await db.archives.toArray();
+    rows.forEach((r) => push({ src: "avatar", id: r.id, data: r.avatar, label: "头像 · " + (r.name || "") }));
+  } catch (e) {}
+  return out;
+}
+async function deleteStoredImage(item) {
+  try {
+    if (item.src === "ls") {
+      localStorage.removeItem(item.key);
+    } else if (item.src === "ls-json") {
+      const obj = JSON.parse(localStorage.getItem(item.key) || "{}");
+      delete obj[item.field];
+      localStorage.setItem(item.key, JSON.stringify(obj));
+    } else if (item.src === "asset") {
+      if (typeof window.tileAssetDel === "function") await window.tileAssetDel(item.key);
+      if (item.key === "wallpaper") localStorage.removeItem("beautify-wallpaper");
+    } else if (item.src === "wardrobe") {
+      await db.ritual_wardrobe.update(item.id, { image: "" });
+    } else if (item.src === "avatar") {
+      await db.archives.update(item.id, { avatar: "" });
+    }
+    return true;
+  } catch (e) {
+    console.warn("[图片管理] 删除失败:", e);
+    return false;
+  }
+}
+async function openImageManager() {
+  const mask = document.createElement("div");
+  mask.className = "imgmgr-mask";
+  mask.style.cssText = "position:fixed;inset:0;z-index:100950;background:rgba(15,23,42,.46);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-end;justify-content:center;";
+  mask.innerHTML =
+    '<div class="imgmgr-card" style="width:100%;max-width:440px;max-height:88vh;background:#fff;border-radius:22px 22px 0 0;display:flex;flex-direction:column;overflow:hidden;">' +
+      '<div style="padding:14px 16px 10px;border-bottom:1px solid #eef2f7;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>' +
+          '<div style="flex:1;font-size:15px;font-weight:800;color:#1e293b;">图片管理</div>' +
+          '<button id="imgmgr-close" style="border:none;background:#f1f5f9;border-radius:9px;padding:6px 10px;color:#64748b;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">关闭</button>' +
+        '</div>' +
+        '<div id="imgmgr-summary" style="font-size:11.5px;color:#64748b;margin-top:6px;">正在统计…</div>' +
+      '</div>' +
+      '<div id="imgmgr-list" style="flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div>' +
+      '<div style="padding:10px 14px calc(14px + env(safe-area-inset-bottom,0px));border-top:1px solid #eef2f7;display:flex;gap:8px;align-items:center;">' +
+        '<button id="imgmgr-all" style="padding:10px 14px;border:1.5px solid #e2e8f0;background:#fff;border-radius:11px;font-size:12px;font-weight:800;color:#475569;cursor:pointer;font-family:inherit;">全选</button>' +
+        '<div style="flex:1;font-size:11.5px;color:#94a3b8;" id="imgmgr-sel">未选中</div>' +
+        '<button id="imgmgr-del" style="padding:10px 16px;border:none;background:#ef4444;border-radius:11px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">删除选中</button>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(mask);
+  const listEl = mask.querySelector("#imgmgr-list");
+  const sumEl = mask.querySelector("#imgmgr-summary");
+  const selEl = mask.querySelector("#imgmgr-sel");
+  const close = () => mask.remove();
+  mask.querySelector("#imgmgr-close").onclick = close;
+  mask.onclick = (e) => { if (e.target === mask) close(); };
+
+  let items = [];
+  let selected = new Set();
+  const refreshSel = () => {
+    const n = selected.size;
+    let size = 0;
+    selected.forEach((i) => { size += items[i].data.length; });
+    selEl.textContent = n ? "已选 " + n + " 张 · " + humanSize(size) : "未选中";
+  };
+  const render = () => {
+    listEl.innerHTML = items.map((it, i) => {
+      const on = selected.has(i);
+      return '<div class="imgmgr-item" data-i="' + i + '" style="position:relative;border-radius:12px;overflow:hidden;background:#f8fafc;border:1.5px solid ' + (on ? "#7c3aed" : "#eef2f7") + ';cursor:pointer;box-sizing:border-box;">' +
+        '<div style="width:100%;aspect-ratio:1/1;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;">' +
+          '<img src="' + it.data + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
+        '</div>' +
+        '<div style="padding:5px 6px;">' +
+          '<div style="font-size:10px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (it.label || "") + '</div>' +
+          '<div style="font-size:9.5px;color:#94a3b8;">' + humanSize(it.data.length) + '</div>' +
+        '</div>' +
+        '<div style="position:absolute;top:5px;right:5px;width:20px;height:20px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:' + (on ? "#7c3aed" : "rgba(255,255,255,.86)") + ';border:1.5px solid ' + (on ? "#7c3aed" : "#cbd5e1") + ';">' +
+          (on ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>' : '') +
+        '</div>' +
+      '</div>';
+    }).join("");
+    listEl.querySelectorAll(".imgmgr-item").forEach((el) => {
+      el.onclick = () => {
+        const i = Number(el.getAttribute("data-i"));
+        if (selected.has(i)) selected.delete(i); else selected.add(i);
+        render(); refreshSel();
+      };
+    });
+  };
+  const load = async () => {
+    items = await collectStoredImages();
+    selected = new Set();
+    let total = 0;
+    items.forEach((it) => { total += it.data.length; });
+    sumEl.textContent = items.length ? ("共 " + items.length + " 张图片，约 " + humanSize(total) + "（点图选择，再点「删除选中」）") : "没有找到图片";
+    render(); refreshSel();
+  };
+  mask.querySelector("#imgmgr-all").onclick = () => {
+    if (selected.size === items.length) selected = new Set();
+    else items.forEach((_, i) => selected.add(i));
+    render(); refreshSel();
+  };
+  mask.querySelector("#imgmgr-del").onclick = async () => {
+    if (!selected.size) { showToast("先点选要删除的图片"); return; }
+    const list = Array.from(selected).map((i) => items[i]);
+    const ok = await new Promise((resolve) => {
+      if (typeof window.showCustomConfirm === "function") {
+        window.showCustomConfirm("删除选中的图片", "将删除 " + list.length + " 张图片（约 " + humanSize(list.reduce((a, b) => a + b.data.length, 0)) + "）。被删的图片在对应位置会变成空位，可重新上传。", () => resolve(true), () => resolve(false));
+      } else resolve(true);
+    });
+    if (!ok) return;
+    let done = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (await deleteStoredImage(list[i])) done++;
+    }
+    showToast("已删除 " + done + " 张图片");
+    if (typeof window.applyGlobalSettingsOnLoad === "function") window.applyGlobalSettingsOnLoad();
+    if (typeof window.loadDesktopLayout === "function") window.loadDesktopLayout();
+    await load();
+    if (typeof computeStorageUsage === "function") computeStorageUsage();
+  };
+  await load();
+}
+window.openImageManager = openImageManager;
 
 // 引擎 1：全库大图与历史头像无损压实引擎 (全量覆盖档案、会话、群组、论坛、表情包与聊天卡片)
 async function optimizeImagesAndAvatars() {
