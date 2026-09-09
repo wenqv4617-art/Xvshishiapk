@@ -4,6 +4,98 @@
 
 let isDesktopEditMode = false;
 let currentDesktopPage = 0;
+let lastRenderedDesktopPage = -1;   // 用于翻页滑入动效的方向判定
+
+// ===== 桌面网格规格：4 列 × 7 行（每页 28 格），旧版为 4 列 × 5 行（每页 20 格）=====
+const DESKTOP_COLS = 4;
+const DESKTOP_ROWS = 7;
+const DESKTOP_PAGE_SIZE = DESKTOP_COLS * DESKTOP_ROWS;   // 28
+const DESKTOP_LEGACY_PAGE_SIZE = 20;                     // 旧版每页 20 格，仅用于迁移
+
+/** 把一份「旧页宽」的扁平布局按页重排到当前页宽，保持每一页的图标仍留在该页 */
+function remapDesktopLayout(arr, fromSize, toSize) {
+  if (!Array.isArray(arr) || !arr.length || fromSize === toSize) return arr;
+  const pages = Math.max(1, Math.ceil(arr.length / fromSize));
+  const next = new Array(pages * toSize).fill(null);
+  for (let p = 0; p < pages; p++) {
+    for (let i = 0; i < fromSize; i++) {
+      const v = arr[p * fromSize + i];
+      if (v !== undefined) next[p * toSize + i] = v;
+    }
+  }
+  return next;
+}
+window.remapDesktopLayout = remapDesktopLayout;
+window.DESKTOP_PAGE_SIZE = DESKTOP_PAGE_SIZE;
+window.DESKTOP_LEGACY_PAGE_SIZE = DESKTOP_LEGACY_PAGE_SIZE;
+
+/** 一次性幂等迁移：桌面布局与小部件槽位从 20 格/页 换成 28 格/页 */
+function migrateDesktopPageSize() {
+  let stored = 0;
+  try { stored = parseInt(localStorage.getItem("desktop-page-size"), 10) || 0; } catch (e) {}
+  if (stored === DESKTOP_PAGE_SIZE) return;
+  const fromSize = stored > 0 ? stored : DESKTOP_LEGACY_PAGE_SIZE;
+  if (fromSize === DESKTOP_PAGE_SIZE) return;
+
+  try {
+    const raw = JSON.parse(localStorage.getItem("desktop-layout-v3"));
+    if (Array.isArray(raw) && raw.length) {
+      localStorage.setItem("desktop-layout-v3", JSON.stringify(remapDesktopLayout(raw, fromSize, DESKTOP_PAGE_SIZE)));
+    }
+  } catch (e) {}
+
+  try {
+    const placed = JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {};
+    const next = {};
+    Object.keys(placed).forEach((k) => {
+      const idx = parseInt(k, 10);
+      if (isNaN(idx)) return;
+      const p = Math.floor(idx / fromSize);
+      const i = idx % fromSize;
+      next[p * DESKTOP_PAGE_SIZE + i] = placed[k];
+    });
+    localStorage.setItem("placed-widgets-desktop", JSON.stringify(next));
+  } catch (e) {}
+
+  try { localStorage.setItem("desktop-page-size", String(DESKTOP_PAGE_SIZE)); } catch (e) {}
+}
+
+/** 4 列 × 7 行必须刚好装进一屏：按可用高度算出图标尺寸并写进 CSS 变量 */
+function applyDesktopGridMetrics() {
+  const desktop = document.getElementById("desktop");
+  const grid = document.getElementById("desktop-grid");
+  if (!desktop || !grid) return;
+  const cs = getComputedStyle(desktop);
+  const avail = desktop.clientHeight - parseFloat(cs.paddingTop || 0) - parseFloat(cs.paddingBottom || 0);
+  if (!avail || avail < 120) {
+    // 桌面还没显示（开屏期间 display:none）时测不到高度，稍后重试一次
+    if (!applyDesktopGridMetrics._retried) {
+      applyDesktopGridMetrics._retried = true;
+      setTimeout(applyDesktopGridMetrics, 500);
+    }
+    return;
+  }
+  applyDesktopGridMetrics._retried = false;
+  const gapY = 10;
+  const labelH = 24;                        // 名称一行 + 间距（图标块总高 = 图标 + 19）
+  const rowH = (avail - (DESKTOP_ROWS - 1) * gapY) / DESKTOP_ROWS;
+  const icon = Math.max(36, Math.min(58, Math.floor(rowH - labelH)));
+  const cell = Math.max(52, Math.min(80, Math.floor(rowH)));
+  [desktop, grid].forEach((el) => {
+    el.style.setProperty("--desktop-icon", icon + "px");
+    el.style.setProperty("--desktop-cell", cell + "px");
+    el.style.setProperty("--desktop-min-row", (icon + 19) + "px");
+    el.style.setProperty("--desktop-gap-y", gapY + "px");
+    el.style.setProperty("--desktop-gap-x", "10px");
+  });
+}
+window.applyDesktopGridMetrics = applyDesktopGridMetrics;
+window.__desktopDebug = function () {
+  return {
+    pageSize: DESKTOP_PAGE_SIZE, cols: DESKTOP_COLS, rows: DESKTOP_ROWS,
+    page: currentDesktopPage, edit: isDesktopEditMode, lastRendered: lastRenderedDesktopPage
+  };
+};
 
 // 核心初始化保护锁，彻底杜绝重复绑定事件导致的浏览器线程阻塞与死锁
 let isDragEventsInitialized = false;
@@ -18,10 +110,11 @@ let isAppClickEventsInitialized = false;
     }
     #desktop-grid {
       display: grid !important;
-      grid-template-columns: repeat(4, 1fr) !important;
-      grid-template-rows: repeat(5, 1fr) !important;
-      gap: 16px 12px !important;
-      min-height: auto !important;
+      grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+      grid-template-rows: repeat(7, minmax(var(--desktop-min-row, 52px), 1fr)) !important;
+      gap: var(--desktop-gap-y, 10px) var(--desktop-gap-x, 10px) !important;
+      min-height: 0 !important;
+      flex: 1 1 auto !important;
       width: 100% !important;
       max-width: 100% !important;
       margin: 0 auto !important;
@@ -56,7 +149,6 @@ let isAppClickEventsInitialized = false;
       justify-content: center !important;
       align-items: center !important;
       width: 100% !important;
-      aspect-ratio: 4 / 5 !important; /* 黄金比例锁，防止拉伸 */
       border-radius: 18px !important;
       transition: background-color 0.15s ease, border-color 0.15s ease !important;
       box-sizing: border-box !important;
@@ -64,6 +156,14 @@ let isAppClickEventsInitialized = false;
       position: relative !important;
       margin: 0 !important;
       padding: 0 !important;
+    }
+    /* 桌面槽位交给 7 行等分的高度决定（不再锁比例，否则 7 行会溢出） */
+    .desktop-slot {
+      aspect-ratio: auto !important;
+      height: 100% !important;
+    }
+    .dock-slot {
+      aspect-ratio: 1 / 1 !important; /* 黄金比例锁，防止拉伸 */
     }
 
     /* 当槽位摆放了自定义小部件组件时，解除比例限制，由小部件本身的行高列宽完全决定占位大小 */
@@ -78,8 +178,9 @@ let isAppClickEventsInitialized = false;
       align-items: center !important;
       justify-content: center !important;
       text-align: center !important;
-      width: 72px !important; /* 核心修正：固定宽度为标准的72px，绝不使用 100% 从而杜绝追加到body时膨胀 */
-      height: auto !important; /* 核心修正：高度完全自适应，绝不使用 100% 从而杜绝追加到body时膨胀 */
+      width: var(--desktop-cell, 72px) !important; /* 由 applyDesktopGridMetrics 按 7 行可用高度算出 */
+      max-width: 100% !important;
+      height: auto !important;
       margin: 0 !important;
       padding: 0 !important;
       box-sizing: border-box !important;
@@ -92,6 +193,8 @@ let isAppClickEventsInitialized = false;
       display: flex !important;
       align-items: center !important;
       justify-content: center !important;
+      width: var(--desktop-icon, 52px) !important;
+      height: var(--desktop-icon, 52px) !important;
       margin: 0 auto 6px auto !important;
       box-sizing: border-box !important;
     }
@@ -108,7 +211,7 @@ let isAppClickEventsInitialized = false;
       cursor: grab;
     }
     .app-icon.dragging {
-      width: 72px !important;
+      width: var(--desktop-cell, 72px) !important;
       height: auto !important;
       opacity: 0.82;
       transform: scale(1.15) !important;
@@ -326,20 +429,23 @@ function loadDesktopLayout() {
   const grid = document.getElementById("desktop-grid");
   const dock = document.getElementById("dock-grid");
 
+  // 0. 每页 20 格 → 28 格（4 列 × 7 行）的一次性幂等迁移
+  migrateDesktopPageSize();
+
   // 1. 读取并平滑迁移老用户的非网格版布局数据，自动将其校准为 v3 版吸附格式
   let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3"));
   if (!desktopLayout || !Array.isArray(desktopLayout)) {
     const oldLayout = JSON.parse(localStorage.getItem("desktop-layout"));
-    desktopLayout = Array(20).fill(null);
+    desktopLayout = Array(DESKTOP_LEGACY_PAGE_SIZE).fill(null);
     if (oldLayout && Array.isArray(oldLayout)) {
       oldLayout.forEach((id, idx) => {
-        if (idx < 20) desktopLayout[idx] = id;
+        if (idx < DESKTOP_LEGACY_PAGE_SIZE) desktopLayout[idx] = id;
       });
       // 老数据迁移后同样写回 v3，避免后续 isAppAlreadyPlaced / placeAppOnSlot 读到 null
-      while (desktopLayout.length < 40) desktopLayout.push(null);
+      while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
       localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
     } else {
-            desktopLayout = Array(40).fill(null); // 扩展为两页
+            desktopLayout = Array(DESKTOP_PAGE_SIZE * 2).fill(null); // 两页，每页 4 列 × 7 行
             // 规则：chat / world_book / archive 只放 Dock 栏，不占主页面格子
             desktopLayout[0] = 'encounter';
             desktopLayout[1] = 'deeptalk';
@@ -347,11 +453,11 @@ function loadDesktopLayout() {
             desktopLayout[3] = 'forum';
             desktopLayout[4] = 'couples';
             // 第二页：听歌 + 购物 + 快穿局 + 工作台 + 仪轨
-            desktopLayout[20] = 'music';
-            desktopLayout[21] = 'shopping';
-            desktopLayout[22] = 'quicktravel';
-            desktopLayout[23] = 'workbench';
-            desktopLayout[24] = 'yigui';
+            desktopLayout[DESKTOP_PAGE_SIZE] = 'music';
+            desktopLayout[DESKTOP_PAGE_SIZE + 1] = 'shopping';
+            desktopLayout[DESKTOP_PAGE_SIZE + 2] = 'quicktravel';
+            desktopLayout[DESKTOP_PAGE_SIZE + 3] = 'workbench';
+            desktopLayout[DESKTOP_PAGE_SIZE + 4] = 'yigui';
             // 关键修复：默认布局必须立即写回 localStorage，否则 isAppAlreadyPlaced / placeAppOnSlot
             //   会读到 null，导致"添加图标列表显示全部"+"添加后覆盖成空数组使全部图标消失"
             localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
@@ -385,7 +491,7 @@ function loadDesktopLayout() {
                       || (Array.isArray(dockLayout) && dockLayout.includes("encounter"));
     if (!hasEncounter) {
       // 确保 desktopLayout 至少有 40 格（两页）
-      while (desktopLayout.length < 40) desktopLayout.push(null);
+      while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
       // 找到第一个空位放置邂逅（避免覆盖已有 app 和 widget 占用区）
       // 优先尝试槽位 0；若 0 已被占用，则找第一个空槽
       let targetIdx = -1;
@@ -417,7 +523,7 @@ function loadDesktopLayout() {
     const hasQt = (Array.isArray(desktopLayout) && desktopLayout.includes("quicktravel"))
                || (Array.isArray(dockLayout) && dockLayout.includes("quicktravel"));
     if (!hasQt) {
-      while (desktopLayout.length < 40) desktopLayout.push(null);
+      while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
       const placedWidgetsDesktop2 = (() => {
         try { return JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {}; }
         catch(e) { return {}; }
@@ -441,7 +547,7 @@ function loadDesktopLayout() {
     const hasYg = (Array.isArray(desktopLayout) && desktopLayout.includes("yigui"))
                || (Array.isArray(dockLayout) && dockLayout.includes("yigui"));
     if (!hasYg) {
-      while (desktopLayout.length < 40) desktopLayout.push(null);
+      while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
       const placedWidgetsDesktop3 = (() => {
         try { return JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {}; }
         catch(e) { return {}; }
@@ -464,19 +570,19 @@ function loadDesktopLayout() {
   }
 
   // 2. 渲染网格 (支持多页切换及补位)
-  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / DESKTOP_PAGE_SIZE));
   if (currentDesktopPage >= pageCount) {
     currentDesktopPage = pageCount - 1;
   }
   
-  const pageStart = currentDesktopPage * 20;
-  const pageLayout = desktopLayout.slice(pageStart, pageStart + 20);
-  while (pageLayout.length < 20) {
+  const pageStart = currentDesktopPage * DESKTOP_PAGE_SIZE;
+  const pageLayout = desktopLayout.slice(pageStart, pageStart + DESKTOP_PAGE_SIZE);
+  while (pageLayout.length < DESKTOP_PAGE_SIZE) {
     pageLayout.push(null);
   }
 
   let isPageBlank = true;
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < DESKTOP_PAGE_SIZE; i++) {
     if (pageLayout[i] !== null) {
       isPageBlank = false;
       break;
@@ -490,6 +596,21 @@ function loadDesktopLayout() {
   renderLayout(grid, pageLayout, "desktop-slot");
   renderLayout(dock, dockLayout, "dock-slot");
   renderPageIndicator(pageCount, isPageBlank);
+  // 4 列 × 7 行按可用高度自适应图标尺寸（保证 7 行刚好装进一屏，不出现滚动）
+  applyDesktopGridMetrics();
+  // 翻页滑入动效（只在页码真的变化时播放）
+  if (lastRenderedDesktopPage !== currentDesktopPage) {
+    const dir = currentDesktopPage > lastRenderedDesktopPage && lastRenderedDesktopPage >= 0 ? "r" : "l";
+    grid.classList.remove("page-anim-r", "page-anim-l");
+    void grid.offsetWidth;
+    grid.classList.add(dir === "r" ? "page-anim-r" : "page-anim-l");
+    lastRenderedDesktopPage = currentDesktopPage;
+  }
+  if (!window.__desktopMetricsBound) {
+    window.__desktopMetricsBound = true;
+    window.addEventListener("resize", () => applyDesktopGridMetrics());
+    window.addEventListener("orientationchange", () => setTimeout(applyDesktopGridMetrics, 120));
+  }
 
   // [3] 应用每页独立的 dock 栏 Y 轴偏移
   applyDockYOffset();
@@ -592,6 +713,13 @@ function renderPageIndicator(pageCount, isPageBlank) {
   if (!indicator) return;
   indicator.innerHTML = "";
 
+  // 只有一页且不在编辑模式时，指示器没必要占位置（也让 7 行网格多出一点高度）
+  if (pageCount <= 1 && !isDesktopEditMode) {
+    indicator.style.display = "none";
+    return;
+  }
+  indicator.style.display = "flex";
+
   const isLastPage = currentDesktopPage === pageCount - 1;
   const canDeleteCurrentPage = isDesktopEditMode && pageCount > 1 && isLastPage && isPageBlank;
 
@@ -602,7 +730,7 @@ function renderPageIndicator(pageCount, isPageBlank) {
       // 在编辑模式下，如果当前页是最后一页且是空白页，长条变成一个红色减号
       dot.className = "page-dot active delete-page-dot";
       dot.innerText = "-";
-      dot.style.cssText = "background-color: #ef4444 !important; color: white !important; display: flex !important; align-items: center; justify-content: center; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 50% !important; width: 14px !important; height: 14px !important; line-height: 1 !important;";
+      dot.style.cssText = "background-color: #ef4444 !important; color: white !important; display: flex !important; align-items: center !important; justify-content: center !important; font-size: 12px !important; font-weight: 800 !important; cursor: pointer !important; border-radius: 99px !important; width: 20px !important; height: 20px !important; line-height: 1 !important;";
       dot.onclick = (e) => {
         e.stopPropagation();
         window.deleteCurrentDesktopPage();
@@ -631,21 +759,21 @@ function renderPageIndicator(pageCount, isPageBlank) {
 
 function addNewDesktopPage() {
   let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < DESKTOP_PAGE_SIZE; i++) {
     desktopLayout.push(null);
   }
   localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
-  currentDesktopPage = Math.floor(desktopLayout.length / 20) - 1;
+  currentDesktopPage = Math.floor(desktopLayout.length / DESKTOP_PAGE_SIZE) - 1;
   loadDesktopLayout();
 }
 
 window.deleteCurrentDesktopPage = function() {
   if (confirm("确定要删除当前空白页吗？")) {
     let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
-    const pageStart = currentDesktopPage * 20;
+    const pageStart = currentDesktopPage * DESKTOP_PAGE_SIZE;
     
     // 移除对应页面的20个数据槽
-    desktopLayout.splice(pageStart, 20);
+    desktopLayout.splice(pageStart, DESKTOP_PAGE_SIZE);
     localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
     
     // 同步清洗和偏移对应页面及后续页面的组件绑定位置
@@ -656,8 +784,8 @@ window.deleteCurrentDesktopPage = function() {
         const idx = parseInt(key);
         if (idx < pageStart) {
           newPlaced[idx] = placed[idx];
-        } else if (idx >= pageStart + 20) {
-          newPlaced[idx - 20] = placed[idx];
+        } else if (idx >= pageStart + DESKTOP_PAGE_SIZE) {
+          newPlaced[idx - DESKTOP_PAGE_SIZE] = placed[idx];
         }
       });
       localStorage.setItem("placed-widgets-desktop", JSON.stringify(newPlaced));
@@ -674,7 +802,7 @@ window.deleteCurrentDesktopPage = function() {
 function getPlacedWidget(type, index) {
   try {
     const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
-    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + index) : index;
+    const realIndex = type === "desktop" ? (currentDesktopPage * DESKTOP_PAGE_SIZE + index) : index;
     const widgetId = placed[realIndex];
     if (widgetId) {
       const widgets = JSON.parse(localStorage.getItem("beautify-widgets")) || {};
@@ -1020,7 +1148,7 @@ function initDragEvents() {
       }
 
       activeIcon.style.position = "absolute";
-      activeIcon.style.width = "72px"; // 锁定标准稳定宽度
+      activeIcon.style.width = (rectWidth || 72) + "px"; // 跟随当前网格格子宽度（4 列 × 7 行自适应）
       activeIcon.style.height = "auto";
       activeIcon.style.zIndex = "9999";
       activeIcon.style.pointerEvents = "none"; 
@@ -1030,8 +1158,10 @@ function initDragEvents() {
       // 核心优化：让图标 1:1 结合 #phone-container 的绝对坐标，实现高精度非弹性跟随
       const phoneContainer = document.getElementById("phone-container");
       const phoneRect = phoneContainer ? phoneContainer.getBoundingClientRect() : { left: 0, top: 0 };
-      activeIcon.style.left = (e.clientX - phoneRect.left - 36) + "px"; // 36 为 72 / 2 的中心点
-      activeIcon.style.top = (e.clientY - phoneRect.top - 42) + "px";  // 42 约为整体高度的一半
+      const halfW = (rectWidth || 72) / 2;
+      const halfH = (rectHeight || 84) / 2;
+      activeIcon.style.left = (e.clientX - phoneRect.left - halfW) + "px";
+      activeIcon.style.top = (e.clientY - phoneRect.top - halfH) + "px";
 
       // 动态获取划过处的网格槽
       const targetElement = document.elementFromPoint(e.clientX, e.clientY);
@@ -1203,7 +1333,7 @@ function initDesktopSwipeEvents() {
       try {
         desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
       } catch (err) {}
-      const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+      const pageCount = Math.max(1, Math.ceil(desktopLayout.length / DESKTOP_PAGE_SIZE));
 
       if (deltaX < -50) {
         // 向左滑 -> 进入下一页
@@ -1236,21 +1366,21 @@ function initDesktopSwipeEvents() {
 function saveLayoutsToLocal() {
   const desktopSlots = Array.from(document.getElementById("desktop-grid").children);
   let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3")) || [];
-  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / 20));
+  const pageCount = Math.max(1, Math.ceil(desktopLayout.length / DESKTOP_PAGE_SIZE));
   
-  while (desktopLayout.length < pageCount * 20) {
+  while (desktopLayout.length < pageCount * DESKTOP_PAGE_SIZE) {
     desktopLayout.push(null);
   }
 
-  const pageStart = currentDesktopPage * 20;
-  for (let i = 0; i < 20; i++) {
+  const pageStart = currentDesktopPage * DESKTOP_PAGE_SIZE;
+  for (let i = 0; i < DESKTOP_PAGE_SIZE; i++) {
     desktopLayout[pageStart + i] = null;
   }
   
   // === 【物理对齐存盘校正】：通过 slot 的 data-index 属性反查真实索引，防止由于跳过 DOM 节点导致的整体缩水 ===
   desktopSlots.forEach(slot => {
     const index = parseInt(slot.getAttribute("data-index"));
-    if (!isNaN(index) && index < 20) {
+    if (!isNaN(index) && index < DESKTOP_PAGE_SIZE) {
       const icon = slot.querySelector(".app-icon");
       desktopLayout[pageStart + index] = icon ? icon.getAttribute("data-app") : null;
     }
@@ -1389,8 +1519,8 @@ function openAddSelector(type, slotIndex) {
 
 window.placeAppOnSlot = function(type, slotIndex, appId) {
   try {
-    let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? 20 : 4).fill(null);
-    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+    let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? DESKTOP_PAGE_SIZE : 4).fill(null);
+    const realIndex = type === "desktop" ? (currentDesktopPage * DESKTOP_PAGE_SIZE + slotIndex) : slotIndex;
     while (layout.length <= realIndex) {
       layout.push(null);
     }
@@ -1405,7 +1535,7 @@ window.placeAppOnSlot = function(type, slotIndex, appId) {
 window.placeWidgetOnSlot = function(type, slotIndex, widgetId) {
   try {
     const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
-    const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+    const realIndex = type === "desktop" ? (currentDesktopPage * DESKTOP_PAGE_SIZE + slotIndex) : slotIndex;
     placed[realIndex] = widgetId;
     localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
   } catch(e) {}
@@ -1423,7 +1553,7 @@ function removeWidgetFromSlot(type, slotIndex) {
   if (confirm("确定要从该网格中删除此组件吗？")) {
     try {
       const placed = JSON.parse(localStorage.getItem(`placed-widgets-${type}`)) || {};
-      const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+      const realIndex = type === "desktop" ? (currentDesktopPage * DESKTOP_PAGE_SIZE + slotIndex) : slotIndex;
       delete placed[realIndex];
       localStorage.setItem(`placed-widgets-${type}`, JSON.stringify(placed));
     } catch(e) {}
@@ -1434,8 +1564,8 @@ function removeWidgetFromSlot(type, slotIndex) {
 function removeAppFromSlot(type, slotIndex) {
   if (confirm("确定要将此应用从当前槽位中移除吗？您随时可以长按点击空白网格的加号重新放回桌面。")) {
     try {
-      let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? 20 : 4).fill(null);
-      const realIndex = type === "desktop" ? (currentDesktopPage * 20 + slotIndex) : slotIndex;
+      let layout = JSON.parse(localStorage.getItem(`${type}-layout-v3`)) || Array(type === "desktop" ? DESKTOP_PAGE_SIZE : 4).fill(null);
+      const realIndex = type === "desktop" ? (currentDesktopPage * DESKTOP_PAGE_SIZE + slotIndex) : slotIndex;
       while (layout.length <= realIndex) {
         layout.push(null);
       }

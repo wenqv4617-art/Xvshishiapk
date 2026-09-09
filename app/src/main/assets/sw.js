@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v79'; // v79: 仪轨 Bento 方块墙/备忘录待办/衣柜透明底大图+编辑; v1.5.3
+const CACHE_NAME = 'story-phone-v80'; // v80: 桌面 4列x7行(每页28格)+翻页指示器重做; v1.5.4
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

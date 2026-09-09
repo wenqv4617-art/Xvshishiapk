@@ -465,18 +465,35 @@ window.applyBuiltinThemePreset = function(specifiedKey) {
       localStorage.setItem("beautify-widgets", JSON.stringify(existingWidgets));
     }
 
-    // 4. 设置桌面摆放小部件
+    // 4. 设置桌面摆放小部件（预设按旧版每页 20 格的槽位号编写，按页重排到当前页宽）
     if (preset.placedDesktop) {
-      localStorage.setItem("placed-widgets-desktop", JSON.stringify(preset.placedDesktop));
+      const from = window.DESKTOP_LEGACY_PAGE_SIZE || 20;
+      const to = window.DESKTOP_PAGE_SIZE || 20;
+      let placed = preset.placedDesktop;
+      if (from !== to) {
+        const next = {};
+        Object.keys(placed).forEach((k) => {
+          const idx = parseInt(k, 10);
+          if (isNaN(idx)) { next[k] = placed[k]; return; }
+          next[Math.floor(idx / from) * to + (idx % from)] = placed[k];
+        });
+        placed = next;
+      }
+      localStorage.setItem("placed-widgets-desktop", JSON.stringify(placed));
     }
 
     // 5. 设置桌面与 Dock 排版
     if (preset.desktopLayout) {
-      localStorage.setItem("desktop-layout-v3", JSON.stringify(preset.desktopLayout));
+      const remapped = typeof window.remapDesktopLayout === "function"
+        ? window.remapDesktopLayout(preset.desktopLayout, window.DESKTOP_LEGACY_PAGE_SIZE || 20, window.DESKTOP_PAGE_SIZE || 20)
+        : preset.desktopLayout;
+      localStorage.setItem("desktop-layout-v3", JSON.stringify(remapped));
     }
     if (preset.dockLayout) {
       localStorage.setItem("dock-layout-v3", JSON.stringify(preset.dockLayout));
     }
+    // 迁移标记：预设已按当前页宽写入，避免随后又被 migrateDesktopPageSize 二次重排
+    try { localStorage.setItem("desktop-page-size", String(window.DESKTOP_PAGE_SIZE || 20)); } catch(e) {}
 
     if (typeof showToast === "function") {
       showToast(`已成功应用预设: ${preset.name}`);
