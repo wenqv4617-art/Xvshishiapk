@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v77'; // v77: 仪轨折叠入口/随身详情/特殊情况/衣柜/日程带地点+此刻感知; v1.5.1
+const CACHE_NAME = 'story-phone-v78'; // v78: 衣柜衣架轨道+摆动动效/档案性别字段/手动记录补生理期与生病; v1.5.2
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

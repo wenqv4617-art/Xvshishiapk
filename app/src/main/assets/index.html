@@ -1600,6 +1600,15 @@
                 </div>
                 <div id="form-general-fields">
                   <div class="form-group"><label>姓名</label><input type="text" id="archive-name" required placeholder="姓名"></div>
+                  <div class="form-group">
+                    <label>性别 <span style="font-size:10px; color:var(--text-secondary); font-weight:normal;">(影响生理期等状态判定)</span></label>
+                    <select id="archive-gender">
+                      <option value="">未设置</option>
+                      <option value="female">女</option>
+                      <option value="male">男</option>
+                      <option value="other">其他 / 不适用</option>
+                    </select>
+                  </div>
                   <div class="form-group"><label>备注 (不发给 AI)</label><input type="text" id="archive-remark" placeholder="仅自己可见"></div>
                   <div class="form-group"><label>母语 / 语言偏好 (留空默认为中文)</label><input type="text" id="archive-language" placeholder="例如：日语、英语、粤语、法语"></div>
                   <div class="form-group"><label>分组</label><input type="text" id="archive-group" placeholder="如：主角团、反派"></div>

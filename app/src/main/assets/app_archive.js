@@ -67,6 +67,7 @@ function initArchiveApp() {
       const group = document.getElementById("archive-group").value.trim();
       const persona = document.getElementById("archive-persona").value.trim();
       const appearance = (document.getElementById("archive-appearance") ? document.getElementById("archive-appearance").value.trim() : "");
+      const gender = (document.getElementById("archive-gender") ? document.getElementById("archive-gender").value : "");
       const lockfaceImages = pendingArchiveLockface.slice();
       const urlAvatar = document.getElementById("archive-avatar-url").value.trim();
     const parentId = archiveCurrentTab === 'npc' ? Number(document.getElementById("archive-parent-id").value) : null;
@@ -91,6 +92,7 @@ function initArchiveApp() {
         nativeLanguage,
         group,
         persona,
+        gender,
         parentId,
         appearance,
         lockfaceImages
@@ -286,6 +288,7 @@ async function openArchiveForm(editId = null) {
   document.getElementById("archive-remark").value = "";
   document.getElementById("archive-language").value = "";
   document.getElementById("archive-group").value = "";
+  if (document.getElementById("archive-gender")) document.getElementById("archive-gender").value = "";
   document.getElementById("archive-persona").value = "";
   if (document.getElementById("archive-appearance")) document.getElementById("archive-appearance").value = "";
   document.getElementById("archive-avatar-url").value = "";
@@ -368,6 +371,7 @@ async function openArchiveForm(editId = null) {
       document.getElementById("archive-remark").value = item.remark || "";
       document.getElementById("archive-language").value = item.nativeLanguage || "";
       document.getElementById("archive-group").value = item.group || "";
+      if (document.getElementById("archive-gender")) document.getElementById("archive-gender").value = item.gender || "";
       document.getElementById("archive-persona").value = item.persona || "";
       if (document.getElementById("archive-appearance")) document.getElementById("archive-appearance").value = item.appearance || "";
       // 回填锁脸正脸照片

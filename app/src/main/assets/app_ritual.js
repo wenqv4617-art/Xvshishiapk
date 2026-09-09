@@ -105,7 +105,7 @@
     var meId = myMeId();
     try {
       var me = meId ? await db.archives.get(Number(meId)) : null;
-      if (me) list.push({ type: 'user', id: Number(me.id), name: me.name || '我', avatar: me.avatar || '', persona: me.persona || '', meId: meId });
+      if (me) list.push({ type: 'user', id: Number(me.id), name: me.name || '我', avatar: me.avatar || '', persona: me.persona || '', gender: me.gender || '', meId: meId });
     } catch (e) {}
     try {
       var sess = await db.sessions.where('userId').equals(Number(meId)).toArray();
@@ -119,12 +119,20 @@
           name: s.customCharName || (c && c.name) || '角色',
           avatar: s.customCharAvatar || (c && c.avatar) || '',
           persona: s.customCharPersona || (c && c.persona) || '',
+          gender: (c && c.gender) || '',
           sessionId: s.id, meId: meId
         });
       }
     } catch (e) {}
     state.subjectList = list;
     return list;
+  }
+
+  /** 是否允许记录/生成生理期：男性一律禁止；未设置性别按"不显示"处理，但 AI 可依据人设自行判断 */
+  function canMenstruate(s) {
+    var g = String((s && s.gender) || '').toLowerCase();
+    if (g === 'male') return false;
+    return true;
   }
 
   function resolveAvatarUrl(av, name) {
@@ -397,10 +405,12 @@
       return { time: String((it && it.time) || ''), place: String((it && it.place) || ''), content: String((it && it.content) || '') };
     }).filter(function (it) { return it.content || it.place; });
   }
-  function specialOf(rec) {
+  function specialOf(rec, allowMen) {
     var sp = (rec && rec.special) || {};
+    var men = (sp.menstruation && sp.menstruation.on) || false;
+    if (allowMen === false) men = false;   // 男性角色一律不显示生理期
     return {
-      menstruation: { on: !!(sp.menstruation && sp.menstruation.on), level: (sp.menstruation && sp.menstruation.level) || '', note: (sp.menstruation && sp.menstruation.note) || '' },
+      menstruation: { on: men, level: (sp.menstruation && sp.menstruation.level) || '', note: (sp.menstruation && sp.menstruation.note) || '' },
       illness: { on: !!(sp.illness && sp.illness.on), name: (sp.illness && sp.illness.name) || '', level: (sp.illness && sp.illness.level) || '', note: (sp.illness && sp.illness.note) || '' }
     };
   }
@@ -463,7 +473,8 @@
 
     var schedule = normalizeSchedule(rec.schedule);
     var belongings = normalizeBelongings(rec.belongings);
-    var sp = specialOf(rec);
+    var allowMen = canMenstruate(state.subject);
+    var sp = specialOf(rec, allowMen);
     var srcTag = rec.source === 'ai'
       ? '<span style="font-size:9.5px;font-weight:800;color:#1e88e5;background:rgba(30,136,229,.10);padding:2px 6px;border-radius:6px;">AI 推演</span>'
       : '<span style="font-size:9.5px;font-weight:800;color:#64748b;background:#f1f5f9;padding:2px 6px;border-radius:6px;">手动填写</span>';
@@ -473,15 +484,17 @@
     if (sp.illness.on) specialSummary.push(sp.illness.name || '身体不适');
     var specialBody =
       '<div style="display:flex;flex-direction:column;gap:12px;">' +
-        '<div style="background:#fff5f7;border:1px solid #ffe0e7;border-radius:12px;padding:11px 12px;">' +
-          '<div style="display:flex;align-items:center;justify-content:space-between;">' +
-            '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#c2415c;">' + svg(ICO.heart, 14, '#c2415c') + '生理期</span>' +
-            '<span style="font-size:11px;font-weight:800;color:' + (sp.menstruation.on ? '#c2415c' : '#cbd5e1') + ';">' + (sp.menstruation.on ? '进行中' : '无') + '</span>' +
-          '</div>' +
-          (sp.menstruation.on ? '<div style="font-size:11.5px;color:#8a5b67;margin-top:6px;line-height:1.6;">' +
-            (sp.menstruation.level ? '状态：' + esc(sp.menstruation.level) + '<br>' : '') +
-            (sp.menstruation.note ? esc(sp.menstruation.note) : '') + '</div>' : '') +
-        '</div>' +
+        (allowMen
+          ? '<div style="background:#fff5f7;border:1px solid #ffe0e7;border-radius:12px;padding:11px 12px;">' +
+              '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+                '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#c2415c;">' + svg(ICO.heart, 14, '#c2415c') + '生理期</span>' +
+                '<span style="font-size:11px;font-weight:800;color:' + (sp.menstruation.on ? '#c2415c' : '#cbd5e1') + ';">' + (sp.menstruation.on ? '进行中' : '无') + '</span>' +
+              '</div>' +
+              (sp.menstruation.on ? '<div style="font-size:11.5px;color:#8a5b67;margin-top:6px;line-height:1.6;">' +
+                (sp.menstruation.level ? '状态：' + esc(sp.menstruation.level) + '<br>' : '') +
+                (sp.menstruation.note ? esc(sp.menstruation.note) : '') + '</div>' : '') +
+            '</div>'
+          : '') +
         '<div style="background:#f6f8ff;border:1px solid #e3e9fb;border-radius:12px;padding:11px 12px;">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;">' +
             '<span style="display:flex;align-items:center;gap:6px;font-size:12.5px;font-weight:800;color:#3b5bdb;">' + svg(ICO.pill, 14, '#3b5bdb') + '生病 / 不适</span>' +
@@ -522,7 +535,7 @@
           : '<div style="font-size:12px;color:#cbd5e1;">今天还没记录随身物品</div>') +
       entryHtml('location', ICO.pin, '当前位置', rec.location ? esc(String(rec.location).slice(0, 30)) : '未记录',
         rec.location ? '<div style="font-size:12.5px;line-height:1.72;color:#334155;">' + esc(rec.location) + '</div>' : '<div style="font-size:12px;color:#cbd5e1;">今天还没记录位置</div>') +
-      entryHtml('special', ICO.heart, '今天的情况', specialSummary.length ? specialSummary.join(' · ') : '生理期 / 生病 都可以记在这里', specialBody) +
+      entryHtml('special', ICO.heart, '今天的情况', specialSummary.length ? specialSummary.join(' · ') : (allowMen ? '生理期 / 生病 都可以记在这里' : '生病 / 不适 可以记在这里'), specialBody) +
       (rec.note ? entryHtml('note', ICO.note, '备注', esc(String(rec.note).slice(0, 30)), '<div style="font-size:12.5px;line-height:1.72;color:#334155;">' + esc(rec.note) + '</div>') : '');
 
     // 折叠交互
@@ -563,51 +576,81 @@
   }
 
   // ==================== 特殊情况（生理期 / 生病） ====================
-  function openSpecialEditor(ds) {
-    var sp = specialOf(state.currentState);
-    var row = function (id, label, val, ph) {
-      return '<div style="margin-bottom:10px;"><div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">' + label + '</div>' +
-        '<input id="' + id + '" value="' + esc(val) + '" placeholder="' + esc(ph) + '" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:9px 11px;font-size:12.5px;color:#334155;font-family:inherit;outline:none;"></div>';
+  function specialRow(id, label, val, ph) {
+    return '<div style="margin-bottom:10px;"><div style="font-size:11px;font-weight:800;color:#64748b;margin-bottom:5px;">' + label + '</div>' +
+      '<input id="' + id + '" value="' + esc(val) + '" placeholder="' + esc(ph) + '" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:9px 11px;font-size:12.5px;color:#334155;font-family:inherit;outline:none;"></div>';
+  }
+
+  /** 特殊情况表单（生理期 / 生病），男性不显示生理期 */
+  function specialFieldsHtml(sp, allowMen) {
+    return (allowMen
+      ? '<div style="background:#fff5f7;border:1px solid #ffe0e7;border-radius:14px;padding:12px;margin-bottom:12px;">' +
+          '<label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">' +
+            '<span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#c2415c;">' + svg(ICO.heart, 15, '#c2415c') + '生理期</span>' +
+            '<input type="checkbox" class="yg-sp-men" ' + (sp.menstruation.on ? 'checked' : '') + ' style="width:18px;height:18px;accent-color:#c2415c;">' +
+          '</label>' +
+          '<div class="yg-sp-men-box" style="display:' + (sp.menstruation.on ? 'block' : 'none') + ';margin-top:10px;">' +
+            specialRow('yg-sp-men-level', '状态', sp.menstruation.level, '例如：第二天，量偏多 / 快结束了') +
+            specialRow('yg-sp-men-note', '备注', sp.menstruation.note, '例如：腰很酸，只想躺着') +
+          '</div>' +
+        '</div>'
+      : '') +
+      '<div style="background:#f6f8ff;border:1px solid #e3e9fb;border-radius:14px;padding:12px;margin-bottom:12px;">' +
+        '<label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">' +
+          '<span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#3b5bdb;">' + svg(ICO.pill, 15, '#3b5bdb') + '生病 / 不适</span>' +
+          '<input type="checkbox" class="yg-sp-ill" ' + (sp.illness.on ? 'checked' : '') + ' style="width:18px;height:18px;accent-color:#3b5bdb;">' +
+        '</label>' +
+        '<div class="yg-sp-ill-box" style="display:' + (sp.illness.on ? 'block' : 'none') + ';margin-top:10px;">' +
+          specialRow('yg-sp-ill-name', '症状', sp.illness.name, '例如：感冒发烧 / 胃疼 / 偏头痛') +
+          specialRow('yg-sp-ill-level', '程度', sp.illness.level, '例如：低烧 37.8℃ / 疼得直不起腰') +
+          specialRow('yg-sp-ill-note', '备注', sp.illness.note, '例如：吃了药，正在休息') +
+        '</div>' +
+      '</div>';
+  }
+
+  function bindSpecialFields(root) {
+    var menCb = root.querySelector('.yg-sp-men');
+    if (menCb) menCb.onchange = function () { root.querySelector('.yg-sp-men-box').style.display = menCb.checked ? 'block' : 'none'; };
+    var illCb = root.querySelector('.yg-sp-ill');
+    if (illCb) illCb.onchange = function () { root.querySelector('.yg-sp-ill-box').style.display = illCb.checked ? 'block' : 'none'; };
+  }
+
+  function readSpecialFields(root, allowMen) {
+    var q = function (sel) { var e = root.querySelector(sel); return e ? e.value.trim() : ''; };
+    var menCb = root.querySelector('.yg-sp-men');
+    var illCb = root.querySelector('.yg-sp-ill');
+    return {
+      menstruation: {
+        on: !!(allowMen && menCb && menCb.checked),
+        level: allowMen ? q('#yg-sp-men-level').slice(0, 60) : '',
+        note: allowMen ? q('#yg-sp-men-note').slice(0, 200) : ''
+      },
+      illness: {
+        on: !!(illCb && illCb.checked),
+        name: q('#yg-sp-ill-name').slice(0, 60),
+        level: q('#yg-sp-ill-level').slice(0, 60),
+        note: q('#yg-sp-ill-note').slice(0, 200)
+      }
     };
+  }
+
+  function openSpecialEditor(ds) {
+    var allowMen = canMenstruate(state.subject);
+    var sp = specialOf(state.currentState, allowMen);
     var el = sheet({
       title: prettyDate(ds) + ' · 今天的情况',
       icon: ICO.heart,
       body:
-        '<div style="background:#fff5f7;border:1px solid #ffe0e7;border-radius:14px;padding:12px;margin-bottom:12px;">' +
-          '<label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">' +
-            '<span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#c2415c;">' + svg(ICO.heart, 15, '#c2415c') + '生理期</span>' +
-            '<input type="checkbox" id="yg-sp-men" ' + (sp.menstruation.on ? 'checked' : '') + ' style="width:18px;height:18px;accent-color:#c2415c;">' +
-          '</label>' +
-          '<div id="yg-sp-men-box" style="display:' + (sp.menstruation.on ? 'block' : 'none') + ';margin-top:10px;">' +
-            row('yg-sp-men-level', '状态', sp.menstruation.level, '例如：第二天，量偏多 / 快结束了') +
-            row('yg-sp-men-note', '备注', sp.menstruation.note, '例如：腰很酸，只想躺着') +
-          '</div>' +
-        '</div>' +
-        '<div style="background:#f6f8ff;border:1px solid #e3e9fb;border-radius:14px;padding:12px;margin-bottom:12px;">' +
-          '<label style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;">' +
-            '<span style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:800;color:#3b5bdb;">' + svg(ICO.pill, 15, '#3b5bdb') + '生病 / 不适</span>' +
-            '<input type="checkbox" id="yg-sp-ill" ' + (sp.illness.on ? 'checked' : '') + ' style="width:18px;height:18px;accent-color:#3b5bdb;">' +
-          '</label>' +
-          '<div id="yg-sp-ill-box" style="display:' + (sp.illness.on ? 'block' : 'none') + ';margin-top:10px;">' +
-            row('yg-sp-ill-name', '症状', sp.illness.name, '例如：感冒发烧 / 胃疼 / 偏头痛') +
-            row('yg-sp-ill-level', '程度', sp.illness.level, '例如：低烧 37.8℃ / 疼得直不起腰') +
-            row('yg-sp-ill-note', '备注', sp.illness.note, '例如：吃了药，正在休息') +
-          '</div>' +
-        '</div>' +
+        specialFieldsHtml(sp, allowMen) +
         '<button id="yg-sp-save" style="width:100%;padding:12px;border:none;background:#1e88e5;border-radius:12px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">保存</button>'
     });
-    var menCb = el.querySelector('#yg-sp-men'), illCb = el.querySelector('#yg-sp-ill');
-    menCb.onchange = function () { el.querySelector('#yg-sp-men-box').style.display = menCb.checked ? 'block' : 'none'; };
-    illCb.onchange = function () { el.querySelector('#yg-sp-ill-box').style.display = illCb.checked ? 'block' : 'none'; };
+    bindSpecialFields(el);
     el.querySelector('#yg-sp-save').onclick = async function () {
       var rec = state.currentState || {
         meId: myMeId(), subjectType: state.subject.type, subjectId: Number(state.subject.id), date: ds,
         schedule: [], attire: '', belongings: [], location: '', note: '', source: 'manual'
       };
-      rec.special = {
-        menstruation: { on: menCb.checked, level: el.querySelector('#yg-sp-men-level').value.trim().slice(0, 60), note: el.querySelector('#yg-sp-men-note').value.trim().slice(0, 200) },
-        illness: { on: illCb.checked, name: el.querySelector('#yg-sp-ill-name').value.trim().slice(0, 60), level: el.querySelector('#yg-sp-ill-level').value.trim().slice(0, 60), note: el.querySelector('#yg-sp-ill-note').value.trim().slice(0, 200) }
-      };
+      rec.special = readSpecialFields(el, allowMen);
       rec.updatedAt = Date.now();
       if (!rec.source) rec.source = 'manual';
       try { await saveState(rec); } catch (e) { await confirmCard({ title: '保存失败', message: e.message }); return; }
@@ -644,10 +687,29 @@
     return state.wardrobe.items;
   }
 
+  /** 衣架样式（轨道 + 挂钩），一次性注入 */
+  function ensureWardrobeStyle() {
+    if (document.getElementById('ygWardrobeStyle')) return;
+    var st = document.createElement('style');
+    st.id = 'ygWardrobeStyle';
+    st.textContent =
+      '@keyframes ygSwing{0%{transform:rotate(0)}16%{transform:rotate(-8deg)}34%{transform:rotate(5.5deg)}52%{transform:rotate(-3.5deg)}70%{transform:rotate(2deg)}85%{transform:rotate(-1deg)}100%{transform:rotate(0)}}' +
+      '@keyframes ygTapSwing{0%{transform:rotate(0) scale(1)}25%{transform:rotate(-11deg) scale(1.05)}55%{transform:rotate(8deg) scale(1.03)}80%{transform:rotate(-3deg) scale(1.01)}100%{transform:rotate(0) scale(1)}}' +
+      '.yg-hang{transform-origin:top center;animation:ygSwing .95s cubic-bezier(.36,.07,.19,.97) both;}' +
+      '.yg-hang.tapped{animation:ygTapSwing .62s cubic-bezier(.36,.07,.19,.97);}' +
+      '.yg-hang-card{transition:transform .18s ease,box-shadow .18s ease;}' +
+      '.yg-hang:active .yg-hang-card{transform:scale(.95);box-shadow:0 2px 8px rgba(15,23,42,.08);}' +
+      '.yg-rail::-webkit-scrollbar{display:none;}' +
+      '.yg-rail{scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;}' +
+      '.yg-hang{scroll-snap-align:center;}';
+    document.head.appendChild(st);
+  }
+
   function openWardrobe() {
     state.wardrobe.open = true;
     var host = document.getElementById('yigui-wardrobe');
     if (!host) return;
+    ensureWardrobeStyle();
     host.style.display = 'block';
     renderWardrobe();
   }
@@ -660,31 +722,47 @@
   async function renderWardrobe() {
     var host = document.getElementById('yigui-wardrobe');
     if (!host || !state.subject) return;
+    ensureWardrobeStyle();
     var s = state.subject;
     var cats = state.wardrobe.cats;
     if (cats.indexOf(state.wardrobe.cat) < 0) state.wardrobe.cat = cats[0];
     var items = await loadWardrobe();
 
+    // 类别计数（用于标签角标）
+    var counts = {};
+    try {
+      var all = await db.ritual_wardrobe.toArray();
+      all.forEach(function (r) {
+        if (r.subjectType === s.type && Number(r.subjectId) === Number(s.id)) counts[r.category] = (counts[r.category] || 0) + 1;
+      });
+    } catch (e) {}
+
     var tabs = cats.map(function (c) {
       var on = c === state.wardrobe.cat;
-      return '<div class="yg-wcat" data-c="' + esc(c) + '" style="flex-shrink:0;padding:7px 13px;border-radius:99px;font-size:12px;font-weight:800;cursor:pointer;' +
-        (on ? 'background:#1e88e5;color:#fff;' : 'background:#fff;color:#64748b;border:1px solid #eef2f7;') + '">' + esc(c) + '</div>';
-    }).join('') + '<div class="yg-wcat-add" style="flex-shrink:0;padding:7px 12px;border-radius:99px;font-size:12px;font-weight:800;cursor:pointer;background:#fff;color:#1e88e5;border:1px dashed #bcd9f2;">+ 类别</div>';
+      var n = counts[c] || 0;
+      return '<div class="yg-wcat" data-c="' + esc(c) + '" style="flex-shrink:0;display:flex;align-items:center;gap:5px;padding:7px 13px;border-radius:99px;font-size:12px;font-weight:800;cursor:pointer;transition:all .18s;' +
+        (on ? 'background:#1e88e5;color:#fff;box-shadow:0 4px 12px rgba(30,136,229,.24);' : 'background:#fff;color:#64748b;border:1px solid #eef2f7;') + '">' +
+        esc(c) + (n ? '<span style="font-size:10px;font-weight:800;' + (on ? 'color:#dbeafe;' : 'color:#b6c2d1;') + '">' + n + '</span>' : '') + '</div>';
+    }).join('') + '<div class="yg-wcat-add" style="flex-shrink:0;display:flex;align-items:center;gap:4px;padding:7px 12px;border-radius:99px;font-size:12px;font-weight:800;cursor:pointer;background:#fff;color:#1e88e5;border:1px dashed #bcd9f2;">' + svg(ICO.plus, 11, '#1e88e5') + '类别</div>';
 
-    var grid = items.length ? items.map(function (it) {
+    // 衣架轨道：每件衣物 = 挂钩 + 连接杆 + 卡片，加载时依次摆动
+    var hangers = items.length ? items.map(function (it, i) {
       var img = it.image
-        ? '<img src="' + esc(it.image) + '" style="width:100%;height:100%;object-fit:cover;">'
-        : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#f8fafc;color:#b9c7d6;">' + svg(catIcon(it.category), 30, '#b9c7d6') + '</div>';
-      return '<div class="yg-witem" data-id="' + it.id + '" style="cursor:pointer;">' +
-          '<div style="width:100%;aspect-ratio:1/1;border-radius:14px;overflow:hidden;border:1px solid #eef2f7;background:#fff;">' + img + '</div>' +
-          '<div style="font-size:11.5px;font-weight:700;color:#334155;margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(it.name || '未命名') + '</div>' +
-          (it.note ? '<div style="font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(String(it.note).slice(0, 16)) + '</div>' : '') +
+        ? '<img src="' + esc(it.image) + '" style="width:100%;height:100%;object-fit:cover;display:block;">'
+        : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#fbfcfe,#f1f5f9);color:#b9c7d6;">' + svg(catIcon(it.category), 34, '#b9c7d6') + '</div>';
+      return '<div class="yg-hang" data-id="' + it.id + '" style="animation-delay:' + (i * 70) + 'ms;flex-shrink:0;width:96px;display:flex;flex-direction:column;align-items:center;cursor:pointer;">' +
+          '<svg viewBox="0 0 44 30" width="38" height="26" fill="none" stroke="#b7c3d0" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">' +
+            '<path d="M22 9V7a3 3 0 1 1 3-3"/><path d="M22 9 5 22h34z"/></svg>' +
+          '<div style="width:1.5px;height:8px;background:linear-gradient(180deg,#d7dee7,transparent);"></div>' +
+          '<div class="yg-hang-card" style="width:86px;height:86px;border-radius:16px;overflow:hidden;border:1px solid #eef2f7;background:#fff;box-shadow:0 6px 16px rgba(15,23,42,.06);">' + img + '</div>' +
+          '<div style="font-size:11px;font-weight:700;color:#334155;margin-top:7px;width:92px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(it.name || '未命名') + '</div>' +
+          (it.note ? '<div style="font-size:9.5px;color:#a8b4c2;width:92px;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(String(it.note).slice(0, 14)) + '</div>' : '') +
         '</div>';
-    }).join('') : '<div style="grid-column:1 / -1;padding:30px 0;text-align:center;color:#cbd5e1;font-size:12px;">这个类别还没有衣物<br>点右上角 + 添加，或让 AI 批量生成</div>';
+    }).join('') : '';
 
     host.innerHTML =
-      '<div style="position:absolute;inset:0;background:#f7f8fa;display:flex;flex-direction:column;animation:ygFade .2s ease-out;">' +
-        '<header class="win-header" style="padding:10px 14px;background:linear-gradient(180deg,rgba(255,255,255,0.92),rgba(255,255,255,0.55));border-bottom:1px solid rgba(148,163,184,0.22);">' +
+      '<div style="position:absolute;inset:0;background:linear-gradient(180deg,#fbfcfe 0%,#f4f7fb 100%);display:flex;flex-direction:column;animation:ygFade .2s ease-out;">' +
+        '<header class="win-header" style="padding:10px 14px;background:linear-gradient(180deg,rgba(255,255,255,0.94),rgba(255,255,255,0.6));border-bottom:1px solid rgba(148,163,184,0.18);">' +
           '<button class="btn-icon" id="yg-w-back" style="color:#475569;">' + svg('<path d="M15 18l-6-6 6-6"/>', 20, '#475569') + '</button>' +
           '<h3 style="color:#1e293b;font-size:15px;font-weight:700;letter-spacing:1px;">衣柜 · ' + esc(s.name) + '</h3>' +
           '<div style="display:flex;gap:6px;">' +
@@ -692,24 +770,55 @@
             '<button id="yg-w-add" title="添加衣物" style="display:flex;align-items:center;justify-content:center;width:32px;height:32px;border:1px solid #eef2f7;background:#fff;border-radius:10px;color:#1e88e5;cursor:pointer;">' + svg(ICO.plus, 15, '#1e88e5') + '</button>' +
           '</div>' +
         '</header>' +
-        '<div style="display:flex;gap:8px;padding:12px 14px 4px;overflow-x:auto;">' + tabs + '</div>' +
-        '<div style="flex:1;overflow-y:auto;padding:10px 14px 26px;">' +
-          '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">' + grid + '</div>' +
-        '</div>' +
+        '<div style="display:flex;gap:8px;padding:12px 14px 6px;overflow-x:auto;scrollbar-width:none;">' + tabs + '</div>' +
+        (items.length
+          ? '<div style="padding:0 14px 4px;display:flex;align-items:center;justify-content:space-between;">' +
+              '<span style="font-size:10.5px;color:#a8b4c2;">' + items.length + ' 件 · 左右拖动查看</span>' +
+              '<span style="display:flex;align-items:center;gap:4px;font-size:10.5px;color:#c3cdd9;">' + svg('<path d="M5 12h14M15 8l4 4-4 4"/>', 11, '#c3cdd9') + '轻点查看详情</span>' +
+            '</div>' +
+            '<div style="flex:1;overflow:hidden;position:relative;">' +
+              '<div class="yg-rail" style="height:100%;display:flex;align-items:center;overflow-x:auto;overflow-y:hidden;padding:0 14px;">' +
+                '<div style="position:relative;display:flex;gap:14px;align-items:flex-start;flex:0 0 auto;width:max-content;min-width:100%;box-sizing:border-box;padding-top:2px;">' +
+                  '<div style="position:absolute;left:-14px;right:-14px;top:6px;height:6px;border-radius:99px;background:linear-gradient(180deg,#e7dcc9,#cbb99a);box-shadow:inset 0 1px 0 rgba(255,255,255,.6),0 2px 6px rgba(120,100,70,.14);"></div>' +
+                  hangers +
+                  '<div style="position:absolute;left:-14px;right:-14px;bottom:-30px;height:2px;border-radius:2px;background:linear-gradient(90deg,rgba(203,185,154,0),rgba(203,185,154,.5),rgba(203,185,154,0));"></div>' +
+                '</div>' +
+              '</div>' +
+            '</div>'
+          : '<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:0 30px;">' +
+              '<div style="width:120px;height:6px;border-radius:99px;background:linear-gradient(180deg,#e7dcc9,#cbb99a);"></div>' +
+              '<div style="display:flex;gap:16px;opacity:.55;">' +
+                '<svg viewBox="0 0 44 30" width="42" height="30" fill="none" stroke="#c3cdd9" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 9V7a3 3 0 1 1 3-3"/><path d="M22 9 5 22h34z"/></svg>' +
+                '<svg viewBox="0 0 44 30" width="42" height="30" fill="none" stroke="#d5dde6" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 9V7a3 3 0 1 1 3-3"/><path d="M22 9 5 22h34z"/></svg>' +
+                '<svg viewBox="0 0 44 30" width="42" height="30" fill="none" stroke="#e3e9ef" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M22 9V7a3 3 0 1 1 3-3"/><path d="M22 9 5 22h34z"/></svg>' +
+              '</div>' +
+              '<div style="font-size:12.5px;color:#a8b4c2;text-align:center;line-height:1.75;">这个类别还是空的<br>点右上角 + 添加，或让 AI 批量生成</div>' +
+              '<div style="display:flex;gap:8px;">' +
+                '<button id="yg-w-empty-add" style="padding:10px 16px;border:none;background:#1e88e5;color:#fff;border-radius:11px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;">添加衣物</button>' +
+                '<button id="yg-w-empty-ai" style="padding:10px 16px;border:1.5px solid #e2e8f0;background:#fff;color:#475569;border-radius:11px;font-size:12px;font-weight:800;cursor:pointer;font-family:inherit;">AI 生成</button>' +
+              '</div>' +
+            '</div>') +
       '</div>';
 
     host.querySelector('#yg-w-back').onclick = closeWardrobe;
     host.querySelector('#yg-w-add').onclick = function () { addWardrobeItem(); };
     host.querySelector('#yg-w-ai').onclick = function () { aiGenerateWardrobe(); };
+    var ea = host.querySelector('#yg-w-empty-add'); if (ea) ea.onclick = function () { addWardrobeItem(); };
+    var eai = host.querySelector('#yg-w-empty-ai'); if (eai) eai.onclick = function () { aiGenerateWardrobe(); };
     host.querySelectorAll('.yg-wcat').forEach(function (t) {
       t.onclick = function () { state.wardrobe.cat = t.getAttribute('data-c'); renderWardrobe(); };
     });
     var addCat = host.querySelector('.yg-wcat-add');
     if (addCat) addCat.onclick = function () { addWardrobeCategory(); };
-    host.querySelectorAll('.yg-witem').forEach(function (n) {
+    host.querySelectorAll('.yg-hang').forEach(function (n) {
       n.onclick = function () {
         var it = state.wardrobe.items.filter(function (x) { return String(x.id) === n.getAttribute('data-id'); })[0];
-        if (it) openWardrobeItem(it);
+        if (!it) return;
+        // 点击动效：先摆一下再弹详情
+        n.classList.remove('tapped');
+        void n.offsetWidth;
+        n.classList.add('tapped');
+        setTimeout(function () { openWardrobeItem(it); }, 190);
       };
     });
   }
@@ -1001,9 +1110,12 @@
     try {
       var ctx = await buildPromptContext(s);
       var dateCn = prettyDate(ds) + '（星期' + weekOf(ds) + '）';
+      var allowMen = canMenstruate(s);
+      var genderCn = s.gender === 'male' ? '男' : (s.gender === 'female' ? '女' : '未指定');
       var sys = '你是一个生活状态推演器。你只输出 JSON，不输出任何解释、Markdown 或 emoji。';
       var usr = ctx + '\n\n今天是 ' + dateCn + '。\n' +
         '请推演' + s.name + '这一天的真实生活状态，必须严格符合上面的人设、关系与最近的剧情走向。\n' +
+        '已知性别：' + genderCn + '。\n' +
         '只输出这个 JSON：\n' +
         '{"schedule":[{"time":"07:30-08:10","place":"家里","content":"起床、洗漱、煮了咖啡"}],' +
         '"attire":"今天穿什么（含颜色/材质/配饰，具体）",' +
@@ -1015,7 +1127,9 @@
         '1) schedule 给 5-7 条，每条必须同时有时间段（HH:MM-HH:MM）、地点、事件三样；内容具体、有生活质感，能体现人设；\n' +
         '2) belongings 给 3-6 件，每件要有 name 和一句 note（这件东西的来历或状态）；\n' +
         '3) attire / location 要具体到能想象出画面，不要空泛；\n' +
-        '4) special 里：生理期只有女性角色才可能为 true，若为 true 给出状态与备注；生病同样（没有就都填 false）；\n' +
+        (allowMen
+          ? '4) special 里：生理期只有女性才可能为 true（不确定就填 false）；生病按剧情判断（没有就填 false）；\n'
+          : '4) special 里的 menstruation 必须一律为 false（' + s.name + ' 是男性，不存在生理期）；生病按剧情判断；\n') +
         '5) 全部用中文，不要 emoji，不要括号动作描写。';
       var raw = await callAI(sys, usr);
       var parsed = parseJsonLoose(raw);
@@ -1037,7 +1151,9 @@
         belongings: belongings,
         location: String(parsed.location || '').slice(0, 400),
         special: {
-          menstruation: { on: !!(sp.menstruation && sp.menstruation.on), level: String((sp.menstruation && sp.menstruation.level) || '').slice(0, 60), note: String((sp.menstruation && sp.menstruation.note) || '').slice(0, 200) },
+          menstruation: allowMen
+            ? { on: !!(sp.menstruation && sp.menstruation.on), level: String((sp.menstruation && sp.menstruation.level) || '').slice(0, 60), note: String((sp.menstruation && sp.menstruation.note) || '').slice(0, 200) }
+            : { on: false, level: '', note: '' },
           illness: { on: !!(sp.illness && sp.illness.on), name: String((sp.illness && sp.illness.name) || '').slice(0, 60), level: String((sp.illness && sp.illness.level) || '').slice(0, 60), note: String((sp.illness && sp.illness.note) || '').slice(0, 200) }
         },
         note: String(parsed.note || '').slice(0, 300),
@@ -1093,6 +1209,8 @@
           : '<input id="' + id + '" value="' + esc(val) + '" placeholder="' + esc(ph) + '" style="width:100%;box-sizing:border-box;border:1.5px solid #e2e8f0;border-radius:11px;padding:9px 11px;font-size:12.5px;color:#334155;font-family:inherit;outline:none;">') +
       '</div>';
     };
+    var allowMen = canMenstruate(s);
+    var spEdit = specialOf(rec, allowMen);
     var el = sheet({
       title: prettyDate(ds) + ' · ' + s.name,
       icon: ICO.edit,
@@ -1101,12 +1219,15 @@
         field('穿着', 'yg-f-attire', rec.attire || '', '例如：米白色针织衫 + 深色阔腿裤，左手戴银色手表', 2) +
         field('随身物品（一行一件：名称 | 详情）', 'yg-f-belongings', belongingsText, '手机 | 屏幕裂了一道，还舍不得换', 4) +
         field('当前位置', 'yg-f-location', rec.location || '', '例如：公司 12 楼靠窗的工位，窗外在下小雨', 2) +
+        '<div style="font-size:11px;font-weight:800;color:#64748b;margin:14px 0 8px;">今天的情况</div>' +
+        specialFieldsHtml(spEdit, allowMen) +
         field('备注 / 心情', 'yg-f-note', rec.note || '', '可选', 2) +
         '<div style="display:flex;gap:8px;margin-top:6px;">' +
           '<button id="yg-f-ai" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:12px;border:1.5px solid #e2e8f0;background:#fff;border-radius:12px;font-size:12.5px;font-weight:800;color:#475569;cursor:pointer;font-family:inherit;">' + svg(ICO.spark, 14, '#475569') + '让 AI 重写</button>' +
           '<button id="yg-f-save" style="flex:1.2;padding:12px;border:none;background:#1e88e5;border-radius:12px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">保存</button>' +
         '</div>'
     });
+    bindSpecialFields(el);
     var q = function (id) { var e = el.querySelector('#' + id); return e ? e.value.trim() : ''; };
     el.querySelector('#yg-f-save').onclick = async function () {
       var lines = q('yg-f-schedule').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
@@ -1128,7 +1249,7 @@
         attire: q('yg-f-attire').slice(0, 600),
         location: q('yg-f-location').slice(0, 400),
         note: q('yg-f-note').slice(0, 300),
-        special: (state.currentState && state.currentState.special) || specialOf(null),
+        special: readSpecialFields(el, allowMen),
         source: 'manual', updatedAt: Date.now()
       };
       if (state.currentState && state.currentState.id) rec.id = state.currentState.id;
@@ -1196,7 +1317,9 @@
         var bl = normalizeBelongings(rec.belongings);
         if (bl.length) lines.push('  随身物品：' + bl.map(function (b) { return b.name + (b.note ? '（' + b.note + '）' : ''); }).join('、'));
         if (rec.location) lines.push('  当前位置：' + rec.location);
-        var sp = specialOf(rec);
+        var subjGender = '';
+        try { var arc = await db.archives.get(Number(p.id)); subjGender = (arc && arc.gender) || ''; } catch (e) {}
+        var sp = specialOf(rec, canMenstruate({ gender: subjGender }));
         if (sp.menstruation.on) lines.push('  生理期：' + [sp.menstruation.level, sp.menstruation.note].filter(Boolean).join('；') + '（请对' + (p.isMe ? '用户' : p.name) + '多加照顾，别安排剧烈活动）');
         if (sp.illness.on) lines.push('  身体不适：' + [sp.illness.name, sp.illness.level, sp.illness.note].filter(Boolean).join('；') + '（回复要体现出状态不佳）');
         if (rec.note) lines.push('  备注：' + rec.note);
