@@ -376,6 +376,8 @@ function applyGlobalSettingsOnLoad() {
       phone.style.backgroundImage = "";
       phone.style.backgroundColor = "var(--bg-main)";
     }
+    // 主题样式要能区分「有壁纸」和「没壁纸」：有壁纸时主题不能再用 !important 覆盖背景
+    phone.classList.toggle("has-wallpaper", !!bg);
   }
 
   // 底部 Dock 栏不透明度配置即时拉动渲染
@@ -492,10 +494,12 @@ function loadDesktopLayout() {
   const grid = document.getElementById("desktop-grid");
   const dock = document.getElementById("dock-grid");
 
-  // 0. 读取当前桌面风格的行数 / 页宽（M3 桌面 7 行 28 格；清透凉夏等旧预设 5 行 20 格）
+  // 0. 读取当前桌面风格的行数 / 页宽（薄秋 7 行 28 格；清透凉夏等旧预设 5 行 20 格）
   DESKTOP_ROWS = getDesktopRows();
   DESKTOP_PAGE_SIZE = DESKTOP_COLS * DESKTOP_ROWS;
   migrateDesktopPageSize();
+  // 0.5 旧版存在 localStorage 里的照片/横幅图搬到 IndexedDB（localStorage 5MB 会被写爆）
+  migrateTileAssetsToDb();
 
   // 1. 读取并平滑迁移老用户的非网格版布局数据，自动将其校准为 v3 版吸附格式
   let desktopLayout = JSON.parse(localStorage.getItem("desktop-layout-v3"));
@@ -900,7 +904,97 @@ function tileGet(key, fallback) {
   try { const v = localStorage.getItem(TILE_KEY_PREFIX + key); return v === null ? fallback : v; } catch (e) { return fallback; }
 }
 function tileSet(key, value) {
-  try { localStorage.setItem(TILE_KEY_PREFIX + key, value); } catch (e) {}
+  try { localStorage.setItem(TILE_KEY_PREFIX + key, value); return true; } catch (e) { return false; }
+}
+
+// ============================================================
+//  图片资源：照片卡 / 横幅背景走 IndexedDB（db.assets）
+//  localStorage 只有约 5MB，一张手机照片就能写爆，而且 setItem 抛异常时是静默的
+//  —— 所以大图一律进 IndexedDB，并且保留 PNG 原格式（无损）
+// ============================================================
+const tileAssetCache = Object.create(null);
+const TILE_ASSET_TIMEOUT = 3000;   // IndexedDB 被禁用时 Dexie 的 Promise 可能一直挂着
+
+function tileAssetGet(key) {
+  if (tileAssetCache[key] !== undefined) return Promise.resolve(tileAssetCache[key]);
+  return new Promise(function (resolve) {
+    var done = false;
+    var fallback = function () {
+      if (done) return; done = true;
+      var v = tileGet("asset-" + key, "");
+      if (v) tileAssetCache[key] = v;   // 只缓存真数据，空结果下次重试
+      resolve(v);
+    };
+    try {
+      if (typeof db !== "undefined" && db.assets) {
+        db.assets.get(key).then(function (row) {
+          if (done) return; done = true;
+          var v = (row && row.data) || tileGet("asset-" + key, "");
+          if (v) tileAssetCache[key] = v;
+          resolve(v);
+        }).catch(fallback);
+        setTimeout(fallback, TILE_ASSET_TIMEOUT);
+        return;
+      }
+    } catch (e) {}
+    fallback();
+  });
+}
+function tileAssetSet(key, dataUrl) {
+  tileAssetCache[key] = dataUrl;
+  return new Promise(function (resolve) {
+    var done = false;
+    var fallback = function () {
+      if (done) return; done = true;
+      // 退路：IndexedDB 不可用时写 localStorage（大图可能失败，会返回 false）
+      resolve(tileSet("asset-" + key, dataUrl));
+    };
+    try {
+      if (typeof db !== "undefined" && db.assets) {
+        db.assets.put({ key: key, data: dataUrl, updatedAt: Date.now() }).then(function () {
+          if (done) return; done = true;
+          try { localStorage.removeItem("desktop-tile-asset-" + key); } catch (e) {}
+          resolve(true);
+        }).catch(function (e) {
+          console.warn("[桌面图片] IndexedDB 写入失败，改用 localStorage:", e);
+          fallback();
+        });
+        setTimeout(fallback, TILE_ASSET_TIMEOUT);
+        return;
+      }
+    } catch (e) { console.warn("[桌面图片] 写入异常:", e); }
+    fallback();
+  });
+}
+/** 把旧版存在 localStorage 里的照片/横幅图搬进 IndexedDB（一次性） */
+function migrateTileAssetsToDb() {
+  if (window.__tileAssetMigrated) return;
+  window.__tileAssetMigrated = true;
+  try {
+    const move = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || k.indexOf("desktop-tile-") !== 0) continue;
+      const v = localStorage.getItem(k) || "";
+      if (k.indexOf("desktop-tile-photo-") === 0 && v.indexOf("data:") === 0) {
+        move.push([k, k.replace("desktop-tile-", ""), v]);
+      } else if (k.indexOf("desktop-tile-banner-") === 0 && v.indexOf("{") === 0) {
+        try {
+          const obj = JSON.parse(v);
+          if (obj && obj.img && String(obj.img).indexOf("data:") === 0) {
+            move.push([k, "banner-" + k.replace("desktop-tile-banner-", ""), obj.img]);
+            delete obj.img;
+            localStorage.setItem(k, JSON.stringify(obj));
+          }
+        } catch (e) {}
+      }
+    }
+    move.forEach(function (m) {
+      tileAssetSet(m[1], m[2]).then(function (ok) {
+        if (ok && m[0].indexOf("desktop-tile-photo-") === 0) { try { localStorage.removeItem(m[0]); } catch (e) {} }
+      });
+    });
+  } catch (e) {}
 }
 /** 选一张图并压到最长边 maxPx 的 dataURL（PNG 保留透明） */
 function tilePickImage(maxPx, cb) {
@@ -993,12 +1087,9 @@ window.desktopTiles = {
     const key = "clock-" + (cfg.key || "main");
     box.style.display = "flex";
     box.style.flexDirection = "column";
-    box.style.alignItems = "flex-start";
-    box.style.justifyContent = "flex-start";
-    box.style.gap = Math.round(8 * s) + "px";
-    // 设计稿里时间文字在 x=101（整块从 x=23 开始），所以左边留 78 个设计单位
-    box.style.paddingLeft = Math.round(78 * s) + "px";
-    box.style.paddingTop = Math.round(2 * s) + "px";
+    box.style.alignItems = "center";
+    box.style.justifyContent = "center";
+    box.style.gap = Math.round(6 * s) + "px";
     box.style.overflow = "hidden";
     box.style.cursor = "pointer";
 
@@ -1019,7 +1110,7 @@ window.desktopTiles = {
     };
     // 按卡片可用宽度收缩字号：宁可小一点，也不许换行把下面挤走
     const fit = () => {
-      const w = box.clientWidth - Math.round(78 * s) - 4;
+      const w = box.clientWidth - 8;
       if (w <= 0) return;
       let fs = maxSize;
       t.style.fontSize = fs + "px";
@@ -1068,16 +1159,15 @@ window.desktopTiles = {
     };
   },
 
-  /** 照片卡片：点击上传并持久保存 */
+  /** 照片卡片：点击上传并持久保存（图片存 IndexedDB，PNG 保持无损） */
   photo(box, cfg) {
     const s = tileScale(box);
-    const key = "photo-" + (cfg.key || "a");
+    const assetKey = "photo-" + (cfg.key || "a");
     const radius = Math.round((cfg.radius === undefined ? 26 : cfg.radius) * s);
     const wrap = document.createElement("div");
     wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + radius + "px;overflow:hidden;cursor:pointer;" +
       "background:" + (cfg.emptyBg || "rgba(243,238,248,.8)") + ";display:flex;align-items:center;justify-content:center;box-sizing:border-box;";
-    const render = () => {
-      const src = tileGet(key, "");
+    const paint = (src) => {
       if (src) {
         wrap.innerHTML = '<img src="' + src + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
           '<div style="position:absolute;left:0;right:0;bottom:0;padding:' + Math.round(7 * s) + 'px 8px;font-size:' + Math.max(9, Math.round(10 * s)) + 'px;font-weight:700;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(15,23,42,0),rgba(15,23,42,.55));">点击更换</div>';
@@ -1087,32 +1177,40 @@ window.desktopTiles = {
           '<span style="font-size:' + Math.max(10, Math.round(11 * s)) + 'px;font-weight:700;">' + (cfg.hint || "添加照片") + '</span></div>';
       }
     };
-    render();
+    paint("");
+    tileAssetGet(assetKey).then(function (src) { if (src) paint(src); });
     wrap.onclick = (e) => {
       if (isDesktopEditMode) return;          // 编辑模式下交给拖拽/删除
       e.stopPropagation();
-      tilePickImage(cfg.maxPx || 900, (dataUrl) => {
-        tileSet(key, dataUrl);
-        render();
-        if (typeof showToast === "function") showToast("照片已保存");
+      tilePickImage(cfg.maxPx || 1200, (dataUrl) => {
+        tileAssetSet(assetKey, dataUrl).then(function (ok) {
+          if (!ok) {
+            if (typeof showToast === "function") showToast("照片保存失败，请重试");
+            return;
+          }
+          paint(dataUrl);
+          if (typeof showToast === "function") showToast("照片已保存");
+        });
       });
     };
     box.appendChild(wrap);
   },
 
-  /** 横幅卡片：背景图 + 可编辑标题/副标题 */
+  /** 横幅卡片：背景图（IndexedDB）+ 可编辑标题/副标题（localStorage） */
   banner(box, cfg) {
     const s = tileScale(box);
     const key = "banner-" + (cfg.key || "main");
+    const assetKey = key;
     const wrap = document.createElement("div");
     wrap.style.cssText = "position:relative;width:100%;height:100%;border-radius:" + Math.round((cfg.radius === undefined ? 28 : cfg.radius) * s) + "px;overflow:hidden;" +
       "background:rgba(243,238,248,.8);display:flex;flex-direction:column;justify-content:flex-end;cursor:pointer;box-sizing:border-box;";
-    const render = () => {
+    let curImg = "";
+    const paint = () => {
       let data = {};
       try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
       const title = data.title !== undefined ? data.title : (cfg.title || "");
       const sub = data.sub !== undefined ? data.sub : (cfg.sub || "");
-      const img = data.img || "";
+      const img = curImg;
       wrap.style.backgroundImage = img ? "url(" + img + ")" : "none";
       wrap.style.backgroundSize = "cover";
       wrap.style.backgroundPosition = "center";
@@ -1123,7 +1221,8 @@ window.desktopTiles = {
           (sub ? '<div style="font-size:' + Math.max(10, Math.round(12 * s)) + 'px;margin-top:' + Math.round(5 * s) + 'px;opacity:.86;line-height:1.5;">' + sub + '</div>' : '') +
         '</div>';
     };
-    render();
+    paint();
+    tileAssetGet(assetKey).then(function (src) { if (src) { curImg = src; paint(); } });
     wrap.onclick = (e) => {
       if (isDesktopEditMode) return;
       e.stopPropagation();
@@ -1131,7 +1230,7 @@ window.desktopTiles = {
       try { data = JSON.parse(tileGet(key, "{}")) || {}; } catch (e) { data = {}; }
       const title = data.title !== undefined ? data.title : (cfg.title || "");
       const sub = data.sub !== undefined ? data.sub : (cfg.sub || "");
-      let newImg = data.img || "";
+      let newImg = curImg;
       tileSheet({
         title: "编辑横幅",
         okText: "保存",
@@ -1153,11 +1252,19 @@ window.desktopTiles = {
         onOk: (mask) => {
           const next = {
             title: mask.querySelector("#tile-bn-title").value.slice(0, 24),
-            sub: mask.querySelector("#tile-bn-sub").value.slice(0, 40),
-            img: newImg
+            sub: mask.querySelector("#tile-bn-sub").value.slice(0, 40)
           };
           tileSet(key, JSON.stringify(next));
-          render();
+          curImg = newImg;
+          if (newImg) {
+            tileAssetSet(assetKey, newImg).then(function (ok) {
+              if (!ok && typeof showToast === "function") showToast("背景图保存失败，请重试");
+            });
+          } else {
+            tileAssetCache[assetKey] = "";
+            try { if (typeof db !== "undefined" && db.assets) db.assets.delete(assetKey); } catch (e) {}
+          }
+          paint();
           if (typeof showToast === "function") showToast("横幅已保存");
         }
       });

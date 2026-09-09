@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v85'; // v85: 薄秋按设计稿1:1等比缩放(尺寸/间距/位置)/切主题几何彻底重置; v1.5.9
+const CACHE_NAME = 'story-phone-v86'; // v86: 照片/横幅图改存 IndexedDB/壁纸被主题覆盖修复/时钟居中/dock纯图标; v1.5.10
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

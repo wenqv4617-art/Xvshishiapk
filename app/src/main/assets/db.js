@@ -413,3 +413,12 @@ db.version(41).stores({
 db.version(42).stores({
   ritual_wardrobe: 'id++, subjectType, subjectId, category, name, createdAt'
 });
+
+// ============================================
+// Version 43：桌面图片资源（照片卡 / 横幅背景 / 壁纸等）
+// - assets: key 为资源名，data 为 data URL
+//   IndexedDB 配额远大于 localStorage（5MB），照片不必再牺牲画质压缩
+// ============================================
+db.version(43).stores({
+  assets: 'key, updatedAt'
+});

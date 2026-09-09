@@ -6,6 +6,7 @@ let isSettingsInitialized = false;
 
 // 专属临时存储自定义图标和壁纸的 Blob 二进制指针
 let tempBgBlob = null;
+let tempBgFile = null;   // 壁纸原始文件：保存时逐级压缩，直到能塞进 localStorage
 
 function initSettingsApp() {
   if (isSettingsInitialized) return;
@@ -77,6 +78,7 @@ function initSettingsApp() {
       if (e.target.files.length > 0) {
         showToast("正在执行高清桌面壁纸自适应压缩...");
         const file = e.target.files[0];
+        tempBgFile = file;   // 保存时按需要再压一次（逐级降规格直到能写进 localStorage）
         
         // 在轨 Canvas 压缩，将数兆壁纸瞬时降至 150KB 级别，彻底避免 QuotaExceededError 崩溃
         const compressedBlob = await new Promise((resolve) => {
@@ -877,12 +879,31 @@ async function saveBeautifyConfig() {
 
   // 保存背景
   if (bgInput === "[本地上传背景]") {
-    if (tempBgBlob) {
-      const dataURL = await blobToDataURL(tempBgBlob);
-      localStorage.setItem("beautify-wallpaper", dataURL);
+    const src = tempBgFile || tempBgBlob;
+    if (src) {
+      // 逐级降规格重压，直到 localStorage 写得进去（手机存储吃紧时也不会静默失败）
+      const ladder = [[1280, 0.82], [1080, 0.75], [900, 0.7], [720, 0.62], [600, 0.55]];
+      let saved = false;
+      for (let i = 0; i < ladder.length; i++) {
+        const dataURL = await encodeImageFile(src, ladder[i][0], ladder[i][1]);
+        if (!dataURL) break;
+        try {
+          localStorage.setItem("beautify-wallpaper", dataURL);
+          saved = true;
+          break;
+        } catch (err) { /* 继续缩小再试 */ }
+      }
+      if (!saved) {
+        showToast("壁纸保存失败：手机存储空间不足，请先清理后再试");
+        return;
+      }
+    } else {
+      showToast("没有读取到壁纸文件，请重新选择");
+      return;
     }
   } else if (bgInput) {
-    localStorage.setItem("beautify-wallpaper", bgInput);
+    try { localStorage.setItem("beautify-wallpaper", bgInput); }
+    catch (err) { showToast("壁纸保存失败：手机存储空间不足"); return; }
   } else {
     localStorage.removeItem("beautify-wallpaper");
   }
@@ -1881,8 +1902,31 @@ async function computeStorageUsage() {
 }
 
 // === 大二进制 Blob / File 原生编解码转换层 ===
-function blobToDataURL(blob) {
-  return new Promise((resolve, reject) => {
+/** 把图片（File/Blob）按最长边 maxW、质量 q 压成 JPEG dataURL；失败返回 null */
+function encodeImageFile(file, maxW, q) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const reader = new FileReader();
+    reader.onerror = () => resolve(null);
+    reader.onload = (evt) => { img.src = evt.target.result; };
+    img.onerror = () => resolve(null);
+    img.onload = () => {
+      try {
+        const scale = Math.min(1, maxW / img.width);
+        const w = Math.max(1, Math.round(img.width * scale));
+        const h = Math.max(1, Math.round(img.height * scale));
+        const cv = document.createElement("canvas");
+        cv.width = w; cv.height = h;
+        const ctx = cv.getContext("2d");
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(cv.toDataURL("image/jpeg", q));
+      } catch (e) { resolve(null); }
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function blobToDataURL(blob) {  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result);
     reader.onerror = reject;

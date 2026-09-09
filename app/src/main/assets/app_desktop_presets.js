@@ -442,9 +442,9 @@ window.DESKTOP_PRESETS = {
     /* 设计稿尺寸（412×892 的画布）：所有几何按手机宽度等比缩放，不另做适配 */
     metrics: {
       designW: 412,
-      top: 50,          // 第一行距桌面顶部的留白
+      top: 40,          // 第一行距桌面顶部的留白（比设计稿再收一点，给 dock 留出完整高度）
       rowH: 91,         // 行高（设计稿单位）
-      gapY: 7,          // 行间距
+      gapY: 6,          // 行间距
       gapX: 9,          // 列间距
       padL: 23,         // 左边距（设计稿里照片在 x=23）
       padR: 16,         // 右边距
@@ -456,9 +456,11 @@ window.DESKTOP_PRESETS = {
     wallpaper: "",
     dockOpacity: "72",
     activeCss: `/* 薄秋 — 淡彩配色 · 按 412 宽设计稿等比缩放（几何由 metrics 驱动） */
-/* 底色：奶油 → 淡紫 → 淡蓝 的极淡渐变 */
+/* 底色：奶油 → 淡紫 → 淡蓝 的极淡渐变（用户自己上传了壁纸时让壁纸优先） */
 #phone-container {
   background-color: #FBF8F4 !important;
+}
+#phone-container:not(.has-wallpaper) {
   background-image: linear-gradient(160deg, #FDF9F3 0%, #F8F4FA 52%, #F2F6FA 100%) !important;
   background-size: cover !important;
 }
@@ -536,7 +538,7 @@ window.DESKTOP_PRESETS = {
 .app-icon[data-app="settings"] .icon-wrapper { background: #F2F3F6 !important; }
 .app-icon[data-app="settings"] .icon-wrapper svg { color: #8A8FA0 !important; }
 
-/* Dock：按设计稿 100 / 80 / 80 / 100 × 56 的胶囊 */
+/* Dock：图标直接放在容器里，不做背景色块；宽度按设计稿 100 / 80 / 80 / 100 刚好排满 */
 #dock {
   padding: calc(8px * var(--desk-s, 1)) calc(10px * var(--desk-s, 1)) calc(14px + env(safe-area-inset-bottom, 0px)) calc(10px * var(--desk-s, 1)) !important;
 }
@@ -545,8 +547,9 @@ window.DESKTOP_PRESETS = {
   border: 1px solid rgba(232, 228, 238, 0.9) !important;
   border-radius: calc(28px * var(--desk-s, 1)) !important;
   height: calc(56px * var(--desk-s, 1)) !important;
-  padding: 0 calc(12px * var(--desk-s, 1)) !important;
+  padding: 0 calc(4px * var(--desk-s, 1)) !important;
   box-shadow: 0 6px 18px rgba(140, 130, 150, 0.10) !important;
+  box-sizing: border-box !important;
 }
 #dock-grid {
   gap: calc(8px * var(--desk-s, 1)) !important;
@@ -565,11 +568,14 @@ window.DESKTOP_PRESETS = {
 #dock-grid .app-icon {
   width: 100% !important;
 }
+/* 纯图标：没有白色底块、没有投影、没有圆角背景 */
 #dock-grid .app-icon .icon-wrapper {
   width: 100% !important;
   height: calc(56px * var(--desk-s, 1)) !important;
-  border-radius: calc(28px * var(--desk-s, 1)) !important;
-  box-shadow: 0 2px 8px rgba(140, 130, 150, 0.10) !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
 }
 #dock-grid .app-icon .icon-wrapper svg {
   width: 24px !important;
@@ -623,7 +629,7 @@ window.DESKTOP_PRESETS = {
         tile: "clock",
         widthSpan: 4,
         heightSpan: 2,
-        fixedH: 114,     // 设计稿：时钟文字 57 → 再大一倍
+        fixedH: 150,     // 设计稿：时钟文字 57 → 再大一倍（下面还有一行小字，所以块高留 150）
         config: { size: 114, colon: ":", color: "#6B6275", subColor: "#A79FAE" }
       },
       // 三张照片卡片（点击上传，持久保存），高度按设计稿 182 / 240
@@ -634,7 +640,7 @@ window.DESKTOP_PRESETS = {
         widthSpan: 2,
         heightSpan: 2,
         fixedH: 182,
-        config: { key: "a", maxPx: 900 }
+        config: { key: "a", maxPx: 1200 }
       },
       tile_thin_autumn_photo_b: {
         id: "tile_thin_autumn_photo_b",
@@ -643,7 +649,7 @@ window.DESKTOP_PRESETS = {
         widthSpan: 2,
         heightSpan: 2,
         fixedH: 182,
-        config: { key: "b", maxPx: 900 }
+        config: { key: "b", maxPx: 1200 }
       },
       tile_thin_autumn_photo_c: {
         id: "tile_thin_autumn_photo_c",
@@ -652,7 +658,7 @@ window.DESKTOP_PRESETS = {
         widthSpan: 2,
         heightSpan: 3,
         fixedH: 240,
-        config: { key: "c", maxPx: 1200 }
+        config: { key: "c", maxPx: 1600 }
       },
       // 第二页横幅（背景图 + 可编辑文字），设计稿 380×223
       tile_thin_autumn_banner: {
