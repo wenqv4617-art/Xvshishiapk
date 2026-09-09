@@ -576,42 +576,49 @@
   }
 
   // ==================== 触发入口（含偷看确认弹窗） ====================
+  var asking = false; // 防重入：确认弹窗未答复时，调度器的下一个 tick 不应再叠一个弹窗
   async function askAndStart(sessionId) {
-    if (state.running) { if (typeof showToast === 'function') showToast('反查手机正在进行中'); return; }
-    var sess = await loadSession(sessionId);
-    if (!sess) return;
-    var char = await loadCharInfo(sess);
+    if (state.running || asking) { if (typeof showToast === 'function') showToast('反查手机正在进行中'); return; }
+    asking = true;
+    try {
+      var sess = await loadSession(sessionId);
+      if (!sess) return;
+      var char = await loadCharInfo(sess);
 
-    var answer = await rcModal({
-      title: char.name + ' 正在偷看',
-      icon: ICO.eye,
-      html: '你发现 <b>' + esc(char.name) + '</b> 正拿着你的手机翻看。<br>是否同意？',
-      buttons: [
-        { label: '好吧', value: 'agree', primary: true },
-        { label: '抗议', value: 'refuse', primary: false }
-      ]
-    });
-    if (answer === 'agree') return runReverseCheck(sessionId);
-    if (answer !== 'refuse') return;
-
-    // 抗议 → 60% 触发「抗议无效」
-    if (Math.random() < 0.6) {
-      await rcModal({
-        title: '抗议无效',
-        icon: ICO.alert,
-        html: esc(char.name) + ' 头也不抬地把手机往身后一藏：<br>「抗议无效。」',
-        buttons: [{ label: '……', value: 'ok', primary: true }]
+      var answer = await rcModal({
+        title: char.name + ' 正在偷看',
+        icon: ICO.eye,
+        html: '你发现 <b>' + esc(char.name) + '</b> 正拿着你的手机翻看。<br>是否同意？',
+        buttons: [
+          { label: '好吧', value: 'agree', primary: true },
+          { label: '抗议', value: 'refuse', primary: false }
+        ]
       });
-      return runReverseCheck(sessionId);
+      if (answer === 'agree') { await runReverseCheck(sessionId); return; }
+      if (answer !== 'refuse') return;
+
+      // 抗议 → 60% 触发「抗议无效」
+      if (Math.random() < 0.6) {
+        await rcModal({
+          title: '抗议无效',
+          icon: ICO.alert,
+          html: esc(char.name) + ' 头也不抬地把手机往身后一藏：<br>「抗议无效。」',
+          buttons: [{ label: '……', value: 'ok', primary: true }]
+        });
+        await runReverseCheck(sessionId);
+        return;
+      }
+      // 40%：抗议成功
+      await rcModal({
+        title: '抗议成功',
+        icon: ICO.hand,
+        html: esc(char.name) + ' 撇撇嘴，把手机塞回你手里。',
+        buttons: [{ label: '好', value: 'ok', primary: true }]
+      });
+      logStep('end', '你抗议成功，ta 把手机还了回来');
+    } finally {
+      asking = false;
     }
-    // 40%：抗议成功
-    await rcModal({
-      title: '抗议成功',
-      icon: ICO.hand,
-      html: esc(char.name) + ' 撇撇嘴，把手机塞回你手里。',
-      buttons: [{ label: '好', value: 'ok', primary: true }]
-    });
-    logStep('end', '你抗议成功，ta 把手机还了回来');
   }
 
   // ==================== 调度器（高频/中频/低频） ====================

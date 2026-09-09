@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v71'; // v71: 开屏启动动画 + API 协议设置「专用」页签(12 个功能位独立预设) + 反查手机(角色偷看 user 手机全流程/动线时间轴); v1.4.0
+const CACHE_NAME = 'story-phone-v72'; // v72: 修反查手机确认弹窗可被调度器重复叠加（askAndStart 防重入）; v1.4.1
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
