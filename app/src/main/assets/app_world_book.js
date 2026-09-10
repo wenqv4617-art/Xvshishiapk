@@ -450,8 +450,8 @@ window.editWorldBookItem = function(id) {
 };
 
 window.deleteWorldBookItem = async function(id) {
-  if (confirm("确定要删除这一条设定背景吗？")) {
+  showCustomConfirm("删除世界书条目", "确定要删除这一条设定背景吗？删除后无法恢复。", async () => {
     await db.world_book_entries.delete(id);
     loadWorldBookData();
-  }
+  }, "删除");
 };

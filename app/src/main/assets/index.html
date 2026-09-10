@@ -203,6 +203,7 @@
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="app.css">
   <link rel="stylesheet" href="chat.css">
+  <link rel="stylesheet" href="group.css">
   <link rel="stylesheet" href="status.css">
   <link rel="stylesheet" href="sticker.css">
   <link rel="stylesheet" href="deeptalk.css">
@@ -1680,14 +1681,16 @@
           </div>
         </header>
         <div class="win-body">
-          <!-- 全局激活参数（对标酒馆：扫描深度 / Token 预算） -->
-          <div style="display:flex; gap:10px; align-items:center; padding:8px 10px; margin-bottom:10px; background:#f8fafc; border:1.5px solid var(--border); border-radius:10px;">
-            <label style="font-size:11px; font-weight:700; color:#6b7280; margin:0; white-space:nowrap;">扫描深度</label>
-            <input type="number" id="wb-global-scandepth" value="10" min="1" style="width:62px; padding:5px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center;">
-            <label style="font-size:11px; font-weight:700; color:#6b7280; margin:0; white-space:nowrap;">Token 预算</label>
-            <input type="number" id="wb-global-budget" value="0" min="0" style="width:76px; padding:5px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center;">
-            <span style="font-size:10px; color:var(--text-secondary);">0=不限</span>
-            <button type="button" class="btn btn-outline" id="btn-wb-tidy-old" style="margin-left:auto; padding:5px 9px; font-size:10.5px; border-radius:8px; white-space:nowrap;">一键整理旧条目</button>
+          <!-- 全局激活参数（对标酒馆：扫描深度 / Token 预算）—— 分两行，避免窄屏溢出 -->
+          <div style="padding:8px 10px; margin-bottom:10px; background:#f8fafc; border:1.5px solid var(--border); border-radius:10px;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <label style="font-size:11px; font-weight:700; color:#6b7280; margin:0; white-space:nowrap;">扫描深度</label>
+              <input type="number" id="wb-global-scandepth" value="10" min="1" style="width:58px; padding:5px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center;">
+              <label style="font-size:11px; font-weight:700; color:#6b7280; margin:0; white-space:nowrap;">Token 预算</label>
+              <input type="number" id="wb-global-budget" value="0" min="0" style="width:70px; padding:5px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center;">
+              <span style="font-size:10px; color:var(--text-secondary); white-space:nowrap;">0 = 不限</span>
+            </div>
+            <button type="button" class="btn btn-outline" id="btn-wb-tidy-old" style="width:100%; margin-top:8px; padding:7px 9px; font-size:11px; border-radius:8px;">一键整理旧条目（未设置插入位置）</button>
           </div>
           <div id="world_book-list-container"></div>
           
@@ -2349,6 +2352,17 @@
             </div>
             <div style="font-size:10px; color:var(--text-secondary); padding: 0 2px; margin-top: -8px;">开启后，本群赴约模式未总结的对话记录将按时间线拼入线上群聊上下文，并参与自动总结轮数统计与向量搜索原文召回。</div>
 
+            <!-- 公告历史入口 -->
+            <div class="form-group" id="btn-group-announce-history" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px; cursor:pointer;">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; font-weight:700; color:var(--text-secondary);">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#B97241;">
+                  <path d="M21 8H3V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2z"/><path d="M10 12h4"/><path d="M19 8v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/>
+                </svg>
+                历史公告（查看 / 重新置顶）
+              </label>
+              <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+
             <!-- 新增：群专属个性化聊天美化入口 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px; cursor:pointer;" onclick="chatBeautifySystem.openPanel()">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; font-weight:700; color:var(--text-secondary);">
@@ -2682,10 +2696,12 @@
               </header>
               <div class="win-body" style="padding: 16px; overflow-y: auto; display: flex; flex-direction: column; justify-content: space-between; height: calc(100% - 50px); box-sizing: border-box;">
                 <div style="flex:1; overflow-y:auto;">
-                  <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-secondary); font-weight:700; background:#f8fafc; padding:10px 14px; border-radius:10px; margin-bottom:14px; border:1px solid var(--border);">
-                    <span>当前在线人数：<span id="group-online-count" style="color:var(--primary);">0</span> 人</span>
-                    <span>当前活跃人数：<span id="group-active-count" style="color:#07c160;">0</span> 人</span>
+                  <div class="group-stat-bar">
+                    <div class="group-stat"><b id="group-stat-total">0</b><span>成员总数</span></div>
+                    <div class="group-stat"><b id="group-stat-active" style="color:#4A7DBF;">0</b><span>近 30 分钟活跃</span></div>
+                    <div class="group-stat"><b id="group-stat-muted" style="color:#D9534F;">0</b><span>禁言中</span></div>
                   </div>
+                  <div class="group-members-toolbar" id="group-members-toolbar"></div>
                   <div id="group-members-list-box" style="display:flex; flex-direction:column; gap:10px;"></div>
                 </div>
                 <!-- 底部邀请成员操作按钮 -->
@@ -2730,8 +2746,20 @@
                 <input type="text" id="group-poll-title" placeholder="请输入投票主题" required>
               </div>
               <div class="form-group">
-                <label>投票选项 (每行一个)</label>
+                <label>投票选项 (每行一个，最多 12 个)</label>
                 <textarea id="group-poll-options" rows="4" placeholder="选项 1&#10;选项 2&#10;选项 3" required></textarea>
+              </div>
+              <div class="form-group" style="display:flex; gap:10px; align-items:center;">
+                <label style="display:flex; align-items:center; gap:6px; font-size:12px; margin:0; flex:1; font-weight:700; color:var(--text-secondary);">
+                  <input type="checkbox" id="group-poll-multi"> 允许多选
+                </label>
+                <select id="group-poll-deadline" style="padding:7px 8px; font-size:11px; border-radius:8px; border:1.5px solid var(--border); background:#fff; color:var(--text-secondary); font-weight:700;">
+                  <option value="0">不设截止</option>
+                  <option value="10">10 分钟后截止</option>
+                  <option value="60">1 小时后截止</option>
+                  <option value="720">12 小时后截止</option>
+                  <option value="1440">1 天后截止</option>
+                </select>
               </div>
               <button class="btn btn-primary" id="btn-group-poll-submit" style="width:100%; height:40px; font-weight:700;">发布投票卡片</button>
             </div>
@@ -2742,12 +2770,13 @@
         <div id="group-helper-overlay" class="modal-overlay" style="z-index: 1500;">
           <div class="modal" style="max-height:85%;">
             <header class="modal-header">
-              <h4>群助手 - 引入机器人</h4>
+              <h4 id="group-helper-title">群助手 - 引入机器人</h4>
               <button class="btn-icon" onclick="document.getElementById('group-helper-overlay').classList.remove('active')">
                 <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
               </button>
             </header>
             <div class="win-body" style="padding:16px; overflow-y:auto;">
+              <input type="hidden" id="group-bot-id">
               <div class="form-group">
                 <label>机器人姓名 (艾特响应名)</label>
                 <input type="text" id="group-bot-name" placeholder="例如：养鸡农场">
@@ -2764,6 +2793,10 @@
                 <label>快捷命令配置 (语法：命令名 | 返回对白变量，每行一个)</label>
                 <textarea id="group-bot-commands" rows="4" placeholder="起名 | @Sender 你的小鸡【VALUE】正在吃草！&#10;喂食 | @Sender 投喂成功！饱食度增加20%，当前饱食度：80%"></textarea>
               </div>
+              <div class="form-group">
+                <label>同一成员连续触发的冷却秒数 (0 = 不限制)</label>
+                <input type="number" id="group-bot-cooldown" value="3" min="0" placeholder="3">
+              </div>
               <div class="form-actions" style="margin-top:16px;">
                 <button class="btn btn-primary" id="btn-group-bot-save" style="width:100%;">保存并部署机器人</button>
               </div>
@@ -2775,7 +2808,7 @@
         <div id="group-announce-overlay" class="modal-overlay" style="z-index: 1500; align-items:center !important; justify-content:center !important;">
           <div class="modal" style="max-width:320px; border-radius:16px; padding:20px;">
             <header class="modal-header" style="border-bottom:none; padding-bottom:0;">
-              <h4>发布群公告</h4>
+              <h4 id="group-announce-form-title">发布群公告</h4>
               <button class="btn-icon" onclick="document.getElementById('group-announce-overlay').classList.remove('active')">
                 <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
               </button>
@@ -2788,6 +2821,16 @@
               <div class="form-group">
                 <label>具体内容</label>
                 <textarea id="group-announce-text" rows="5" placeholder="请输入群公告具体要求或通知..." required></textarea>
+              </div>
+              <div class="form-group">
+                <label>有效期（到期自动下架，可在历史公告里找回）</label>
+                <select id="group-announce-expire" style="width:100%; padding:8px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; background:#fff;">
+                  <option value="0">长期有效</option>
+                  <option value="1">1 小时后自动下架</option>
+                  <option value="6">6 小时后自动下架</option>
+                  <option value="24">1 天后自动下架</option>
+                  <option value="72">3 天后自动下架</option>
+                </select>
               </div>
               <button class="btn btn-primary" id="btn-group-announce-submit" style="width:100%; height:40px; font-weight:700;">确认发布置顶公告</button>
             </div>

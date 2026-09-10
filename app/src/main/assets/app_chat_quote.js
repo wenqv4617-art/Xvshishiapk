@@ -88,7 +88,9 @@
           if (session && session.isGroup === 1) {
             if (Number(msg.senderId) === 99999) {
               const groupObj = await db.groups.get(session.groupId);
-              const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+              const botObj = (window.groupChatSystem && window.groupChatSystem.resolveBot)
+                ? window.groupChatSystem.resolveBot(groupObj, msg)
+                : ((groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null);
               senderName = botObj ? botObj.name : "群助手";
             } else {
               const charObj = await db.archives.get(Number(msg.senderId));
@@ -274,7 +276,9 @@
           if (session && session.isGroup === 1) {
             if (Number(quotedMsg.senderId) === 99999) {
               const groupObj = await db.groups.get(session.groupId);
-              const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+              const botObj = (window.groupChatSystem && window.groupChatSystem.resolveBot)
+                ? window.groupChatSystem.resolveBot(groupObj, quotedMsg)
+                : ((groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null);
               senderName = botObj ? botObj.name : "群助手";
             } else {
               const charObj = await db.archives.get(Number(quotedMsg.senderId));

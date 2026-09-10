@@ -3364,9 +3364,11 @@ async function renderDialogMessages(isInitial = true) {
 
     if (sess.isGroup === 1) {
       if (Number(m.senderId) === 99999) {
-        // 核心支持：精准匹配并加载群助手机器人的专属名称与头像
+        // 核心支持：精准匹配并加载群助手机器人的专属名称与头像（支持多机器人共存）
         const groupObj = await db.groups.get(sess.groupId);
-        const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+        const botObj = (window.groupChatSystem && window.groupChatSystem.resolveBot)
+          ? window.groupChatSystem.resolveBot(groupObj, m)
+          : ((groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null);
         finalSenderName = botObj ? botObj.name : "群助手";
         finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar, botObj.name) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
       } else {
@@ -4097,7 +4099,9 @@ async function appendMessageToDOM(msg) {
       if (sess && sess.isGroup === 1) {
         if (Number(msg.senderId) === 99999) {
           const groupObj = await db.groups.get(sess.groupId);
-          const botObj = (groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null;
+          const botObj = (window.groupChatSystem && window.groupChatSystem.resolveBot)
+            ? window.groupChatSystem.resolveBot(groupObj, msg)
+            : ((groupObj && groupObj.bots && groupObj.bots.length > 0) ? groupObj.bots[0] : null);
           finalSenderName = botObj ? botObj.name : "群助手";
           finalAvatarUrl = (botObj && botObj.avatar) ? resolveAvatar(botObj.avatar, botObj.name) : "data:image/svg+xml;utf8,<svg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'><circle cx='12' cy='12' r='12' fill='%2364748b'/></svg>";
         } else {
