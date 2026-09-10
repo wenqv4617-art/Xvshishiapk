@@ -218,56 +218,13 @@ async function buildGlobalSystemPrompt(sessionId) {
   // 动态检索关系网
   const relationshipDesc = await queryRelationship(sess.userId, sess.charId, userName, charName);
 
-  // 1. 提取当前会话在后台显式挂载的世界书条目 ID 列表
-  const mountedIds = sess.mountedEntryIds || [];
-  
-  // 2. 拉取全量世界书条目
-  const allWbEntries = await db.world_book_entries.toArray();
-  
-  // 3. 过滤出【在当前对话挂载了】或【属于“常驻/破限”默认全局组】的候选条目
-  const targetScopeEntries = allWbEntries.filter(entry => {
-    const isMounted = mountedIds.includes(entry.id);
-    const isAlwaysGroup = entry.group === '常驻' || entry.group === '破限底料';
-    return isMounted || isAlwaysGroup;
-  });
-
-  const candidateEntries = [];
-
-  // 获取最近 10 条聊天记录作为关键词匹配上下文
-  const recentChatMsgs = await db.messages.where('sessionId').equals(sessionId).reverse().limit(10).toArray();
-  const contextText = recentChatMsgs.map(m => m.content).join(" ");
-
-  for (let entry of targetScopeEntries) {
-    // 0. 大分组一键总开关校验 (若该大分组被设为关停，直接无损跳过，绝不修改条目本身的 mode 属性)
-    const isGroupDisabled = localStorage.getItem('wb_group_disabled_' + entry.group) === 'true';
-    if (isGroupDisabled) continue;
-
-    const mode = entry.mode || (entry.isActive ? 'constant' : 'disabled');
-    if (mode === 'disabled') continue; // 节点单体禁用跳过
-
-    // 概率判定
-    const prob = entry.probability ?? 100;
-    if (prob < 100 && Math.random() * 100 > prob) continue;
-
-    if (mode === 'constant') {
-      // 永久触发
-      candidateEntries.push(entry);
-    } else if (mode === 'selective') {
-      // 关键词触发判定
-      const kwStr = entry.keywords || "";
-      if (kwStr) {
-        const kwList = kwStr.split(/[,，|\|;；]/).map(k => k.trim().toLowerCase()).filter(Boolean);
-        const isMatched = kwList.some(kw => contextText.toLowerCase().includes(kw));
-        if (isMatched) {
-          candidateEntries.push(entry);
-        }
-      }
-    }
+  // 世界书：交给 worldBookEngine 统一判定
+  // （挂载/常驻、分组关停、三态、关键词逻辑、概率、互斥组、粘滞/冷却、预算、插入位置）
+  let wbResult = null;
+  if (window.worldBookEngine && typeof window.worldBookEngine.checkWorldInfo === 'function') {
+    try { wbResult = await window.worldBookEngine.checkWorldInfo(sessionId, { mode: 'online' }); }
+    catch (e) { console.warn('世界书引擎执行失败:', e); }
   }
-
-  const combinedMap = new Map();
-  candidateEntries.forEach(e => combinedMap.set(e.id, e));
-  const uniqueEntries = Array.from(combinedMap.values());
 
   const segments = [];
 
@@ -829,15 +786,24 @@ ${relationshipDesc}`;
     content: timePrompt
   });
 
-  // 1.5 世界书条目：使用用户配置的实际 depth
-  uniqueEntries.forEach(entry => {
-    const entryDepth = Number(entry.depth) ?? 10;
-    segments.push({
-      id: "world_book",
-      depth: entryDepth,
-      content: `## 世界书设定：${entry.title} (优先级: 深度 ${entryDepth})\n${entry.content}`
+  // 1.5 世界书条目：按「插入位置」锚点分发（每条独立 id，供上下文管理逐条查看/开关）
+  if (wbResult && window.worldBookEngine && typeof window.worldBookEngine.segmentDepth === 'function') {
+    ["beforeChar", "afterChar", "afterRule", "legacy"].forEach(key => {
+      (wbResult[key] || []).forEach(it => {
+        segments.push({
+          id: "wb_" + it.id,
+          label: "世界书 · " + it.title,
+          group: "世界书",
+          wbPos: it.position,
+          depth: window.worldBookEngine.segmentDepth(it),
+          content: it.content
+        });
+      });
     });
-  });
+  }
+  if (window.contextManager && typeof window.contextManager.setWorldBookReport === 'function') {
+    window.contextManager.setWorldBookReport("online", wbResult);
+  }
 
   // 排序 + 应用上下文管理覆盖（开关/排序）并记录 trace（原地，不改变引用）
   segments.sort((a, b) => a.depth - b.depth);
@@ -900,24 +866,12 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     ? await queryRelationship(sess.userId, sess.charId, userName, charName) 
     : "你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
 
-  // 收集世界书 (世界书作为客观世界观/物理环境法则设定，即使不携带角色交往记忆，也应当保持正常完美生效)
-  const alwaysActiveWB = await db.world_book_entries
-    .where('group').equals('常驻')
-    .and(entry => entry.isActive === true)
-    .toArray();
-
-  let mountedWB = [];
-  if (mountedIds && mountedIds.length > 0) {
-    for (let entryId of mountedIds) {
-      const entry = await db.world_book_entries.get(entryId);
-      if (entry) mountedWB.push(entry);
-    }
+  // 世界书：交给 worldBookEngine 统一判定（线下模式同样生效）
+  let wbResult = null;
+  if (window.worldBookEngine && typeof window.worldBookEngine.checkWorldInfo === 'function') {
+    try { wbResult = await window.worldBookEngine.checkWorldInfo(sessionId, { mode: 'offline' }); }
+    catch (e) { console.warn('世界书引擎执行失败:', e); }
   }
-
-  const combinedMap = new Map();
-  alwaysActiveWB.forEach(e => combinedMap.set(e.id, e));
-  mountedWB.forEach(e => combinedMap.set(e.id, e));
-  const uniqueEntries = Array.from(combinedMap.values());
 
   const segments = [];
 
@@ -1198,15 +1152,24 @@ ${relationshipDesc}`;
     }
   }
 
-  // 2.5 世界书条目载入 (支持负深度！如 -900 会自动排在人设和规则的前最上方)
-  uniqueEntries.forEach(entry => {
-    const entryDepth = Number(entry.depth) ?? 10;
-    segments.push({
-      id: "world_book",
-      depth: entryDepth,
-      content: `## 世界书背景设定：${entry.title}\n${entry.content}`
+  // 2.5 世界书条目：按「插入位置」锚点分发（每条独立 id）
+  if (wbResult && window.worldBookEngine && typeof window.worldBookEngine.segmentDepth === 'function') {
+    ["beforeChar", "afterChar", "afterRule", "legacy"].forEach(key => {
+      (wbResult[key] || []).forEach(it => {
+        segments.push({
+          id: "wb_" + it.id,
+          label: "世界书 · " + it.title,
+          group: "世界书",
+          wbPos: it.position,
+          depth: window.worldBookEngine.segmentDepth(it),
+          content: it.content
+        });
+      });
     });
-  });
+  }
+  if (window.contextManager && typeof window.contextManager.setWorldBookReport === 'function') {
+    window.contextManager.setWorldBookReport(isTheater ? "theater" : "date", wbResult);
+  }
 
   // 排序 + 应用上下文管理覆盖（开关/排序）并记录 trace（原地，不改变引用）
   segments.sort((a, b) => a.depth - b.depth);

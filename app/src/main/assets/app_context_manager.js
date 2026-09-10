@@ -47,7 +47,7 @@
     { id: "online_summary",    label: "线上聊天背景参考",   cats: ["theater","date"], group: "记忆", builtin: false, switch: null, depth: 9998, appended: true, desc: "线下携带记忆时，把近期线上聊天作为背景参考注入（固定追加，不参与排序）。" },
 
     // ===== 环境与感知 =====
-    { id: "mcp_env",           label: "MCP 设备环境",     cats: ["online"], group: "环境", builtin: false, switch: { kind: "local", key: "settings-mcp-prompt-enabled" }, depth: -490, desc: "天气/电量/正在播放/歌单/蓝牙等真机传感器数据。" },
+    { id: "mcp_env",           label: "MCP 设备环境",     cats: ["online"], group: "环境", builtin: false, switch: { kind: "local", key: "settings-mcp-prompt-enabled" }, depth: -490, domSync: ["settings-mcp-prompt-toggle"], onToggleHook: "mcp", desc: "天气/电量/正在播放/歌单/蓝牙等真机传感器数据。" },
     { id: "couples",           label: "情侣空间日程与愿望", cats: ["online"], group: "环境", builtin: false, switch: null, depth: -495, desc: "情侣空间本日日程与未完成愿望（在情侣空间开启同步时有数据）。" },
     { id: "ritual_state",      label: "仪轨四维状态",     cats: ["online"], group: "环境", builtin: false, switch: { kind: "session", key: "ritualStateInContext" }, depth: -470, domSync: "details-ritual-state-toggle", desc: "当天日程/穿着/随身物品/位置进入 Prompt。" },
     { id: "time",              label: "时间感知",         cats: ["online","theater","date"], group: "环境", builtin: false, switch: null, depth: -400, desc: "注入真实或模拟场景时间。关掉则不注入任何时间行。" },
@@ -58,7 +58,6 @@
     // ===== 剧情与社交 =====
     { id: "plot",              label: "剧情引擎主线剧本",   cats: ["online","theater","date"], group: "剧情", builtin: false, switch: null, depth: -480, desc: "当前主线剧情演进要求（配置了剧情要求时注入）。" },
     { id: "blocked",           label: "拉黑状态约束",     cats: ["online"], group: "剧情", builtin: false, switch: null, depth: -475, desc: "被拉黑/主动拉黑时的状态约束与特权指令。" },
-    { id: "world_book",        label: "世界书设定",       cats: ["online","theater","date"], group: "剧情", builtin: false, switch: null, depth: 10, desc: "挂载/常驻的世界书条目（按其各自深度自动排序）。" },
     { id: "moment_history",    label: "朋友圈历史",       cats: ["online"], group: "剧情", builtin: false, switch: null, depth: -82, desc: "角色已发布的朋友圈动态及互动（有数据时注入）。" },
     { id: "forum_history",     label: "论坛帖子历史",     cats: ["online"], group: "剧情", builtin: false, switch: { kind: "session", key: "allowCharForumRoam" }, depth: -81, desc: "角色在论坛发过的帖子历史（论坛漫游开启时注入）。" },
 
@@ -66,7 +65,7 @@
     { id: "multimedia",        label: "多媒体能力",       cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "multimediaToggle" }, depth: -450, domSync: "details-multimedia-toggle", desc: "允许发送语音/图片的指令说明。" },
     { id: "recall",            label: "消息撤回能力",     cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharRecall" }, depth: -430, domSync: "details-allow-recall-toggle", desc: "允许角色撤回消息的指令说明。" },
     { id: "reaction",          label: "表情反应能力",     cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharReaction" }, depth: -420, domSync: "details-allow-reaction-toggle", desc: "允许角色对消息做表情反应的指令说明。" },
-    { id: "cot",               label: "思维链 (CoT)",     cats: ["online","theater","date"], group: "开关", builtin: false, switch: { kind: "session", key: "cotToggle" }, depth: -90, desc: "深度思考推演协议。关闭后不再注入任何思维链提示。" },
+    { id: "cot",               label: "思维链 (CoT)",     cats: ["online","theater","date"], group: "开关", builtin: false, switch: { kind: "session", key: "cotToggle" }, depth: -90, domSync: ["cot-session-toggle"], onToggleHook: "cot", desc: "深度思考推演协议。关闭后不再注入任何思维链提示。" },
     { id: "auto_call",         label: "主动通话",         cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharAutoCall" }, depth: -85, domSync: "details-autocall-toggle", desc: "允许角色主动发起语音/视频通话。" },
     { id: "auto_moment",       label: "自动发朋友圈",     cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharAutoMoment" }, depth: -84, domSync: "details-auto-moment-toggle", desc: "允许角色自发发朋友圈的指令说明。" },
     { id: "forum_roam",        label: "论坛漫游",         cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharForumRoam" }, depth: -83, domSync: "details-auto-forum-roam-toggle", desc: "允许角色自发去论坛发帖的指令说明。" },
@@ -83,12 +82,25 @@
   }
 
   // ---------- 运行时状态 ----------
-  var lastRequest = { online: null, theater: null, date: null }; // { sessionId, messages, trace, at }
+  // 每个会话 × 每类 各自独立保存最近一轮请求；LRU 上限防止内存膨胀
+  var lastRequests = {};      // key = sessionId + "::" + category
+  var lastOrder = [];         // LRU 顺序
+  var MAX_KEEP = 24;
   var pendingTrace = { online: null, theater: null, date: null }; // builder 写入的 trace 缓冲
+  var wbReport = { online: null, theater: null, date: null };     // 世界书引擎本轮激活报告
   var activeTab = "online";
   var panelEl = null;
   var currentSess = null; // 当前会话缓存（用于静态开关态扫描）
   var _renderedSectionsCount = 0; // 当前渲染的启用段数量（用于末位下移禁用）
+
+  function reqKey(sid, cat) { return String(sid) + "::" + cat; }
+
+  // 取「当前会话」在指定类别下最近一轮请求（换聊天就天然隔离）
+  function getCurrentRequest(cat) {
+    var sid = currentSessionId();
+    if (sid === null || sid === undefined) return null;
+    return lastRequests[reqKey(sid, cat)] || null;
+  }
 
   // ---------- 小工具 ----------
   function esc(s) {
@@ -174,12 +186,30 @@
     return { known: false, on: true };
   }
 
-  // 同步回对话详情里的同名 checkbox
+  // 同步回其它面板里的同名开关（支持一个段对应多个镜像）
   function syncDom(id, on) {
     var c = CATALOG_BY_ID[id];
     if (!c || !c.domSync) return;
-    var el = document.getElementById(c.domSync);
-    if (el) el.checked = !!on;
+    var ids = Array.isArray(c.domSync) ? c.domSync : [c.domSync];
+    ids.forEach(function (eid) {
+      var el = document.getElementById(eid);
+      if (el) el.checked = !!on;
+    });
+  }
+
+  // 切换后回调：让 MCP 中枢 / 思维链面板等即时刷新到同一状态
+  function runToggleHook(c, on) {
+    if (!c || !c.onToggleHook) return;
+    try {
+      if (c.onToggleHook === "mcp") {
+        if (window.mcpSystem && typeof window.mcpSystem.loadMcpSettings === "function") window.mcpSystem.loadMcpSettings();
+        if (window.mcpClientSystem && typeof window.mcpClientSystem.updateSummaryText === "function") window.mcpClientSystem.updateSummaryText();
+      } else if (c.onToggleHook === "cot") {
+        if (window.cotSystem) window.cotSystem.currentSessionCotToggle = !!on;
+        var el = document.getElementById("cot-session-toggle");
+        if (el) el.checked = !!on;
+      }
+    } catch (e) { console.warn("[ctx] onToggleHook 失败:", e); }
   }
 
   // ---------- 开关写入 ----------
@@ -203,10 +233,28 @@
   }
 
   function toggleSection(id, on) {
-    var c = CATALOG_BY_ID[id];
     var sessionId = currentSessionId();
-    if (!c) return;
     if (!sessionId) { toast("请先进入一个对话会话"); return; }
+    // 世界书条目（动态段）：此处直接切换条目自身的启用 / 禁用
+    var m = /^wb_(?:off_|depth_)?(\d+)$/.exec(id);
+    if (m) {
+      var wbId = Number(m[1]);
+      db.world_book_entries.get(wbId).then(function (entry) {
+        if (!entry) return;
+        if (on) {
+          var cur = entry.mode || (entry.isActive ? "constant" : "disabled");
+          return db.world_book_entries.update(wbId, { mode: cur === "disabled" ? "selective" : cur, isActive: true });
+        }
+        return db.world_book_entries.update(wbId, { mode: "disabled", isActive: false });
+      }).then(function () {
+        toast(on ? "已启用该世界书条目" : "已关闭该世界书条目");
+        try { if (typeof loadWorldBookData === "function") loadWorldBookData(); } catch (e) {}
+        renderPanel();
+      }).catch(function (e) { console.warn("[ctx] 切换世界书条目失败:", e); });
+      return;
+    }
+    var c = CATALOG_BY_ID[id];
+    if (!c) return;
     if (c.builtin) { toast("「" + c.label + "」为常驻基础段，不可关闭"); return; }
 
     db.sessions.get(sessionId).then(function (sess) {
@@ -217,6 +265,7 @@
         patch[c.switch.key] = on ? 1 : 0;
         return db.sessions.update(sessionId, patch).then(function () {
           syncDom(id, on);
+          runToggleHook(c, on);
           if (c.switch.key) { currentSess = currentSess || {}; currentSess[c.switch.key] = on ? 1 : 0; }
           toast(on ? ("已开启「" + c.label + "」") : ("已关闭「" + c.label + "」"));
           renderPanel();
@@ -224,6 +273,8 @@
       }
       if (c.switch && c.switch.kind === "local") {
         try { localStorage.setItem(c.switch.key, on ? "true" : "false"); } catch (e) {}
+        syncDom(id, on);
+        runToggleHook(c, on);
         toast(on ? ("已开启「" + c.label + "」") : ("已关闭「" + c.label + "」"));
         renderPanel();
         return Promise.resolve();
@@ -243,6 +294,9 @@
     var c = CATALOG_BY_ID[id];
     if (c && c.id === "disclaimer") { toast("安全免责声明固定置顶，不可移动"); return; }
     if (c && c.appended) { toast("该段固定追加在请求末尾，不可排序"); return; }
+    // 动态段（如各条世界书）：顺序由其自身的位置/顺序字段决定
+    if (!c) { toast("世界书条目的先后请在「世界书」里调整（位置 / 顺序）"); return; }
+    if (id.indexOf("wb_") === 0) { toast("世界书条目的先后请在「世界书」里调整（位置 / 顺序）"); return; }
 
     db.sessions.get(sessionId).then(function (sess) {
       if (!sess) return;
@@ -321,41 +375,77 @@
   }
 
   function recordTrace(category, sessionId, segments, sess, catOv) {
-    var produced = {};
+    // 1. 按「实际发送顺序」归并同 id 段 → sections（含动态段，例如每一条世界书）
+    var byId = {};
+    var orderIds = [];
     segments.forEach(function (s) {
-      if (!produced[s.id]) produced[s.id] = [];
-      produced[s.id].push(s);
+      var id = s.id || ("anon_" + orderIds.length);
+      if (!byId[id]) { byId[id] = { first: s, list: [] }; orderIds.push(id); }
+      byId[id].list.push(s);
+    });
+    var sections = orderIds.map(function (id, i) {
+      var g = byId[id];
+      var c = CATALOG_BY_ID[id];
+      return {
+        id: id,
+        label: (c && c.label) || g.first.label || id,
+        group: (c && c.group) || g.first.group || "其他",
+        builtin: !!(c && c.builtin) || !!g.first.builtin,
+        appended: !!(c && c.appended),
+        dynamic: !c,
+        wbPos: g.first.wbPos || null,
+        depth: g.first.depth || 0,
+        content: g.list.map(function (x) { return x.content || ""; }).join("\n\n"),
+        enabled: true,
+        order: i
+      };
     });
 
-    var sections = [];
-    var disabledList = [];
+    // 2. 目录里未产出的段 → 关闭 / 未注入
     var disabledSet = {};
     (catOv.disabled || []).forEach(function (id) { disabledSet[id] = true; });
-
+    var disabledList = [];
     catEntries(category).forEach(function (c) {
-      var list = produced[c.id];
-      if (list && list.length > 0) {
-        var content = list.map(function (s) { return s.content || ""; }).join("\n\n");
-        sections.push({
-          id: c.id, label: c.label, group: c.group, builtin: !!c.builtin,
-          depth: list[0].depth || 0, content: content, enabled: true, order: sections.length
-        });
-      } else {
-        var reason = "无数据 / 未命中";
-        if (disabledSet[c.id]) reason = "手动关闭";
-        else if (c.switch) {
-          var st = readSwitch(c.id, sess);
-          if (st.known && !st.on) reason = "开关关闭";
-        }
-        disabledList.push({ id: c.id, label: c.label, group: c.group, builtin: !!c.builtin, reason: reason });
+      if (byId[c.id]) return; // 本段已启用
+      var reason = "无数据 / 未命中";
+      if (disabledSet[c.id]) reason = "手动关闭";
+      else if (c.switch) {
+        var st = readSwitch(c.id, sess);
+        if (st.known && !st.on) reason = "开关关闭";
       }
+      disabledList.push({ id: c.id, label: c.label, group: c.group, builtin: !!c.builtin, reason: reason });
     });
+
+    // 3. 合并世界书引擎报告：聊天内注入条目 + 未激活条目
+    var rep = wbReport[category];
+    var wbStats = null;
+    if (rep) {
+      try {
+        wbStats = { stats: rep.stats, tokens: rep.tokens };
+        (rep.atDepth || []).forEach(function (it) {
+          sections.push({
+            id: "wb_depth_" + it.id, label: "世界书 · " + it.title, group: "世界书",
+            builtin: false, appended: false, dynamic: true, atDepth: true,
+            depth: it.depth, role: it.role, content: it.content, enabled: true, order: sections.length
+          });
+        });
+        (rep.report || []).forEach(function (r) {
+          if (r.active) return;
+          disabledList.push({
+            id: "wb_off_" + r.id, label: "世界书 · " + r.title,
+            group: "世界书", builtin: false, dynamic: true, reason: r.reason || "未激活"
+          });
+        });
+      } catch (e) { console.warn("[ctx] 合并世界书报告失败:", e); }
+      wbReport[category] = null;
+    }
 
     pendingTrace[category] = {
       sessionId: sessionId,
       at: nowStr(),
       sections: sections,
-      disabled: disabledList
+      disabled: disabledList,
+      wbStats: wbStats
     };
   }
 
@@ -364,15 +454,28 @@
     var trace = pendingTrace[category] || {
       sessionId: sessionId, at: nowStr(), sections: [], disabled: []
     };
-    lastRequest[category] = {
+    var key = reqKey(sessionId, category);
+    lastRequests[key] = {
       sessionId: sessionId,
       at: nowStr(),
       messages: messages,
       trace: trace,
       preview: !!(opts && opts.preview)
     };
+    var i = lastOrder.indexOf(key);
+    if (i >= 0) lastOrder.splice(i, 1);
+    lastOrder.push(key);
+    while (lastOrder.length > MAX_KEEP) {
+      var old = lastOrder.shift();
+      delete lastRequests[old];
+    }
     // 清理缓冲，避免旧 trace 串台
     pendingTrace[category] = null;
+  }
+
+  // 世界书引擎本轮激活报告（app_prompts.js 在 finalizeSegments 之前调用）
+  function setWorldBookReport(category, result) {
+    wbReport[category] = result || null;
   }
 
   // 附加段（app_chat.js 在 System Prompt 组装完成后调用，位于基础段之后）
@@ -522,7 +625,7 @@
     var box = document.getElementById("ctx-full-req");
     if (!box) return;
     var pal = PASTEL[activeTab] || PASTEL.online;
-    var lr = lastRequest[activeTab];
+    var lr = getCurrentRequest(activeTab);
 
     var inner = '<div class="ctx-card" style="border-color:' + pal.border + ';">' +
       '<div class="ctx-card-head" style="cursor:default;">' +
@@ -592,7 +695,7 @@
     var box = document.getElementById("ctx-section-list");
     if (!box) return;
     var pal = PASTEL[activeTab] || PASTEL.online;
-    var lr = lastRequest[activeTab];
+    var lr = getCurrentRequest(activeTab);
     var trace = lr && lr.trace ? lr.trace : null;
 
     // 若没有 trace，则用「目录 + 当前开关」生成一个静态列表（可开关/排序）
@@ -647,6 +750,17 @@
       statPill("~token", fmtNum(totalTokens), { soft: "#eef6f0", accent: "#5f9e7d" }) +
     '</div>';
 
+    // 世界书引擎本轮激活摘要
+    var wb = lr && lr.trace ? lr.trace.wbStats : null;
+    if (wb && wb.stats && wb.stats.total > 0) {
+      var st = wb.stats;
+      html += '<div style="font-size:10px; color:#8b8496; margin:-3px 0 10px 3px; line-height:1.7;">' +
+        svgIcon(ICONS.brain, 11, "#6f9a86") + ' 世界书：命中 <b style="color:#5f9e7d;">' + st.active + '</b> / 共 ' + st.total +
+        '（未挂载 ' + st.notMounted + ' · 未命中 ' + st.noKeyword + ' · 概率 ' + st.byProb +
+        ' · 同组 ' + st.byGroup + ' · 冷却 ' + st.byCooldown + ' · 预算 ' + st.byBudget + '）' +
+        ' · 约 ' + fmtNum(wb.tokens) + ' token</div>';
+    }
+
     // 操作条
     html += '<div style="display:flex; gap:6px; margin-bottom:11px;">' +
       '<button class="ctx-act" onclick="window.contextManager.buildPreview()">' + svgIcon(ICONS.refresh, 12) + '构建预览</button>' +
@@ -693,6 +807,8 @@
     var isBuiltin = s.builtin || (c && c.builtin);
     var locked = (s.id === "disclaimer");
     var isAppended = !!(c && c.appended);
+    var isDynamic = !c;                       // 动态段（如各条世界书）
+    var isAtDepth = !!s.atDepth;              // 注入在聊天记录内
     var numColor = pal.soft;
     var numFg = pal.accent;
     var collapseId = "ctx-body-" + s.id + "-" + idx;
@@ -700,12 +816,20 @@
     var chips = '<span class="ctx-chip" style="background:#f3f0f6; color:#8a7bd8;">' + esc(s.group || "其他") + '</span>';
     if (isBuiltin) chips += '<span class="ctx-chip" style="background:#fff6e8; color:#c98a3a;">常驻</span>';
     if (isAppended) chips += '<span class="ctx-chip" style="background:#eef4f0; color:#6f9a86;">追加</span>';
+    if (isAtDepth) chips += '<span class="ctx-chip" style="background:#eef4f0; color:#5f9e7d;">聊天内 · 深度 ' + esc(String(s.depth)) + '</span>';
+    if (s.wbPos && !isAtDepth) {
+      var _wbPosLabel = (window.worldBookEngine && window.worldBookEngine.positionLabel)
+        ? window.worldBookEngine.positionLabel(s.wbPos) : s.wbPos;
+      chips += '<span class="ctx-chip" style="background:#eef4f0; color:#6f9a86;">' + esc(_wbPosLabel) + '</span>';
+    }
 
     var controls = '';
     if (isAppended) {
       controls += '<span class="ctx-icon-btn" style="opacity:.5; cursor:default;" title="固定追加在请求末尾">' + svgIcon(ICONS.plug, 13) + '</span>';
     } else if (locked) {
       controls += '<span class="ctx-icon-btn" style="opacity:.5; cursor:default;" title="固定置顶">' + svgIcon(ICONS.lock, 13) + '</span>';
+    } else if (isDynamic) {
+      controls += '<span class="ctx-icon-btn" style="opacity:.5; cursor:default;" title="顺序由世界书的位置 / 顺序决定">' + svgIcon(ICONS.plug, 13) + '</span>';
     } else {
       controls += '<button class="ctx-icon-btn" title="上移" ' + (idx === 0 ? 'disabled' : '') + ' onclick="window.contextManager.moveSection(\'' + s.id + '\',-1)">' + svgIcon(ICONS.up, 13) + '</button>';
       controls += '<button class="ctx-icon-btn" title="下移" ' + (idx === sectionsCount() - 1 ? 'disabled' : '') + ' onclick="window.contextManager.moveSection(\'' + s.id + '\',1)">' + svgIcon(ICONS.down, 13) + '</button>';
@@ -746,9 +870,12 @@
 
   function renderDisabledCard(d, pal) {
     var c = CATALOG_BY_ID[d.id];
-    var toggle = (c && !c.builtin)
+    var isWb = /^wb_off_\d+$/.test(d.id);           // 世界书未激活条目：可在上下文管理里直接开关
+    var canToggle = isWb || (c && !c.builtin);
+    var checked = isWb ? false : isCurrentlyOn(d.id);
+    var toggle = canToggle
       ? '<label class="switch" style="transform:scale(.82); margin:0;">' +
-          '<input type="checkbox" ' + (isCurrentlyOn(d.id) ? 'checked' : '') + ' onchange="window.contextManager.toggleSection(\'' + d.id + '\', this.checked)">' +
+          '<input type="checkbox" ' + (checked ? 'checked' : '') + ' onchange="window.contextManager.toggleSection(\'' + d.id + '\', this.checked)">' +
           '<span class="slider"></span></label>'
       : '<span class="ctx-icon-btn" style="opacity:.5; cursor:default;" title="常驻">' + svgIcon(ICONS.lock, 13) + '</span>';
 
@@ -845,7 +972,7 @@
   }
 
   function copyFullRequest() {
-    var lr = lastRequest[activeTab];
+    var lr = getCurrentRequest(activeTab);
     if (!lr || !lr.messages) { toast("暂无请求可复制"); return; }
     var text;
     try {
@@ -919,8 +1046,9 @@
     captureRequest: captureRequest,
     finalizeSegments: finalizeSegments,
     pushExtraSection: pushExtraSection,
+    setWorldBookReport: setWorldBookReport,
     getCatalog: function () { return CATALOG; },
-    getLastRequest: function (category) { return lastRequest[category || activeTab] || null; }
+    getLastRequest: function (category) { return getCurrentRequest(category || activeTab); },
   };
 
   // 启动：恢复上次查看的 Tab + 预建 DOM（不自动展开，等用户从对话详情进入）

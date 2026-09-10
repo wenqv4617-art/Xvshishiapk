@@ -48,8 +48,26 @@ function initWorldBookApp() {
     const mode = document.getElementById("wb-entry-mode").value;
     const keywords = document.getElementById("wb-entry-keywords").value.trim();
     const probability = Math.min(100, Math.max(0, parseInt(document.getElementById("wb-entry-prob").value) || 100));
-    const depth = Number(document.getElementById("wb-entry-depth").value) ?? 10;
     const content = document.getElementById("wb-entry-content").value.trim();
+
+    // 新增（对标酒馆 World Info）
+    const position = document.getElementById("wb-entry-position").value || "legacy";
+    const order = Number(document.getElementById("wb-entry-order").value) || 100;
+    const depth = Number(document.getElementById("wb-entry-depth").value) || 0;
+    const role = document.getElementById("wb-entry-role").value || "system";
+    const selectiveLogic = document.getElementById("wb-entry-logic").value || "AND_ANY";
+    const secondaryKeys = document.getElementById("wb-entry-secondary").value.trim();
+    const inclusionGroup = document.getElementById("wb-entry-ingroup").value.trim();
+    const groupWeight = Math.max(0, parseInt(document.getElementById("wb-entry-weight").value, 10) || 100);
+    const sticky = Math.max(0, parseInt(document.getElementById("wb-entry-sticky").value, 10) || 0);
+    const cooldown = Math.max(0, parseInt(document.getElementById("wb-entry-cooldown").value, 10) || 0);
+    const scanDepthRaw = Math.max(0, parseInt(document.getElementById("wb-entry-scandepth").value, 10) || 0);
+    const scanDepth = scanDepthRaw > 0 ? scanDepthRaw : null;
+    const caseSensitive = document.getElementById("wb-entry-case").checked;
+    const matchWholeWords = document.getElementById("wb-entry-whole").checked;
+    const useProbability = document.getElementById("wb-entry-useprob").checked;
+    const groupOverride = document.getElementById("wb-entry-goverride").checked;
+    const ignoreBudget = document.getElementById("wb-entry-ignorebudget").checked;
 
     const entryObj = {
       group,
@@ -59,6 +77,21 @@ function initWorldBookApp() {
       probability,
       depth,
       content,
+      position,
+      order,
+      role,
+      selectiveLogic,
+      secondaryKeys,
+      inclusionGroup,
+      groupWeight,
+      sticky,
+      cooldown,
+      scanDepth,
+      caseSensitive,
+      matchWholeWords,
+      useProbability,
+      groupOverride,
+      ignoreBudget,
       isActive: mode !== 'disabled'
     };
 
@@ -70,10 +103,53 @@ function initWorldBookApp() {
 
     document.getElementById("world_book-form-overlay").classList.remove("active");
     loadWorldBookData();
+    try { if (typeof loadWorldBookData === "function") loadWorldBookData(); } catch (err) {}
   };
 
   // 初始化世界书导入
   initWorldBookImport();
+
+  // 全局激活参数（对标酒馆：扫描深度 / Token 预算）
+  const gScan = document.getElementById("wb-global-scandepth");
+  const gBudget = document.getElementById("wb-global-budget");
+  if (gScan) {
+    gScan.value = localStorage.getItem("wb-scan-depth") || "10";
+    gScan.onchange = () => {
+      const v = Math.max(1, parseInt(gScan.value, 10) || 10);
+      gScan.value = v;
+      localStorage.setItem("wb-scan-depth", String(v));
+      showToast("已保存扫描深度");
+    };
+  }
+  if (gBudget) {
+    gBudget.value = localStorage.getItem("wb-budget-tokens") || "0";
+    gBudget.onchange = () => {
+      const v = Math.max(0, parseInt(gBudget.value, 10) || 0);
+      gBudget.value = v;
+      localStorage.setItem("wb-budget-tokens", String(v));
+      showToast(v > 0 ? "已保存 Token 预算" : "已取消 Token 预算限制");
+    };
+  }
+  const btnTidy = document.getElementById("btn-wb-tidy-old");
+  if (btnTidy) btnTidy.onclick = () => tidyLegacyEntries();
+}
+
+// 一键整理：把没有 position 的旧条目按深度符号映射到推荐分位（之后仍可随时改）
+async function tidyLegacyEntries() {
+  const list = await db.world_book_entries.toArray();
+  const legacy = list.filter(e => !e.position);
+  if (legacy.length === 0) { showToast("没有需要整理的旧条目"); return; }
+  showCustomConfirm("一键整理旧条目", `检测到 ${legacy.length} 条旧条目还没有「插入位置」。\n\n建议映射：负深度 → 角色定义之前；非负深度 → 角色定义之后（顺序 100）。\n\n整理后仍可在编辑里随时改回。`, async () => {
+    for (const e of legacy) {
+      const depth = Number(e.depth) || 0;
+      await db.world_book_entries.update(e.id, {
+        position: depth < 0 ? "before_char" : "after_char",
+        order: 100
+      });
+    }
+    showToast(`已整理 ${legacy.length} 条旧条目`);
+    loadWorldBookData();
+  });
 }
 
 // 初始化世界书导入控制器
@@ -260,15 +336,23 @@ async function loadWorldBookData() {
 
       const prob = entry.probability ?? 100;
       const kwText = entry.keywords ? ` | 词: ${entry.keywords}` : "";
+      const posLabel = (window.worldBookEngine && window.worldBookEngine.positionLabel)
+        ? window.worldBookEngine.positionLabel(entry.position || "legacy")
+        : (entry.position || "旧版");
+      const stickyN = Number(entry.sticky) || 0;
+      const cooldownN = Number(entry.cooldown) || 0;
+      const groupTag = entry.inclusionGroup ? ` | 互斥组:${entry.inclusionGroup}` : "";
+      const extraTag = (stickyN ? ` | 粘滞${stickyN}` : "") + (cooldownN ? ` | 冷却${cooldownN}` : "") + groupTag;
+      const legacyTag = entry.position ? "" : ' <span style="color:#f59e0b; font-weight:700;">· 旧版未整理</span>';
 
       card.innerHTML = `
-        <div style="cursor:pointer; display:flex; align-items:center; user-select:none; flex-shrink:0;" onclick="cycleWbMode(${entry.id})" title="轻触切换模式：🔵永久(蓝) 🟢关键词(绿) 🔴禁用(红)">
+        <div style="cursor:pointer; display:flex; align-items:center; user-select:none; flex-shrink:0;" onclick="cycleWbMode(${entry.id})" title="轻触切换模式：永久(蓝) / 关键词(绿) / 禁用(红)">
           ${modeIcon}
         </div>
         <div class="card-info" style="flex:1; overflow:hidden;">
           <div class="card-name" style="font-size:13px; font-weight:700;">
-            ${entry.title} 
-            <span style="font-size: 10px; color: var(--text-secondary); font-weight:500;">(深度: ${entry.depth} | ${modeLabel} | 概率: ${prob}%${kwText})</span>
+            ${entry.title}${legacyTag}
+            <span style="font-size: 10px; color: var(--text-secondary); font-weight:500;">(${posLabel} | 序${entry.order ?? 100} | ${modeLabel} | 概率 ${prob}%${kwText}${extraTag})</span>
           </div>
           <div class="card-desc" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;">${entry.content}</div>
         </div>
@@ -298,28 +382,63 @@ async function loadWorldBookData() {
 }
 
 async function openWorldBookForm(editId = null) {
-  document.getElementById("wb-entry-id").value = "";
-  document.getElementById("wb-entry-group").value = "破限底料";
-  document.getElementById("wb-entry-title").value = "";
-  document.getElementById("wb-entry-mode").value = "selective";
-  document.getElementById("wb-entry-keywords").value = "";
-  document.getElementById("wb-entry-prob").value = "100";
-  document.getElementById("wb-entry-depth").value = "10";
-  document.getElementById("wb-entry-content").value = "";
+  const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+  const setChk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+
+  setVal("wb-entry-id", "");
+  setVal("wb-entry-group", "破限底料");
+  setVal("wb-entry-title", "");
+  setVal("wb-entry-mode", "selective");
+  setVal("wb-entry-keywords", "");
+  setVal("wb-entry-prob", "100");
+  setVal("wb-entry-position", "after_char");
+  setVal("wb-entry-order", "100");
+  setVal("wb-entry-depth", "10");
+  setVal("wb-entry-role", "system");
+  setVal("wb-entry-content", "");
+  setVal("wb-entry-logic", "AND_ANY");
+  setVal("wb-entry-secondary", "");
+  setVal("wb-entry-ingroup", "");
+  setVal("wb-entry-weight", "100");
+  setVal("wb-entry-sticky", "0");
+  setVal("wb-entry-cooldown", "0");
+  setVal("wb-entry-scandepth", "0");
+  setChk("wb-entry-case", false);
+  setChk("wb-entry-whole", false);
+  setChk("wb-entry-useprob", true);
+  setChk("wb-entry-goverride", false);
+  setChk("wb-entry-ignorebudget", false);
 
   document.getElementById("wb-form-title").innerText = editId ? "编辑世界书条目设定" : "添加世界书条目";
 
   if (editId) {
     const entry = await db.world_book_entries.get(editId);
     if (entry) {
-      document.getElementById("wb-entry-id").value = entry.id;
-      document.getElementById("wb-entry-group").value = entry.group || "破限底料";
-      document.getElementById("wb-entry-title").value = entry.title || "";
-      document.getElementById("wb-entry-mode").value = entry.mode || (entry.isActive ? 'constant' : 'disabled');
-      document.getElementById("wb-entry-keywords").value = entry.keywords || "";
-      document.getElementById("wb-entry-prob").value = entry.probability ?? 100;
-      document.getElementById("wb-entry-depth").value = entry.depth ?? 10;
-      document.getElementById("wb-entry-content").value = entry.content || "";
+      const secRaw = entry.secondaryKeys;
+      const secStr = Array.isArray(secRaw) ? secRaw.join(", ") : (secRaw || "");
+      setVal("wb-entry-id", entry.id);
+      setVal("wb-entry-group", entry.group || "破限底料");
+      setVal("wb-entry-title", entry.title || "");
+      setVal("wb-entry-mode", entry.mode || (entry.isActive ? 'constant' : 'disabled'));
+      setVal("wb-entry-keywords", entry.keywords || "");
+      setVal("wb-entry-prob", entry.probability ?? 100);
+      setVal("wb-entry-position", entry.position || "legacy");
+      setVal("wb-entry-order", entry.order ?? 100);
+      setVal("wb-entry-depth", entry.depth ?? 10);
+      setVal("wb-entry-role", entry.role || "system");
+      setVal("wb-entry-content", entry.content || "");
+      setVal("wb-entry-logic", entry.selectiveLogic || "AND_ANY");
+      setVal("wb-entry-secondary", secStr);
+      setVal("wb-entry-ingroup", entry.inclusionGroup || "");
+      setVal("wb-entry-weight", entry.groupWeight ?? 100);
+      setVal("wb-entry-sticky", entry.sticky ?? 0);
+      setVal("wb-entry-cooldown", entry.cooldown ?? 0);
+      setVal("wb-entry-scandepth", entry.scanDepth ?? 0);
+      setChk("wb-entry-case", entry.caseSensitive);
+      setChk("wb-entry-whole", entry.matchWholeWords);
+      setChk("wb-entry-useprob", entry.useProbability !== false);
+      setChk("wb-entry-goverride", entry.groupOverride);
+      setChk("wb-entry-ignorebudget", entry.ignoreBudget);
     }
   }
 

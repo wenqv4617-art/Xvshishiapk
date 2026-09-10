@@ -1680,6 +1680,15 @@
           </div>
         </header>
         <div class="win-body">
+          <!-- 全局激活参数（对标酒馆：扫描深度 / Token 预算） -->
+          <div style="display:flex; gap:10px; align-items:center; padding:8px 10px; margin-bottom:10px; background:#f8fafc; border:1.5px solid var(--border); border-radius:10px;">
+            <label style="font-size:11px; font-weight:700; color:#6b7280; margin:0; white-space:nowrap;">扫描深度</label>
+            <input type="number" id="wb-global-scandepth" value="10" min="1" style="width:62px; padding:5px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center;">
+            <label style="font-size:11px; font-weight:700; color:#6b7280; margin:0; white-space:nowrap;">Token 预算</label>
+            <input type="number" id="wb-global-budget" value="0" min="0" style="width:76px; padding:5px; font-size:12px; border-radius:8px; border:1.5px solid var(--border); text-align:center;">
+            <span style="font-size:10px; color:var(--text-secondary);">0=不限</span>
+            <button type="button" class="btn btn-outline" id="btn-wb-tidy-old" style="margin-left:auto; padding:5px 9px; font-size:10.5px; border-radius:8px; white-space:nowrap;">一键整理旧条目</button>
+          </div>
           <div id="world_book-list-container"></div>
           
           <!-- 世界书条目弹层 -->
@@ -1719,14 +1728,90 @@
                   <label>触发关键词 (仅关键词模式生效，英文或中文逗号分隔多个词)</label>
                   <input type="text" id="wb-entry-keywords" placeholder="例如：剑术, 拔刀, 佩剑">
                 </div>
-                <div class="form-group">
-                  <label>注入深度 Depth (支持负数！数值越小越靠前，如 -900 可排在人设最前方)</label>
-                  <input type="number" id="wb-entry-depth" required value="10" placeholder="-900 或 10">
+                <div class="form-group" style="display:flex; gap:10px;">
+                  <div style="flex:1.5;">
+                    <label>插入位置 Position（对标酒馆）</label>
+                    <select id="wb-entry-position" style="width:100%; padding:8px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; background:#fff;">
+                      <option value="before_char">角色定义之前（世界观总纲）</option>
+                      <option value="after_char" selected>角色定义之后（角色详情/NPC/场景）</option>
+                      <option value="after_rule">回复准则之后（写作规范/行为纠正）</option>
+                      <option value="at_depth">聊天记录内（按深度注入）</option>
+                      <option value="legacy">旧版（按 Depth 原样排序）</option>
+                    </select>
+                  </div>
+                  <div style="flex:0.75;">
+                    <label>顺序 Order</label>
+                    <input type="number" id="wb-entry-order" value="100" placeholder="100">
+                  </div>
+                </div>
+                <div class="form-group" style="display:flex; gap:10px;">
+                  <div style="flex:1;">
+                    <label>深度 Depth（聊天内 / 旧版使用）</label>
+                    <input type="number" id="wb-entry-depth" value="10" placeholder="4">
+                  </div>
+                  <div style="flex:1;">
+                    <label>角色 Role（聊天内使用）</label>
+                    <select id="wb-entry-role" style="width:100%; padding:8px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; background:#fff;">
+                      <option value="system">system</option>
+                      <option value="user">user</option>
+                      <option value="assistant">assistant</option>
+                    </select>
+                  </div>
                 </div>
                 <div class="form-group">
                   <label>设定文本内容</label>
                   <textarea id="wb-entry-content" rows="5" required placeholder="输入具体的设定描述文本..."></textarea>
                 </div>
+
+                <details id="wb-entry-advanced" style="margin:10px 0; border:1.5px solid var(--border); border-radius:10px; padding:8px 10px; background:#fafbfc;">
+                  <summary style="cursor:pointer; font-size:12px; font-weight:700; color:#6b7280;">高级：关键词逻辑 / 互斥组 / 粘滞冷却 / 覆盖扫描</summary>
+                  <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+                    <div class="form-group" style="margin:0;">
+                      <label>关键词逻辑 (selectiveLogic)</label>
+                      <select id="wb-entry-logic" style="width:100%; padding:8px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; background:#fff;">
+                        <option value="AND_ANY">命中任一主词（次要词命中任一即可）</option>
+                        <option value="AND_ALL">命中主词 且 命中全部次要词</option>
+                        <option value="NOT_ANY">命中主词 且 不命中任何次要词</option>
+                        <option value="NOT_ALL">命中主词 且 未命中全部次要词</option>
+                      </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                      <label>次要关键词（英文或中文逗号分隔）</label>
+                      <input type="text" id="wb-entry-secondary" placeholder="例如：白天, 户外">
+                    </div>
+                    <div class="form-group" style="margin:0; display:flex; gap:10px;">
+                      <div style="flex:1;">
+                        <label>互斥组名（同组只激活一条）</label>
+                        <input type="text" id="wb-entry-ingroup" placeholder="留空 = 不互斥">
+                      </div>
+                      <div style="flex:0.7;">
+                        <label>组内权重</label>
+                        <input type="number" id="wb-entry-weight" value="100">
+                      </div>
+                    </div>
+                    <div class="form-group" style="margin:0; display:flex; gap:10px;">
+                      <div style="flex:1;">
+                        <label>粘滞轮数（触发后保持）</label>
+                        <input type="number" id="wb-entry-sticky" value="0" min="0">
+                      </div>
+                      <div style="flex:1;">
+                        <label>冷却轮数（触发后禁用）</label>
+                        <input type="number" id="wb-entry-cooldown" value="0" min="0">
+                      </div>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                      <label>单独扫描深度（0 = 用全局）</label>
+                      <input type="number" id="wb-entry-scandepth" value="0" min="0">
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:14px; font-size:12px; padding:2px 0;">
+                      <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="wb-entry-case"> 区分大小写</label>
+                      <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="wb-entry-whole"> 匹配整词</label>
+                      <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="wb-entry-useprob" checked> 启用概率</label>
+                      <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="wb-entry-goverride"> 组内优先</label>
+                      <label style="display:flex; align-items:center; gap:6px;"><input type="checkbox" id="wb-entry-ignorebudget"> 忽略预算</label>
+                    </div>
+                  </div>
+                </details>
                 <div class="form-actions">
                   <button type="button" class="btn btn-outline" id="btn-cancel-wb-form">取消</button>
                   <button type="submit" class="btn btn-primary" id="btn-save-wb">保存</button>
@@ -6457,6 +6542,8 @@
   <script src="app_prompts.js"></script>
   <!-- 上下文管理中枢：结构化 Prompt 可见/可开关/可排序（依赖 app_prompts.js 的构建器，须在其后） -->
   <script src="app_context_manager.js"></script>
+  <!-- 世界书激活引擎：对标酒馆 World Info（插入位置/顺序/深度/关键词逻辑/概率/互斥组/粘滞冷却/预算） -->
+  <script src="app_world_book_engine.js"></script>
   <script src="app_desktop.js"></script>
   <script src="app_settings.js"></script>
   <script src="app_changelog.js"></script>

@@ -5571,6 +5571,16 @@ function bindChatAppEvents() {
           container.scrollTop = container.scrollHeight;
         };
 
+        // 世界书「聊天内注入」：按深度插入到最近消息之间（对标酒馆 @Depth）
+        try {
+          if (window.worldBookEngine && typeof window.worldBookEngine.getResult === "function") {
+            var _wbResOnline = window.worldBookEngine.getResult(reqSessionId, "online");
+            if (_wbResOnline && _wbResOnline.atDepth && _wbResOnline.atDepth.length) {
+              window.worldBookEngine.insertAtDepth(messagesToSend, _wbResOnline.atDepth);
+            }
+          }
+        } catch (e) { console.warn("世界书聊天内注入失败:", e); }
+
         // 上下文管理：捕获最近一轮完整请求（供「对话详情 → 上下文管理」查看全文）
         if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
           window.contextManager.captureRequest(reqSessionId, "online", messagesToSend);
@@ -8261,6 +8271,16 @@ async function triggerOfflineReply() {
 
           container.scrollTop = container.scrollHeight;
         };
+
+        // 世界书「聊天内注入」：按深度插入到最近消息之间
+        try {
+          if (window.worldBookEngine && typeof window.worldBookEngine.getResult === "function") {
+            var _wbResOffline = window.worldBookEngine.getResult(activeSessionId, "offline");
+            if (_wbResOffline && _wbResOffline.atDepth && _wbResOffline.atDepth.length) {
+              window.worldBookEngine.insertAtDepth(messagesToSend, _wbResOffline.atDepth);
+            }
+          }
+        } catch (e) { console.warn("世界书聊天内注入失败:", e); }
 
         // 上下文管理：捕获最近一轮完整请求（线下/小剧场）
         if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
