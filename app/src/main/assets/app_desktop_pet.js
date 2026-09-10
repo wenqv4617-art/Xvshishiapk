@@ -252,17 +252,78 @@
       }, duration);
     },
 
-    // 双击调起 App (基于当前活跃活跃桌宠绑定的角色) [1]
-    handleDoubleClick: async function() {
-      if (!this.activePetCharId) return;
+    // 解析桌宠对应的目标会话（会话级字段缺失时按“当前会话 → 当前面具 → 任意会话 → 自建”逐级兜底）
+    // 返回 { sess, created } 或 null；不再依赖“当前是否停在对话页”
+    resolvePetSession: async function(charId) {
+      const cid = Number(charId);
+      if (!cid) return null;
+      try {
+        let list = [];
+        try { list = (await db.sessions.where('charId').equals(cid).toArray()) || []; } catch (e) { list = []; }
 
-      if (typeof openWeChatDialog === 'function' && typeof activeSessionId !== 'undefined') {
-        const list = await db.sessions.where('charId').equals(this.activePetCharId).toArray();
-        if (list.length > 0) {
-          openWeChatDialog(list[0].id);
+        // 1. 正在浏览的这个角色的会话优先
+        if (typeof activeSessionId !== 'undefined' && activeSessionId) {
+          const active = list.find(s => s && s.id === activeSessionId);
+          if (active) return { sess: active, created: false };
         }
-      }
 
+        // 2. 当前面具（userId）下该角色的会话
+        const personaId = (typeof activeUserPersonaId !== 'undefined' && activeUserPersonaId !== null && activeUserPersonaId !== '')
+          ? Number(activeUserPersonaId)
+          : NaN;
+        if (!isNaN(personaId)) {
+          const mine = list.find(s => Number(s.userId) === personaId);
+          if (mine) return { sess: mine, created: false };
+          // 该角色还没有会话：按“新建单聊”的口径补建一个，保证双击永远有落点
+          try {
+            const char = await db.archives.get(cid);
+            const user = await db.archives.get(personaId);
+            const newSess = {
+              userId: personaId,
+              charId: cid,
+              customCharName: (char && char.name) || "",
+              customCharAvatar: (char && char.avatar) || null,
+              customCharPersona: (char && char.persona) || "",
+              customUserName: (user && user.name) || "我",
+              customUserAvatar: (user && user.avatar) || null,
+              customUserPersona: (user && user.persona) || "",
+              lastMessageTime: Date.now()
+            };
+            newSess.id = await db.sessions.add(newSess);
+            return { sess: newSess, created: true };
+          } catch (e) {
+            console.warn("桌宠自动补建会话失败:", e);
+          }
+        }
+
+        // 3. 兜底：该角色已有的任意会话
+        if (list.length > 0) return { sess: list[0], created: false };
+      } catch (e) {
+        console.error("解析桌宠目标会话失败:", e);
+      }
+      return null;
+    },
+
+    // 保证该角色会话存在，并把对话页切过去（用于“不在对话页双击也能进对话”）
+    openPetChat: async function() {
+      const resolved = await this.resolvePetSession(this.activePetCharId);
+      if (!resolved || !resolved.sess) return null;
+      const sess = resolved.sess;
+      if (typeof openWeChatDialog === 'function') {
+        try { await openWeChatDialog(sess.id); } catch (e) { console.error("桌宠打开对话页失败:", e); }
+      }
+      return sess;
+    },
+
+    // 双击调起 App (基于当前活跃活跃桌宠绑定的角色) [1]
+    // 关键修复：不再依赖 activeSessionId / 是否停在对话页，双击永远解析到该角色的会话并切过去
+    handleDoubleClick: async function() {
+      if (!this.activePetCharId || !this.activePetConfig) return;
+
+      // 1. 无条件解析并打开该角色的会话（不在对话页也能进对话）
+      try { await this.openPetChat(); } catch (e) { console.error("桌宠双击切会话失败:", e); }
+
+      // 2. 触发交互
       if (this.activePetConfig.mode === 'api') {
         await this.triggerApiInteraction();
       } else {
@@ -270,9 +331,9 @@
       }
     },
 
-    // 真机系统桌面双击后台静默触发
+    // 真机系统桌面双击后台静默触发（不强制切页面，但同样不依赖 activeSessionId）
     handleDoubleClickBackground: async function() {
-      if (!this.activePetCharId) return;
+      if (!this.activePetCharId || !this.activePetConfig) return;
 
       if (this.activePetConfig.mode === 'api') {
         await this.triggerApiInteraction();
@@ -343,7 +404,10 @@
 
     // 自定义对话触发 (作用于当前活跃活跃桌宠) [1]
     triggerCustomInteraction: function() {
-      if (!this.activePetConfig) return;
+      if (!this.activePetConfig) {
+        this.popBubble("(还没配置桌宠对话)");
+        return;
+      }
 
       const candidates = [];
       Object.keys(STATE_NAMES).forEach(st => {
@@ -397,10 +461,18 @@
         const api = await db.api_presets.get(Number(presetId));
         if (!api) throw new Error("API预设丢失");
 
-        // 定位全局活跃桌宠关联会话
+        // 定位全局活跃桌宠关联会话（优先当前面具下的会话，避免多面具串台）
         const sessions = await db.sessions.where('charId').equals(this.activePetCharId).toArray();
         if (sessions.length === 0) throw new Error("未找到对应会话");
-        const sess = sessions[0];
+        const personaId = (typeof activeUserPersonaId !== 'undefined' && activeUserPersonaId !== null && activeUserPersonaId !== '')
+          ? Number(activeUserPersonaId)
+          : NaN;
+        let sess = null;
+        if (!isNaN(personaId)) sess = sessions.find(s => Number(s.userId) === personaId) || null;
+        if (!sess && typeof activeSessionId !== 'undefined' && activeSessionId) {
+          sess = sessions.find(s => s.id === activeSessionId) || null;
+        }
+        if (!sess) sess = sessions[0];
         const char = await db.archives.get(sess.charId);
 
         const prompt = `你现在是用户的桌面悬浮桌宠，扮演【${char.name}】。
@@ -455,7 +527,8 @@
             senderId: 0,
             content: finalReply,
             contentType: 'text',
-            timestamp: baseTime
+            timestamp: baseTime,
+            petOnly: 1
           };
           await db.messages.add(newMsg);
           // 若当前正打开该角色的聊天页，立即刷新消息流
@@ -722,7 +795,15 @@
       try {
         const sessions = await db.sessions.where('charId').equals(Number(charId)).toArray();
         if (sessions.length === 0) return;
-        const sess = sessions[0];
+        const personaId = (typeof activeUserPersonaId !== 'undefined' && activeUserPersonaId !== null && activeUserPersonaId !== '')
+          ? Number(activeUserPersonaId)
+          : NaN;
+        let sess = null;
+        if (!isNaN(personaId)) sess = sessions.find(s => Number(s.userId) === personaId) || null;
+        if (!sess && typeof activeSessionId !== 'undefined' && activeSessionId) {
+          sess = sessions.find(s => s.id === activeSessionId) || null;
+        }
+        if (!sess) sess = sessions[0];
 
         // 联动桌宠（仅在该角色正好是当前全局活跃桌宠时冒泡提示）
         if (this.activePetCharId === charId && this.currentState !== 'sleep') {
@@ -920,7 +1001,8 @@
             senderId: 0,
             content: bubblesToSave[i],
             contentType: 'text',
-            timestamp: baseTime + i * 1000  // 每条间隔 1 秒，模拟逐条发送
+            timestamp: baseTime + i * 1000,  // 每条间隔 1 秒，模拟逐条发送
+            petOnly: 1
           };
           await db.messages.add(newMsg);
         }

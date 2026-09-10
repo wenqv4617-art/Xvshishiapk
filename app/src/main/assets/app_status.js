@@ -3,6 +3,23 @@
 let activeStatusSessionId = null;
 let isStatusInitializing = false;
 
+// 心声来源隔离：status_history 里 isTheater=0 同时被「线上」和「赴约」写入，
+// 读的时候会互相串台。新记录显式带 source（online / date / theater），按 source 精确过滤；
+// 旧记录没有 source，只能按 isTheater 兜底（线上与赴约无法区分，统一视为线上）。
+function resolveStatusScope() {
+  if (typeof isOfflineTheater !== 'undefined' && isOfflineTheater) return 'theater';
+  if (typeof activeTheaterId !== 'undefined' && activeTheaterId > 0) return 'theater';
+  return 'online';
+}
+
+function statusRecordMatchesScope(h, scope) {
+  if (!h) return false;
+  if (h.source) return h.source === scope;
+  // 旧数据兜底
+  if (scope === 'theater') return h.isTheater === 1;
+  return h.isTheater === 0;
+}
+
 // 窥秘主逻辑初始化
 function initStatusApp() {
   if (isStatusInitializing) return;
@@ -84,24 +101,16 @@ async function openStatusCard(sessionId) {
   resetStatusFields();
 
   try {
-    // 根据是否处于剧场模式区分保存
-    let latest = null;
-    if (isOfflineTheater) {
-      latest = await db.status_history
-        .where('sessionId').equals(sessionId)
-        .and(h => h.isTheater === 1 && h.theaterId === activeTheaterId)
-        .reverse()
-        .sortBy('timestamp');
-    } else {
-      latest = await db.status_history
-        .where('sessionId').equals(sessionId)
-        .and(h => h.isTheater === 0)
-        .reverse()
-        .sortBy('timestamp');
-    }
+    // 按来源精确过滤（线上 / 赴约 / 小剧场 各自独立，互不串台）
+    const scope = resolveStatusScope();
+    const list = await db.status_history
+      .where('sessionId').equals(sessionId)
+      .and(h => statusRecordMatchesScope(h, scope))
+      .toArray();
+    list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
-    if (latest && latest.length > 0) {
-      displayStatusFields(latest[0]);
+    if (list.length > 0) {
+      displayStatusFields(list[0]);
     } else {
       // 提示加载
       document.getElementById("status-attire").innerText = "请点击下方深度同频同步状态...";
@@ -334,20 +343,13 @@ async function openStatusHistory() {
   document.getElementById("status-history-overlay").classList.add("active");
 
   try {
-    let list = [];
-    if (isOfflineTheater) {
-      list = await db.status_history
-        .where('sessionId').equals(activeStatusSessionId)
-        .and(h => h.isTheater === 1 && h.theaterId === activeTheaterId)
-        .reverse()
-        .sortBy('timestamp');
-    } else {
-      list = await db.status_history
-        .where('sessionId').equals(activeStatusSessionId)
-        .and(h => h.isTheater === 0)
-        .reverse()
-        .sortBy('timestamp');
-    }
+    // 与主卡片同源：按 source 精确过滤，避免历史列表串台
+    const scope = resolveStatusScope();
+    const list = await db.status_history
+      .where('sessionId').equals(activeStatusSessionId)
+      .and(h => statusRecordMatchesScope(h, scope))
+      .toArray();
+    list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     if (list.length === 0) {
       container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该场景暂无心声同频历史</p>`;

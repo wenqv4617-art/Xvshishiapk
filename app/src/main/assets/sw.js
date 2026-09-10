@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v91'; // v91: 群管家机器人(欢迎/关键词/定时/签到养成) + 多选分享聊天记录 + 冷色调 UI; v1.5.15
+const CACHE_NAME = 'story-phone-v92'; // v92: 桌宠不上屏/离开对话页双击可用 + 心声按场景隔离 + 消息流自动归底 + 按钮纯图标 + 群投票修复; v1.5.16
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

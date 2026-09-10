@@ -2464,7 +2464,9 @@ async function renderSessionList() {
             char = await db.archives.get(s.charId);
           }
           const rawMsgs = await db.messages.where('sessionId').equals(s.id).toArray();
-          const latestMsg = rawMsgs.sort((a, b) => b.timestamp - a.timestamp)[0];
+          // 桌宠气泡（petOnly）不算“最新消息”：列表预览与时间都用最近一条真正上屏的消息
+          const visibleMsgs = rawMsgs.filter(m => !m.petOnly && !m.callId);
+          const latestMsg = visibleMsgs.sort((a, b) => b.timestamp - a.timestamp)[0];
           
           let latestText = "暂无对话消息";
           if (latestMsg) {
@@ -2592,6 +2594,9 @@ async function openWeChatDialog(sessionId) {
   renderDialogMessages();
 }
 
+// 显式挂到 window：桌宠等外部模块会包装/调用它（经典脚本顶层函数声明并不保证 window 属性）
+window.openWeChatDialog = openWeChatDialog;
+
 function closeChatDialog() {
   document.getElementById("chat-dialog-panel").classList.remove("active");
   updateThemeColor("#f4f6fa");
@@ -2608,6 +2613,110 @@ let chatPageOffset = 0;
 const CHAT_PAGE_SIZE = 30;
 let isChatLoadingMore = false;
 let hasMoreChatMessages = true;
+
+// ============================================================
+// 消息流归底管理（修「新消息不自动到底 / 反查看不到最新消息」）
+//   规则：首次渲染、切换会话、自己发送、新消息到达 → 无条件归底
+//         用户主动上滑查看历史 → 保持位置（滚回底部附近自动恢复跟随）
+// ============================================================
+let chatUserScrolledUp = false;   // 用户是否手动上滑离开了底部
+let chatForceNextScroll = false;  // 下一次追加消息是否强制归底（自己发送时置位）
+let chatLastScrollHeight = 0;
+let chatScrollToken = 0;          // 每次「归底意图」递增；旧的补滚回调据此失效
+const chatScrollTimers = {};      // 每个滚动容器最多只有一个待执行的补滚
+const chatScrollKeys = new Set(); // 兼容旧命名（待执行补滚的 key 集合）
+
+// 让 _chatProgrammaticScroll 只用来「吞掉紧随其后的一次 scroll 事件」，
+// 避免出现「标志一直为 true，把用户的真实上滑也一起吞掉」的致命情况。
+function markProgrammaticScroll(container) {
+  if (!container) return;
+  container._chatProgrammaticScroll = true;
+  setTimeout(() => { container._chatProgrammaticScroll = false; }, 260);
+}
+
+// 挂载滚动监听：识别「用户主动上滑」与「重新回到底部」
+function bindChatScrollState(container) {
+  if (!container || container._chatScrollBound) return;
+  container._chatScrollBound = true;
+  container.addEventListener('scroll', () => {
+    if (container._chatProgrammaticScroll) {
+      // 吞掉程序化归底产生的那一次 scroll，但绝不吞掉后续的用户滚动
+      container._chatProgrammaticScroll = false;
+      chatLastScrollHeight = container.scrollHeight;
+      return;
+    }
+    const distance = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distance <= 8) {
+      // 用户自己滚回了底部 → 恢复「跟随最新消息」
+      chatUserScrolledUp = false;
+      chatForceNextScroll = false;
+    } else if (distance > 60) {
+      chatUserScrolledUp = true;
+      chatScrollToken++;   // 作废所有还没执行的补滚回调，别把用户拽回底部
+    }
+    chatLastScrollHeight = container.scrollHeight;
+  }, { passive: true });
+}
+
+// 双帧延迟归底：图片/卡片撑高后再补一次，避免又被落下
+// 说明：rAF 与定时器双保险 —— 后台/无头环境里 rAF 可能被节流甚至不触发，
+// 只靠 rAF 会导致「补滚」永远不发生；补滚前必须再确认「用户没有主动上滑」。
+function scheduleChatBottomScroll(container, force, key) {
+  if (!container) return;
+  const scrollKey = key || (container.id || 'chat');
+  const token = ++chatScrollToken;
+  const doScroll = () => {
+    if (token !== chatScrollToken) return;      // 已有更新的意图，本轮回调作废
+    if (chatUserScrolledUp && !force) return;   // 用户已上滑：不抢位置
+    try {
+      if (container.clientHeight > 0 && container.scrollTop + container.clientHeight < container.scrollHeight - 1) {
+        markProgrammaticScroll(container);
+        container.scrollTop = container.scrollHeight;
+        chatLastScrollHeight = container.scrollHeight;
+      }
+    } catch (e) {}
+  };
+  if (chatScrollTimers[scrollKey]) clearTimeout(chatScrollTimers[scrollKey]);
+  chatScrollKeys.add(scrollKey);
+  chatScrollTimers[scrollKey] = setTimeout(() => {
+    delete chatScrollTimers[scrollKey];
+    chatScrollKeys.delete(scrollKey);
+    doScroll();
+  }, 120);
+  if (typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(doScroll));
+  }
+}
+
+// 统一归底入口：force=true 无条件归底；否则仅在「用户没有主动上滑」时归底
+function scrollChatToBottom(forceOrContainer, maybeContainer) {
+  let container = null;
+  let force = false;
+  if (forceOrContainer && typeof forceOrContainer === 'object' && forceOrContainer.nodeType) {
+    container = forceOrContainer;
+  } else {
+    force = !!forceOrContainer;
+    container = maybeContainer || document.getElementById('dialog-messages-container');
+  }
+  if (!container) return;
+  bindChatScrollState(container);
+  // 自己发送的消息用 chatForceNextScroll 强推归底；其余情况尊重用户的「上滑看历史」
+  const forced = !!(force || chatForceNextScroll);
+  if (!forced && chatUserScrolledUp) return;
+  try {
+    if (container.clientHeight > 0 && container.scrollTop + container.clientHeight < container.scrollHeight - 1) {
+      markProgrammaticScroll(container);
+      container.scrollTop = container.scrollHeight;
+      chatLastScrollHeight = container.scrollHeight;
+    }
+  } catch (e) {}
+  scheduleChatBottomScroll(container, forced);
+}
+
+function releaseChatFollowLock() {
+  chatUserScrolledUp = false;
+  chatForceNextScroll = false;
+}
 
 // 绑定顶部触顶下拉加载历史消息监听器
 function initChatScrollListener(container) {
@@ -2712,6 +2821,8 @@ async function renderDialogMessages(isInitial = true) {
         const m = msgs[msgIdx];
         // 通话中的对白消息（带 callId）不上屏，只在通话记录卡片内查看
         if (m.callId) continue;
+        // 桌宠气泡消息（petOnly）不入聊天流：仍留在库里参与 AI 上下文，但不在对话页上屏
+        if (m.petOnly) continue;
 
         // 查手机系统消息折叠机制：连续的相同 phoneSessionId 的查手机操作折叠为一个可展开条目 [11]
         // 上下文机制不变（仍按条存数据库），仅在 UI 渲染层做折叠
@@ -3522,26 +3633,37 @@ async function renderDialogMessages(isInitial = true) {
   if (isInitial) {
     container.innerHTML = "";
     container.appendChild(fragment);
+    bindChatScrollState(container);
 
     if (isRefresh && savedAnchorMsgId && !wasNearBottom) {
       // 操作后刷新且用户不在底部：精准滚动回之前可见的首条消息位置
       const anchorEl = container.querySelector(`[data-msg-id="${savedAnchorMsgId}"]`);
       if (anchorEl) {
+        markProgrammaticScroll(container);
         container.scrollTop = anchorEl.offsetTop - container.offsetTop - 4;
+        chatLastScrollHeight = container.scrollHeight;
       } else {
-        container.scrollTop = container.scrollHeight;
+        scrollChatToBottom(container, true);
       }
     } else {
-      // 全新打开会话或用户在底部：滚动到底部
-      container.scrollTop = container.scrollHeight;
+      // 全新打开会话 / 切换会话 / 用户本来就在底部：无条件归底（含双帧补滚）
+      releaseChatFollowLock();
+      scrollChatToBottom(container, true);
     }
   } else {
-    // 向上滑动加载时，精准锚定视角高度差，防止滚动条蹦跳
-    const oldScrollHeight = container.scrollHeight;
+    // 向上滑动加载更多历史：本次只会在**顶部**插入更早的消息，
+    // 因此必须保持「距底部的距离」不变，否则用户正在看的位置会被顶走
+    // （这正是「上滑看历史 → 位置莫名变化」以及后续所有归底判断失准的根源）。
+    const keeper = container.scrollHeight - container.scrollTop;
     container.insertBefore(fragment, container.firstChild);
-    container.scrollTop = container.scrollHeight - oldScrollHeight;
+    markProgrammaticScroll(container);
+    container.scrollTop = Math.max(0, container.scrollHeight - keeper);
+    chatLastScrollHeight = container.scrollHeight;
   }
 }
+
+// 显式挂到 window：桌宠（app_desktop_pet.js）等外部模块会包装/调用
+window.renderDialogMessages = renderDialogMessages;
 
 // 动态追加消息
 async function appendMessageToDOM(msg) {
@@ -3550,6 +3672,21 @@ async function appendMessageToDOM(msg) {
 
   // 通话中的对白消息（带 callId）不上屏，只在通话记录卡片内查看
   if (msg && msg.callId) return;
+
+  // 桌宠气泡消息（petOnly）不上屏（仍留在库里参与 AI 上下文）
+  if (msg && msg.petOnly) return;
+
+  // 群投票卡片：追加路径同样要渲染成可点击的投票卡（此前只有"全量渲染"有分支，
+  // 走追加上屏的投票会被当成普通文本，点了没反应）
+  if (msg && msg.contentType === 'group_poll' && window.groupChatSystem &&
+      typeof window.groupChatSystem.renderPollCardInMsg === 'function') {
+    const pollCard = await window.groupChatSystem.renderPollCardInMsg(msg);
+    if (pollCard) {
+      container.appendChild(pollCard);
+      scrollChatToBottom(container, false);
+      return;
+    }
+  }
 
   // 会话隔离：如果消息不属于当前活跃会话，不渲染到 DOM（消息已存库，切换回时会显示）
   if (msg && msg.sessionId != null && msg.sessionId !== activeSessionId) return;
@@ -3609,7 +3746,7 @@ async function appendMessageToDOM(msg) {
       </div>
     `;
     container.appendChild(sysEl);
-    container.scrollTop = container.scrollHeight;
+    scrollChatToBottom(container, false);
     return;
   }
 
@@ -3649,7 +3786,7 @@ async function appendMessageToDOM(msg) {
       document.getElementById("bubble-context-menu").style.display = "flex";
     };
     container.appendChild(recallEl);
-    container.scrollTop = container.scrollHeight;
+    scrollChatToBottom(container, false);
     return;
   }
 
@@ -3959,8 +4096,7 @@ async function appendMessageToDOM(msg) {
       tempDiv.innerHTML = cardHtml;
       tempDiv.setAttribute("data-msg-id", msg.id);
       container.appendChild(tempDiv);
-      const _d = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (_d < 150) container.scrollTop = container.scrollHeight;
+      scrollChatToBottom(container, false);
       return;
     } catch(e) {}
   } else if (msg.contentType === 'social_notice') {
@@ -3978,8 +4114,7 @@ async function appendMessageToDOM(msg) {
       sysEl.innerHTML = `<div style="background-color: rgba(0,0,0,0.05); padding: 4px 10px; border-radius: 4px; font-size: 11px; color: #7f7f7f; max-width: 85%; text-align: center;">${escapeHtml(msg.content)}</div>`;
       container.appendChild(sysEl);
     }
-    const _d3 = container.scrollHeight - container.scrollTop - container.clientHeight;
-    if (_d3 < 150) container.scrollTop = container.scrollHeight;
+    scrollChatToBottom(container, false);
     return;
   } else if (msg.contentType === 'call') {
     // 通话记录系统卡片：居中灰底，可点击展开查看通话对话记录并反复播放 TTS
@@ -3987,8 +4122,7 @@ async function appendMessageToDOM(msg) {
       const cardWrap = window.callSystem.renderCallRecordCard(msg);
       cardWrap.setAttribute("data-msg-id", msg.id);
       container.appendChild(cardWrap);
-      const _d2 = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (_d2 < 150) container.scrollTop = container.scrollHeight;
+      scrollChatToBottom(container, false);
     }
     return;
   } else {
@@ -4252,11 +4386,8 @@ async function appendMessageToDOM(msg) {
     }
   }
 
-  // 仅在用户已在底部附近时才自动滚动到底部，避免打断查看历史消息
-  const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-  if (distFromBottom < 150) {
-    container.scrollTop = container.scrollHeight;
-  }
+  // 自动归底：用户主动上滑查看历史时不抢位置（自己发送的消息由 chatForceNextScroll 强制归底）
+  scrollChatToBottom(container, false);
 }
 
 // 回溯重回要求输入卡片：返回用户输入的要求文本（空字符串表示不输入要求），null 表示取消
@@ -5611,7 +5742,7 @@ function bindChatAppEvents() {
           }
 
           streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar, activeSessionCharName)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
-          container.scrollTop = container.scrollHeight;
+          scrollChatToBottom(container, false);
         };
 
         // 世界书「聊天内注入」：按深度插入到最近消息之间（对标酒馆 @Depth）
@@ -6084,6 +6215,7 @@ function bindChatAppEvents() {
                     sessionId: activeSessionId,
                     theaterId: 0,
                     isTheater: 0,
+                    source: 'online',
                     timestamp: Date.now(),
                     attire: cleanProp(statusJson.attire) || '未详',
                     affection: cleanProp(statusJson.affection) || '未详',
@@ -7262,7 +7394,10 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text', o
     msg.thought = thought;
   }
   msg.id = await db.messages.add(msg);
+  // 自己发送 / 新到消息：无条件归底，不让「刚才上滑看过历史」把最新消息挡在屏幕外
+  chatForceNextScroll = true;
   await appendMessageToDOM(msg);
+  chatForceNextScroll = false;
 
   if (senderType === 'char' && localStorage.getItem("settings-background-enabled") === "true") {
     const sess = await db.sessions.get(sid);
@@ -7823,7 +7958,8 @@ async function renderOfflineMessages() {
   }
 
   container.appendChild(fragment);
-  container.scrollTop = container.scrollHeight;
+  // 线下消息流（赴约 / 小剧场）：渲染完成无条件归底，保证能看到最新的一条
+  scrollChatToBottom(container, true);
 }
 
 // 绑定线下卡片专属双击操作菜单 (安全保护锁)
@@ -8324,7 +8460,7 @@ async function triggerOfflineReply() {
             <div class="offline-card-body">${streamBodyHtml}</div>
           `;
 
-          container.scrollTop = container.scrollHeight;
+          scrollChatToBottom(container, false);
         };
 
         // 世界书「聊天内注入」：按深度插入到最近消息之间
@@ -8412,7 +8548,7 @@ async function triggerOfflineReply() {
               try {
                 offlineStatusJson = JSON.parse(balancedJson);
                 rawReply = rawReply.substring(0, statusIdx).trim();
-                // 保存线下心声到 status_history（线下：isTheater=1 或 0 取决于模式）
+                // 保存线下心声到 status_history（小剧场 = theater，赴约 = date）
                 try {
                   const userRegex = /\buser\b/gi;
                   const cleanProp = (val) => (typeof val === 'string') ? val.replace(userRegex, offlineMyName) : val;
@@ -8420,6 +8556,7 @@ async function triggerOfflineReply() {
                     sessionId: activeSessionId,
                     theaterId: isOfflineTheater ? activeTheaterId : 0,
                     isTheater: isOfflineTheater ? 1 : 0,
+                    source: isOfflineTheater ? 'theater' : 'date',
                     timestamp: Date.now(),
                     attire: cleanProp(offlineStatusJson.attire) || '未详',
                     affection: cleanProp(offlineStatusJson.affection) || '未详',

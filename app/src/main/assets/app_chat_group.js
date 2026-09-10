@@ -575,6 +575,17 @@
       if (!Array.isArray(arr)) return false;
       return arr.indexOf(this.memberKey(m)) >= 0 || arr.some(x => Number(x) === Number(m.memberId));
     },
+    // 投票诊断：把「谁、什么身份、投了哪一票、结果如何」留一条记录，
+    // 自投投不上时无需猜，直接看 window.groupChatSystem.getPollDiag()
+    _pollDiag: [],
+    _diag: function (stage, payload) {
+      try {
+        this._pollDiag.push({ t: Date.now(), stage: stage, payload: payload });
+        if (this._pollDiag.length > 30) this._pollDiag.shift();
+      } catch (e) {}
+      try { console.log('[群投票]', stage, payload); } catch (e) {}
+    },
+    getPollDiag: function () { return this._pollDiag.slice(); },
     _stripMyVote: function (arr, m) {
       const key = this.memberKey(m);
       return (arr || []).filter(x => x !== key && Number(x) !== Number(m.memberId));
@@ -614,7 +625,10 @@
       try {
         const sess = await db.sessions.get(m.sessionId);
         const members = await db.group_members.where('groupId').equals(sess.groupId).toArray();
-        const myMember = members.find(mem => mem.memberId === Number(activeUserPersonaId) && mem.memberType === 'user');
+        // 身份键归一到数字比较：activeUserPersonaId 来自 localStorage，可能是字符串
+        // （用 === 直接比 memberId 会静默判定"你不在本群"，投票按钮点不动）
+        const myId = Number(activeUserPersonaId);
+        const myMember = members.find(mem => Number(mem.memberId) === myId && mem.memberType === 'user');
         const isPrivileged = myMember && (myMember.role === 'owner' || myMember.role === 'admin');
 
         const poll = JSON.parse(m.content);
@@ -693,13 +707,30 @@
       try {
         const sex = await db.sessions.get(msg.sessionId);
         const members = await db.group_members.where('groupId').equals(sex.groupId).toArray();
-        const myMember = members.find(m => m.memberId === Number(activeUserPersonaId) && m.memberType === 'user');
-        if (!myMember) { showToast("你不在本群，无法投票"); return; }
+        // 身份键归一到数字比较（原因同 renderPollCardInMsg）
+        const myId = Number(activeUserPersonaId);
+        const myMember = members.find(m => Number(m.memberId) === myId && m.memberType === 'user');
+        if (!myMember) {
+          this._diag('vote:not-in-group', {
+            msgId: msg.id, activeUserPersonaId: activeUserPersonaId, myId: myId,
+            groupId: sex && sex.groupId,
+            memberIds: members.map(m => m.memberType + ':' + m.memberId)
+          });
+          showToast("你不在本群，无法投票"); return;
+        }
 
         const poll = JSON.parse(msg.content);
-        if (this._pollClosed(poll)) { showToast("该投票已截止或归档，无法继续投票"); return; }
+        if (this._pollClosed(poll)) {
+          this._diag('vote:poll-closed', { msgId: msg.id, status: poll.status, expireAt: poll.expireAt, now: Date.now() });
+          showToast("该投票已截止或归档，无法继续投票"); return;
+        }
 
+        this._diag('vote:before', {
+          msgId: msg.id, optionIndex: optionIndex, me: this.memberKey(myMember),
+          multi: !!poll.multi, options: poll.options, votes: poll.votes
+        });
         const result = this._applyVote(poll, myMember, optionIndex);
+        this._diag('vote:result', { result: result, votes: poll.votes });
         await db.messages.update(msg.id, { content: JSON.stringify(poll) });
 
         const myUser = await db.archives.get(Number(activeUserPersonaId));
