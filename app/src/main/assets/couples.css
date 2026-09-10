@@ -917,6 +917,54 @@
   border-left: 3px solid #f0c3d1;
 }
 
+/* 话题库 / 设置面板里的胶囊与分组 */
+.couples-whisper-opt {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #e8dbe1;
+  background: #fff;
+  color: #5c4a53;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.couples-whisper-opt.active {
+  border-color: #f0a9bd;
+  background: #fff5f8;
+  color: #d2708d;
+}
+.couples-whisper-opt:active { transform: scale(0.985); }
+
+.couples-whisper-topic-group { display: flex; flex-direction: column; gap: 6px; }
+.couples-whisper-topic-group .cwtg-name {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: #b09aa4;
+  letter-spacing: 0.04em;
+}
+.couples-whisper-topic-group .cwtg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.couples-whisper-chip {
+  border: 1px solid #f0dde4;
+  background: #fffafc;
+  color: #6b5560;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 7px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  line-height: 1.4;
+}
+.couples-whisper-chip:active { transform: scale(0.96); background: #fff0f5; }
+
 /* 5. 愿望清单：自研呼吸感便利贴卡片 */
 .couples-wish-list-box {
   display: flex;
@@ -1076,6 +1124,31 @@
   box-shadow: 0 16px 40px rgba(0,0,0,0.1);
   box-sizing: border-box;
   padding: 20px;
+  position: relative;
+}
+
+/* 右上角统一关闭按钮：只要弹窗存在，就一定关得掉 */
+.couples-dialog-x {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(148, 163, 184, 0.14);
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  z-index: 2;
+  transition: background-color 0.18s, color 0.18s;
+}
+.couples-dialog-x:hover { background: rgba(148, 163, 184, 0.24); color: #64748b; }
+.couples-dialog-x:active { transform: scale(0.9); }
+.couples-dialog-title { padding-right: 26px; }
   text-align: center;
   transform: scale(0.92);
   transition: transform 0.2s cubic-bezier(0.1, 0.76, 0.55, 0.94);

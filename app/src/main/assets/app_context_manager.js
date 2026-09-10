@@ -35,14 +35,14 @@
     // ===== 线上 =====
     { id: "disclaimer",        label: "安全免责声明",   cats: ["online","theater","date"], group: "基础", builtin: true,  switch: null, depth: -1000, desc: "完全虚拟环境免责声明，固定置顶，不可关闭。" },
     { id: "identity_wall",     label: "身份隔离墙",     cats: ["online","theater","date"], group: "基础", builtin: true,  switch: null, depth: -800,  desc: "角色身份与人设锁定，防 OOC 的核心墙。" },
-    { id: "user_wall",         label: "用户背景与关系网", cats: ["online","theater","date"], group: "基础", builtin: true,  switch: null, depth: -700, desc: "用户人设 + 双向关系网定位。" },
+    { id: "user_wall",         label: "用户背景与关系网", cats: ["online","theater","date"], group: "基础", builtin: true,  switch: null, depth: -700, desc: "用户人设 + 双向关系网定位（含双方与关系网中其他人物的关系，避免角色反问「这人是谁」）。" },
     { id: "offline_scenario",  label: "线下情景背景",   cats: ["theater","date"], group: "基础", builtin: true, switch: null, depth: -950, desc: "小剧场/赴约的情景设定与见面背景。" },
     { id: "offline_rule",      label: "线下白描准则",   cats: ["theater","date"], group: "基础", builtin: true, switch: null, depth: -900, desc: "线下叙事视角、字数、性别锁定等准则。" },
     { id: "online_rule",       label: "线上回复准则",   cats: ["online"], group: "基础", builtin: true, switch: null, depth: -500, desc: "微信聊天行为准则 + 红包/转账/引用/分句规范。" },
     { id: "offline_final_rule",label: "线下格式强制规范", cats: ["theater","date"], group: "基础", builtin: true, switch: null, depth: 9999, appended: true, desc: "请求末尾注入的线下白描格式隔离墙（固定追加，不参与排序）。" },
 
     // ===== 记忆与检索 =====
-    { id: "memory",            label: "核心记忆与总结召回", cats: ["online","theater","date"], group: "记忆", builtin: false, switch: null, depth: -600, desc: "长周期核心记忆 + 三角形总结检索召回（有数据时注入）。" },
+    { id: "memory",            label: "核心记忆与总结召回", cats: ["online","theater","date"], group: "记忆", builtin: false, switch: null, depth: -600, desc: "长周期核心记忆 + 三角形总结检索召回（有数据时注入）。线下/剧场只有开启「携带线上主聊天记忆」才会带进来。" },
     { id: "raw_dialogue",      label: "原始对话向量召回",   cats: ["online","theater","date"], group: "记忆", builtin: false, switch: null, depth: -590, desc: "语义检索召回的原始对话原文片段（有命中时注入）。" },
     { id: "online_summary",    label: "线上聊天背景参考",   cats: ["theater","date"], group: "记忆", builtin: false, switch: null, depth: 9998, appended: true, desc: "线下携带记忆时，把近期线上聊天作为背景参考注入（固定追加，不参与排序）。" },
 
@@ -395,6 +395,7 @@
         dynamic: !c,
         wbPos: g.first.wbPos || null,
         depth: g.first.depth || 0,
+        meta: g.first.meta || "",
         content: g.list.map(function (x) { return x.content || ""; }).join("\n\n"),
         enabled: true,
         order: i
@@ -861,6 +862,9 @@
       '</div>' +
       '<div class="ctx-card-body" id="' + collapseId + '">' +
         '<div style="font-size:10.5px; color:#9a93a6; margin-bottom:7px; line-height:1.6;">' + esc((c && c.desc) || "") + '</div>' +
+        (s.meta
+          ? '<div style="font-size:10.5px; color:#7c6f86; background:rgba(124,111,134,0.07); border-radius:7px; padding:5px 8px; margin-bottom:6px; line-height:1.55;">' + esc(s.meta) + '</div>'
+          : '') +
         (s.content
           ? '<div style="font-size:10px; color:#b3acbe; margin-bottom:6px;">' + fmtNum(len) + ' 字 · 约 ' + fmtNum(estTokens(s.content)) + ' token</div><div class="ctx-pre">' + esc(s.content) + '</div>'
           : '<div style="font-size:11px; color:#b3acbe;">（本段无独立正文，或内容已并入其它段）</div>') +

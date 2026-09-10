@@ -141,10 +141,7 @@
       }
 
       // 4. 悄悄话事件
-      const btnWhisperSend = document.getElementById("btn-couples-whisper-send");
-      if (btnWhisperSend) {
-        btnWhisperSend.onclick = () => this.sendWhisperMessage();
-      }
+      // 发送按钮已移除：发消息靠输入框回车（见下），回车即上屏并触发对方接话
       const btnWhisperReply = document.getElementById("btn-couples-whisper-reply");
       if (btnWhisperReply) {
         btnWhisperReply.onclick = () => this.triggerWhisperReply();
@@ -152,6 +149,10 @@
       const btnWhisperTopic = document.getElementById("btn-couples-whisper-topic");
       if (btnWhisperTopic) {
         btnWhisperTopic.onclick = () => this.triggerWhisperTopicForm();
+      }
+      const btnWhisperSettings = document.getElementById("btn-couples-whisper-settings");
+      if (btnWhisperSettings) {
+        btnWhisperSettings.onclick = () => this.openWhisperSettings();
       }
       const btnWhisperTopicEnd = document.getElementById("btn-couples-whisper-topic-end");
       if (btnWhisperTopicEnd) {
@@ -191,6 +192,34 @@
         btnAssetsUpload.onclick = () => fileAssetsInput.click();
         fileAssetsInput.onchange = (e) => this.handleAssetUpload(e);
       }
+
+      // 7. 弹窗防卡死兜底：ESC 关掉最上面那层磨砂弹窗
+      if (!window.__couplesDialogEscapeBound) {
+        window.__couplesDialogEscapeBound = true;
+        document.addEventListener("keydown", (e) => {
+          if (e.key !== "Escape") return;
+          const overlays = document.querySelectorAll(".couples-dialog-overlay, .couples-sheet-overlay");
+          if (!overlays.length) return;
+          const top = overlays[overlays.length - 1];
+          top.classList.remove("active");
+          setTimeout(() => top.remove(), 200);
+        });
+      }
+
+      // 8. 兜底：点弹窗遮罩（卡片以外）也能关掉。用 win-couples 上的委托，
+      //    这样「隐藏了取消/确认按钮」的只读弹窗也不会把人卡住。
+      const winCouplesEl = document.getElementById("win-couples");
+      if (winCouplesEl && !winCouplesEl._couplesBackdropBound) {
+        winCouplesEl._couplesBackdropBound = true;
+        winCouplesEl.addEventListener("click", (e) => {
+          const el = e.target;
+          if (!el || !el.classList || !el.classList.contains("couples-dialog-overlay")) return;
+          if (!el.classList.contains("active")) return;
+          // 计时器兜底移除：即使某个弹窗自己绑过 onclick，也不会残留
+          el.classList.remove("active");
+          setTimeout(() => { try { el.remove(); } catch (err) {} }, 220);
+        });
+      }
     },
 
     /**
@@ -198,12 +227,15 @@
      */
     showFrostedDialog(title, htmlContent, onConfirm, onCancel) {
       const parent = document.getElementById("win-couples");
-      if (!parent) return;
+      if (!parent) return null;
 
       const overlay = document.createElement("div");
       overlay.className = "couples-dialog-overlay";
       overlay.innerHTML = `
         <div class="couples-dialog-card">
+          <button class="couples-dialog-x" id="btn-couples-dialog-x" title="关闭" aria-label="关闭">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+          </button>
           <div class="couples-dialog-title">${title}</div>
           <div style="margin-bottom:18px; max-height:260px; overflow-y:auto; scrollbar-width:none;">
             ${htmlContent}
@@ -223,6 +255,14 @@
         setTimeout(() => overlay.remove(), 200);
       };
 
+      // 三条关闭通路：右上角 X / 点遮罩 / 取消按钮
+      // （历史上「隐藏取消+确认」只读弹窗没有任何关闭方式，会被彻底卡死）
+      const xBtn = overlay.querySelector("#btn-couples-dialog-x");
+      if (xBtn) xBtn.onclick = () => { close(); if (typeof onCancel === 'function') onCancel(); };
+      overlay.onclick = (e) => {
+        if (e.target === overlay) { close(); if (typeof onCancel === 'function') onCancel(); }
+      };
+
       overlay.querySelector("#btn-couples-dialog-cancel").onclick = () => {
         close();
         if (typeof onCancel === 'function') onCancel();
@@ -235,6 +275,8 @@
         }
         close();
       };
+
+      return overlay;
     },
 
     // 自绘确认卡（Promise 版）：项目红线禁止原生 confirm
@@ -246,6 +288,9 @@
         overlay.className = "couples-dialog-overlay";
         overlay.innerHTML = `
           <div class="couples-dialog-card">
+            <button class="couples-dialog-x" id="btn-couples-dialog-x" title="关闭" aria-label="关闭">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </button>
             <div class="couples-dialog-title">${window.escapeHtml(title)}</div>
             <div style="margin-bottom:18px; font-size:12.5px; line-height:1.65; color:#475569; text-align:left;">${window.escapeHtml(message)}</div>
             <div style="display:flex; gap:10px;">
@@ -261,6 +306,8 @@
         const finish = (val) => { if (settled) return; settled = true; close(); resolve(val); };
         overlay.querySelector("#btn-couples-dialog-cancel").onclick = () => finish(false);
         overlay.querySelector("#btn-couples-dialog-confirm").onclick = () => finish(true);
+        const xBtn = overlay.querySelector("#btn-couples-dialog-x");
+        if (xBtn) xBtn.onclick = () => finish(false);
         overlay.onclick = (e) => { if (e.target === overlay) finish(false); };
       });
     },
@@ -278,6 +325,9 @@
         overlay.className = "couples-dialog-overlay";
         overlay.innerHTML = `
           <div class="couples-dialog-card">
+            <button class="couples-dialog-x" id="btn-couples-dialog-x" title="关闭" aria-label="关闭">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </button>
             <div class="couples-dialog-title">${window.escapeHtml(title)}</div>
             <div style="margin-bottom:18px; font-size:12.5px; line-height:1.65; color:#475569; text-align:left;">${window.escapeHtml(message)}</div>
             <button class="btn btn-pwa-modal confirm" id="btn-couples-alert-ok" style="width:100%; border-radius:10px; height:38px; background:#ff8fa3;">知道了</button>
@@ -294,6 +344,8 @@
           resolve();
         };
         overlay.querySelector("#btn-couples-alert-ok").onclick = finish;
+        const xBtn = overlay.querySelector("#btn-couples-dialog-x");
+        if (xBtn) xBtn.onclick = finish;
         overlay.onclick = (e) => { if (e.target === overlay) finish(); };
       });
     },
@@ -2026,11 +2078,67 @@ ${historyText || "刚刚相见，倍感温润。"}`;
     // ==========================================================================
 
     // 一期悄悄话的空闲时限：超过这个时间没人说话，本期自动收尾，下一条消息开新的一期
-    WHISPER_IDLE_MS: 45 * 60 * 1000,
+    // （用户可在「悄悄话设置」里改，默认 12 小时）
+    WHISPER_IDLE_DEFAULT_MS: 12 * 60 * 60 * 1000,
+    WHISPER_IDLE_OPTIONS: [
+      { label: '1 小时', ms: 1 * 60 * 60 * 1000 },
+      { label: '3 小时', ms: 3 * 60 * 60 * 1000 },
+      { label: '6 小时', ms: 6 * 60 * 60 * 1000 },
+      { label: '12 小时', ms: 12 * 60 * 60 * 1000 },
+      { label: '1 天', ms: 24 * 60 * 60 * 1000 },
+      { label: '3 天', ms: 3 * 24 * 60 * 60 * 1000 },
+      { label: '不自动收起', ms: 0 }
+    ],
     // 一期最多容纳多少条对白（超过就自然翻页，避免上下文无限膨胀）
     WHISPER_MAX_TURNS: 40,
     // 最近多少期会作为「近况」带入新一期的开场（只带摘要，几百字，不会污染上下文）
     WHISPER_RECENT_SESSIONS: 3,
+
+    _whisperIdleKey() {
+      return `couples_whisper_idle_${this.activeMeId}_${this.activeCharId}`;
+    },
+    // 取当前设定的空闲时限（0 = 不自动收起）
+    getWhisperIdleMs() {
+      try {
+        const raw = localStorage.getItem(this._whisperIdleKey());
+        if (raw === null || raw === undefined || raw === '') return this.WHISPER_IDLE_DEFAULT_MS;
+        const v = parseInt(raw, 10);
+        return isNaN(v) ? this.WHISPER_IDLE_DEFAULT_MS : v;
+      } catch (e) { return this.WHISPER_IDLE_DEFAULT_MS; }
+    },
+    setWhisperIdleMs(ms) {
+      try { localStorage.setItem(this._whisperIdleKey(), String(ms)); } catch (e) {}
+    },
+    _formatIdleLabel(ms) {
+      if (!ms) return '不自动收起';
+      const h = ms / 3600000;
+      if (h < 24) return `${h % 1 === 0 ? h : h.toFixed(1)} 小时`;
+      return `${Math.round(h / 24)} 天`;
+    },
+
+    // 悄悄话设置面板：一期多长自动收起 / 手动换期
+    async openWhisperSettings() {
+      const cur = this.getWhisperIdleMs();
+      let html = `<div style="display:flex; flex-direction:column; gap:10px; text-align:left;">`;
+      html += `<div style="font-size:11.5px; color:#64748b; line-height:1.6;">多久没人说话，这一期就自动收好（会写一条摘要进记忆，下一句自动开新的一期）。</div>`;
+      this.WHISPER_IDLE_OPTIONS.forEach(opt => {
+        const active = opt.ms === cur;
+        html += `<button class="couples-whisper-opt${active ? ' active' : ''}" onclick="couplesSystem.setWhisperIdleFromUI(${opt.ms})">${opt.label}${active ? ' · 当前' : ''}</button>`;
+      });
+      html += `<div style="border-top:1px dashed var(--border); margin-top:2px; padding-top:10px; display:flex; flex-direction:column; gap:8px;">
+        <button class="couples-whisper-opt" onclick="couplesSystem.letCharOpenWhisper()">让对方先开口（换一期）</button>
+        <button class="couples-whisper-opt" onclick="couplesSystem.openWhisperArchiveList()">查看往期悄悄话</button>
+      </div></div>`;
+      this.showFrostedDialog("悄悄话设置", html);
+    },
+
+    setWhisperIdleFromUI(ms) {
+      this.setWhisperIdleMs(ms);
+      const overlay = document.querySelector(".couples-dialog-overlay");
+      if (overlay) overlay.remove();
+      showToast(ms ? `这一期静下来 ${this._formatIdleLabel(ms)} 后会自己收好` : "已改为不自动收起，手动点「收好这一期」才收起");
+      this.renderWhisperChat();
+    },
 
     // 取当前打开（未收尾）的那一期
     async getActiveWhisperSession() {
@@ -2053,8 +2161,10 @@ ${historyText || "刚刚相见，倍感温润。"}`;
 
     isWhisperSessionIdle(session, now) {
       if (!session) return true;
+      const idleMs = this.getWhisperIdleMs();
+      if (!idleMs) return false;   // 用户设成「不自动收起」
       const last = session.lastMessageAt || session.startTime || 0;
-      return (now - last) > this.WHISPER_IDLE_MS;
+      return (now - last) > idleMs;
     },
 
     // 开一期新的悄悄话（只建元数据，不代写台词；开场白由 AI 或用户自己说）
@@ -2263,9 +2373,11 @@ ${historyText || "刚刚相见，倍感温润。"}`;
         bar.style.display = "none";
         return;
       }
-      const idleMin = Math.round(this.WHISPER_IDLE_MS / 60000);
+      const idleLabel = this._formatIdleLabel(this.getWhisperIdleMs());
       const who = session.initiator === 'user' ? '你主动开口' : '对方主动开口';
-      titleEl.innerText = count > 0 ? `${who} · 已经 ${count} 句 · 静下来 ${idleMin} 分钟自动收起` : `${who} · 等第一句`;
+      titleEl.innerText = count > 0
+        ? `${who} · 已经 ${count} 句 · 静下来 ${idleLabel} 自动收起`
+        : `${who} · 等第一句 · 静下来 ${idleLabel} 自动收起`;
       bar.style.display = "flex";
     },
 
@@ -2414,11 +2526,13 @@ ${historyText}`;
       }
       listHtml += `</div>`;
 
-      this.showFrostedDialog("悄悄话历史归档", listHtml);
-      const overlay = document.querySelector(".couples-dialog-overlay");
+      const overlay = this.showFrostedDialog("悄悄话历史归档", listHtml);
       if (overlay) {
-        overlay.querySelector("#btn-couples-dialog-cancel").style.display = "none";
-        overlay.querySelector("#btn-couples-dialog-confirm").style.display = "none";
+        // 只读弹窗：藏掉取消/确认，但右上角 X 与点遮罩仍可关闭（曾经这里被彻底卡死）
+        const cancelBtn = overlay.querySelector("#btn-couples-dialog-cancel");
+        const confirmBtn = overlay.querySelector("#btn-couples-dialog-confirm");
+        if (cancelBtn) cancelBtn.style.display = "none";
+        if (confirmBtn) confirmBtn.style.display = "none";
       }
     },
 
@@ -2513,9 +2627,7 @@ ${historyText}`;
         </div>
       `;
 
-      this.showFrostedDialog("管理私密悄悄话", formHtml, null);
-
-      const overlay = document.querySelector(".couples-dialog-overlay");
+      const overlay = this.showFrostedDialog("管理私密悄悄话", formHtml, null);
       
       overlay.querySelector("#btn-whisper-action-save").onclick = async () => {
         const val = document.getElementById("whisper-edit-textarea").value.trim();
@@ -2802,31 +2914,85 @@ ${openerInstruction}
       return null;
     },
 
+    // 悄悄话话题库：按「情绪方向」分组。每条都是**方向**而不是台词，
+    // 由 AI 结合人设与当下剧情自己发挥，避免套模板。
+    WHISPER_TOPIC_LIBRARY: [
+      {
+        group: '今晚的心情',
+        items: [
+          '今天最想告诉你的一件小事',
+          '最近我在想我们的什么',
+          '今天有一瞬间特别想你',
+          '有件事我一直没敢说',
+          '如果今晚只能说一句话'
+        ]
+      },
+      {
+        group: '吃醋与占有',
+        items: [
+          '今天我吃醋了（你猜是因为谁）',
+          '我想知道你身边最近都有谁',
+          '你会不会也有藏起来不告诉我的事',
+          '我们之间有没有让你不安的地方',
+          '今天看到你和别人说话时我在想什么'
+        ]
+      },
+      {
+        group: '靠近一点',
+        items: [
+          '想做却一直没对你做的事',
+          '你今天身上的味道让我走神了',
+          '如果现在我就站在你面前',
+          '想被你怎么抱',
+          '说一句你平时不会说的话'
+        ]
+      },
+      {
+        group: '深夜频道（成人向）',
+        items: [
+          '今晚想聊一点平时不会聊的',
+          '你最不敢说出口的偏好是什么',
+          '如果我什么都答应你，你想做什么',
+          '你身上有哪个地方最不能碰',
+          '想听你用另一种语气叫我',
+          '我们之中谁更主动一点'
+        ]
+      },
+      {
+        group: '关系与未来',
+        items: [
+          '你希望我们一年后是什么样子',
+          '有没有哪一刻你想过放弃我',
+          '我最怕你对我做什么',
+          '我们之间最该改掉的一点',
+          '十年后我们生活的样子'
+        ]
+      }
+    ],
+
     triggerWhisperTopicForm() {
-      const presets = [
-        "今天最想告诉你的一件小事",
-        "最近我在想我们的什么",
-        "想做却一直没对你做的事",
-        "如果今晚只能说一句话"
-      ];
-
+      const groups = this.WHISPER_TOPIC_LIBRARY || [];
+      const idleLabel = this._formatIdleLabel(this.getWhisperIdleMs());
       let listHtml = `
-        <div style="display:flex; flex-direction:column; gap:12px;">
-          <div style="font-size:11.5px; line-height:1.6; color:#64748b; text-align:left;">
-            换话题 = 把这一期收好（会写进你们的记忆），然后重新开一期。你也可以什么都不选，直接让对方先开口。
+        <div style="display:flex; flex-direction:column; gap:12px; text-align:left;">
+          <div style="font-size:11.5px; line-height:1.6; color:#64748b;">
+            选一个方向，或者让对方自己开口。换话题 = 把这一期收好（会写进你们的记忆，静下来 ${idleLabel} 也会自动收）。
           </div>
-          <button onclick="couplesSystem.letCharOpenWhisper()" class="btn btn-outline" style="width:100%; padding:12px; font-size:12px; font-weight:800;">让对方先开口（换一期）</button>
-          <div style="display:flex; flex-direction:column; gap:6px;">
+          <button class="couples-whisper-opt" onclick="couplesSystem.letCharOpenWhisper()">让对方先开口（换一期）</button>
+          <button class="couples-whisper-opt" onclick="couplesSystem.suggestWhisperTopicsByContext()">按今天的剧情，让 TA 出三个话题</button>
       `;
-
-      presets.forEach(p => {
-        listHtml += `<button onclick="couplesSystem.startWhisperTopic('${p}', 'user')" class="btn btn-outline" style="width:100%; padding:10px; font-size:11.5px; text-align:left; font-weight:700;">${p}</button>`;
+      groups.forEach(g => {
+        listHtml += `<div class="couples-whisper-topic-group">
+          <div class="cwtg-name">${window.escapeHtml(g.group)}</div>
+          <div class="cwtg-chips">`;
+        g.items.forEach(p => {
+          listHtml += `<button class="couples-whisper-chip" onclick="couplesSystem.startWhisperTopic('${p.replace(/'/g, "\\'")}', 'user')">${window.escapeHtml(p)}</button>`;
+        });
+        listHtml += `</div></div>`;
       });
-
       listHtml += `
-          </div>
-          <div style="margin-top:10px; border-top:1px dashed var(--border); padding-top:10px;">
-            <label style="font-size:11px; font-weight:700; color:#334155; margin-bottom:4px; display:block; text-align:left;">或者，写下你今晚真正想聊的</label>
+          <div style="border-top:1px dashed var(--border); padding-top:10px;">
+            <label style="font-size:11px; font-weight:700; color:#334155; margin-bottom:4px; display:block;">或者，写下你今晚真正想聊的</label>
             <div style="display:flex; gap:6px;">
               <input type="text" id="whisper-custom-topic-input" placeholder="一句话就够了" style="flex:1; height:34px; font-size:12px; border-radius:8px;">
               <button onclick="couplesSystem.submitCustomWhisperTopic()" class="btn btn-primary" style="padding:0 14px; font-size:11.5px; height:34px; border:none; border-radius:8px;">换一期</button>
@@ -2834,8 +3000,101 @@ ${openerInstruction}
           </div>
         </div>
       `;
-
       this.showFrostedDialog("换一期悄悄话", listHtml);
+    },
+
+    // 按「最近的剧情」让 AI 出三个贴合的悄悄话话题，（可选）一个偏成人向
+    async suggestWhisperTopicsByContext() {
+      const overlay = document.querySelector(".couples-dialog-overlay");
+      showToast("正在读你们最近的剧情...");
+      try {
+        const api = await window.apiRoutes.resolve("couples");
+        if (!api) throw new Error("API 未就绪");
+
+        const char = await db.archives.get(Number(this.activeCharId));
+        const user = await db.archives.get(Number(this.activeMeId));
+        const charName = (char && char.name) || '对方';
+        const userName = (user && user.name) || '我';
+
+        // 取最近的线上对话 + 最近几期悄悄话摘要，作为「当下的剧情」
+        let recentText = "";
+        try {
+          const sessList = await db.sessions.where('userId').equals(Number(this.activeMeId)).toArray();
+          const target = sessList.find(s => s.charId === Number(this.activeCharId));
+          if (target) {
+            const msgs = await db.messages.where('sessionId').equals(target.id).reverse().limit(12).toArray();
+            recentText = msgs.reverse().map(m => `${m.senderType === 'user' ? userName : charName}：${String(m.content || '').slice(0, 120)}`).join('\n');
+          }
+        } catch (e) {}
+        let memoText = "";
+        try {
+          const topics = await db.table('couples_whisper_topics').where('charId').equals(Number(this.activeCharId)).toArray();
+          memoText = topics
+            .filter(t => t.summary && (t.closed === 1 || t.archived === 1))
+            .sort((a, b) => (b.endTime || 0) - (a.endTime || 0))
+            .slice(0, 3)
+            .map(t => `- ${t.summary}`)
+            .join('\n');
+        } catch (e) {}
+
+        const prompt = `你是「${charName}」，正在和「${userName}」的私密悄悄话空间里，准备主动挑起今晚想聊的话题。
+
+你的人设：
+${(char && char.persona) || '（未设置）'}
+
+你们最近的线上剧情：
+${recentText || '(最近没有新的线上对话)'}
+
+最近几期悄悄话的近况：
+${memoText || '(还没有往期)'}
+
+请基于**上面这些真实剧情**，提出 3 个你此刻最想和对方聊的话题方向（不是台词，是"想聊什么"）。
+要求：
+1. 三个话题必须与当前剧情有因果关系（比如最近发生过某件事、有某个人出现、有某句没说完的话）。
+2. 必须贴合你的人设语气与在意的东西，不要写成通用情感话题。
+3. 第 3 个可以比前两个更私密、更贴身体或更成人向一些，但**尺度由人设和当前关系进展决定**，不要为露骨而露骨。
+4. 每个话题 12 字以内，直接就是话题名。
+5. 只输出 JSON 数组，不要 Markdown，不要解释：
+[{"title":"话题一"},{"title":"话题二"},{"title":"话题三"}]`;
+
+        let raw;
+        if (typeof window.fwCallLLM === "function") {
+          try { raw = await window.fwCallLLM(api, [{ role: "user", content: prompt }], { temperature: 0.9 }); } catch (e) { raw = undefined; }
+        }
+        if (raw === undefined) {
+          const resp = await fetch(`${api.url}/chat/completions`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
+            body: JSON.stringify({ model: api.model, messages: [{ role: "user", content: prompt }], temperature: 0.9 })
+          });
+          if (!resp.ok) throw new Error("网络异常");
+          const j = await resp.json();
+          raw = j.choices[0].message.content;
+        }
+        const text = String(raw || '').replace(/^\`\`\`json/i, '').replace(/\`\`\`$/i, '').trim();
+        let arr = [];
+        try {
+          arr = JSON.parse(text);
+        } catch (e) {
+          const m = text.match(/\[[\s\S]*\]/);
+          if (m) arr = JSON.parse(m[0]);
+        }
+        const titles = (Array.isArray(arr) ? arr : []).map(x => (x && (x.title || x.topic)) || '').filter(Boolean).slice(0, 3);
+        if (titles.length === 0) throw new Error("没有解析出话题");
+
+        if (overlay) overlay.remove();
+        let html = `<div style="display:flex; flex-direction:column; gap:8px; text-align:left;">
+          <div style="font-size:11.5px; color:#64748b; line-height:1.6;">这是 TA 根据你们最近的剧情挑出来的方向，点一个就直接开这一期。</div>`;
+        titles.forEach(t => {
+          html += `<button class="couples-whisper-chip" style="padding:11px 14px; font-size:12.5px;" onclick="couplesSystem.startWhisperTopic('${t.replace(/'/g, "\\'")}', 'char')">${window.escapeHtml(t)}</button>`;
+        });
+        html += `<button class="couples-whisper-opt" onclick="couplesSystem.triggerWhisperTopicForm()">回到话题库</button></div>`;
+        this.showFrostedDialog("TA 想聊的", html);
+      } catch (e) {
+        console.error("[悄悄话] 生成话题失败", e);
+        showToast("没读出来，先回到话题库挑一个");
+        this.triggerWhisperTopicForm();
+      }
     },
 
     // 「让对方先开口」：把当前一期收好，然后由角色开一期并说第一句
@@ -3239,9 +3498,7 @@ ${openerInstruction}
         </div>
       `;
 
-      this.showFrostedDialog("素材属性管理与应用", formHtml, null, () => {});
-
-      const overlay = document.querySelector(".couples-dialog-overlay");
+      const overlay = this.showFrostedDialog("素材属性管理与应用", formHtml, null, () => {});
       
       overlay.querySelector("#btn-asset-action-place").onclick = async () => {
         const name = document.getElementById("asset-form-name").value.trim() || "未知贴纸";

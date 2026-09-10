@@ -162,37 +162,96 @@ ${behaviorRules}
 
 /**
  * 助手函数：实时检索数据库中所有的图形关系网，提取双方的双视角人际关系
+ *
+ * v1.5.18 修复：旧实现**只**收集 (userId ↔ charId) 这一条边，关系网里的
+ * 第三者（比如「小林」「阿哲」）完全没有进入上下文，所以用户一提及关系网里的
+ * 其他人，char 就只能反复追问「这人是谁」。
+ * 现在改成三段一起注入：
+ *   ① 我 ↔ 你（最高优先）
+ *   ② 你 ↔ 其他人（char 认不认识 TA 生活中的人）
+ *   ③ 我 ↔ 其他人（char 知道「我」身边有谁）
  */
 async function queryRelationship(userId, charId, userName, charName) {
-  if (!userId || !charId) return "你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
+  const DEFAULT_REL = "你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
+  if (!userId || !charId) return DEFAULT_REL;
   try {
     const allGraphs = await db.relations.toArray();
-    let relPrompts = [];
 
-    for (let graph of allGraphs) {
-      if (Array.isArray(graph.edges)) {
-        for (let edge of graph.edges) {
-          const matchAIsUser = (edge.fromId === Number(userId) && edge.toId === Number(charId));
-          const matchAIsChar = (edge.fromId === Number(charId) && edge.toId === Number(userId));
+    // 需要把节点 id 换成名字，先建一张档案表（跳过对话快照产生的临时档案）
+    let archMap = {};
+    try {
+      const archives = await db.archives.toArray();
+      archives.forEach(a => { if (a && !a.isSnapshot) archMap[Number(a.id)] = a.name || ('档案' + a.id); });
+    } catch (e) { console.warn('关系网：读取档案名失败', e); }
+    const nameOf = (id) => archMap[Number(id)] || ('（已删除的档案 ' + id + '）');
 
-          if (matchAIsUser) {
-            if (edge.relAtoB) relPrompts.push(`- 在 [${userName}] 视角，[${charName}] 是：${edge.relAtoB}`);
-            if (edge.relBtoA) relPrompts.push(`- 在 [${charName}] 视角，[${userName}] 是：${edge.relBtoA}`);
-          } else if (matchAIsChar) {
-            if (edge.relAtoB) relPrompts.push(`- 在 [${charName}] 视角，[${userName}] 是：${edge.relAtoB}`);
-            if (edge.relBtoA) relPrompts.push(`- 在 [${userName}] 视角，[${charName}] 是：${edge.relBtoA}`);
+    const me = Number(userId);
+    const him = Number(charId);
+    const pairLines = [];   // 我 ↔ 你
+    const myLines = [];     // 你 ↔ 其他人
+    const userLines = [];   // 我 ↔ 其他人
+    const seen = new Set();
+
+    const push = (bucket, line, dedupKey) => {
+      if (seen.has(dedupKey)) return;
+      seen.add(dedupKey);
+      bucket.push(line);
+    };
+
+    for (const graph of allGraphs) {
+      if (!Array.isArray(graph.edges)) continue;
+      for (const edge of graph.edges) {
+        const a = Number(edge.fromId);
+        const b = Number(edge.toId);
+        if (!a || !b || a === b) continue;
+        // relAtoB：A 视角里 B 是什么；relBtoA：B 视角里 A 是什么
+        const lines = [];
+        if (edge.relAtoB) lines.push({ from: a, to: b, rel: edge.relAtoB });
+        if (edge.relBtoA) lines.push({ from: b, to: a, rel: edge.relBtoA });
+
+        for (const L of lines) {
+          // 站在 char 的视角：char 如何看对方 / 对方如何看待 char
+          if (L.from === him) {
+            if (L.to === me) {
+              push(pairLines, `- 在 [${charName}] 视角，[${userName}] 是：${L.rel}`, 'pair:' + L.rel);
+            } else {
+              push(myLines, `- 在 [${charName}] 视角，[${nameOf(L.to)}] 是：${L.rel}`, 'my:' + L.to + ':' + L.rel);
+            }
+          } else if (L.to === him) {
+            if (L.from === me) {
+              push(pairLines, `- 在 [${userName}] 视角，[${charName}] 是：${L.rel}`, 'pair2:' + L.rel);
+            } else {
+              push(myLines, `- [${nameOf(L.from)}] 视 [${charName}] 为：${L.rel}`, 'my2:' + L.from + ':' + L.rel);
+            }
+          }
+          // 与 char 无关的边：只保留「我 ↔ 其他人」，让 char 知道用户身边的人际关系
+          if (L.from === me && L.to !== him) {
+            push(userLines, `- 在 [${userName}] 视角，[${nameOf(L.to)}] 是：${L.rel}`, 'u:' + L.to + ':' + L.rel);
+          } else if (L.to === me && L.from !== him) {
+            push(userLines, `- [${nameOf(L.from)}] 视 [${userName}] 为：${L.rel}`, 'u2:' + L.from + ':' + L.rel);
           }
         }
       }
     }
 
-    if (relPrompts.length > 0) {
-      return `【双方在关系网中的双向人际羁绊设定（务必精准遵守双方视角下的彼此定位）】：\n${relPrompts.join("\n")}`;
+    const parts = [];
+    if (pairLines.length > 0) {
+      parts.push(`【双方在关系网中的双向人际羁绊设定（务必精准遵守双方视角下的彼此定位）】：\n${pairLines.join("\n")}`);
+    }
+    if (myLines.length > 0) {
+      parts.push(`【你（${charName}）与其他人物的关系（这些人是你们生活里真实存在的人，提到时要像熟人一样自然认得，不要反问「是谁」）】：\n${myLines.slice(0, 20).join("\n")}`);
+    }
+    if (userLines.length > 0) {
+      parts.push(`【${userName} 与其他人物的关系（你知道 TA 身边有这些人；若对方提起，请直接按此关系反应，不要追问这人是谁）】：\n${userLines.slice(0, 20).join("\n")}`);
+    }
+
+    if (parts.length > 0) {
+      return parts.join("\n\n") + "\n（以上关系为既定事实，不要在对话中否认或要求用户重新介绍。）";
     }
   } catch (err) {
     console.warn("查询关系网络失败:", err);
   }
-  return "【你们的关系】\n你们是普通的即时通讯好友。请使语气和态度贴合你们之间的日常关系。";
+  return `【你们的关系】\n${DEFAULT_REL}`;
 }
 
 /**
@@ -836,7 +895,7 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
   let maxWord = 200;
   let scenario = "两人线下见面。";
   let carryMemory = false;
-  let mountedIds = sess.mountedEntryIds || [];
+  let mountedIds = [];
   let charPOV = "第三人称";
   let userPOV = "第二人称";
 
@@ -854,12 +913,14 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     // 赴约模式
     minWord = sess.offlineMinWordCount || 50;
     maxWord = sess.offlineMaxWordCount || 200;
-    mountedIds = sess.offlineMountedEntryIds || sess.mountedEntryIds || [];
     scenario = "两人线下约会见面，在同一个物理空间中进行真实面对面接触。";
-    carryMemory = true; 
+    // v1.5.18：赴约的「携带线上记忆」改成用户可关（默认开，保持旧行为）
+    carryMemory = sess.offlineCarryMemory === undefined ? true : !!sess.offlineCarryMemory;
     charPOV = sess.offlineCharPOV || "第三人称";
     userPOV = sess.offlineUserPOV || "第二人称";
   }
+  // 挂载：剧场自己保存的优先，其余按赴约/线上回落（统一解析，避免「改了没反应」）
+  mountedIds = await resolveOfflineMountedEntryIds(sess, theaterId, isTheater, null);
 
   // 核心解耦：若不携带记忆与关系网，强制将关系描述初始化为普通即时通讯关系 [3]
   const relationshipDesc = carryMemory 
@@ -869,7 +930,7 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
   // 世界书：交给 worldBookEngine 统一判定（线下模式同样生效）
   let wbResult = null;
   if (window.worldBookEngine && typeof window.worldBookEngine.checkWorldInfo === 'function') {
-    try { wbResult = await window.worldBookEngine.checkWorldInfo(sessionId, { mode: 'offline' }); }
+    try { wbResult = await window.worldBookEngine.checkWorldInfo(sessionId, { mode: 'offline', theaterId: theaterId }); }
     catch (e) { console.warn('世界书引擎执行失败:', e); }
   }
 
@@ -932,6 +993,8 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
 2. 线下回复长度控制 · 最高优先级：
 - 本轮回复字数区间：最小 ${minWord} 字，最大 ${maxWord} 字。
 - 这是绝对强制限制上限与下限，禁止违反！
+- 落笔前先在脑子里估一遍长度；写完后自己数一遍：**不足 ${minWord} 字就继续把场景、动作、细节写厚；超过 ${maxWord} 字就立刻收束，砍掉多余的修饰与重复。**
+- 不要用「省略号」「未完待续」「（此处省略）」之类的占位来凑数或逃避长度要求。
 
 ${offlineBehaviorRules}
 
@@ -990,10 +1053,20 @@ ${userPersona}
   const userWall = `【双方社会关系与亲疏纽带（锁定当前关系，杜绝态度崩坏）】
 ${relationshipDesc}`;
 
+  // v1.5.18：把「注入了多少条关系」暴露给上下文管理面板，
+  // 用户可以一眼确认关系网到底有没有进上下文（之前只能靠猜）
+  const relCount = (relationshipDesc.match(/^- /gm) || []).length;
+  const relKnownNames = (relationshipDesc.match(/\[([^\[\]]+)\]/g) || [])
+    .map(s => s.slice(1, -1))
+    .filter((n, i, arr) => arr.indexOf(n) === i && n !== charName && n !== userName);
+
   segments.push({
     id: "user_wall",
     depth: -700,
-    content: userWall
+    content: userWall,
+    meta: relCount > 0
+      ? `关系网命中 ${relCount} 条 · 涉及 ${relKnownNames.length} 人（${relKnownNames.slice(0, 6).join('、')}${relKnownNames.length > 6 ? ' 等' : ''}）`
+      : '关系网未命中（关系网里没有这一对的关系设定）'
   });
 
   // === 2.2.5 核心长周期记忆、检索总结与主线剧本（当 carryMemory 启用时，线下与剧场无缝带入） ===
@@ -1391,6 +1464,27 @@ async function buildGroupOnlineSystemPrompt(sessionId) {
 }
 
 /**
+ * v1.5.18：统一解析「线下/剧场」应该挂载哪些世界书条目。
+ * 修复点：剧场在「线下专属设定」里保存的挂载以前**根本没人读**，
+ * 读的是 sess.mountedEntryIds（线上挂载），表现为「开关无效 / 改了没反应」。
+ */
+async function resolveOfflineMountedEntryIds(sess, theaterId, isTheater, group) {
+  try {
+    if (isTheater && theaterId) {
+      const th = await db.theaters.get(Number(theaterId));
+      if (th && Array.isArray(th.mountedEntryIds) && th.mountedEntryIds.length > 0) return th.mountedEntryIds;
+      return (sess && sess.mountedEntryIds) || [];
+    }
+    if (sess && Array.isArray(sess.offlineMountedEntryIds)) return sess.offlineMountedEntryIds;
+    if (group && Array.isArray(group.mountedEntryIds)) return group.mountedEntryIds;
+    return (sess && sess.mountedEntryIds) || [];
+  } catch (e) {
+    console.warn('解析线下世界书挂载失败:', e);
+    return (sess && sess.mountedEntryIds) || [];
+  }
+}
+
+/**
  * 4. 微信群聊线下白描剧场与多维小说视角 Prompt 生成器 (高优先级首位偏好重置版)
  */
 async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
@@ -1528,6 +1622,26 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     context += `\n（注意：本轮线下场景仅上述被选中的成员出席，未列出的群成员不出现在本场景中。${userInAttendee ? 'User 本人始终出席。' : 'User 未被选入本轮出席名单。'}）\n`;
   }
 
+  // === v1.5.18：群聊线下/剧场「携带线上主聊天记忆」 ===
+  // 旧实现只声明了 carryMemory 变量却从未使用，开关等于摆设。
+  // 现在开启时把线上主聊天的历史总结带进来，让成员不需要用户重新自我介绍。
+  if (carryMemory) {
+    try {
+      let groupMemoText = "";
+      const sums = await db.table('summaries').where('sessionId').equals(sessionId).toArray();
+      const recentSums = (sums || [])
+        .slice()
+        .sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0))
+        .slice(-8)
+        .map(s => `- [第 ${s.startRound || 0} - ${s.endRound || 0} 轮]: ${s.content}`)
+        .filter(l => l.length > 12);
+      if (recentSums.length) groupMemoText += recentSums.join("\n");
+      if (groupMemoText) {
+        context += `\n【线上主聊天的历史记忆（已随你进入线下场景）】：\n${groupMemoText}\n（这些是你们共同经历过的事，直接当作既定事实使用，不要让用户重新讲一遍。）\n`;
+      }
+    } catch (e) { console.warn('群聊线下携带记忆失败:', e); }
+  }
+
   // 同素异形体概念总则：同一角色不同时间线个体的调用与区分
   context += `\n【同素异形体·时间线个体概念总则 · 极其重要】
 1. 同一角色可能存在多个「时间线个体」（同素异形体）：他们是同一个人在不同时间点的独立存在，各自拥有完整的人格、经历、记忆与总结，在群内以「角色名（存档标签）」区分显示。
@@ -1548,7 +1662,8 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
   }];
 
   // 收集群聊线下挂载的世界书 (支持大分组总开关、三态与负数深度)
-  const mountedIds = isTheater ? (sess.mountedEntryIds || []) : (sess.offlineMountedEntryIds || group.mountedEntryIds || sess.mountedEntryIds || []);
+  // v1.5.18：改为走统一解析——剧场自己保存的挂载优先，其次赴约挂载，最后线上/群挂载
+  const mountedIds = await resolveOfflineMountedEntryIds(sess, theaterId, isTheater, group);
   const allWbEntries = await db.world_book_entries.toArray();
 
   const targetScopeEntries = allWbEntries.filter(entry => {

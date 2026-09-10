@@ -8654,6 +8654,7 @@ async function triggerOfflineReply() {
 // 线下场景设置面板逻辑 (支持 POV 参数装载)
 async function openOfflineDetails() {
   const sess = await db.sessions.get(activeSessionId);
+  const carryEl = document.getElementById("offline-detail-carry-memory");
   if (isOfflineTheater) {
     const th = await db.theaters.get(activeTheaterId);
     document.getElementById("offline-detail-min-word").value = th.minWordCount || 50;
@@ -8662,6 +8663,9 @@ async function openOfflineDetails() {
     document.getElementById("offline-detail-auto-summary").value = sess.autoSummaryInterval || 10; 
     document.getElementById("offline-detail-char-pov").value = th.charPOV || "第三人称";
     document.getElementById("offline-detail-user-pov").value = th.userPOV || "第二人称";
+    // 剧场也要能开关「携带线上主聊天记忆与人物关系快照」——以前只有新建/编辑剧场表单里能设，
+    // 进了剧场就再也找不到，用户体感就是「开不开关不掉」
+    if (carryEl) carryEl.checked = !!th.carryMemory;
     document.getElementById("btn-end-appointment").style.display = "none";
   } else {
     // 赴约模式
@@ -8671,13 +8675,15 @@ async function openOfflineDetails() {
     document.getElementById("offline-detail-auto-summary").value = sess.autoSummaryInterval || sess.offlineAutoSummaryCount || 10;
     document.getElementById("offline-detail-char-pov").value = sess.offlineCharPOV || "第三人称";
     document.getElementById("offline-detail-user-pov").value = sess.offlineUserPOV || "第二人称";
+    // 赴约默认携带（历史行为一致），但允许用户关掉
+    if (carryEl) carryEl.checked = sess.offlineCarryMemory === undefined ? true : !!sess.offlineCarryMemory;
     document.getElementById("btn-end-appointment").style.display = "block";
   }
 
-  // 渲染线下专属世界书手风琴选择器
+  // 渲染线下专属世界书手风琴选择器（剧场与赴约都要渲染，否则剧场里根本改不了挂载）
   const containerEl = document.getElementById("offline-details-wb-mounted-accordion");
   if (containerEl && typeof renderWbMountedAccordion === 'function') {
-    const currentMounted = isOfflineTheater ? (sess.mountedEntryIds || []) : (sess.offlineMountedEntryIds || sess.mountedEntryIds || []);
+    const currentMounted = sess.offlineMountedEntryIds || sess.mountedEntryIds || [];
     await renderWbMountedAccordion(containerEl, currentMounted, "cb-offline-details-wb-mount");
   }
 
@@ -8694,15 +8700,21 @@ async function saveOfflineDetails() {
   const autoSummary = Number(document.getElementById("offline-detail-auto-summary").value) || 10;
   const charPOV = document.getElementById("offline-detail-char-pov").value;
   const userPOV = document.getElementById("offline-detail-user-pov").value;
+  const carryEl = document.getElementById("offline-detail-carry-memory");
+  const carryMemory = carryEl ? (carryEl.checked ? 1 : 0) : 1;
 
   // 抓取线下手风琴选择器选中的世界书条目 ID 列表
   const checkedBoxes = document.querySelectorAll(".cb-offline-details-wb-mount:checked");
   const mountedEntryIds = Array.from(checkedBoxes).map(cb => Number(cb.value));
 
   if (isOfflineTheater) {
+    // 剧场：把「携带线上记忆」与「挂载世界书」落到剧场对象上，
+    // 否则 buildOfflineSystemPrompt 读到的仍是线上挂载（表现为开关无效）
     await db.theaters.update(activeTheaterId, {
       minWordCount: minWord,
       maxWordCount: maxWord,
+      carryMemory: carryMemory ? 1 : 0,
+      mountedEntryIds: mountedEntryIds,
       charPOV,
       userPOV
     });
@@ -8714,12 +8726,13 @@ async function saveOfflineDetails() {
       autoSummaryInterval: autoSummary, // 默认回写继承至线上自动总结区间配置
       offlineAutoSummaryCount: autoSummary,
       offlineMountedEntryIds: mountedEntryIds,
+      offlineCarryMemory: carryMemory ? 1 : 0,
       offlineCharPOV: charPOV,
       offlineUserPOV: userPOV
     });
   }
 
-  alert("线下场景配置已成功保存！");
+  showToast("线下场景配置已保存");
   closeOfflineDetails();
 }
 

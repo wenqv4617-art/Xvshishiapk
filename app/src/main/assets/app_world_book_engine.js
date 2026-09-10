@@ -182,8 +182,36 @@
 
   // ---------- 核心：激活判定 ----------
   /**
+   * v1.5.18：统一解析当前场景该挂载哪些世界书条目。
+   * 修复点：以前线下只读 sess.offlineMountedEntryIds，剧场在「线下专属设定」里
+   * 保存的挂载（theaters.mountedEntryIds）根本没被读取 → 表现为「开关无效 / 关不掉」。
+   * 优先级：剧场自带挂载 > 线下专属挂载 > 群挂载 > 线上挂载
+   */
+  async function resolveMountedIds(sess, mode, theaterId) {
+    var fallback = (sess && sess.mountedEntryIds) || [];
+    try {
+      if (theaterId) {
+        var th = await db.theaters.get(Number(theaterId));
+        if (th && Array.isArray(th.mountedEntryIds) && th.mountedEntryIds.length > 0) return th.mountedEntryIds;
+      }
+      if (mode === "offline") {
+        if (sess && Array.isArray(sess.offlineMountedEntryIds)) return sess.offlineMountedEntryIds;
+        if (sess && sess.isGroup === 1 && sess.groupId) {
+          var g = await db.groups.get(sess.groupId);
+          if (g && Array.isArray(g.mountedEntryIds)) return g.mountedEntryIds;
+        }
+        return fallback;
+      }
+      return fallback;
+    } catch (e) {
+      console.warn("[世界书] 解析挂载失败，回落线上挂载", e);
+      return fallback;
+    }
+  }
+
+  /**
    * @param {number} sessionId
-   * @param {object} opts { mode: 'online'|'offline', scanText?: string }
+   * @param {object} opts { mode: 'online'|'offline', scanText?: string, theaterId?: number }
    * @returns {Promise<object>} 结构化激活结果
    */
   async function checkWorldInfo(sessionId, opts) {
@@ -206,9 +234,7 @@
     result.stats.total = all.length;
     if (all.length === 0) return result;
 
-    var mountedIds = (mode === "offline")
-      ? (sess.offlineMountedEntryIds || sess.mountedEntryIds || [])
-      : (sess.mountedEntryIds || []);
+    var mountedIds = await resolveMountedIds(sess, mode, opts.theaterId);
 
     // 扫描深度：全局默认 + 条目覆盖，取最大值一次性取消息
     var globalScan = Math.max(1, parseInt(localStorage.getItem("wb-scan-depth") || String(DEFAULT_SCAN_DEPTH), 10) || DEFAULT_SCAN_DEPTH);
