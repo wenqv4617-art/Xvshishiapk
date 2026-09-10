@@ -1108,9 +1108,20 @@
       this.renderStepsList();
     },
 
-    // 5. 切换 Session 总开关
+    // 5. 切换 Session 总开关（即时持久化，修复「关闭后仍生效」问题）
     toggleSessionCot: function(isChecked) {
-      showToast(isChecked ? "本对话已开启思维链推演" : "本对话已关闭思维链推演");
+      const sid = (typeof activeSessionId !== "undefined") ? activeSessionId : null;
+      if (!sid) {
+        showToast("请先进入一个好友聊天或群聊对话！");
+        return;
+      }
+      db.sessions.update(sid, { cotToggle: isChecked ? 1 : 0 }).then(() => {
+        this.currentSessionCotToggle = !!isChecked;
+        showToast(isChecked ? "本对话已开启思维链推演" : "本对话已关闭思维链推演");
+      }).catch((e) => {
+        console.warn("思维链开关保存失败:", e);
+        showToast("思维链开关保存失败，请重试");
+      });
     },
 
     // 6. 切换 线上 / 线下 模式 Tab

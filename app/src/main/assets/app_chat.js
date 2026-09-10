@@ -4630,6 +4630,9 @@ async function buildSystemPrompt(sessionId) {
     const stickerPrompt = await window.stickerSystem.buildStickerSystemPrompt(sessionId);
     if (stickerPrompt) {
       basePrompt += '\n\n' + stickerPrompt;
+      if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+        window.contextManager.pushExtraSection("online", { id: "sticker", label: "表情包系统上下文", group: "环境", content: stickerPrompt, enabled: true });
+      }
     }
   }
   return basePrompt;
@@ -5169,7 +5172,7 @@ function bindChatAppEvents() {
             if (userArch && userArch.name) myName = userArch.name;
           }
 
-          finalSystemPrompt += `\n\n【心声随动指令（重要）】
+          const statusExtra = `\n\n【心声随动指令（重要）】
 你需要在回复正常对话内容之后，额外输出当前角色（${charName}）对 ${myName} 此时此刻的真实内心状态。
 请严格按照以下格式输出：
 
@@ -5177,12 +5180,16 @@ function bindChatAppEvents() {
 
 [STATUS]
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
+          finalSystemPrompt += statusExtra;
+          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+            window.contextManager.pushExtraSection("online", { id: "status_auto", label: "心声随动", group: "开关", content: statusExtra, enabled: true });
+          }
         }
 
         // 翻译随动生成：默认单次调用——要求 AI 在正文最末尾追加结构化译文块，
         // 本地解析后剥离并逐气泡挂载（正文零污染）；不再使用会穿插正文的 [TRANSLATE] 标签
         if (isTranslateAutoOn) {
-          finalSystemPrompt += `\n\n【翻译随动指令（重要）】
+          const translateExtra = `\n\n【翻译随动指令（重要）】
 当你的回复包含非中文内容（英语/日语/法语等）时，请在**整条回复的最末尾**单独追加一行机器可读块，格式严格如下（必须是合法 JSON 数组，不要加代码块围栏）：
 [TRANS_JSON][{"src":"正文中的原文片段（必须与正文逐字一致，含标点）","t":"该片段的简体中文翻译"}]
 规则：
@@ -5190,19 +5197,32 @@ function bindChatAppEvents() {
 2) t 是流畅自然的简体中文翻译；纯中文片段不需要列出；
 3) 该块只能出现在最后，前面必须是完整正文；正文中严禁出现 [TRANSLATE] 等翻译标签；
 4) 若整条回复都是中文，则不要输出该块。`;
+          finalSystemPrompt += translateExtra;
+          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+            window.contextManager.pushExtraSection("online", { id: "translate_auto", label: "翻译随动", group: "开关", content: translateExtra, enabled: true });
+          }
         }
 
         // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
         if (window.miniProgramSystem && typeof window.miniProgramSystem.buildSharePrompt === "function") {
           try {
             const mpPrompt = await window.miniProgramSystem.buildSharePrompt(activeSessionId);
-            if (mpPrompt) finalSystemPrompt += mpPrompt;
+            if (mpPrompt) {
+              finalSystemPrompt += mpPrompt;
+              if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+                window.contextManager.pushExtraSection("online", { id: "miniprogram_share", label: "小程序分享", group: "开关", content: mpPrompt, enabled: true });
+              }
+            }
           } catch (e) {}
         }
 
         // 注入回溯重回要求（若存在），约束 char 本次重回的内容方向
         if (window._rerollRequirement) {
-          finalSystemPrompt += `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
+          const rerollExtra = `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
+          finalSystemPrompt += rerollExtra;
+          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+            window.contextManager.pushExtraSection("online", { id: "reroll", label: "回溯重回要求", group: "附加", content: rerollExtra, enabled: true });
+          }
           // 注入后立即清除，避免污染后续普通回复
           window._rerollRequirement = "";
         }
@@ -5550,6 +5570,11 @@ function bindChatAppEvents() {
           streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar, activeSessionCharName)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
           container.scrollTop = container.scrollHeight;
         };
+
+        // 上下文管理：捕获最近一轮完整请求（供「对话详情 → 上下文管理」查看全文）
+        if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
+          window.contextManager.captureRequest(reqSessionId, "online", messagesToSend);
+        }
 
         let rawReply = await fetchStreamOrJson(activeApi.url, activeApi, messagesToSend, onlineAbortController.signal, handleStreamChunk);
 
@@ -8057,6 +8082,10 @@ async function triggerOfflineReply() {
         }
 
         const systemPrompt = await buildOfflineSystemPrompt(activeSessionId, activeTheaterId, isOfflineTheater);
+        const offlineCategory = isOfflineTheater ? "theater" : "date";
+        if (onlineSummaryPrompt && window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+          window.contextManager.pushExtraSection(offlineCategory, { id: "online_summary", label: "线上聊天背景参考", group: "记忆", content: onlineSummaryPrompt, enabled: true });
+        }
         const messagesToSend = [{ role: "system", content: systemPrompt + (onlineSummaryPrompt ? "\n\n" + onlineSummaryPrompt : "") }];
 
         // 仅取真正的线下白描对话轮次塞入历史，计算场景设定时间推演，彻底斩断微信格式污染
@@ -8147,7 +8176,7 @@ async function triggerOfflineReply() {
 
         // 心声随动：基于线下上下文生成，附加在白描之后
         if (offlineStatusAutoOn) {
-          finalOfflineSystemPrompt += `\n\n【心声随动指令（重要）】
+          const offStatusExtra = `\n\n【心声随动指令（重要）】
 你需要在回复线下白描内容之后，额外输出当前角色（${charName}）对 ${offlineMyName} 此时此刻的真实内心状态。
 请严格按照以下格式输出：
 
@@ -8155,17 +8184,28 @@ async function triggerOfflineReply() {
 
 [STATUS]
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
+          finalOfflineSystemPrompt += offStatusExtra;
+          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+            window.contextManager.pushExtraSection(offlineCategory, { id: "status_auto", label: "心声随动", group: "开关", content: offStatusExtra, enabled: true });
+          }
         }
 
         // 翻译随动：线下同样默认单次调用——要求正文末尾追加结构化译文块
         if (offlineTranslateAutoOn) {
-          finalOfflineSystemPrompt += `\n\n【翻译随动指令（重要）】
+          const offTranslateExtra = `\n\n【翻译随动指令（重要）】
 当你的回复包含非中文内容时，请在**整条回复的最末尾**单独追加一行机器可读块（必须是合法 JSON 数组，不要加代码块围栏）：
 [TRANS_JSON][{"src":"正文中的原文片段（必须与正文逐字一致，含标点）","t":"该片段的简体中文翻译"}]
 规则：src 必须与正文逐字一致以便精确匹配；t 为简体中文翻译；纯中文片段不用列；该块只能出现在最后，正文中严禁出现 [TRANSLATE] 等标签；若全是中文则不输出该块。`;
+          finalOfflineSystemPrompt += offTranslateExtra;
+          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+            window.contextManager.pushExtraSection(offlineCategory, { id: "translate_auto", label: "翻译随动", group: "开关", content: offTranslateExtra, enabled: true });
+          }
         }
 
         messagesToSend.push({ role: "system", content: finalOfflineSystemPrompt });
+        if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+          window.contextManager.pushExtraSection(offlineCategory, { id: "offline_final_rule", label: "线下格式强制规范", group: "基础", builtin: true, content: finalOfflineSystemPrompt, enabled: true });
+        }
 
         let streamingCard = null;
         const handleOfflineStreamChunk = (delta, currentFullText) => {
@@ -8221,6 +8261,11 @@ async function triggerOfflineReply() {
 
           container.scrollTop = container.scrollHeight;
         };
+
+        // 上下文管理：捕获最近一轮完整请求（线下/小剧场）
+        if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
+          window.contextManager.captureRequest(activeSessionId, offlineCategory, messagesToSend);
+        }
 
         let rawReply = await fetchStreamOrJson(api.url, api, messagesToSend, offlineAbortController.signal, handleOfflineStreamChunk);
 

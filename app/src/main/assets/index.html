@@ -3074,6 +3074,18 @@
               <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
             </div>
 
+            <!-- 新增：上下文管理入口（结构化查看最近请求全文 + 逐段开关/排序） -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; padding: 12px 0; border-bottom: 1px solid var(--border); cursor:pointer;" onclick="window.contextManager && window.contextManager.openPanel()">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:700;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="color:#6E96CB;">
+                  <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44A2.5 2.5 0 0 1 5 17.5V8a2.5 2.5 0 0 1 2.5-2.5A2.5 2.5 0 0 1 9.5 2z"/>
+                  <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44A2.5 2.5 0 0 0 19 17.5V8a2.5 2.5 0 0 0-2.5-2.5A2.5 2.5 0 0 0 14.5 2z"/>
+                </svg> 上下文管理
+              </label>
+              <svg viewBox="0 0 24 24" style="width:16px; height:16px; color:var(--text-secondary);"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+            </div>
+            <div style="font-size:10px; color:var(--text-secondary); padding: 0 0 6px 0; margin-top: -6px;">查看最近一轮请求全文，并结构化地开关、排序线上 / 小剧场线下 / 赴约线下三类上下文段。</div>
+
             <!-- 新增：自定义模拟时间设定卡片 -->
             <div class="form-group" id="details-custom-time-container" style="display:none; padding: 10px; background: #f8fafc; border-radius: 8px; border: 1.5px solid var(--border); margin-top: -6px; margin-bottom: 12px;">
               <label style="margin-bottom: 8px; font-weight: 700; font-size:11px;">设置虚拟场景模拟时间</label>
@@ -6443,6 +6455,8 @@
   <script src="url_ban_list.js"></script>
   <script src="app_url_ban.js"></script>
   <script src="app_prompts.js"></script>
+  <!-- 上下文管理中枢：结构化 Prompt 可见/可开关/可排序（依赖 app_prompts.js 的构建器，须在其后） -->
+  <script src="app_context_manager.js"></script>
   <script src="app_desktop.js"></script>
   <script src="app_settings.js"></script>
   <script src="app_changelog.js"></script>

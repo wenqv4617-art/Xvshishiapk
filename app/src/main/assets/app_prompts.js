@@ -273,6 +273,7 @@ async function buildGlobalSystemPrompt(sessionId) {
 
   // 1.1 免责声明：永远处于最开头，深度为 -1000
   segments.push({
+    id: "disclaimer",
     depth: -1000,
     content: PROMPT_TEMPLATES.DISCLAIMER
   });
@@ -387,6 +388,7 @@ async function buildGlobalSystemPrompt(sessionId) {
     mcpPrompt += `\n请你在后续的对白或动作白描中，极其自然地融入当前的天气气温或所处地理特征，或根据歌单里的歌名展开讨论，或自然地提及用户手机当前正在播放的音乐/视频内容，在对白中进行合乎人设的引导！`;
 
     segments.push({
+      id: "mcp_env",
       depth: -490,
       content: mcpPrompt
     });
@@ -415,6 +417,7 @@ ${languageCulturePrompt}
 你必须严守边界，绝不准模仿、借用、混淆、甚至直接代表对方的性格特征、说话风格、行为模式。你只能且仅能按照你自己角色的世界观、逻辑和性格说出台词。`;
 
   segments.push({
+    id: "identity_wall",
     depth: -800,
     content: identityWall
   });
@@ -427,6 +430,7 @@ ${userPersona}
 ${relationshipDesc}`;
 
   segments.push({
+    id: "user_wall",
     depth: -700,
     content: userWall
   });
@@ -492,6 +496,7 @@ ${relationshipDesc}`;
       memoryPrompt += `\n【历史交往的大事记回顾召回】：\n${retrievedSummariesText}`;
     }
     segments.push({
+      id: "memory",
       depth: -600,
       content: memoryPrompt
     });
@@ -514,6 +519,7 @@ ${relationshipDesc}`;
         return `- [第${d.roundIndex}轮 原始对话回忆${offlineTag}${timeHint}]\n  对方说: ${d.userText}\n  你回: ${d.charText}`;
       }).join("\n");
       segments.push({
+        id: "raw_dialogue",
         depth: -590,
         content: `【语义检索召回的原始对话片段（这些是与当前话题最贴合的历史真实对话原文，请参考其中的细节与语气保持连贯）】\n${rawText}`
       });
@@ -563,6 +569,7 @@ ${relationshipDesc}`;
 
   if (couplesPromptText) {
     segments.push({
+      id: "couples",
       depth: -495,
       content: `【情侣专属时空动态与交往期许注入】：\n你与对方在私人情侣空间中留下了以下动态，请你在闲聊对话中极度自然地提及、并对此表示关切、约定或督促提醒（例如询问对方是否完成了本日的日常作息，或探讨什么时候一起去完成愿望清单）：\n${couplesPromptText}`
     });
@@ -572,7 +579,7 @@ ${relationshipDesc}`;
   if (sess.ritualStateInContext === 1 && window.ritualSystem && typeof window.ritualSystem.buildPromptSegment === 'function') {
     try {
       const ritualSeg = await window.ritualSystem.buildPromptSegment(sess);
-      if (ritualSeg) segments.push({ depth: -470, content: ritualSeg });
+      if (ritualSeg) segments.push({ id: "ritual_state", depth: -470, content: ritualSeg });
     } catch (e) { console.warn('仪轨状态注入失败:', e); }
   }
 
@@ -592,6 +599,7 @@ ${relationshipDesc}`;
   const onlineRuleText = PROMPT_TEMPLATES.getOnlineChatRule(userName, charName, customOnlineText);
 
   segments.push({
+    id: "online_rule",
     depth: -500,
     content: onlineRuleText
   });
@@ -599,6 +607,7 @@ ${relationshipDesc}`;
   // === 剧情引擎主线剧本控制 (depth: -480) (新增) ===
   if (sess.plotRequirement && sess.plotRequirement.trim()) {
     segments.push({
+      id: "plot",
       depth: -480,
       content: `【当前主线剧情演进核心要求（高优先级最高指令）】：\n当前两人的社交背景、身处环境、近期经历或情绪状态由于剧情演进而发生了以下特定变化。你（${charName}）当前的所有言谈举止、对白切入点、态度倾向和当前话题必须受到以下剧本设定的强制约束，不得出戏：\n\n${sess.plotRequirement}`
     });
@@ -609,6 +618,7 @@ ${relationshipDesc}`;
     const mcpPromptStr = await window.mcpClientSystem.buildMcpPromptSegment();
     if (mcpPromptStr) {
       segments.push({
+        id: "mcp_tools",
         depth: -100,
         content: mcpPromptStr
       });
@@ -620,15 +630,9 @@ ${relationshipDesc}`;
     const cotPromptStr = await window.cotSystem.buildCotPromptSegment(sessionId, 'online');
     if (cotPromptStr) {
       segments.push({
+        id: "cot",
         depth: -90,
         content: cotPromptStr
-      });
-    } else {
-      // 防御性负向指令：CoT 关闭时，明确禁止输出任何形式的思维链/思考标签
-      // 针对原生推理模型（DeepSeek-R1 / GLM 等）会自带 <think> 输出的情况，从 prompt 侧再锁一道
-      segments.push({
-        depth: -90,
-        content: '【思维链禁用指令】当前对话已关闭思维链推演。你在回复中【绝对禁止】输出任何形式的思考过程标签，包括但不限于：<think>、</think>、[THINKING]、[/THINKING]、【思考】、【/思考】、<thought>、</thought>、<thinking>、</thinking>。请直接输出对白内容，不要在任何位置包裹思考过程。'
       });
     }
   }
@@ -638,6 +642,7 @@ ${relationshipDesc}`;
     const autoCallPromptStr = await window.callSystem.buildAutoCallPromptSegment(sessionId);
     if (autoCallPromptStr) {
       segments.push({
+        id: "auto_call",
         depth: -85,
         content: autoCallPromptStr
       });
@@ -649,6 +654,7 @@ ${relationshipDesc}`;
     const autoMomentPromptStr = await window.socialActions.buildAutoMomentPromptSegment(sessionId);
     if (autoMomentPromptStr) {
       segments.push({
+        id: "auto_moment",
         depth: -84,
         content: autoMomentPromptStr
       });
@@ -660,6 +666,7 @@ ${relationshipDesc}`;
     const forumRoamPromptStr = await window.socialActions.buildForumRoamPromptSegment(sessionId);
     if (forumRoamPromptStr) {
       segments.push({
+        id: "forum_roam",
         depth: -83,
         content: forumRoamPromptStr
       });
@@ -672,6 +679,7 @@ ${relationshipDesc}`;
     const momentHistoryStr = await window.socialActions.buildMomentHistoryContext(sessionId);
     if (momentHistoryStr) {
       segments.push({
+        id: "moment_history",
         depth: -82,
         content: momentHistoryStr
       });
@@ -683,6 +691,7 @@ ${relationshipDesc}`;
     const forumHistoryStr = await window.socialActions.buildForumHistoryContext(sessionId);
     if (forumHistoryStr) {
       segments.push({
+        id: "forum_history",
         depth: -81,
         content: forumHistoryStr
       });
@@ -692,6 +701,7 @@ ${relationshipDesc}`;
   // === 智能拉黑指令状态动态注入 (depth: -475) ===
   if (sess.isBlockedByUser === 1) {
     segments.push({
+      id: "blocked",
       depth: -475,
       content: `【重要约束（你已被对方拉黑！）】：对方由于以下原因：“${sess.blockByUserReason || "无具体原因"}”已经把你拉黑了。你在微信中发出的文字，对方界面实际上会直接拦截，并展示发送失败的红色叹号。请你立即在后续回复中做出符合自身性格人设、以及当前特定处境的真实被拉黑反应（如：极度震惊、私底下不甘发疯、哭泣认错、或者冷嘲热讽等）！严厉禁止以温和大度、毫无波澜地像AI助手一样继续给对方理性说教！`
     });
@@ -699,6 +709,7 @@ ${relationshipDesc}`;
 
   if (sess.isBlockedByChar === 1) {
     segments.push({
+      id: "blocked",
       depth: -475,
       content: `【重要约束（你已经主动拉黑了对方！）】：你之前因为理由：“${sess.blockByCharReason || "无具体原因"}”已经拉黑了对方。请你在本次以及后续回复的对白中死死维持你拉黑对方后的心理隔阂感与情感拉锯状态（如：爱理不理、赌气冷战、讥笑等）。除非你决定并在回复中单独占一行输出解除拉黑指令（格式为：[UNBLOCK] 或 【解除拉黑】），否则绝对禁止提前、无故主动对对方献殷勤或示好！`
     });
@@ -717,6 +728,7 @@ ${relationshipDesc}`;
 在你想原谅对方或解除拉黑状态时，你必须单独占一行输出解除拉黑指令：
 [UNBLOCK] 或 【解除拉黑】`;
     segments.push({
+      id: "blocked",
       depth: -474,
       content: allowBlockPrompt
     });
@@ -742,6 +754,7 @@ ${relationshipDesc}`;
 
 如果你使用了上述指令，请在前面的日常对白中进行合乎逻辑的语言铺垫（如：“给你发条语音，你听听。”或“看，这是我刚才拍的照片。”等）。`;
     segments.push({
+      id: "multimedia",
       depth: -450,
       content: multimediaPrompt
     });
@@ -758,6 +771,7 @@ ${relationshipDesc}`;
 - 请注意：如果该消息已经发送超过2分钟或ID不合法，系统将拦截此撤回指令并返回“撤回失败”的系统级拒绝提示。
 - 当你选择撤回某条消息后，该消息对应的对话内容将被完全隐藏为“对方撤回了一条消息”，你可以配合日常语言铺垫对此做出傲娇、慌张或得意的反应（如：“等等！刚才那句发错了，你不准看！”或“撤回了，假装无事发生~”等）。`;
     segments.push({
+      id: "recall",
       depth: -430,
       content: recallPrompt
     });
@@ -777,6 +791,7 @@ ${relationshipDesc}`;
   [REACT:2048] 🙄
 注意：每次回复最多只能追加一个表情反应指令，且表情必须处于14个限定范围内。若你添加了指令，请在前面的对白中配合情绪反应。`;
     segments.push({
+      id: "reaction",
       depth: -420,
       content: reactionPrompt
     });
@@ -809,6 +824,7 @@ ${relationshipDesc}`;
     timePrompt = `【当前场景设定时间感知（自定义虚拟时间，且自设置时刻起，正以 1:1 流速与现实世界同步流逝随动中！）】：当前该会话虚拟时空中精确推演出的最新模拟时间是公历 ${timeStr}。请根据这一精确计算出的场景时间（如白昼交替、深夜休息、作息节律）做出拟真扮演！`;
   }
   segments.push({
+    id: "time",
     depth: -400,
     content: timePrompt
   });
@@ -817,13 +833,17 @@ ${relationshipDesc}`;
   uniqueEntries.forEach(entry => {
     const entryDepth = Number(entry.depth) ?? 10;
     segments.push({
+      id: "world_book",
       depth: entryDepth,
       content: `## 世界书设定：${entry.title} (优先级: 深度 ${entryDepth})\n${entry.content}`
     });
   });
 
-  // 排序
+  // 排序 + 应用上下文管理覆盖（开关/排序）并记录 trace（原地，不改变引用）
   segments.sort((a, b) => a.depth - b.depth);
+  if (window.contextManager && typeof window.contextManager.finalizeSegments === "function") {
+    window.contextManager.finalizeSegments(segments, "online", sess);
+  }
 
   return segments.map(s => s.content).join("\n\n");
 }
@@ -903,12 +923,14 @@ async function buildOfflineSystemPrompt(sessionId, theaterId, isTheater) {
 
   // 2.1 完全虚拟世界安全免责声明
   segments.push({
+    id: "disclaimer",
     depth: -1000,
     content: PROMPT_TEMPLATES.DISCLAIMER
   });
 
   // 2.4 当前线下情景背景 (优先级上提到极为靠前的 -950 深度，建立绝对场景初印象)
   segments.push({
+    id: "offline_scenario",
     depth: -950,
     content: `## 当前线下场景情景背景：\n${scenario}`
   });
@@ -963,6 +985,7 @@ ${offlineBehaviorRules}
 - 直接呈现白描内容，禁止使用任何括号（如：(点头) ）、星号（如：*牵起手*）或心理描写标记。`;
 
   segments.push({
+    id: "offline_rule",
     depth: -900,
     content: offlineRulesText
   });
@@ -1005,6 +1028,7 @@ ${userPersona}
 2. **演绎动作主权分立**：你只负责产出角色 [${charName}] 的肢体举止、言词神态描写。对用户 [${userName}]，你只有“观察其外在反应”的权利，绝对禁止越权替用户做出任何违背其人设的选择、决定或内心独白（例如：“你感到心中一阵悸动，决定靠近他”是严重越权违规，必须改写为让 [${charName}] 观察用户的外部动作）。`;
 
   segments.push({
+    id: "identity_wall",
     depth: -800,
     content: identityWall
   });
@@ -1013,6 +1037,7 @@ ${userPersona}
 ${relationshipDesc}`;
 
   segments.push({
+    id: "user_wall",
     depth: -700,
     content: userWall
   });
@@ -1083,6 +1108,7 @@ ${relationshipDesc}`;
         memoryPrompt += `\n【历史交往的大事记回顾召回】：\n${retrievedSummariesText}`;
       }
       segments.push({
+        id: "memory",
         depth: -600,
         content: memoryPrompt
       });
@@ -1102,6 +1128,7 @@ ${relationshipDesc}`;
             return `- [第${d.roundIndex}轮 原始对话回忆${timeHint}]\n  对方说: ${d.userText}\n  你回: ${d.charText}`;
           }).join("\n");
           segments.push({
+            id: "raw_dialogue",
             depth: -590,
             content: `【语义检索召回的原始对话片段（这些是与当前话题最贴合的历史真实对话原文，请参考其中的细节与语气保持连贯）】\n${rawText}`
           });
@@ -1114,6 +1141,7 @@ ${relationshipDesc}`;
     // === 剧情引擎主线剧本控制 (depth: -480) ===
     if (sess.plotRequirement && sess.plotRequirement.trim()) {
       segments.push({
+        id: "plot",
         depth: -480,
         content: `【当前主线剧情演进核心要求（高优先级最高指令）】：\n当前两人的社交背景、身处环境、近期经历或情绪状态由于剧情演进而发生了以下特定变化。你（${charName}）当前的所有言谈举止、对白切入点、态度倾向和当前话题必须受到以下剧本设定的强制约束，不得出戏：\n\n${sess.plotRequirement}`
       });
@@ -1141,6 +1169,7 @@ ${relationshipDesc}`;
     offlineTimePrompt = `## 线下虚拟设定随动时间：现在是公历 ${timeStr}（已根据设置物理时间点同步流逝）。`;
   }
   segments.push({
+    id: "time",
     depth: -50,
     content: offlineTimePrompt
   });
@@ -1150,14 +1179,9 @@ ${relationshipDesc}`;
     const cotOfflinePromptStr = await window.cotSystem.buildCotPromptSegment(sessionId, 'offline');
     if (cotOfflinePromptStr) {
       segments.push({
+        id: "cot",
         depth: -40,
         content: cotOfflinePromptStr
-      });
-    } else {
-      // 防御性负向指令：线下 CoT 关闭时，同样禁止输出任何思维链标签
-      segments.push({
-        depth: -40,
-        content: '【思维链禁用指令】当前线下场景已关闭思维链推演。你在回复中【绝对禁止】输出任何形式的思考过程标签，包括但不限于：<think>、</think>、[THINKING]、[/THINKING]、【思考】、【/思考】、<thought>、</thought>、<thinking>、</thinking>。请直接输出线下白描内容。'
       });
     }
   }
@@ -1167,6 +1191,7 @@ ${relationshipDesc}`;
     const beautifyHints = await window.cotSystem.buildOfflineBeautifyPromptHints(sessionId);
     if (beautifyHints) {
       segments.push({
+        id: "beautify",
         depth: -30,
         content: beautifyHints
       });
@@ -1177,13 +1202,17 @@ ${relationshipDesc}`;
   uniqueEntries.forEach(entry => {
     const entryDepth = Number(entry.depth) ?? 10;
     segments.push({
+      id: "world_book",
       depth: entryDepth,
       content: `## 世界书背景设定：${entry.title}\n${entry.content}`
     });
   });
 
-  // 排序
+  // 排序 + 应用上下文管理覆盖（开关/排序）并记录 trace（原地，不改变引用）
   segments.sort((a, b) => a.depth - b.depth);
+  if (window.contextManager && typeof window.contextManager.finalizeSegments === "function") {
+    window.contextManager.finalizeSegments(segments, isTheater ? "theater" : "date", sess);
+  }
 
   return segments.map(s => s.content).join("\n\n");
 }
@@ -1597,6 +1626,7 @@ async function buildGroupOfflineSystemPrompt(sessionId, theaterId, isTheater) {
     const beautifyHints = await window.cotSystem.buildOfflineBeautifyPromptHints(sessionId);
     if (beautifyHints) {
       segments.push({
+        id: "beautify",
         depth: -30,
         content: beautifyHints
       });
