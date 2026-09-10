@@ -7396,8 +7396,11 @@ async function saveAndRenderMessage(senderType, content, contentType = 'text', o
   msg.id = await db.messages.add(msg);
   // 自己发送 / 新到消息：无条件归底，不让「刚才上滑看过历史」把最新消息挡在屏幕外
   chatForceNextScroll = true;
-  await appendMessageToDOM(msg);
-  chatForceNextScroll = false;
+  try {
+    await appendMessageToDOM(msg);
+  } finally {
+    chatForceNextScroll = false;
+  }
 
   if (senderType === 'char' && localStorage.getItem("settings-background-enabled") === "true") {
     const sess = await db.sessions.get(sid);
