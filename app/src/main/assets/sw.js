@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v89'; // v89: 上下文管理(每会话独立/开关双向同步) + 世界书引擎(对标酒馆 position/order/概率/互斥组/粘滞); v1.5.13
+const CACHE_NAME = 'story-phone-v90'; // v90: 群聊大修(多机器人/成员管理/公告历史与有效期/投票多选与名单/自绘弹层+group.css); v1.5.14
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -10,6 +10,7 @@ const ASSETS = [
   './style.css',
   './app.css',
   './chat.css',
+  './group.css',          // 群聊专属样式（公告条/投票卡/机器人卡/成员卡/自绘弹层）
   './sticker.css',
   './app_quicktravel.js',
   './app_ritual.js',      // 仪轨（日程/穿着/随身物品/位置 四维状态）
