@@ -2183,6 +2183,17 @@ ${historyText || "刚刚相见，倍感温润。"}`;
       if (!flow) return;
       flow.innerHTML = "";
 
+      // 没有确定角色时什么都不做：避免建出 charId 为 NaN 的脏数据
+      if (!this.activeCharId || isNaN(Number(this.activeCharId))) {
+        const hint = document.createElement("div");
+        hint.className = "couples-whisper-empty";
+        hint.innerHTML = '<div class="cwe-title">还没有选择共度的人</div><div class="cwe-sub">先在最上方切换到一位角色</div>';
+        flow.appendChild(hint);
+        const bar0 = document.getElementById("couples-whisper-topic-status-bar");
+        if (bar0) bar0.style.display = "none";
+        return;
+      }
+
       let session = await this.getActiveWhisperSession();
       const now = Date.now();
 
