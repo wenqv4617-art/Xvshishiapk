@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v88'; // v88: 新增「上下文管理」（结构化Prompt可见/可开关/可排序）+ 修复思维链关不掉; v1.5.12
+const CACHE_NAME = 'story-phone-v89'; // v89: 上下文管理(每会话独立/开关双向同步) + 世界书引擎(对标酒馆 position/order/概率/互斥组/粘滞); v1.5.13
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -19,6 +19,7 @@ const ASSETS = [
   './db.js',
   './app_prompts.js',
   './app_context_manager.js', // 上下文管理中枢（结构化 Prompt 可见/可开关/可排序）
+  './app_world_book_engine.js', // 世界书激活引擎（对标酒馆 World Info）
   './app_desktop.js',
   './app_settings.js',
   './app_archive.js',
