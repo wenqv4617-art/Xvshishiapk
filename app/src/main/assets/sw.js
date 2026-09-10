@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v87'; // v87: 图片管理/壁纸改存IndexedDB/照片解码换createImageBitmap+blobURL; v1.5.11
+const CACHE_NAME = 'story-phone-v88'; // v88: 新增「上下文管理」（结构化Prompt可见/可开关/可排序）+ 修复思维链关不掉; v1.5.12
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -18,6 +18,7 @@ const ASSETS = [
   './workbench.css',      // 工作台样式
   './db.js',
   './app_prompts.js',
+  './app_context_manager.js', // 上下文管理中枢（结构化 Prompt 可见/可开关/可排序）
   './app_desktop.js',
   './app_settings.js',
   './app_archive.js',
