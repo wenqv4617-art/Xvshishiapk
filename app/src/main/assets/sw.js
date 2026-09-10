@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v90'; // v90: 群聊大修(多机器人/成员管理/公告历史与有效期/投票多选与名单/自绘弹层+group.css); v1.5.14
+const CACHE_NAME = 'story-phone-v91'; // v91: 群管家机器人(欢迎/关键词/定时/签到养成) + 多选分享聊天记录 + 冷色调 UI; v1.5.15
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -21,6 +21,7 @@ const ASSETS = [
   './app_prompts.js',
   './app_context_manager.js', // 上下文管理中枢（结构化 Prompt 可见/可开关/可排序）
   './app_world_book_engine.js', // 世界书激活引擎（对标酒馆 World Info）
+  './app_chat_share_log.js', // 多选分享聊天记录（打包 → 转发到同面具其它会话）
   './app_desktop.js',
   './app_settings.js',
   './app_archive.js',
