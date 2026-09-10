@@ -343,7 +343,7 @@ async function loadWorldBookData() {
       const cooldownN = Number(entry.cooldown) || 0;
       const groupTag = entry.inclusionGroup ? ` | 互斥组:${entry.inclusionGroup}` : "";
       const extraTag = (stickyN ? ` | 粘滞${stickyN}` : "") + (cooldownN ? ` | 冷却${cooldownN}` : "") + groupTag;
-      const legacyTag = entry.position ? "" : ' <span style="color:#f59e0b; font-weight:700;">· 旧版未整理</span>';
+      const legacyTag = entry.position ? "" : ' <span style="color:#4A7DBF; font-weight:700;">· 旧版未整理</span>';
 
       card.innerHTML = `
         <div style="cursor:pointer; display:flex; align-items:center; user-select:none; flex-shrink:0;" onclick="cycleWbMode(${entry.id})" title="轻触切换模式：永久(蓝) / 关键词(绿) / 禁用(红)">

@@ -13,11 +13,11 @@
 (function () {
   "use strict";
 
-  // ---------- 淡彩主题 ----------
+  // ---------- 淡彩主题（统一冷色调：蓝 / 靛 / 青，规避黄棕与莫兰迪灰调） ----------
   var PASTEL = {
-    online:  { accent: "#6E96CB", soft: "#EAF3FF", border: "#C9DCF5" },
-    theater: { accent: "#B08CC9", soft: "#F3ECFA", border: "#DECFE9" },
-    date:    { accent: "#E09A7E", soft: "#FDF0EA", border: "#F3D3C4" }
+    online:  { accent: "#4A7DBF", soft: "#EAF2FB", border: "#CFE1F3" },
+    theater: { accent: "#6B5BC4", soft: "#F1EEFB", border: "#DCD6F2" },
+    date:    { accent: "#35867A", soft: "#E9F5F2", border: "#CDE9E3" }
   };
 
   // ---------- 三类上下文 ----------
@@ -647,7 +647,7 @@
       var totalChars = 0, totalTokens = 0;
       msgs.forEach(function (m) { var t = messageToText(m); totalChars += t.length; totalTokens += estTokens(t); });
       inner += '<div style="display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin-bottom:9px;">' +
-        '<span class="ctx-chip" style="background:' + (lr.preview ? '#fff6e8' : pal.soft) + '; color:' + (lr.preview ? '#c98a3a' : pal.accent) + ';">' +
+        '<span class="ctx-chip" style="background:' + (lr.preview ? '#F1EEFB' : pal.soft) + '; color:' + (lr.preview ? '#6B5BC4' : pal.accent) + ';">' +
           (lr.preview ? '预览构建 · 仅 system' : '真实请求') + '</span>' +
         '<span class="ctx-chip" style="background:#f4f1f7; color:#8b8496;">' + esc(lr.at) + '</span>' +
         '<span class="ctx-chip" style="background:#f4f1f7; color:#8b8496;">' + msgs.length + ' 条 · ' + fmtNum(totalChars) + ' 字 · ~' + fmtNum(totalTokens) + ' token</span>' +
@@ -746,8 +746,8 @@
       statPill("启用", sections.length, pal) +
       statPill("关闭", offList.length, { soft: "#f6f2f8", accent: "#8b8496" }) +
       statPill("无数据", emptyList.length, { soft: "#f4f6f8", accent: "#94a3b8" }) +
-      statPill("字符", fmtNum(totalChars), { soft: "#fdf6ec", accent: "#c98a3a" }) +
-      statPill("~token", fmtNum(totalTokens), { soft: "#eef6f0", accent: "#5f9e7d" }) +
+      statPill("字符", fmtNum(totalChars), { soft: "#EDF3FA", accent: "#5A7FA8" }) +
+      statPill("~token", fmtNum(totalTokens), { soft: "#E9F5F2", accent: "#35867A" }) +
     '</div>';
 
     // 世界书引擎本轮激活摘要
@@ -814,7 +814,7 @@
     var collapseId = "ctx-body-" + s.id + "-" + idx;
 
     var chips = '<span class="ctx-chip" style="background:#f3f0f6; color:#8a7bd8;">' + esc(s.group || "其他") + '</span>';
-    if (isBuiltin) chips += '<span class="ctx-chip" style="background:#fff6e8; color:#c98a3a;">常驻</span>';
+    if (isBuiltin) chips += '<span class="ctx-chip" style="background:#EDF3FA; color:#4A7DBF;">常驻</span>';
     if (isAppended) chips += '<span class="ctx-chip" style="background:#eef4f0; color:#6f9a86;">追加</span>';
     if (isAtDepth) chips += '<span class="ctx-chip" style="background:#eef4f0; color:#5f9e7d;">聊天内 · 深度 ' + esc(String(s.depth)) + '</span>';
     if (s.wbPos && !isAtDepth) {

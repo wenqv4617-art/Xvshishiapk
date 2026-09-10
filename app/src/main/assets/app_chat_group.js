@@ -418,6 +418,9 @@
       // 加载并置顶群公告
       this.renderGroupAnnouncement(group);
 
+      // 群管家定时推送（惰性补推，不依赖常驻定时器）
+      try { await this.maybeBotSchedule(); } catch (e) { console.warn(e); }
+
       // 渲染群消息
       await renderDialogMessages();
     },
@@ -444,7 +447,7 @@
 
       let archiveBtnHtml = "";
       if (isPrivileged) {
-        archiveBtnHtml = '<button class="group-icon-btn" style="width:26px;height:26px;border:none;background:transparent;" onclick="window.groupChatSystem.archiveAnnouncement(event)" title="下架并归档此置顶公告">' + this._svg(this._icon.archive, 15, "#B97241") + '</button>';
+        archiveBtnHtml = '<button class="group-icon-btn" style="width:26px;height:26px;border:none;background:transparent;" onclick="window.groupChatSystem.archiveAnnouncement(event)" title="下架并归档此置顶公告">' + this._svg(this._icon.archive, 15, "#4A7DBF") + '</button>';
       }
 
       stickyBar = document.createElement("div");
@@ -453,7 +456,7 @@
       stickyBar.innerHTML =
         '<div class="group-announcement-content-area" onclick="window.groupChatSystem.viewAnnouncementDetails()">' +
           '<div class="group-announcement-title" style="display:flex;align-items:center;gap:5px;">' +
-            this._svg(this._icon.bell, 13, "#E8A87C") +
+            this._svg(this._icon.bell, 13, "#6E96CB") +
             '<span style="overflow:hidden;text-overflow:ellipsis;">置顶公告：' + this._esc(ann.title) + '</span>' +
           '</div>' +
           '<span class="group-announcement-text">' + this._esc(ann.text) + '</span>' +
@@ -546,10 +549,10 @@
         const pendingNames = infos.filter(x => !x.done).map(x => x.name);
         readHtml +=
           '<div class="group-sheet-row" style="flex-direction:column;align-items:flex-start;gap:4px;">' +
-            '<span class="gsr-label" style="color:#2F9E6E;">已读（' + doneNames.length + '）</span>' +
+            '<span class="gsr-label" style="color:#35867A;">已读（' + doneNames.length + '）</span>' +
             '<span class="gsr-value" style="white-space:normal;line-height:1.6;">' + this._esc(doneNames.join('、') || '无') + '</span></div>' +
           '<div class="group-sheet-row" style="flex-direction:column;align-items:flex-start;gap:4px;">' +
-            '<span class="gsr-label" style="color:#D9534F;">未读（' + pendingNames.length + '）</span>' +
+            '<span class="gsr-label" style="color:#C25C7C;">未读（' + pendingNames.length + '）</span>' +
             '<span class="gsr-value" style="white-space:normal;line-height:1.6;">' + this._esc(pendingNames.join('、') || '无') + '</span></div>';
       }
 
@@ -635,7 +638,7 @@
             (isArchived ? '已归档' : (isClosed ? '已截止' : '进行中')) + '</span>' +
           '<span class="group-chip" style="background:#F4F1F7;color:#8B8496;">' + (poll.multi ? '多选' : '单选') + '</span>' +
           '<span class="group-chip" style="background:#F4F1F7;color:#8B8496;">共 ' + totalVotes + ' 票</span>' +
-          (poll.expireAt ? '<span class="group-chip" style="background:#FFF6EC;color:#B97241;">' +
+          (poll.expireAt ? '<span class="group-chip sched">' +
             (Date.now() > poll.expireAt ? '截止于 ' : '至 ') +
             new Date(poll.expireAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) + '</span>' : '');
 
@@ -943,23 +946,29 @@
 
       let body = '';
       if (bots.length === 0) {
-        body = '<div class="group-sheet-empty">还没有机器人。<br>点下方「新增机器人」引入一个群助手，之后在聊天里 @ 它就能互动。</div>';
+        body = '<div class="group-sheet-empty">还没有机器人。<br>点下方「新增机器人」引入一个群管家：支持入群欢迎、关键词回复、定时推送、签到养成。</div>';
       } else {
-        body = bots.map((b) => {
-          const cmds = (b.commands || '').split('\n').map(x => x.trim()).filter(Boolean);
-          return '<div class="group-list-card' + (b.enabled === false ? ' is-off' : '') + '">' +
-            '<img src="' + resolveAvatar(b.avatar, b.name) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;">' +
+        body = bots.map((raw) => {
+          const bot = this._botDef(raw);
+          const cmds = (bot.commands || '').split('\n').map(x => x.trim()).filter(Boolean);
+          const trig = bot.triggerMode === 'keyword' ? '仅关键词' : (bot.triggerMode === 'both' ? '@或关键词' : '@触发');
+          const kws = String(bot.keywords || '').split(/[,，|｜]/).map(x => x.trim()).filter(Boolean);
+          const chips =
+            '<span class="group-chip bot">' + this._svg(this._icon.bot, 10) + '管家</span>' +
+            (bot.enabled === false ? '<span class="group-chip off">已停用</span>' : '') +
+            '<span class="group-chip kw">' + trig + (kws.length ? '：' + this._esc(kws.slice(0, 2).join('/')) : '') + '</span>' +
+            (bot.growth.enabled !== false ? '<span class="group-chip growth">养成·' + this._esc(bot.growth.unit) + '</span>' : '') +
+            (bot.scheduleSec > 0 ? '<span class="group-chip sched">定时 ' + bot.scheduleSec + 's</span>' : '') +
+            (bot.welcome ? '<span class="group-chip mine">欢迎语</span>' : '');
+          return '<div class="group-list-card' + (bot.enabled === false ? ' is-off' : '') + '" style="cursor:pointer;" onclick="window.groupChatSystem.openBotStatsSheet(\'' + bot.id + '\')">' +
+            '<img src="' + resolveAvatar(bot.avatar, bot.name) + '" style="width:38px;height:38px;border-radius:50%;object-fit:cover;">' +
             '<div class="glc-main">' +
-              '<div class="glc-title">' + this._esc(b.name) +
-                '<span class="group-chip bot">' + this._svg(this._icon.bot, 10) + '助手</span>' +
-                (b.enabled === false ? '<span class="group-chip off">已停用</span>' : '') +
-                (Number(b.cooldownSec) > 0 ? '<span class="group-chip" style="background:#FFF6EC;color:#B97241;">冷却 ' + Number(b.cooldownSec) + 's</span>' : '') +
-              '</div>' +
-              '<div class="glc-sub">快捷命令 ' + cmds.length + ' 条 · 聊天里发 @' + this._esc(b.name) + ' 触发</div>' +
+              '<div class="glc-title">' + this._esc(bot.name) + chips + '</div>' +
+              '<div class="glc-sub">快捷命令 ' + cmds.length + ' 条' + (bot.cooldownSec > 0 ? ' · 冷却 ' + bot.cooldownSec + 's' : '') + ' · 点卡片看养成数据</div>' +
             '</div>' +
-            '<button class="group-icon-btn" title="' + (b.enabled === false ? '启用' : '停用') + '" onclick="window.groupChatSystem.toggleGroupBot(\'' + b.id + '\')">' + this._svg(b.enabled === false ? this._icon.x : this._icon.check, 14) + '</button>' +
-            '<button class="group-icon-btn" title="编辑" onclick="window.groupChatSystem.openGroupHelperSetup(\'' + b.id + '\')">' + this._svg(this._icon.edit, 14) + '</button>' +
-            '<button class="group-icon-btn danger" title="删除" onclick="window.groupChatSystem.deleteGroupBot(\'' + b.id + '\')">' + this._svg(this._icon.trash, 14) + '</button>' +
+            '<button class="group-icon-btn" title="' + (bot.enabled === false ? '启用' : '停用') + '" onclick="event.stopPropagation();window.groupChatSystem.toggleGroupBot(\'' + bot.id + '\')">' + this._svg(bot.enabled === false ? this._icon.x : this._icon.check, 14) + '</button>' +
+            '<button class="group-icon-btn" title="编辑" onclick="event.stopPropagation();window.groupChatSystem.openGroupHelperSetup(\'' + bot.id + '\')">' + this._svg(this._icon.edit, 14) + '</button>' +
+            '<button class="group-icon-btn danger" title="删除" onclick="event.stopPropagation();window.groupChatSystem.deleteGroupBot(\'' + bot.id + '\')">' + this._svg(this._icon.trash, 14) + '</button>' +
           '</div>';
         }).join('');
       }
@@ -978,19 +987,42 @@
       const group = await this._ensureBotIds(await db.groups.get(sess.groupId));
       if (!group) return;
 
-      const bot = (Array.isArray(group.bots) && botId)
+      const raw = (Array.isArray(group.bots) && botId)
         ? group.bots.find(b => String(b.id) === String(botId))
         : null;
-      const editing = !!bot;
-      const b = bot || { name: '', avatar: '', persona: '', commands: '起名 | @Sender 你的小鸡【VALUE】正在吃草！\n签到 | @Sender 签到成功！当前饱食度：80%', cooldownSec: 3 };
+      const editing = !!raw;
+      const b = this._botDef(raw || {
+        name: '',
+        commands: '起名 | @Sender 你的小鸡【VALUE】正在吃草！\n签到 | @Sender 签到成功！',
+        persona: '',
+        cooldownSec: 3,
+        growth: { enabled: true }
+      });
 
       const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+      const chk = (id, v) => { const el = document.getElementById(id); if (el) el.checked = !!v; };
+
       set('group-bot-id', editing ? b.id : '');
       set('group-bot-name', b.name || '');
       set('group-bot-avatar', b.avatar || '');
       set('group-bot-persona', b.persona || '');
       set('group-bot-commands', b.commands || '');
       set('group-bot-cooldown', String(Number(b.cooldownSec) || 0));
+      set('group-bot-trigger', b.triggerMode || 'at');
+      set('group-bot-keywords', b.keywords || '');
+      set('group-bot-welcome', b.welcome || '');
+      set('group-bot-schedule-sec', String(Number(b.scheduleSec) || 0));
+      set('group-bot-schedule-text', b.scheduleText || '');
+      chk('group-bot-growth-enabled', b.growth.enabled !== false);
+      set('group-bot-unit', b.growth.unit || '小鱼干');
+      set('group-bot-sign-points', String(Number(b.growth.signPoints) || 5));
+      set('group-bot-feed-points', String(Number(b.growth.feedPoints) || 3));
+      set('group-bot-exp', String(Number(b.growth.expPerAction) || 2));
+      set('group-bot-level-step', String(Number(b.growth.levelStep) || 20));
+      set('group-bot-feed-items', b.growth.feedItems || '');
+      set('group-bot-sign-tpl', b.growth.signTpl || '');
+      set('group-bot-feed-tpl', b.growth.feedTpl || '');
+      set('group-bot-pat-tpl', b.growth.patTpl || '');
 
       const titleEl = document.getElementById('group-helper-title');
       if (titleEl) titleEl.innerText = editing ? '编辑机器人' : '引入机器人';
@@ -999,15 +1031,12 @@
     },
 
     saveGroupBot: async function() {
-      const idEl = document.getElementById('group-bot-id');
-      const idVal = idEl ? idEl.value : '';
-      const name = document.getElementById('group-bot-name').value.trim();
-      const avatar = document.getElementById('group-bot-avatar').value.trim();
-      const persona = document.getElementById('group-bot-persona').value.trim();
-      const commands = document.getElementById('group-bot-commands').value.trim();
-      const cdEl = document.getElementById('group-bot-cooldown');
-      const cooldownSec = cdEl ? Math.max(0, parseInt(cdEl.value, 10) || 0) : 0;
+      const val = (id, d) => { const el = document.getElementById(id); return el ? el.value : (d === undefined ? '' : d); };
+      const isChk = (id) => { const el = document.getElementById(id); return !!(el && el.checked); };
+      const numOr = (id, d) => { const n = parseInt(val(id), 10); return isFinite(n) ? n : d; };
 
+      const idVal = val('group-bot-id');
+      const name = val('group-bot-name').trim();
       if (!name) { showToast("请填写机器人名称！"); return; }
 
       const sess = await db.sessions.get(activeSessionId);
@@ -1015,16 +1044,41 @@
       if (!group) return;
       if (!Array.isArray(group.bots)) group.bots = [];
 
-      const dup = group.bots.find(b => b.name === name && String(b.id) !== String(idVal));
+      const dup = group.bots.find(x => x.name === name && String(x.id) !== String(idVal));
       if (dup) { showToast("已存在同名机器人，请换一个名字"); return; }
 
-      if (idVal) {
-        const idx = group.bots.findIndex(b => String(b.id) === String(idVal));
-        if (idx >= 0) {
-          group.bots[idx] = Object.assign({}, group.bots[idx], { name, avatar, persona, commands, cooldownSec });
+      const patch = {
+        name: name,
+        avatar: val('group-bot-avatar').trim(),
+        persona: val('group-bot-persona').trim(),
+        commands: val('group-bot-commands').trim(),
+        cooldownSec: Math.max(0, numOr('group-bot-cooldown', 0)),
+        triggerMode: val('group-bot-trigger', 'at') || 'at',
+        keywords: val('group-bot-keywords').trim(),
+        welcome: val('group-bot-welcome').trim(),
+        scheduleSec: Math.max(0, numOr('group-bot-schedule-sec', 0)),
+        scheduleText: val('group-bot-schedule-text').trim(),
+        growth: {
+          enabled: isChk('group-bot-growth-enabled'),
+          unit: val('group-bot-unit').trim() || '小鱼干',
+          signPoints: Math.max(0, numOr('group-bot-sign-points', 5)),
+          signStreakBonus: 2,
+          feedPoints: Math.max(0, numOr('group-bot-feed-points', 3)),
+          expPerAction: Math.max(0, numOr('group-bot-exp', 2)),
+          levelStep: Math.max(5, numOr('group-bot-level-step', 20)),
+          feedItems: val('group-bot-feed-items').trim(),
+          signTpl: val('group-bot-sign-tpl').trim(),
+          feedTpl: val('group-bot-feed-tpl').trim(),
+          patTpl: val('group-bot-pat-tpl').trim(),
+          statTpl: val('group-bot-stat-tpl').trim()
         }
+      };
+
+      if (idVal) {
+        const idx = group.bots.findIndex(x => String(x.id) === String(idVal));
+        if (idx >= 0) group.bots[idx] = Object.assign({}, group.bots[idx], patch);
       } else {
-        group.bots.push({ id: 'bot_' + Date.now(), name, avatar, persona, commands, cooldownSec, enabled: true });
+        group.bots.push(Object.assign({ id: 'bot_' + Date.now(), enabled: true }, patch));
       }
 
       await db.groups.update(group.id, { bots: group.bots });
@@ -1061,6 +1115,321 @@
       }, "删除");
     },
 
+    // ============================================================
+    // 9.5 群管家内核（对标 QQ 群管家 + 养成类机器人）
+    //     入群欢迎 / 关键词自动回复 / 定时推送 / 签到积分养成 / 帮助菜单
+    // ============================================================
+    _hhmm: function () {
+      const d = new Date();
+      return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+    },
+    _today: function () { return new Date().toISOString().slice(0, 10); },
+
+    // 兼容旧数据的默认值（不写库，仅运行时补全）
+    _botDef: function (b) {
+      b = b || {};
+      const growth = Object.assign({
+        enabled: true,
+        unit: '小鱼干',
+        signPoints: 5,
+        signStreakBonus: 2,
+        feedPoints: 3,
+        expPerAction: 2,
+        levelStep: 20,
+        feedItems: '小鱼干, 冻干, 罐头',
+        signTpl: '',
+        feedTpl: '',
+        patTpl: '',
+        statTpl: ''
+      }, b.growth || {});
+      return {
+        id: b.id,
+        name: b.name || '群助手',
+        avatar: b.avatar || '',
+        persona: b.persona || '',
+        commands: b.commands || '',
+        enabled: b.enabled !== false,
+        cooldownSec: Math.max(0, Number(b.cooldownSec) || 0),
+        triggerMode: b.triggerMode || 'at',          // at | keyword | both
+        keywords: b.keywords || '',
+        welcome: b.welcome || '',
+        scheduleSec: Math.max(0, Number(b.scheduleSec) || 0),
+        scheduleText: b.scheduleText || '',
+        lastPushAt: Number(b.lastPushAt) || 0,
+        growth: growth
+      };
+    },
+
+    _growthOf: function (member, botId) {
+      if (!member.botStats || typeof member.botStats !== 'object') member.botStats = {};
+      let s = member.botStats[botId];
+      if (!s || typeof s !== 'object') s = { points: 0, exp: 0, level: 1, lastSignDay: '', streak: 0, feeds: 0, pats: 0 };
+      s.points = Number(s.points) || 0;
+      s.exp = Number(s.exp) || 0;
+      s.level = Math.max(1, Number(s.level) || 1);
+      s.streak = Number(s.streak) || 0;
+      s.feeds = Number(s.feeds) || 0;
+      s.pats = Number(s.pats) || 0;
+      s.lastSignDay = s.lastSignDay || '';
+      member.botStats[botId] = s;
+      return s;
+    },
+
+    _addExp: function (s, growth, amount) {
+      s.exp += amount;
+      const step = Math.max(5, Number(growth.levelStep) || 20);
+      let leveled = 0;
+      while (s.exp >= s.level * step) { s.exp -= s.level * step; s.level++; leveled++; }
+      return leveled;
+    },
+
+    // 模板渲染：支持 {var}、中文别名【POINTS】等、以及 || 随机分支
+    _fillTpl: function (tpl, vars) {
+      if (!tpl) return '';
+      let out = String(tpl);
+      if (out.indexOf('||') >= 0) {
+        const parts = out.split('||').map(x => x.trim()).filter(Boolean);
+        out = parts[Math.floor(Math.random() * parts.length)] || '';
+      }
+      Object.keys(vars).forEach(k => { out = out.split('{' + k + '}').join(vars[k]); });
+      return out
+        .replace(/【VALUE】/g, vars.value || '无').replace(/\[VALUE\]/g, vars.value || '无')
+        .replace(/【POINTS】/g, vars.points).replace(/【LEVEL】/g, vars.level)
+        .replace(/【EXP】/g, vars.exp).replace(/【UNIT】/g, vars.unit)
+        .replace(/【BOT】/g, vars.bot).replace(/【TIME】/g, vars.time)
+        .replace(/【DATE】/g, vars.date).replace(/【STREAK】/g, vars.streak)
+        .replace(/@Sender/g, '@' + vars.user);
+    },
+
+    _botHelp: function (bot) {
+      const g = bot.growth || {};
+      const cmds = (bot.commands || '').split('\n').map(l => l.split('|')[0].trim()).filter(Boolean);
+      const lines = ['【' + bot.name + ' · 功能菜单】', '@' + bot.name + ' + 下面的词即可'];
+      if (g.enabled !== false) {
+        lines.push('· 签到 / 打卡　每日一次，赚' + (g.unit || '小鱼干'));
+        lines.push('· 投喂 xx　喂点东西，加' + (g.unit || '小鱼干') + '与经验');
+        lines.push('· 撸一把 / 摸摸　互动涨经验');
+        lines.push('· 状态 / 我的　查看我的养成数据');
+        lines.push('· 排行 / 榜单　看看谁最勤快');
+      }
+      if (cmds.length) lines.push('· 自定义：' + cmds.join('、'));
+      return lines.join('\n');
+    },
+
+    // 养成类内置命令；返回 null 表示不是内置命令
+    _builtinBotCommand: async function (bot, member, cmdBody, senderName) {
+      const g = bot.growth || {};
+      if (g.enabled === false) return null;
+      const s = this._growthOf(member, bot.id);
+      const unit = g.unit || '小鱼干';
+      const head = String(cmdBody || '').trim();
+      const headWord = (head.split(/\s+/)[0] || '').trim();
+      const value = head.replace(headWord, '').replace(/^[:：\s]+/, '').trim();
+      const baseVars = {
+        user: senderName, bot: bot.name, unit: unit, value: value,
+        points: s.points, level: s.level, exp: s.exp, streak: s.streak,
+        time: this._hhmm(), date: this._today()
+      };
+
+      if (/^(帮助|菜单|help|命令|功能)$/i.test(headWord)) {
+        return { text: this._botHelp(bot) };
+      }
+
+      if (/^(签到|打卡)$/.test(headWord)) {
+        const today = this._today();
+        if (s.lastSignDay === today) {
+          return { text: '@' + senderName + ' 今天已经签过到啦，明天再来～' };
+        }
+        const yest = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        s.streak = (s.lastSignDay === yest) ? (s.streak + 1) : 1;
+        s.lastSignDay = today;
+        const gain = (Number(g.signPoints) || 5) + (s.streak > 1 ? (Number(g.signStreakBonus) || 0) * (s.streak - 1) : 0);
+        s.points += gain;
+        const lv = this._addExp(s, g, Number(g.expPerAction) || 2);
+        await db.group_members.put(member);
+        const tpl = g.signTpl || '{user} 签到成功！连续 {streak} 天，获得 {gain} 个{unit}，现有 {points} 个，等级 Lv.{level}';
+        return { text: this._fillTpl(tpl, Object.assign({}, baseVars, { points: s.points, level: s.level, exp: s.exp, streak: s.streak, gain: gain })) + (lv ? '（升级到 Lv.' + s.level + '！）' : '') };
+      }
+
+      if (/^(投喂|喂食|喂饭|喂猫|喂|投食)$/.test(headWord)) {
+        const pool = String(g.feedItems || '').split(/[,，|｜]/).map(x => x.trim()).filter(Boolean);
+        const item = value || (pool.length ? pool[Math.floor(Math.random() * pool.length)] : '好吃的');
+        const gain = Number(g.feedPoints) || 3;
+        s.points += gain;
+        s.feeds++;
+        const lv = this._addExp(s, g, Number(g.expPerAction) || 2);
+        await db.group_members.put(member);
+        const tpl = g.feedTpl || '{user} 投喂了一份{value}，{bot} 吃得很香！获得 {gain} 个{unit}，现有 {points} 个';
+        return { text: this._fillTpl(tpl, Object.assign({}, baseVars, { value: item, points: s.points, level: s.level, exp: s.exp, gain: gain })) + (lv ? '（升级到 Lv.' + s.level + '！）' : '') };
+      }
+
+      if (/^(撸一把|撸猫|摸摸|摸|rua|撸)$/i.test(headWord)) {
+        const gain = 1;
+        s.pats++;
+        const lv = this._addExp(s, g, Number(g.expPerAction) || 2);
+        await db.group_members.put(member);
+        const tpl = g.patTpl || '{user} 撸了{bot} 一把，它舒服地眯起眼睛。经验 +{gain}，等级 Lv.{level}';
+        return { text: this._fillTpl(tpl, Object.assign({}, baseVars, { points: s.points, level: s.level, exp: s.exp, gain: gain })) + (lv ? '（升级到 Lv.' + s.level + '！）' : '') };
+      }
+
+      if (/^(状态|我的|我的猫|数据|面板)$/.test(headWord)) {
+        const step = Math.max(5, Number(g.levelStep) || 20);
+        const need = s.level * step;
+        const tpl = g.statTpl || '';
+        if (tpl) return { text: this._fillTpl(tpl, Object.assign({}, baseVars, { points: s.points, level: s.level, exp: s.exp, need: need })) };
+        return { text: '@' + senderName + ' 的养成数据\n· ' + unit + '：' + s.points + '\n· 等级：Lv.' + s.level + '（经验 ' + s.exp + '/' + need + '）\n· 连续签到：' + s.streak + ' 天\n· 已投喂 ' + s.feeds + ' 次 · 已撸 ' + s.pats + ' 次' };
+      }
+
+      if (/^(排行|榜单|排行榜|排名)$/.test(headWord)) {
+        const members = await db.group_members.where('groupId').equals(member.groupId).toArray();
+        const rows = [];
+        for (const m of members) {
+          const st = (m.botStats && m.botStats[bot.id]) ? m.botStats[bot.id] : null;
+          if (!st) continue;
+          const info = await this._memberInfo(m);
+          rows.push({ name: info.name, points: Number(st.points) || 0, level: Number(st.level) || 1, isMe: m.id === member.id });
+        }
+        rows.sort((a, b) => b.points - a.points || b.level - a.level);
+        if (rows.length === 0) return { text: '@' + senderName + ' 还没有人开始养成，你先来签到吧～' };
+        const top = rows.slice(0, 5).map((r, i) => (i + 1) + '. ' + r.name + '　' + r.points + ' 个 · Lv.' + r.level).join('\n');
+        const mine = rows.findIndex(r => r.isMe);
+        return { text: '【' + bot.name + ' · ' + unit + '排行榜】\n' + top + (mine >= 0 ? '\n\n你目前排在第 ' + (mine + 1) + ' 名' : '') };
+      }
+
+      return null;
+    },
+
+    // 入群欢迎（邀请成功 / 建群时由调用方触发）
+    sendBotWelcome: async function (group, member, senderName) {
+      if (!group || !Array.isArray(group.bots) || group.bots.length === 0) return;
+      const labels = [];
+      for (const raw of group.bots) {
+        const bot = this._botDef(raw);
+        if (!bot.enabled || !bot.welcome) continue;
+        labels.push(this._fillTpl(bot.welcome, {
+          user: senderName, bot: bot.name, unit: bot.growth.unit, value: '',
+          points: 0, level: 1, exp: 0, streak: 0, time: this._hhmm(), date: this._today()
+        }));
+      }
+      if (labels.length === 0) return;
+      const sysMsg = {
+        sessionId: activeSessionId,
+        senderType: 'system',
+        senderId: 0,
+        content: labels.join('\n'),
+        contentType: 'text',
+        timestamp: Date.now()
+      };
+      await db.messages.add(sysMsg);
+      return sysMsg;
+    },
+
+    // 定时推送：惰性补推（进入群 / 发完消息时检查），避免常驻定时器
+    maybeBotSchedule: async function () {
+      try {
+        const sess = await db.sessions.get(activeSessionId);
+        if (!sess || sess.isGroup !== 1) return false;
+        const group = await this._ensureBotIds(await db.groups.get(sess.groupId));
+        if (!group || !Array.isArray(group.bots) || group.bots.length === 0) return false;
+
+        const now = Date.now();
+        let changed = false;
+        let lastPushed = null;
+        for (const raw of group.bots) {
+          const bot = this._botDef(raw);
+          if (!bot.enabled || !bot.scheduleText || bot.scheduleSec <= 0) continue;
+          if (raw.lastPushAt && now - raw.lastPushAt < bot.scheduleSec * 1000) continue;
+          const text = this._fillTpl(bot.scheduleText, {
+            user: '大家', bot: bot.name, unit: bot.growth.unit, value: '',
+            points: 0, level: 1, exp: 0, streak: 0, time: this._hhmm(), date: this._today()
+          });
+          if (!text) continue;
+          raw.lastPushAt = now;
+          changed = true;
+          lastPushed = { botId: raw.id, name: bot.name, text: text };
+        }
+        if (changed) await db.groups.update(group.id, { bots: group.bots });
+        if (!lastPushed) return false;
+
+        const msg = {
+          sessionId: activeSessionId,
+          senderType: 'char',
+          senderId: 99999,
+          senderBotId: lastPushed.botId,
+          content: lastPushed.text,
+          contentType: 'text',
+          timestamp: Date.now()
+        };
+        await db.messages.add(msg);
+        return true;
+      } catch (e) {
+        console.warn("[Group] 机器人定时推送失败:", e);
+        return false;
+      }
+    },
+
+    // 养成数据面板（自绘卡片）
+    openBotStatsSheet: async function (botId) {
+      const self = this;
+      const sess = await db.sessions.get(activeSessionId);
+      const group = await this._ensureBotIds(await db.groups.get(sess.groupId));
+      if (!group) return;
+      const bot = (group.bots || []).map(b => self._botDef(b)).find(b => String(b.id) === String(botId));
+      if (!bot) return;
+      const member = await db.group_members.where('[groupId+memberId+memberType]').equals([group.id, Number(activeUserPersonaId), 'user']).first();
+      if (!member) { showToast("你不在本群，无法查看养成数据"); return; }
+
+      const s = this._growthOf(member, bot.id);
+      const g = bot.growth;
+      const step = Math.max(5, Number(g.levelStep) || 20);
+      const need = s.level * step;
+      const pct = Math.max(0, Math.min(100, Math.round((s.exp / need) * 100)));
+
+      const body =
+        '<div class="group-growth-card">' +
+          '<div class="group-growth-head">' + this._svg(this._icon.bot, 16, "#35867A") + this._esc(bot.name) + ' · 我的养成</div>' +
+          '<div class="group-growth-grid">' +
+            '<div class="group-growth-cell"><b>' + s.level + '</b><span>等级</span></div>' +
+            '<div class="group-growth-cell"><b>' + s.points + '</b><span>' + this._esc(g.unit) + '</span></div>' +
+            '<div class="group-growth-cell"><b>' + s.streak + '</b><span>连续签到</span></div>' +
+          '</div>' +
+          '<div class="group-growth-bar"><div class="group-growth-bar-fill" style="width:' + pct + '%;"></div></div>' +
+          '<div style="font-size:10px;color:#7C8798;">经验 ' + s.exp + ' / ' + need + '（' + pct + '%）　已投喂 ' + s.feeds + ' 次 · 已撸 ' + s.pats + ' 次</div>' +
+        '</div>';
+
+      this._sheet({
+        title: '养成面板', icon: this._icon.bot, body: body,
+        actions: [
+          { label: '去签到', cls: 'teal', icon: this._icon.check, onClick: function () { self._closeSheet(); self.quickBotSay('签到'); } },
+          { label: '去投喂', cls: 'primary', icon: this._icon.plus, onClick: function () { self._closeSheet(); self.quickBotSay('投喂'); } },
+          { label: '关闭', cls: 'ghost', onClick: function () { self._closeSheet(); } }
+        ]
+      });
+    },
+
+    // 以玩家身份快速发出一条机器人指令（用于养成面板快捷按钮）
+    quickBotSay: async function (cmdText) {
+      const sess = await db.sessions.get(activeSessionId);
+      const group = await db.groups.get(sess.groupId);
+      if (!group) return;
+      const bots = (group.bots || []).map(b => this._botDef(b)).filter(b => b.enabled);
+      const bot = bots[0];
+      if (!bot) { showToast("本群还没有启用中的机器人"); return; }
+      const myName = await this._myName();
+      const text = '@' + bot.name + ' ' + cmdText;
+      const userMsg = {
+        sessionId: activeSessionId,
+        senderType: 'user',
+        senderId: Number(activeUserPersonaId),
+        content: text,
+        contentType: 'text',
+        timestamp: Date.now()
+      };
+      await db.messages.add(userMsg);
+      await this.interceptBotTrigger(text, myName);
+      await renderDialogMessages();
+    },
+
     interceptBotTrigger: async function(text, senderName) {
       const sess = await db.sessions.get(activeSessionId);
       if (!sess || sess.isGroup !== 1) return false;
@@ -1068,43 +1437,71 @@
       const group = await this._ensureBotIds(await db.groups.get(sess.groupId));
       if (!group || !Array.isArray(group.bots) || group.bots.length === 0) return false;
 
-      // 命中被 @ 的（启用中的）机器人；支持多个机器人各自独立
-      const bot = group.bots.find(b => b.enabled !== false && b.name && text.includes('@' + b.name));
-      if (!bot) return false;
+      const members = await db.group_members.where('groupId').equals(group.id).toArray();
+      const senderMem = await this.findMemberByName(members, senderName);
 
-      // 每个机器人独立冷却，避免刷屏
-      window.__groupBotCooldown = window.__groupBotCooldown || {};
-      const now = Date.now();
-      const cdMs = (Number(bot.cooldownSec) || 0) * 1000;
-      if (cdMs > 0 && now - (window.__groupBotCooldown[bot.id] || 0) < cdMs) return false;
-      window.__groupBotCooldown[bot.id] = now;
+      // 命中判定：@ 触发 或 关键词触发（可在机器人设置里选）
+      let hit = null;
+      for (const raw of group.bots) {
+        const bot = this._botDef(raw);
+        if (!bot.enabled || !bot.name) continue;
+        const atMatch = text.includes('@' + bot.name);
+        const kws = String(bot.keywords || '').split(/[,，|｜]/).map(x => x.trim()).filter(Boolean);
+        const kwMatch = (bot.triggerMode === 'keyword' || bot.triggerMode === 'both') && kws.some(k => text.includes(k));
+        if (atMatch || kwMatch) { hit = { raw: raw, bot: bot, atMatch: atMatch }; break; }
+      }
+      if (!hit) return false;
 
-      const summonPrefix = '@' + bot.name;
-      const cmdBody = text.substring(text.indexOf(summonPrefix) + summonPrefix.length).trim();
+      const bot = hit.bot;
+      const g = bot.growth || {};
+      let cmdBody = "";
+      if (hit.atMatch) {
+        const p = '@' + bot.name;
+        cmdBody = text.substring(text.indexOf(p) + p.length).trim();
+      } else {
+        cmdBody = text.trim();
+      }
+
       let triggeredReply = "";
-      let isCommandMatched = false;
 
-      // 1. 快捷内置命令
-      const cmdList = (bot.commands || '').split('\n').map(l => l.trim()).filter(Boolean);
-      for (const line of cmdList) {
-        const parts = line.split('|').map(p => p.trim());
-        if (parts.length < 2) continue;
-        const cmdName = parts[0];
-        if (!cmdName) continue;
-        const cmdTemplate = parts.slice(1).join('|');
-        if (cmdBody === cmdName || cmdBody.startsWith(cmdName)) {
-          isCommandMatched = true;
-          const paramValue = cmdBody.replace(cmdName, "").replace(/[:：]/g, "").trim();
-          triggeredReply = cmdTemplate
-            .replace(/@Sender/g, '@' + senderName)
-            .replace(/【VALUE】/g, paramValue || "无")
-            .replace(/\[VALUE\]/g, paramValue || "无");
-          break;
+      // 1. 养成类内置命令（签到 / 投喂 / 撸 / 状态 / 排行 / 帮助）—— 不走冷却，另有每日限制
+      if (senderMem) {
+        try {
+          const builtin = await this._builtinBotCommand(bot, senderMem, cmdBody, senderName);
+          if (builtin && builtin.text) triggeredReply = builtin.text;
+        } catch (e) { console.warn("[Group] 机器人内置命令失败:", e); }
+      }
+
+      // 2 / 3 需要冷却（避免刷屏刷接口）
+      if (!triggeredReply) {
+        window.__groupBotCooldown = window.__groupBotCooldown || {};
+        const now = Date.now();
+        const cdMs = (Number(bot.cooldownSec) || 0) * 1000;
+        if (cdMs > 0 && now - (window.__groupBotCooldown[bot.id] || 0) < cdMs) return false;
+        window.__groupBotCooldown[bot.id] = now;
+
+        // 2. 自定义快捷命令（模板支持 || 随机分支与多变量）
+        const cmdList = (bot.commands || '').split('\n').map(l => l.trim()).filter(Boolean);
+        const headWord = (cmdBody.split(/\s+/)[0] || '').trim();
+        const paramValue = cmdBody.replace(headWord, '').replace(/^[:：\s]+/, '').trim();
+        for (const line of cmdList) {
+          const parts = line.split('|').map(p => p.trim());
+          if (parts.length < 2) continue;
+          const cmdName = parts[0];
+          if (!cmdName) continue;
+          const cmdTemplate = parts.slice(1).join('|');
+          if (cmdBody === cmdName || cmdBody.startsWith(cmdName)) {
+            triggeredReply = this._fillTpl(cmdTemplate, {
+              user: senderName, bot: bot.name, unit: g.unit || '小鱼干', value: paramValue,
+              points: 0, level: 1, exp: 0, streak: 0, time: this._hhmm(), date: this._today()
+            });
+            break;
+          }
         }
       }
 
-      // 2. 未匹配快捷指令，则调用大模型
-      if (!isCommandMatched) {
+      // 3. 仍未命中 → 交给大模型按机器人人设自由发挥
+      if (!triggeredReply) {
         showToast(bot.name + " 正在思考…");
         try {
           const api = await window.apiRoutes.resolve("chat");
@@ -1115,7 +1512,7 @@
 - 你的名字：${bot.name}
 - 你的性格背景与底料设定：${bot.persona || "一个平平无奇的群助手"}
 
-你刚刚收到了成员 [@${senderName}] 的艾特消息：“${cmdBody}”。
+${hit.atMatch ? `你刚刚收到了成员 [@${senderName}] 的艾特消息：“${cmdBody}”。` : `群里有人说了句：“${cmdBody}”，正好提到了你。`}
 请你扮演该机器人，直接写一句极具特色、符合设定的回复语本身，限40字内。回复最前面必须带上 @${senderName} 标记。`;
 
           let llmReply;
@@ -1128,21 +1525,14 @@
             const response = await fetch(`${api.url}/chat/completions`, {
               method: "POST",
               headers: { "Content-Type": "application/json", "Authorization": `Bearer ${api.key}` },
-              body: JSON.stringify({
-                model: api.model,
-                messages: [{ role: "user", content: botSystem }],
-                temperature: 0.7
-              })
+              body: JSON.stringify({ model: api.model, messages: [{ role: "user", content: botSystem }], temperature: 0.7 })
             });
-
             if (response.ok) {
               const result = await response.json();
               llmReply = result.choices[0].message.content.trim();
             }
           }
-          if (llmReply !== undefined) {
-            triggeredReply = llmReply;
-          }
+          if (llmReply !== undefined) triggeredReply = llmReply;
         } catch(e) {
           triggeredReply = `@${senderName} 嘀…… ${bot.name} 信号有些虚弱，等会再试吧。`;
         }
@@ -1266,21 +1656,34 @@
       }).length);
       setTxt('group-stat-muted', members.filter(m => m.muteUntil && m.muteUntil > now).length);
 
-      // 工具栏（首次注入搜索与排序）
+      // 工具栏（首次注入：搜索满宽一行 + 排序胶囊一行，窄屏不再溢出）
       const toolbar = document.getElementById('group-members-toolbar');
       if (toolbar && !toolbar.dataset.bound) {
+        const self = this;
         toolbar.dataset.bound = '1';
+        this._memberSort = this._memberSort || 'role';
         toolbar.innerHTML =
-          '<div class="group-members-search">' + this._svg(this._icon.search, 14, "#9A93A6") +
+          '<div class="group-members-search">' + this._svg(this._icon.search, 14, "#9AA7B8") +
             '<input type="text" id="group-member-search" placeholder="搜索昵称 / 头衔 / 分组">' +
           '</div>' +
-          '<select class="group-members-sort" id="group-member-sort">' +
-            '<option value="role">按身份</option>' +
-            '<option value="active">按活跃</option>' +
-            '<option value="name">按昵称</option>' +
-          '</select>';
-        toolbar.querySelector('#group-member-search').oninput = () => this.renderMemberList();
-        toolbar.querySelector('#group-member-sort').onchange = () => this.renderMemberList();
+          '<div class="group-members-sort-chips" id="group-member-sort-chips">' +
+            '<button type="button" class="group-sort-chip" data-sort="role">按身份</button>' +
+            '<button type="button" class="group-sort-chip" data-sort="active">按活跃</button>' +
+            '<button type="button" class="group-sort-chip" data-sort="name">按昵称</button>' +
+          '</div>';
+        toolbar.querySelector('#group-member-search').oninput = function () { self.renderMemberList(); };
+        toolbar.querySelectorAll('.group-sort-chip').forEach(function (chip) {
+          chip.onclick = function () {
+            self._memberSort = chip.getAttribute('data-sort') || 'role';
+            self.renderMemberList();
+          };
+        });
+      }
+      if (toolbar) {
+        const cur = this._memberSort || 'role';
+        toolbar.querySelectorAll('.group-sort-chip').forEach(chip => {
+          chip.classList.toggle('active', (chip.getAttribute('data-sort') || 'role') === cur);
+        });
       }
 
       this._memberCtx = { members: members, lastAt: lastAt, group: group, myRole: myRole, now: now, myMember: myMemberState };
@@ -1293,9 +1696,8 @@
       if (!ctx) return;
       const members = ctx.members, lastAt = ctx.lastAt, now = ctx.now;
       const qEl = document.getElementById('group-member-search');
-      const sEl = document.getElementById('group-member-sort');
       const q = (qEl && qEl.value ? qEl.value : '').trim().toLowerCase();
-      const sortBy = sEl ? sEl.value : 'role';
+      const sortBy = this._memberSort || 'role';
 
       const listBox = document.getElementById("group-members-list-box");
       if (!listBox) return;
@@ -2483,6 +2885,7 @@
 
       try {
         // 处理档案馆常规邀请
+        const invitedNames = [];
         for (const cb of checkedBoxes) {
           const charId = Number(cb.value);
           const char = await db.archives.get(charId);
@@ -2498,6 +2901,7 @@
             syncFromSingle: 1,
             syncToSingle: 1
           });
+          invitedNames.push(char.name);
 
           const sysMsg = {
             sessionId: activeSessionId,
@@ -2508,6 +2912,12 @@
             timestamp: Date.now()
           };
           await db.messages.add(sysMsg);
+        }
+
+        // 群管家迎新人（有欢迎语且启用中的机器人各发一条）
+        if (invitedNames.length > 0) {
+          const freshGroup = await db.groups.get(group.id);
+          await this.sendBotWelcome(freshGroup, null, invitedNames.join('、'));
         }
 
         // 处理文件管理存档引入

@@ -2075,9 +2075,10 @@
             </div>
 
             <div class="multi-select-action-bar" id="multi-select-bar" style="display: none;">
-              <button id="btn-multi-translate" class="btn btn-outline" style="flex:1; border-color:#0284c7; color:#0284c7; font-weight:700;">批量翻译</button>
-              <button id="btn-multi-delete" class="btn btn-danger-outline" style="flex:1;">删除选中 (<span id="selected-count">0</span>)</button>
-              <button id="btn-multi-cancel" class="btn" style="flex:1;">退出多选</button>
+              <button id="btn-multi-share" class="btn btn-outline" style="flex:1; min-width:0; padding:8px 4px; font-size:11px; border-color:#4A7DBF; color:#4A7DBF; font-weight:700;">分享</button>
+              <button id="btn-multi-translate" class="btn btn-outline" style="flex:1; min-width:0; padding:8px 4px; font-size:11px; border-color:#4A7DBF; color:#4A7DBF; font-weight:700;">批量翻译</button>
+              <button id="btn-multi-delete" class="btn btn-danger-outline" style="flex:1; min-width:0; padding:8px 4px; font-size:11px;">删除选中 (<span id="selected-count">0</span>)</button>
+              <button id="btn-multi-cancel" class="btn" style="flex:1; min-width:0; padding:8px 4px; font-size:11px;">退出多选</button>
             </div>
             
             <!-- === 统一在轨：全功能多态自适应加号展开面板（装载全部 18 项物理按键，严禁遗漏任何单聊特权） === -->
@@ -2355,7 +2356,7 @@
             <!-- 公告历史入口 -->
             <div class="form-group" id="btn-group-announce-history" style="display:flex; align-items:center; justify-content:space-between; padding: 12px; border-radius:12px; background:var(--surface); border: 1.5px solid var(--border); margin-top:14px; cursor:pointer;">
               <label style="margin-bottom:0; display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; font-weight:700; color:var(--text-secondary);">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#B97241;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color:#4A7DBF;">
                   <path d="M21 8H3V6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2z"/><path d="M10 12h4"/><path d="M19 8v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8"/>
                 </svg>
                 历史公告（查看 / 重新置顶）
@@ -2376,8 +2377,8 @@
 
             <div class="form-actions" style="margin-top: 24px; display: flex; flex-direction: column; gap: 10px;">
               <button id="btn-group-details-save" class="btn btn-primary" style="width:100%;">保存群后台修改</button>
-              <button id="btn-group-details-clear" class="btn btn-outline" style="width:100%; color: #b45309; border-color: #fde68a;">清空群聊天记录</button>
-              <button id="btn-group-details-delete" class="btn btn-outline" style="width:100%; color: #991b1b; border-color: #fca5a5; background-color: #fef2f2;">解散并删除此群聊</button>
+              <button id="btn-group-details-clear" class="btn btn-outline" style="width:100%; color: #C25C7C; border-color: #F0CDD8;">清空群聊天记录</button>
+              <button id="btn-group-details-delete" class="btn btn-outline" style="width:100%; color: #A84462; border-color: #F0CDD8; background-color: #FCEDF2;">解散并删除此群聊</button>
             </div>
           </div>
         </div>
@@ -2699,7 +2700,7 @@
                   <div class="group-stat-bar">
                     <div class="group-stat"><b id="group-stat-total">0</b><span>成员总数</span></div>
                     <div class="group-stat"><b id="group-stat-active" style="color:#4A7DBF;">0</b><span>近 30 分钟活跃</span></div>
-                    <div class="group-stat"><b id="group-stat-muted" style="color:#D9534F;">0</b><span>禁言中</span></div>
+                    <div class="group-stat"><b id="group-stat-muted" style="color:#C25C7C;">0</b><span>禁言中</span></div>
                   </div>
                   <div class="group-members-toolbar" id="group-members-toolbar"></div>
                   <div id="group-members-list-box" style="display:flex; flex-direction:column; gap:10px;"></div>
@@ -2797,6 +2798,93 @@
                 <label>同一成员连续触发的冷却秒数 (0 = 不限制)</label>
                 <input type="number" id="group-bot-cooldown" value="3" min="0" placeholder="3">
               </div>
+
+              <details style="margin:10px 0; border:1.5px solid var(--border); border-radius:10px; padding:8px 10px; background:#f8fafc;">
+                <summary style="cursor:pointer; font-size:12px; font-weight:700; color:#6b7280;">群管家能力：触发方式 / 入群欢迎 / 定时推送</summary>
+                <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+                  <div class="form-group" style="margin:0;">
+                    <label>触发方式</label>
+                    <select id="group-bot-trigger" style="width:100%; padding:8px; border-radius:8px; border:1.5px solid var(--border); font-size:12px; background:#fff;">
+                      <option value="at">仅 @机器人 触发</option>
+                      <option value="keyword">仅关键词触发（听到就回）</option>
+                      <option value="both">@ 或关键词都触发</option>
+                    </select>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>触发关键词（逗号分隔，仅关键词模式下生效）</label>
+                    <input type="text" id="group-bot-keywords" placeholder="例如：喵, 猫猫, 喂猫">
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>入群欢迎语（新成员加入时自动发出）</label>
+                    <textarea id="group-bot-welcome" rows="2" placeholder="欢迎 @Sender 加入本群！有问题可以 @机器人 找我～"></textarea>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>定时推送间隔（秒，0 = 关闭）</label>
+                    <input type="number" id="group-bot-schedule-sec" value="0" min="0" placeholder="例如 1800 = 半小时一条">
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>定时推送内容（支持 || 随机分支与变量）</label>
+                    <textarea id="group-bot-schedule-text" rows="2" placeholder="【{bot}提醒】现在是 {time}，别忘了喝水～ || 【{bot}播报】{date} 已签到 {streak} 人"></textarea>
+                  </div>
+                </div>
+              </details>
+
+              <details style="margin:10px 0; border:1.5px solid var(--border); border-radius:10px; padding:8px 10px; background:#f8fafc;">
+                <summary style="cursor:pointer; font-size:12px; font-weight:700; color:#6b7280;">养成玩法：签到 / 投喂 / 撸一把 / 排行榜</summary>
+                <div style="margin-top:10px; display:flex; flex-direction:column; gap:10px;">
+                  <label style="display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; color:var(--text-secondary); margin:0;">
+                    <input type="checkbox" id="group-bot-growth-enabled" checked> 开启养成系统
+                  </label>
+                  <div class="form-group" style="margin:0; display:flex; gap:10px;">
+                    <div style="flex:1;">
+                      <label>资源名称</label>
+                      <input type="text" id="group-bot-unit" value="小鱼干" placeholder="小鱼干">
+                    </div>
+                    <div style="flex:1;">
+                      <label>升级基础经验（每级递增）</label>
+                      <input type="number" id="group-bot-level-step" value="20" min="5">
+                    </div>
+                  </div>
+                  <div class="form-group" style="margin:0; display:flex; gap:10px;">
+                    <div style="flex:1;">
+                      <label>签到奖励</label>
+                      <input type="number" id="group-bot-sign-points" value="5" min="0">
+                    </div>
+                    <div style="flex:1;">
+                      <label>投喂奖励</label>
+                      <input type="number" id="group-bot-feed-points" value="3" min="0">
+                    </div>
+                    <div style="flex:1;">
+                      <label>每次互动经验</label>
+                      <input type="number" id="group-bot-exp" value="2" min="0">
+                    </div>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>可投喂物品池（逗号分隔，随机挑一个）</label>
+                    <input type="text" id="group-bot-feed-items" placeholder="小鱼干, 冻干, 罐头">
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>签到文案（留空用默认；支持 || 随机与变量）</label>
+                    <textarea id="group-bot-sign-tpl" rows="2" placeholder="{user} 签到成功！连续 {streak} 天，获得 {gain} 个{unit}"></textarea>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>投喂文案</label>
+                    <textarea id="group-bot-feed-tpl" rows="2" placeholder="{user} 投喂了一份{value}，{bot} 吃得很香！"></textarea>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>撸一把文案</label>
+                    <textarea id="group-bot-pat-tpl" rows="2" placeholder="{user} 撸了{bot} 一把，它舒服地眯起眼睛 || {bot} 蹭了蹭 {user} 的手"></textarea>
+                  </div>
+                  <div class="form-group" style="margin:0;">
+                    <label>状态文案（留空用默认表格）</label>
+                    <textarea id="group-bot-stat-tpl" rows="2" placeholder="@{user} 现有 {points} 个{unit}，等级 Lv.{level}"></textarea>
+                  </div>
+                  <div style="font-size:10px; color:var(--text-secondary); line-height:1.6;">
+                    可用变量：{user} {bot} {unit} {value} {points} {level} {exp} {streak} {gain} {time} {date}
+                  </div>
+                </div>
+              </details>
+
               <div class="form-actions" style="margin-top:16px;">
                 <button class="btn btn-primary" id="btn-group-bot-save" style="width:100%;">保存并部署机器人</button>
               </div>
@@ -6587,6 +6675,8 @@
   <script src="app_context_manager.js"></script>
   <!-- 世界书激活引擎：对标酒馆 World Info（插入位置/顺序/深度/关键词逻辑/概率/互斥组/粘滞冷却/预算） -->
   <script src="app_world_book_engine.js"></script>
+  <!-- 多选分享聊天记录：打包选中消息 → 转发到同一面具下的其它聊天框 -->
+  <script src="app_chat_share_log.js"></script>
   <script src="app_desktop.js"></script>
   <script src="app_settings.js"></script>
   <script src="app_changelog.js"></script>

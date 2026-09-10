@@ -2927,6 +2927,12 @@ async function renderDialogMessages(isInitial = true) {
     if (m.contentType === 'share') {
       try { contentHtml = buildShareCardHTML(m.id, JSON.parse(m.content)); }
       catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[分享链接]</div>`; }
+    } else if (m.contentType === 'chat_log_share') {
+      try {
+        contentHtml = (window.chatLogShareSystem && window.chatLogShareSystem.buildShareCardHTML)
+          ? window.chatLogShareSystem.buildShareCardHTML(m.id, JSON.parse(m.content))
+          : `<div style="font-size:12px; color:var(--text-secondary);">[聊天记录]</div>`;
+      } catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[聊天记录]</div>`; }
     } else if (m.contentType === 'reverse_check_report') {
       try {
         contentHtml = (window.reverseCheckSystem && window.reverseCheckSystem.buildReportCardHTML)
@@ -3702,6 +3708,12 @@ async function appendMessageToDOM(msg) {
   if (msg.contentType === 'share') {
     try { contentHtml = buildShareCardHTML(msg.id, JSON.parse(msg.content)); }
     catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[分享链接]</div>`; }
+  } else if (msg.contentType === 'chat_log_share') {
+    try {
+      contentHtml = (window.chatLogShareSystem && window.chatLogShareSystem.buildShareCardHTML)
+        ? window.chatLogShareSystem.buildShareCardHTML(msg.id, JSON.parse(msg.content))
+        : `<div style="font-size:12px; color:var(--text-secondary);">[聊天记录]</div>`;
+    } catch (e) { contentHtml = `<div style="font-size:12px; color:var(--text-secondary);">[聊天记录]</div>`; }
   } else if (msg.contentType === 'reverse_check_report') {
     try {
       contentHtml = (window.reverseCheckSystem && window.reverseCheckSystem.buildReportCardHTML)
@@ -4515,6 +4527,18 @@ function initContextMenuHandlers() {
     btnMultiTranslate.onclick = () => batchTranslateMessages(false);
   }
 
+  // 多选分享聊天记录：打包选中消息 → 选择同一面具下的目标会话
+  const btnMultiShare = document.getElementById("btn-multi-share");
+  if (btnMultiShare) {
+    btnMultiShare.onclick = () => {
+      if (window.chatLogShareSystem && typeof window.chatLogShareSystem.openShareTargetPicker === "function") {
+        window.chatLogShareSystem.openShareTargetPicker();
+      } else {
+        showToast("分享模块加载中，请稍后重试");
+      }
+    };
+  }
+
   const btnMultiDelete = document.getElementById("btn-multi-delete");
   if (btnMultiDelete) {
     btnMultiDelete.onclick = async () => {
@@ -5012,6 +5036,14 @@ function bindChatAppEvents() {
             const isIntercepted = await window.groupChatSystem.interceptBotTrigger(processedText, senderName);
             if (isIntercepted) return;
           }
+
+          // 群管家定时推送检查（不拦截正常回复）
+          if (window.groupChatSystem && typeof window.groupChatSystem.maybeBotSchedule === 'function') {
+            try {
+              const pushed = await window.groupChatSystem.maybeBotSchedule();
+              if (pushed) await renderDialogMessages();
+            } catch (e) { console.warn("群管家定时推送检查失败:", e); }
+          }
         } else {
           // 分享链接自动识别：抓取元数据后以"分享卡片"上屏（失败则退回普通文本）
           const _shareUrl = extractShareUrl(processedText);
@@ -5474,6 +5506,13 @@ function bindChatAppEvents() {
                 displayContent = `[${_chatCharName} 向你转发了一个"砍一刀提现"活动链接]`;
               }
             } catch(e) { displayContent = "[转发了一个砍一刀提现链接]"; }
+          } else if (h.contentType === 'chat_log_share') {
+            // 聊天记录转发：展开成"谁把谁和谁的聊天记录转发给了你"的可读摘要
+            try {
+              displayContent = (window.chatLogShareSystem && window.chatLogShareSystem.buildContextSummary)
+                ? window.chatLogShareSystem.buildContextSummary(JSON.parse(h.content))
+                : '[聊天记录转发]';
+            } catch (e) { displayContent = '[聊天记录转发]'; }
           } else if (h.contentType === 'share') {
             // 分享链接：转为干净上下文（标题/正文/互动数据/评论/链接），避免乱码与标签污染
             displayContent = formatShareContextText(h, h.senderType === 'user', _chatCharName);
@@ -7749,6 +7788,12 @@ async function renderOfflineMessages() {
     if (m.contentType === 'share') {
       try { shareCardHtml = buildShareCardHTML(m.id, JSON.parse(m.content)); } catch (e) { shareCardHtml = null; }
       if (shareCardHtml) displayContent = displayContent || '[分享链接]';
+    } else if (m.contentType === 'chat_log_share') {
+      try {
+        shareCardHtml = (window.chatLogShareSystem && window.chatLogShareSystem.buildShareCardHTML)
+          ? window.chatLogShareSystem.buildShareCardHTML(m.id, JSON.parse(m.content)) : null;
+      } catch (e) { shareCardHtml = null; }
+      if (shareCardHtml) displayContent = displayContent || '[聊天记录]';
     }
     if (!displayContent && !parsedCot.thought) {
       continue;
@@ -8137,6 +8182,12 @@ async function triggerOfflineReply() {
                 displayContent = `[图片描述: ${d.text || '（无描述）'}]`;
               }
             } catch(e) {}
+          } else if (h.contentType === 'chat_log_share') {
+            try {
+              displayContent = (window.chatLogShareSystem && window.chatLogShareSystem.buildContextSummary)
+                ? window.chatLogShareSystem.buildContextSummary(JSON.parse(h.content))
+                : '[聊天记录转发]';
+            } catch (e) { displayContent = '[聊天记录转发]'; }
           } else if (h.contentType === 'share') {
             displayContent = formatShareContextText(h, h.senderType === 'user', (sessObj && (sessObj.customCharName || sessObj.name)) || '对方');
             try {
