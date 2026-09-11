@@ -560,8 +560,150 @@
         buttons: reverse ? [{
           text: '上架新商品', icon: 'plus', kind: 'primary', keepOpen: true,
           onClick: function () { Shop.openListingForm(); }
-        }] : null
+        }] : [
+          // 攻略模式：可以生成商品、也可以管理（用户 2026-09-11 要求）
+          {
+            text: 'AI 上新', icon: 'sparkle', kind: 'primary', keepOpen: true,
+            onClick: function (api, node) { Shop.generateGoods(node); }
+          },
+          {
+            text: '管理商品', icon: 'edit', kind: 'soft', soft: '#EDF2FB', color: '#5f7aa8', keepOpen: true,
+            onClick: function () { Shop.openGoodsManager(); }
+          }
+        ]
       };
+    },
+
+    /**
+     * 让 AI 按角色设定与当前关系阶段生成一批商品（攻略模式）
+     * 生成结果进「自定义商品」，可以在「管理商品」里改价 / 改文案 / 删除。
+     */
+    generateGoods: async function (node) {
+      if (H.blocked('shop-gen', 2500)) { H.toast('正在上新，稍等一下'); return; }
+      if (node) { var _r = H.busy(node, '正在上新…'); setTimeout(_r, 2500); }
+      var profile = await K.charProfile();
+      var user = await K.userProfile();
+      var prompt = '你在为一款女性向恋爱游戏的「心动商店」设计商品。\n'
+        + '角色：' + profile.name + '\n'
+        + '角色设定：' + U.cut(profile.persona || '（未填写）', 400) + '\n'
+        + '玩家：' + user.name + (user.persona ? ' —— ' + U.cut(user.persona, 200) : '') + '\n'
+        + '当前关系阶段：' + K.tier().name + '（好感 ' + U.comma(K.state.affinity) + '）\n'
+        + '玩家已经买过：' + (K.state.shop.owned || []).slice(0, 8).map(function (o) {
+          var g = K.findGoods(o.goodsId); return g ? g.name : '';
+        }).filter(Boolean).join('、') || '（还没有）' + '\n\n'
+        + '请设计 3 件**只属于你们两人**的商品：它应该像 TA 会准备给你的东西，'
+        + '或者你会想买来送给 TA 的东西。要具体、有画面感、价格合理。\n'
+        + '严格只返回 JSON 数组：\n'
+        + '[{"name":"商品名（4~10 字）","desc":"一句话说明（15~30 字）",'
+        + '"price":120,"category":"wear|accessory|consumable|letter|privilege","icon":"gift"}]\n'
+        + 'category 取值含义：wear=服饰 accessory=饰品 consumable=消耗品 letter=手写信物 privilege=亲密特权。\n'
+        + 'icon 取 gift / heart / cards / book / clock / wallet / star 之一。';
+      var arr = await K.askJSON(prompt, null, { temperature: 0.95, maxTokens: 1200 });
+      if (!Array.isArray(arr) || !arr.length) {
+        H.toast('这次没生成出来，再试一次');
+        return;
+      }
+      var n = 0;
+      arr.slice(0, 5).forEach(function (g) {
+        if (!g || !g.name) return;
+        K.addGoods({
+          name: g.name, desc: g.desc, price: g.price,
+          category: g.category, icon: g.icon, from: 'ai'
+        });
+        n++;
+      });
+      H.toast(n ? ('上新了 ' + n + ' 件商品') : '这次没生成出来，再试一次');
+      if (n) Shop.open();
+    },
+
+    /** 商品管理：自己加的可改可删，内置的只能隐藏/恢复 */
+    openGoodsManager: function () {
+      var body = H.el('div');
+      var rerender = function () { Shop.openGoodsManager(); };
+
+      body.appendChild(H.sectionTitle('自定义商品', { color: '#D97FA8' }));
+      var mine = K.customGoods();
+      if (!mine.length) {
+        body.appendChild(H.empty('还没有自定义商品。点「AI 上新」让模型按你们的关系设计几件。', { icon: 'shop' }));
+      }
+      mine.forEach(function (g) {
+        var row = H.listRow({
+          icon: g.icon || 'gift',
+          color: '#D97FA8', soft: '#FFEBF3',
+          title: g.name,
+          subtitle: U.comma(g.price) + ' 心动代币 · ' + U.esc(g.desc || '') +
+            ' · ' + (g.from === 'char' ? 'TA 上架' : (g.from === 'ai' ? 'AI 生成' : '手动新增')),
+          subtitleWrap: true,
+          rightNode: (function () {
+            var box = H.el('div');
+            box.style.cssText = 'display:flex; gap:6px; align-items:center; flex-shrink:0;';
+            var editB = H.iconButton('edit', { size: 26, color: '#B79EDC', title: '编辑' });
+            editB.onclick = function (ev) {
+              ev.stopPropagation();
+              H.prompt({ title: '商品名', value: g.name }).then(function (name) {
+                if (name === null) return;
+                H.prompt({ title: '一句话说明', value: g.desc || '' }).then(function (desc) {
+                  if (desc === null) return;
+                  H.prompt({ title: '售价（心动代币）', value: String(g.price) }).then(function (price) {
+                    if (price === null) return;
+                    K.updateGoods(g.id, { name: name, desc: desc, price: price });
+                    H.toast('已保存');
+                    rerender();
+                  });
+                });
+              });
+            };
+            box.appendChild(editB);
+            var delB = H.iconButton('trash', { size: 26, color: '#c2607c' });
+            delB.onclick = function (ev) {
+              ev.stopPropagation();
+              K.removeGoods(g.id);
+              H.toast('已下架');
+              rerender();
+            };
+            box.appendChild(delB);
+            return box;
+          })()
+        });
+        row.onclick = null;
+        body.appendChild(row);
+      });
+
+      body.appendChild(H.sectionTitle('内置商品（可隐藏）', { color: '#7E97C9' }));
+      K.builtinGoods().forEach(function (g) {
+        var hidden = K.isGoodsHidden(g.id);
+        var row = H.listRow({
+          icon: g.icon || 'gift',
+          color: hidden ? '#b3aab8' : '#7E97C9',
+          soft: hidden ? 'rgba(240,236,244,0.9)' : '#EDF2FB',
+          title: g.name + (hidden ? '（已隐藏）' : ''),
+          subtitle: U.comma(g.price) + ' 心动代币',
+          rightNode: (function () {
+            var b = H.button(hidden ? '恢复' : '隐藏', {
+              kind: 'soft', pad: '5px 10px', size: 10.5,
+              soft: hidden ? '#FFEBF3' : 'rgba(240,236,244,0.9)',
+              color: hidden ? '#B0728F' : '#9a919f'
+            });
+            b.onclick = function (ev) {
+              ev.stopPropagation();
+              K.hideGoods(g.id, !hidden);
+              rerender();
+            };
+            return b;
+          })()
+        });
+        row.onclick = null;
+        body.appendChild(row);
+      });
+
+      H.sheet({
+        title: '管理商品',
+        subtitle: '自定义的可改可删，内置的只能隐藏',
+        icon: 'edit',
+        height: '90%',
+        slot: 'shop-manage',
+        content: body
+      });
     },
 
     /** 购买（攻略模式） */

@@ -503,14 +503,14 @@
       var pageBg = App.PAGE_BG[App.view] || '';
       root.style.cssText = 'position:relative; width:100%; height:100%; min-height:560px;'
         + 'display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;'
-        + (pageBg ? ('background:' + pageBg + ' center/cover no-repeat;') : '')
         + 'background:linear-gradient(170deg,#FFF7FB 0%,#FBF4FA 52%,#F4F2FB 100%);';
-      // 有氛围底图时，再叠一层浅色蒙版（保证浅色内容可读）
+      // 有氛围底图时：**只加很淡的一层**，让插画真的看得见（用户反馈"太浅了压根看不见"）；
+      // 可读性交给下面的毛玻璃卡片与状态栏，而不是靠把整张图糊白。
       if (pageBg) {
-        root.style.backgroundImage = 'linear-gradient(180deg, rgba(255,250,252,0.78) 0%,'
-          + ' rgba(255,247,251,0.88) 46%, rgba(248,246,255,0.93) 100%), ' + pageBg;
+        root.style.backgroundImage = 'linear-gradient(180deg, rgba(255,250,252,0.16) 0%,'
+          + ' rgba(255,247,251,0.30) 42%, rgba(248,246,255,0.52) 100%), ' + pageBg;
         root.style.backgroundSize = 'cover';
-        root.style.backgroundPosition = 'center';
+        root.style.backgroundPosition = 'center top';
       }
       App._dom = { root: root };
 
@@ -518,7 +518,9 @@
       var top = H.el('div');
       top.style.cssText = 'position:relative; z-index:10; flex-shrink:0; display:flex; align-items:center; gap:9px;'
         + 'padding:10px 13px 9px; border-bottom:1px solid rgba(216,160,190,0.22);'
-        + 'background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(255,247,251,0.78));';
+        // 顶栏做成毛玻璃：浮在插画上，但底下的画仍然透得出来
+        + 'background:linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,247,251,0.58));'
+        + 'backdrop-filter:blur(16px) saturate(1.2); -webkit-backdrop-filter:blur(16px) saturate(1.2);';
       // 返回按钮做成带文字的胶囊：应用窗口顶部已经有一颗裸箭头（那是"退出应用"），
       // 这里再放一颗裸箭头会让人分不清哪颗是哪颗。
       var back = H.el('div');
@@ -559,7 +561,9 @@
         var bar = H.el('div');
         bar.style.cssText = 'position:relative; z-index:10; flex-shrink:0; display:flex; gap:9px;'
           + 'padding:11px 16px calc(10px + env(safe-area-inset-bottom, 0px));'
-          + 'border-top:1px solid rgba(216,160,190,0.18); background:rgba(255,255,255,0.82);';
+          + 'border-top:1px solid rgba(216,160,190,0.18);'
+          + 'background:rgba(255,255,255,0.62);'
+          + 'backdrop-filter:blur(16px) saturate(1.2); -webkit-backdrop-filter:blur(16px) saturate(1.2);';
         buttons.forEach(function (cfg) {
           var b = H.button(cfg.text, {
             kind: cfg.kind || 'primary', block: true, icon: cfg.icon,
@@ -655,8 +659,12 @@
           : 'linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0) 22%, rgba(255,247,251,0.92) 100%);');
       stage.appendChild(aura);
       // 立绘挂载点
+      // v1.5.44：以前是 bottom:104px —— 而抽卡按钮在 bottom:62px 且高 88px，
+      // 它的水平中线正好落在 106px 处，于是立绘**永远下不到那条线以下**，
+      // 在调整视图里继续往下拖也会被吞掉（用户截图反馈）。
+      // 现在直接铺到画面底部，底部工具栏与抽卡按钮靠 z-index 与渐变浮在上面。
       var portraitHost = H.el('div', { id: 'hg-portrait-host' });
-      portraitHost.style.cssText = 'position:absolute; left:0; right:0; top:6%; bottom:104px;';
+      portraitHost.style.cssText = 'position:absolute; left:0; right:0; top:6%; bottom:0;';
       stage.appendChild(portraitHost);
       root.appendChild(stage);
       App._dom.bgLayer = bgLayer;

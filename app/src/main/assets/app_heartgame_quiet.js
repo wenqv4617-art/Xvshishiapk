@@ -700,6 +700,9 @@
         desc: '你的心境发生了变化（mood 取 ecstatic/happy/calm/anxious/jealous/possessive）。' },
       { tag: 'HG_GIFT', modes: ['STRATEGY', 'REVERSE_STRATEGY'], args: '{"item":"亲手做的便当"}',
         desc: '你把某样东西送给了 Ta。' },
+      { tag: 'HG_LIST', modes: ['STRATEGY', 'REVERSE_STRATEGY'], args: '{"item":"替你收着的旧外套","desc":"你说过喜欢的那件，我一直留着。","price":180,"category":"wear"}',
+        desc: '你往心动商店的货架上摆了一件**自己的东西**，Ta 可以买走。'
+          + 'category 取 wear/accessory/consumable/letter/privilege，可省略。' },
       // —— 被攻略模式（TA 是追人的一方：会自己去抽卡 / 氪金 / 买礼物） ——
       { tag: 'HG_GACHA', modes: ['REVERSE_STRATEGY'], args: '{"pool":"卡池名(可省)","times":10}',
         desc: '你去抽卡了。系统会真的执行抽卡并把结果告诉你（可能歪）。' },
@@ -895,6 +898,29 @@
         }
         K.pushTimeline({ type: 'quest', title: name + '完成了任务', text: done });
         return { ok: true, tone: 'quest', log: '*' + name + '汇报：' + done + ' 已经做完了*', extra: done };
+      }
+
+      // —— TA 往商店上架一件自己的东西（用户要求"静室里 char 也能上架商品"）——
+      if (op.tag === 'HG_LIST') {
+        var gName = String(op.args.item || '').trim().slice(0, 20);
+        if (!gName) return { ok: false, log: '', tone: 'system', extra: '' };
+        var gDesc = String(op.args.desc || '').trim().slice(0, 60);
+        var gPrice = U.clamp(U.int(op.args.price, 120), 0, 99999);
+        var gCat = String(op.args.category || 'letter');
+        if (['wear', 'accessory', 'consumable', 'letter', 'privilege'].indexOf(gCat) < 0) gCat = 'letter';
+        K.addGoods({
+          name: gName, desc: gDesc, price: gPrice, category: gCat,
+          icon: gCat === 'privilege' ? 'heart' : 'gift',
+          from: 'char'
+        });
+        K.pushTimeline({ type: 'shop', title: name + '上架了商品', text: name + '把「' + gName + '」摆上了心动商店的货架。' });
+        K.save(true);
+        return {
+          ok: true, tone: 'gift',
+          log: '*' + name + '往心动商店的货架上摆了一件自己的东西【' + gName + '】'
+            + (gDesc ? '：' + gDesc : '') + '（售价 ' + U.comma(gPrice) + ' 心动代币）*',
+          extra: gName
+        };
       }
 
       // —— 攻略模式：TA 因为这一刻动心，好感上升 ——（用户要求"对方可以加好感度"）

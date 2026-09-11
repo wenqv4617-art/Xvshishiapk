@@ -121,37 +121,75 @@
     {
       id: 'builtin-restrained', name: '克制留白', builtin: true,
       desc: '话少、留白多，情绪藏在动作里',
-      prompt: '文风：克制留白。多用短句与具体动作细节，少写心理直述；'
-        + '情绪靠停顿、视线、呼吸、手上的小动作带出来，不要写"他心里想"。'
-        + '对白简短克制，一句话只承载一个意思，允许沉默与答非所问。'
+      prompt: [
+        '视角：第三人称限知，只写镜头能拍到的东西，不进入任何人物的内心。',
+        '句式：以短句为主（8~18 字），一段不超过 4 句；长短句交替，长句只用于环境。',
+        '情绪：一律通过**可观察的细节**传递 —— 停顿、视线落点、呼吸的深浅、手指的动作、'
+          + '把话说到一半又咽回去。禁止出现"他心里一紧""她感到难过"这类内心直述。',
+        '对白：极简，一句话只承载一个意思，允许答非所问、允许沉默。'
+          + '重要的话用「」单独成句，前后各留一个动作作为停顿。',
+        '用词：日常、准确、不修饰。不用形容词堆砌（"无比""万分""深深地"一律禁止）。',
+        '节奏：慢。一个场景只推进一件事，结尾留一口气，不要把话说尽。',
+        '禁止：感叹号连用、网络流行语、把情绪直接说出来、用"仿佛""好像"堆比喻。'
+      ].join('\n')
     },
     {
       id: 'builtin-intense', name: '浓烈直白', builtin: true,
       desc: '情绪外放，对白有压迫感',
-      prompt: '文风：浓烈直白。情绪允许外放，对白有压迫感与占有欲；'
-        + '多用短促的祈使句与打断，允许重复与追问。'
-        + '描写偏感官（温度、气味、触碰的力度），但要避免堆砌形容词。'
+      prompt: [
+        '视角：第三人称，紧贴角色，允许写身体反应（心跳、耳鸣、发烫）。',
+        '句式：短促、断裂，允许破折号与省略号收尾；对白可以打断对方、可以重复追问。',
+        '情绪：外放但不廉价 —— 用**欲望与克制互相拉扯**来制造张力，'
+          + '越是想靠近越要写出他为什么停下。',
+        '对白：有压迫感，多用祈使句与反问；一句话里可以塞两个意思。'
+          + '允许说出让人脸红的具体要求（但不要露骨描写）。',
+        '感官：温度、气味、触碰的力度、衣料的摩擦声，至少写两种。',
+        '节奏：快慢交替 —— 一段急促的对白之后，接一个极慢的动作特写。',
+        '禁止：只写"他很激动"这类概括、空喊口号、把张力写成吵架。'
+      ].join('\n')
     },
     {
       id: 'builtin-classical', name: '古风雅致', builtin: true,
-      desc: '用词典雅，节奏舒缓',
-      prompt: '文风：古风雅致。用词偏书面与古典意象（灯、雨、更漏、衣料摩擦声），'
-        + '句读讲究，长短句交错；避免现代口语与网络词。情绪要含蓄，'
-        + '以景写情，让景物承担一部分情绪。'
+      desc: '用词典雅，以景写情',
+      prompt: [
+        '视角：第三人称，可全知，允许点到即止地写一句人物心境。',
+        '句式：骈散结合，四六句与长句交错；句读讲究，善用对仗但不要通篇对仗。',
+        '用词：书面语与古典意象 —— 灯、雨、更漏、帘、案、砚、檐、襟、'
+          + '茶烟、衣料摩擦声。**禁止**现代口语、外来词、网络词、直白的身体描写。',
+        '情绪：含蓄，以景写情 —— 让天气、光线、器物承担一半以上的情绪。',
+        '对白：短、有礼数、话里有话；称呼要符合身份关系，不要直呼其名。',
+        '节奏：舒缓，允许用一段景物铺陈换一个情绪的转折。',
+        '禁止：现代化比喻（"像电流一样"）、把爱意直接说白。'
+      ].join('\n')
     },
     {
       id: 'builtin-noir', name: '悬疑冷硬', builtin: true,
-      desc: '冷调、信息密度高、有悬念',
-      prompt: '文风：悬疑冷硬。叙述冷静克制，镜头感强，多用环境细节与时间点；'
-        + '每段留一个未解的钩子（一句没说完的话、一个不该出现的物件）。'
-        + '对白简洁、有试探性，双方都在隐藏信息。'
+      desc: '冷调、信息密度高、每段留钩子',
+      prompt: [
+        '视角：第三人称，冷静、抽离，像在复述一段记录。',
+        '句式：干脆利落，多用陈述句；避免形容词，用名词与动词推进。',
+        '信息：每一段至少给一个**具体事实**（时间、地点、物件、数字），'
+          + '并在结尾留一个未解的钩子：一句没说完的话、一个不该出现在那里的东西。',
+        '对白：简洁、有试探性，双方都在隐藏信息；用沉默和转移话题来表达回避。',
+        '氛围：低照度环境音（雨、钟表、远处的车），冷暖光对比。',
+        '节奏：紧，段落之间跳切，不做过渡性铺垫。',
+        '禁止：把悬念解释清楚、大段抒情、用巧合解决问题。'
+      ].join('\n')
     },
     {
       id: 'builtin-daily', name: '轻甜日常', builtin: true,
       desc: '生活流、松弛、小打小闹',
-      prompt: '文风：轻甜日常。以生活细节推进（吃什么、几点、谁忘了带伞），'
-        + '节奏松弛，允许玩笑与小小的拌嘴；情绪落点轻但有温度。'
-        + '避免大起大落与苦情桥段。'
+      prompt: [
+        '视角：第三人称，轻快，可以带一点点调侃的叙述口吻。',
+        '句式：口语化短句为主，允许语气词与省略句。',
+        '内容：以生活细节推进 —— 吃什么、几点、谁忘了带伞、谁把糖放多了。'
+          + '每一个节点都要有一件具体的、可执行的小事。',
+        '情绪：落点轻但有温度。允许玩笑、拌嘴、小小的得寸进尺，'
+          + '**不要**大起大落与苦情桥段。',
+        '对白：自然、有来有回，允许插科打诨；该认真的时候突然认真一句，效果最好。',
+        '节奏：松弛，允许写没有推进作用的可爱细节。',
+        '禁止：狗血、误会推动、突然的生死离别。'
+      ].join('\n')
     }
   ];
 
@@ -1112,8 +1150,8 @@
         panel.insertBefore(bgEl, panel.firstChild);
         var scrim = H.el('div');
         scrim.style.cssText = 'position:absolute; inset:0; z-index:0; pointer-events:none;'
-          + 'background:' + (o.bgScrim || 'linear-gradient(180deg, rgba(255,250,252,0.68) 0%,'
-            + ' rgba(255,247,251,0.80) 46%, rgba(248,246,255,0.90) 100%)') + ';';
+          + 'background:' + (o.bgScrim || 'linear-gradient(180deg, rgba(255,250,252,0.22) 0%,'
+            + ' rgba(255,247,251,0.38) 46%, rgba(248,246,255,0.56) 100%)') + ';';
         panel.insertBefore(scrim, bgEl.nextSibling);
         // 内容浮在背景之上
         Array.prototype.forEach.call(panel.children, function (ch) {
@@ -1347,8 +1385,12 @@
       var o = opts || {};
       var row = H.el('div', { class: 'hg-list-row' });
       row.style.cssText = 'display:flex; align-items:center; gap:11px; padding:11px 12px; border-radius:15px;'
-        + 'background:' + (o.bg || 'rgba(255,255,255,0.72)') + '; border:1px solid '
+        + 'background:' + (o.bg || 'rgba(255,255,255,0.86)') + '; border:1px solid '
         + (o.border || 'rgba(216,160,190,0.18)') + '; cursor:' + (o.onClick ? 'pointer' : 'default') + ';'
+        // v1.5.44：卡片改成"毛玻璃"。页面底图变清晰之后，卡片之间的缝隙能透出插画，
+        // 而卡片本身仍然够白够清楚 —— 这是"背景看得见 + 内容读得清"的关键。
+        + 'backdrop-filter:blur(14px) saturate(1.15); -webkit-backdrop-filter:blur(14px) saturate(1.15);'
+        + 'box-shadow:0 6px 18px rgba(150,120,150,0.08);'
         + 'transition:transform .16s ease, background .2s ease; margin-bottom:8px;';
       if (o.icon) {
         var ic = H.el('span');
@@ -1738,7 +1780,9 @@
         owned: [],            // [{goodsId, at, count}]
         listed: [],           // 反向模式：User 上架的自制道具
         /** Char 自动采购记录（反向模式） */
-        purchases: []
+        purchases: [],
+        custom: [],           // 自定义商品（自己生成 / 手动新增 / TA 上架）
+        hidden: []            // 被隐藏的内置商品 id
       },
 
       // —— 羁绊 ——
@@ -1892,11 +1936,40 @@
       var o = opts || {};
       var meId = o.meId || K.resolveMeId();
       var charId = o.charId || K.resolveCharId();
+      var changed = (U.int(K.meId, 0) !== (U.int(meId, 0) || 0)) || (U.int(K.charId, 0) !== (U.int(charId, 0) || 0));
       K.meId = U.int(meId, 0) || null;
       K.charId = U.int(charId, 0) || null;
       K.sessionId = o.sessionId || null;
       K.state = await K.load(K.charId, K.meId);
+      // 换角色 / 换面具时清掉**跨存档的进程内缓存**（v1.5.44）：
+      // 这些缓存不落库、也不带 charId/meId，换人之后必须丢弃，
+      // 否则会出现"新角色用着上一个角色的立绘反应 / 台词"这种串台。
+      if (changed) K._purgeCaches();
       return K.state;
+    },
+
+    /**
+     * 清掉所有"按关系缓存、但不带 charId/meId"的进程内状态。
+     * 换角色 / 换面具 / 清档时调用。
+     */
+    _purgeCaches: function () {
+      try { if (HG.Portraits) { HG.Portraits._reactCache = {}; } } catch (e) { }
+      try { if (HG.Gacha && HG.Gacha.UI) { HG.Gacha.UI._albumCache = null; } } catch (e) { }
+      try { if (HG.Story && HG.Story.UI) { HG.Story.UI._busy = false; } } catch (e) { }
+      try { if (HG.Quiet && HG.Quiet.UI) { HG.Quiet.UI._fallbackNoticed = false; } } catch (e) { }
+      try { K._sessCache = null; } catch (e) { }
+      return true;
+    },
+
+    /** 给外部（测试 / 诊断）看的隔离信息 */
+    isolationInfo: function () {
+      return {
+        key: K._sessionRow,
+        charId: K.charId,
+        meId: K.meId,
+        stateCharId: K.state ? K.state.charId : null,
+        stateMeId: K.state ? K.state.meId : null
+      };
     },
 
     /** 当前 User（面具）id：与项目全局 activeUserPersonaId 同源 */
@@ -1982,7 +2055,22 @@
           if (ls) raw = JSON.parse(ls);
         } catch (e) { raw = null; }
       }
+      // ★ 数据隔离硬校验（v1.5.44）：
+      // 存档键已经是 hg_state_<meId>_<charId> 双键，但为了**绝对不串台**，
+      // 这里再核对一次**存档原始内容里**自带的 charId / meId。
+      // 不一致（键被复用、备份被导到别的槽位、手改过 localStorage……）就直接丢弃重建，
+      // 宁可丢掉一份可疑的存档，也不能把一个角色的进度显示在另一个角色身上。
+      // 注意：只在这两个字段**确实存在**时才校验 —— 老存档若没带，就原样放行，不能误删用户数据。
+      var rawHasOwner = raw && (raw.charId !== undefined || raw.meId !== undefined);
+      if (rawHasOwner && (U.int(raw.charId, 0) !== U.int(charId, 0) || U.int(raw.meId, 0) !== U.int(meId, 0))) {
+        console.warn('[心动游戏] 存档与当前角色/面具不匹配，已按新档处理：key=' + key
+          + ' 存档内 charId=' + raw.charId + '/' + charId + ' meId=' + raw.meId + '/' + meId);
+        raw = null;
+        try { localStorage.removeItem(key); } catch (e) { }
+      }
       var st = K.normalize(raw, charId, meId);
+      st.charId = U.int(charId, 0);
+      st.meId = U.int(meId, 0);
       K._cancelPendingSave();      // 换 state：作废上一个 state 排队的写盘
       K._sessionRow = key;
       K._memCache = st;
@@ -2568,9 +2656,86 @@
     catalog: function () {
       var st = K.state;
       var custom = (st && st.overrides && st.overrides.shopItems) || null;
-      if (Array.isArray(custom) && custom.length) return custom.slice();
-      return defaultGoods();
+      var base = (Array.isArray(custom) && custom.length) ? custom.slice() : defaultGoods();
+      var hidden = (st && st.shop && st.shop.hidden) || [];
+      // v1.5.44：内置目录 + 自己生成/新增/TA 上架的商品，去掉被隐藏的
+      return base.filter(function (g) { return hidden.indexOf(g.id) < 0; }).concat(K.customGoods());
     },
+
+    /** 自定义商品（用户生成 / 手动新增 / TA 上架），统一放一处便于管理 */
+    customGoods: function () {
+      var st = K.state;
+      return (st && st.shop && Array.isArray(st.shop.custom)) ? st.shop.custom : [];
+    },
+
+    /** 上架一件商品；from = 'user' | 'char' | 'ai' */
+    addGoods: function (g) {
+      var st = K.state;
+      if (!st || !g) return null;
+      st.shop.custom = st.shop.custom || [];
+      var row = {
+        id: g.id || U.uid('gd'),
+        name: String(g.name || '').trim().slice(0, 20) || '无名之物',
+        desc: String(g.desc || '').trim().slice(0, 60),
+        price: Math.max(0, U.int(g.price, 60)),
+        category: g.category || 'letter',
+        icon: g.icon || 'gift',
+        from: g.from || 'user',
+        custom: true,
+        createdAt: Date.now()
+      };
+      st.shop.custom.unshift(row);
+      if (st.shop.custom.length > 60) st.shop.custom.length = 60;
+      K.save();
+      K.emit('shop', { added: row.id });
+      return row;
+    },
+
+    updateGoods: function (id, patch) {
+      var st = K.state;
+      if (!st) return false;
+      var list = K.customGoods();
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].id !== id) continue;
+        var p = patch || {};
+        if (p.name !== undefined) list[i].name = String(p.name).trim().slice(0, 20);
+        if (p.desc !== undefined) list[i].desc = String(p.desc).trim().slice(0, 60);
+        if (p.price !== undefined) list[i].price = Math.max(0, U.int(p.price, list[i].price));
+        if (p.category !== undefined) list[i].category = p.category;
+        K.save();
+        K.emit('shop', { updated: id });
+        return true;
+      }
+      return false;
+    },
+
+    removeGoods: function (id) {
+      var st = K.state;
+      if (!st || !Array.isArray(st.shop.custom)) return false;
+      var before = st.shop.custom.length;
+      st.shop.custom = st.shop.custom.filter(function (x) { return x.id !== id; });
+      K.save();
+      K.emit('shop', { removed: id });
+      return st.shop.custom.length !== before;
+    },
+
+    /** 内置商品只能隐藏（不能删），自己加的商品直接删 */
+    hideGoods: function (id, on) {
+      var st = K.state;
+      if (!st) return false;
+      st.shop.hidden = st.shop.hidden || [];
+      var i = st.shop.hidden.indexOf(id);
+      if (on && i < 0) st.shop.hidden.push(id);
+      if (!on && i >= 0) st.shop.hidden.splice(i, 1);
+      K.save();
+      return true;
+    },
+    isGoodsHidden: function (id) {
+      var st = K.state;
+      return !!st && (st.shop.hidden || []).indexOf(id) >= 0;
+    },
+    /** 内置目录（含被隐藏的），管理页要用 */
+    builtinGoods: function () { return defaultGoods(); },
 
     /** 反向模式：User 上架自制道具 */
     listGoods: function (item) {
@@ -3111,6 +3276,10 @@
         keywords: JSON.stringify(Array.isArray(keywords) ? keywords : []),
         timestamp: Date.now(),
         source: 'heartgame',
+        // 带上关系双键（v1.5.44）：主聊天按会话召回时还能再按角色/面具过滤，
+        // 不会把 A 角色的心动游戏记忆喂给 B 角色
+        charId: U.int(K.charId, 0),
+        meId: U.int(K.meId, 0),
         vector: null
       };
       var ok = await K._withTimeout(tbl.add(row), 4000, false);
