@@ -897,7 +897,7 @@
 
       if (!pool) {
         body.appendChild(H.empty('还没有卡池。点「新卡池」让 AI 按角色设定为你与TA生成一个主题池。', { icon: 'cards' }));
-        return H.sheet({ title: '抽卡工坊', subtitle: '心动卡池', icon: 'cards', height: '88%', content: body });
+        return H.sheet({ title: '抽卡工坊', subtitle: '心动卡池', icon: 'cards', height: '88%', slot: 'gacha', content: body });
       }
 
       // 主卡面（当期 UP 立绘切片）
@@ -999,6 +999,7 @@
         subtitle: pool.name + ' · 已抽 ' + rs.total + ' 次',
         icon: 'cards',
         height: '90%',
+        slot: 'gacha',
         content: body,
         buttons: [
           {
@@ -1270,6 +1271,7 @@
         subtitle: '点击卡面展开全屏动态卡面与独家私语',
         icon: 'book',
         height: '92%',
+        slot: 'gacha-album',
         content: body
       });
     },
@@ -1997,6 +1999,7 @@
         subtitle: pool.name + ' · 严格锁脸已开启',
         icon: 'camera',
         height: '72%',
+        slot: 'gacha-art',
         content: body
       });
 
@@ -2252,6 +2255,7 @@
         subtitle: '心动代币 · 仿制代金券',
         icon: 'wallet',
         height: '84%',
+        slot: 'gacha-wallet',
         content: body
       });
     }

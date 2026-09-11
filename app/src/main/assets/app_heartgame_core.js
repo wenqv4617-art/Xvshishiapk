@@ -670,18 +670,75 @@
 
     _layers: [],
 
-    /** 构建一个浮层容器 */
+    /** 正在淡出中的层（已从活动登记摘除、节点还没移除），closeAllLayers 也要能扫到 */
+    _fading: [],
+
+    /** 同名排他槽位：slot -> overlay。用于「同一个入口绝不叠层」 */
+    _slots: {},
+
+    /**
+     * 构建一个浮层容器
+     * opts.slot：同名排他槽位。带 slot 的浮层在创建前会**同步**关掉上一个同 slot 的层，
+     * 从根上杜绝「连点同一个入口叠出两层」。
+     * 注意：面板内部的父子层（例如后台管理里再开一个子弹窗）**不要**共用同一个 slot，
+     * 否则子层会把父层关掉。
+     */
     _layer: function (opts) {
       var o = opts || {};
+
+      if (o.slot) {
+        var prev = H._slots[o.slot];
+        if (prev) H._closeLayer(prev);
+      }
+
       var overlay = H.el('div', { class: 'hg-overlay ' + (o.class || '') });
       overlay.style.cssText = 'position:fixed; inset:0; z-index:' + (o.z || 100200) + ';'
         + 'display:flex; ' + (o.align || 'align-items:flex-end;') + ' justify-content:center;'
         + 'background:' + (o.dim || 'rgba(70,50,66,0.34)') + ';'
         + 'backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);'
         + 'opacity:0; transition:opacity .26s ease; padding:' + (o.pad || '0') + ';';
+      if (o.slot) {
+        overlay.__hgSlot = o.slot;
+        H._slots[o.slot] = overlay;
+      }
       H._layers.push(overlay);
       return overlay;
     },
+
+    /** 从活动层 / 淡出层 / 槽位登记里摘除（不碰节点） */
+    _untrack: function (l) {
+      if (!l) return;
+      var i = H._layers.indexOf(l);
+      if (i >= 0) H._layers.splice(i, 1);
+      var j = H._fading.indexOf(l);
+      if (j >= 0) H._fading.splice(j, 1);
+      if (l.__hgSlot && H._slots[l.__hgSlot] === l) H._slots[l.__hgSlot] = null;
+      l.__hgSlot = null;
+    },
+
+    /** 立刻关掉一个浮层（同步移除节点，不等 240ms 淡出） */
+    _closeLayer: function (l) {
+      if (!l) return;
+      H._untrack(l);
+      if (typeof l.__hgClose === 'function') { try { l.__hgClose(); return; } catch (e) { } }
+      if (l.parentNode) l.parentNode.removeChild(l);
+    },
+
+    /**
+     * 登记一个「自建浮层」（没走 H._layer、自己 append 到 body 的那种）：
+     * 主线 VN 舞台、静室都是这么来的。登记之后 closeAllLayers() 才关得掉它们
+     * ——这正是以前「有些弹窗不会自己关闭」的来源。
+     */
+    registerLayer: function (overlay, closeFn, slot) {
+      if (!overlay) return overlay;
+      if (slot) { overlay.__hgSlot = slot; H._slots[slot] = overlay; }
+      if (typeof closeFn === 'function') overlay.__hgClose = closeFn;
+      if (H._layers.indexOf(overlay) < 0) H._layers.push(overlay);
+      return overlay;
+    },
+
+    /** 反登记（自建浮层自己关闭时调用，避免登记表里留下死引用） */
+    forgetLayer: function (overlay) { H._untrack(overlay); },
 
     _show: function (overlay) {
       document.body.appendChild(overlay);
@@ -690,20 +747,45 @@
 
     _hide: function (overlay, cb) {
       overlay.style.opacity = '0';
+      // 同步摘除活动登记、转入「淡出中」：240ms 淡出窗口期内它已经不算「开着的层」了。
+      // 否则同名排他会误判「还开着」，closeAllLayers 也会漏掉正在淡出的那一层。
+      H._untrack(overlay);
+      if (H._fading.indexOf(overlay) < 0) H._fading.push(overlay);
       setTimeout(function () {
         if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-        var i = H._layers.indexOf(overlay);
-        if (i >= 0) H._layers.splice(i, 1);
+        var k = H._fading.indexOf(overlay);
+        if (k >= 0) H._fading.splice(k, 1);
         if (typeof cb === 'function') cb();
       }, 240);
     },
 
     /** 关闭全部浮层（页面退出时调用，防残留） */
     closeAllLayers: function () {
-      H._layers.slice().forEach(function (l) {
+      H._layers.concat(H._fading).forEach(function (l) {
+        H._untrack(l);
+        // 自建浮层（主线 VN / 静室）登记了关闭函数，必须走它 ——
+        // 只删节点会让它内部的计时器与资源释放逻辑全部落空。
+        if (typeof l.__hgClose === 'function') { try { l.__hgClose(); return; } catch (e) { } }
         if (l.parentNode) l.parentNode.removeChild(l);
       });
       H._layers = [];
+      H._fading = [];
+      H._slots = {};
+    },
+
+    /**
+     * 页面化路由钩子（v1.5.35）
+     * 装配层注册后，任务 / 商店 / 牵绊这类入口会渲染成 #heartgame-mount 内的
+     * **独立页面**而不是 body 级抽屉：点入口 = 换页，天然不会叠加，也彻底绕开 z-index 问题。
+     * present() 返回 true 表示已由页面接管，调用方不要再开抽屉。
+     */
+    pageRouter: null,
+
+    present: function (kind, arg) {
+      if (typeof H.pageRouter === 'function') {
+        try { if (H.pageRouter(kind, arg) === true) return true; } catch (e) { }
+      }
+      return false;
     },
 
     /**
@@ -722,7 +804,7 @@
       // z-index 必须高于 #app-window-container（项目里是 9999）——
       // 否则抽屉会被**不透明的应用窗口整个盖住**：动作明明执行成功、DOM 里也有面板，
       // 但用户什么都看不见，表现就是「点了没反应」。这是本轮真正的主因。
-      var overlay = H._layer({ z: o.z || 100200, align: o.full ? 'align-items:stretch;' : 'align-items:flex-end;' });
+      var overlay = H._layer({ z: o.z || 100200, slot: o.slot, align: o.full ? 'align-items:stretch;' : 'align-items:flex-end;' });
       var panel = H.el('div', { class: 'hg-sheet' });
       var maxH = o.height || (o.full ? '100%' : '86%');
       panel.style.cssText = 'position:relative; width:100%; max-width:' + (o.maxWidth || '520px') + ';'
@@ -849,7 +931,7 @@
       var accent = o.accent || '#D97FA8';
       var settle, done = false;
       var promise = new Promise(function (res) { settle = res; });
-      var overlay = H._layer({ z: o.z || 100400, align: 'align-items:center;', pad: '22px' });
+      var overlay = H._layer({ z: o.z || 100400, slot: o.slot, align: 'align-items:center;', pad: '22px' });
       var card = H.el('div', { class: 'hg-modal' });
       card.style.cssText = 'width:100%; max-width:330px; border-radius:24px; overflow:hidden; text-align:center;'
         + 'background:linear-gradient(165deg, rgba(255,255,255,0.99), rgba(255,247,251,0.97));'
@@ -910,7 +992,7 @@
       var o = (typeof opts === 'string') ? { message: opts } : (opts || {});
       return H.confirm({
         title: o.title, message: o.message, icon: o.icon, accent: o.accent, soft: o.soft, glow: o.glow,
-        okText: o.okText || '知道了', cancelText: o.cancelText || null, z: o.z
+        okText: o.okText || '知道了', cancelText: o.cancelText || null, z: o.z, slot: o.slot
       }).then(function () { });
     },
 
@@ -923,7 +1005,7 @@
       var accent = o.accent || '#D97FA8';
       var settle, done = false;
       var promise = new Promise(function (res) { settle = res; });
-      var overlay = H._layer({ z: 100400, align: 'align-items:center;', pad: '18px' });
+      var overlay = H._layer({ z: 100400, slot: o.slot, align: 'align-items:center;', pad: '18px' });
       var card = H.el('div');
       card.style.cssText = 'width:100%; max-width:' + (o.maxWidth || '340px') + '; border-radius:22px;'
         + 'background:linear-gradient(165deg, rgba(255,255,255,0.99), rgba(255,248,252,0.97));'

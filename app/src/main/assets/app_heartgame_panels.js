@@ -102,7 +102,19 @@
 
   var Tasks = {
 
+    /**
+     * 入口。
+     * v1.5.35：优先走页面化路由（装配层注册后，「每日任务」是 #heartgame-mount 内的
+     * 独立页面而不是底部抽屉）——点入口就是换页，天然不会叠层。
+     * 没有页面宿主时回落到抽屉，保证单测/降级路径依然可用。
+     */
     open: function () {
+      if (H.present('tasks')) return;
+      H.sheet(Tasks.build());
+    },
+
+    /** 面板内容（独立页面与抽屉共用同一份配置，避免两套 UI 走样） */
+    build: function () {
       var st = K.state;
       K.rollQuests();
       var body = H.el('div');
@@ -170,18 +182,19 @@
         body.appendChild(Tasks.buildDynamicList());
       }
 
-      H.sheet({
+      return {
         title: '任务',
         subtitle: reverse ? '你会收到 TA 的游戏行为汇报' : '完成委托，推进心动',
         icon: 'task',
         height: '92%',
+        slot: 'tasks',
         content: body,
         buttons: [{
           text: reverse ? '发布新任务' : '让 TA 派一个委托',
           icon: 'plus', kind: 'primary', keepOpen: true,
           onClick: function () { reverse ? Tasks.openPublishForm() : Tasks.requestDynamic(); }
         }]
-      });
+      };
     },
 
     /** 攻略模式：Char 抛出的专属日常委托 */
@@ -406,7 +419,14 @@
 
   var Shop = {
 
+    /** 入口：优先页面化路由（见 Tasks.open 的说明） */
     open: function (category) {
+      if (H.present('shop', category || 'all')) return;
+      H.sheet(Shop.build(category));
+    },
+
+    /** 面板内容（独立页面与抽屉共用） */
+    build: function (category) {
       var st = K.state;
       var reverse = K.isReverse();
       var body = H.el('div');
@@ -527,17 +547,18 @@
         body.appendChild(cell);
       });
 
-      H.sheet({
+      return {
         title: reverse ? '私享杂货商' : '心动商店',
         subtitle: reverse ? '你上架 · TA 采购' : '为 TA 挑一件礼物',
         icon: 'shop',
         height: '92%',
+        slot: 'shop',
         content: body,
         buttons: reverse ? [{
           text: '上架新商品', icon: 'plus', kind: 'primary', keepOpen: true,
           onClick: function () { Shop.openListingForm(); }
         }] : null
-      });
+      };
     },
 
     /** 购买（攻略模式） */
@@ -674,7 +695,14 @@
 
   var Bond = {
 
+    /** 入口：优先页面化路由（见 Tasks.open 的说明） */
     open: function (tab) {
+      if (H.present('bond', tab || 'ladder')) return;
+      H.sheet(Bond.build(tab));
+    },
+
+    /** 面板内容（独立页面与抽屉共用） */
+    build: function (tab) {
       var st = K.state;
       var body = H.el('div');
       var cur = tab || 'ladder';
@@ -684,7 +712,7 @@
         { key: 'timeline', label: '时空足迹', icon: 'clock' },
         { key: 'memory', label: '记忆回廊', icon: 'book' },
         { key: 'rights', label: '特权与称号', icon: 'key' }
-      ], cur, function (k) { H.closeAllLayers(); Bond.open(k); });
+      ], cur, function (k) { Bond.open(k); });
       body.appendChild(tabs);
       body.appendChild(H.divider({ margin: '12px 0' }));
 
@@ -693,13 +721,14 @@
       else if (cur === 'memory') Bond.renderMemories(body);
       else Bond.renderRights(body);
 
-      H.sheet({
+      return {
         title: '牵绊',
         subtitle: '阶梯好感 · 足迹 · 记忆',
         icon: 'bond',
         height: '92%',
+        slot: 'bond',
         content: body
-      });
+      };
     },
 
     /** 阶梯面板 */
@@ -1072,6 +1101,19 @@
     Tasks: Tasks,
     Shop: Shop,
     Bond: Bond,
+
+    /**
+     * 页面化视图注册表（v1.5.35）：
+     * 装配层的看板视图路由按 App.view 到这里取「这一页该怎么画」。
+     * 每个 builder 返回与 H.sheet 同形的配置（title / subtitle / icon / content / buttons），
+     * 装配层把它渲染成 #heartgame-mount 内的独立页面。
+     */
+    pages: {
+      tasks: function () { return Tasks.build(); },
+      shop: function (arg) { return Shop.build(arg || 'all'); },
+      bond: function (arg) { return Bond.build(arg || 'ladder'); }
+    },
+
     openTasks: function () { Tasks.open(); },
     openShop: function () { Shop.open(); },
     openBond: function (tab) { Bond.open(tab); }

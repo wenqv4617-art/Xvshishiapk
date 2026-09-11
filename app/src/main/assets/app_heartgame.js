@@ -84,7 +84,10 @@
       if (closeBtn) {
         // 关闭按钮直接接线全局 closeApp('heartgame')；
         // 资源释放由 bindLifecycle() 里包住的 closeApp 与 MutationObserver 兜底完成。
+        // v1.5.35：在独立页面里，这颗左上角箭头先**回看板**（否则用户以为它是"返回"，
+        // 一点却把整个应用关掉了）；只有已经在看板时才真的退出。
         closeBtn.onclick = function () {
+          if (App.view !== 'lobby') { App.backToLobby(); return; }
           App.teardown();
           if (typeof closeApp === 'function') closeApp('heartgame');
         };
@@ -102,6 +105,10 @@
 
       App.bindLifecycle();
       App.bindActions();
+
+      // 每次从桌面进来都回到主界面看板（上次可能停在任务/商店页）
+      App.view = 'lobby';
+      App.viewArg = null;
 
       // 载入状态
       body.innerHTML = '';
@@ -150,8 +157,10 @@
     diagEnabled: function () {
       try {
         var v = localStorage.getItem(App.DIAG_KEY);
-        return v === null ? true : v === '1';   // 默认开：等这次问题解决后可关掉
-      } catch (e) { return true; }
+        // v1.5.35：排查用的诊断条**默认关闭**了（「点入口没反应」的根因已修复并验证）。
+        // 需要时在控制台执行 heartGameApp.setDiag(true) 即可重新打开。
+        return v === '1';
+      } catch (e) { return false; }
     },
 
     setDiag: function (on) {
@@ -345,6 +354,8 @@
     /** 释放一切副作用：Live2D 实例、资源池、定时器、K 的事件订阅、浮层 */
     teardown: function () {
       App.stopOnlineTracking();
+      App.view = 'lobby';
+      App.viewArg = null;
       if (HG && HG.Portraits) { try { HG.Portraits.teardown(); } catch (e) { } }
       if (HG && HG.H) { try { HG.H.closeAllLayers(); } catch (e) { } }
       if (HG && HG.U) { try { HG.U.clearTimers(); } catch (e) { } }
@@ -392,12 +403,125 @@
       }
     },
 
+    /**
+     * 当前看板视图（v1.5.35）
+     *   'lobby'                                  — 主界面看板（立绘 + 热区 + 入口）
+     *   'tasks' / 'shop' / 'bond'                — 看板内的独立页面（不再是 body 级抽屉）
+     * 为什么改成页面：抽屉是**覆盖式浮层**，连点两下会叠两层，而且层级一旦压不过应用窗口
+     * 就整片看不见。页面是「点入口 = 换页」，两个问题一起消失。
+     */
+    view: 'lobby',
+    /** 当前页面的参数（例如商店的分类、牵绊的页签） */
+    viewArg: null,
+
+    /** 切换看板视图并重绘（幂等：重复点同一个入口只是重绘同一页） */
+    setView: function (v, arg) {
+      App.view = v || 'lobby';
+      App.viewArg = (arg === undefined) ? null : arg;
+      return App.render();
+    },
+
+    /** 返回主界面看板 */
+    backToLobby: function () { return App.setView('lobby'); },
+
+    /**
+     * 渲染一个看板内独立页面（v1.5.35）
+     * 直接画进 #heartgame-mount：顶部「返回 + 标题」、中部可滚动内容、底部动作条。
+     * 页面不挂立绘、也**不开任何 body 级浮层** —— 所以「连点叠层」与「被应用窗口盖住」
+     * 这两个老问题在页面里根本无从发生。
+     */
+    _renderPage: function (body) {
+      var H = HG.H, K = HG.K, U = HG.U;
+      var spec = HG.Panels.pages[App.view](App.viewArg) || {};
+      body.innerHTML = '';
+      var root = H.el('div', { id: 'heartgame-mount', class: 'hg-page hg-rise' });
+      root.style.cssText = 'position:relative; width:100%; height:100%; min-height:560px;'
+        + 'display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;'
+        + 'background:linear-gradient(170deg,#FFF7FB 0%,#FBF4FA 52%,#F4F2FB 100%);';
+      App._dom = { root: root };
+
+      // ---------- 顶栏：返回 + 标题 ----------
+      var top = H.el('div');
+      top.style.cssText = 'position:relative; z-index:10; flex-shrink:0; display:flex; align-items:center; gap:9px;'
+        + 'padding:10px 13px 9px; border-bottom:1px solid rgba(216,160,190,0.22);'
+        + 'background:linear-gradient(180deg, rgba(255,255,255,0.94), rgba(255,247,251,0.78));';
+      // 返回按钮做成带文字的胶囊：应用窗口顶部已经有一颗裸箭头（那是"退出应用"），
+      // 这里再放一颗裸箭头会让人分不清哪颗是哪颗。
+      var back = H.el('div');
+      back.style.cssText = 'display:inline-flex; align-items:center; gap:3px; padding:6px 11px 6px 8px;'
+        + 'border-radius:12px; cursor:pointer; flex-shrink:0;'
+        + 'background:rgba(255,255,255,0.80); border:1px solid rgba(216,160,190,0.34); color:#8f6a80;'
+        + 'font-size:11px; font-weight:800;';
+      back.innerHTML = '<span style="display:flex; width:14px; height:14px;">'
+        + H.icon('back', 14, { strokeWidth: 2.4 }) + '</span><span>返回</span>';
+      App.act(back, 'page-back');
+      top.appendChild(back);
+
+      var ic = H.el('span');
+      ic.style.cssText = 'width:30px; height:30px; border-radius:10px; display:flex; align-items:center;'
+        + 'justify-content:center; flex-shrink:0; background:#FFEBF3; color:#D97FA8;';
+      ic.innerHTML = H.icon(spec.icon || 'heart', 16, { strokeWidth: 1.9 });
+      top.appendChild(ic);
+
+      var tt = H.el('div');
+      tt.style.cssText = 'flex:1; min-width:0;';
+      tt.innerHTML = '<div style="font-size:14.5px; font-weight:800; color:#553f4c; letter-spacing:.02em;">'
+        + U.esc(spec.title || '') + '</div>'
+        + (spec.subtitle ? '<div style="font-size:10.5px; color:#a99fae; margin-top:2px;">'
+          + U.esc(spec.subtitle) + '</div>' : '');
+      top.appendChild(tt);
+      root.appendChild(top);
+
+      // ---------- 内容区（可滚动） ----------
+      var content = H.el('div');
+      content.style.cssText = 'position:relative; z-index:2; flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch;'
+        + 'padding:14px 16px 18px; overscroll-behavior:contain;';
+      if (spec.content) content.appendChild(spec.content);
+      root.appendChild(content);
+
+      // ---------- 底部动作条（与抽屉的按钮条同形） ----------
+      var buttons = spec.buttons || [];
+      if (buttons.length) {
+        var bar = H.el('div');
+        bar.style.cssText = 'position:relative; z-index:10; flex-shrink:0; display:flex; gap:9px;'
+          + 'padding:11px 16px calc(10px + env(safe-area-inset-bottom, 0px));'
+          + 'border-top:1px solid rgba(216,160,190,0.18); background:rgba(255,255,255,0.82);';
+        buttons.forEach(function (cfg) {
+          var b = H.button(cfg.text, {
+            kind: cfg.kind || 'primary', block: true, icon: cfg.icon,
+            color: cfg.color, color2: cfg.color2, soft: cfg.soft, glow: cfg.glow
+          });
+          b.onclick = function () {
+            if (typeof cfg.onClick === 'function') {
+              if (cfg.onClick(null) === false) return;   // 校验失败：保持当前页
+            }
+            // keepOpen 的按钮自己负责后续重绘（例如「让 TA 派一个委托」完成后自己重开面板）
+            if (cfg.keepOpen !== true) App.render();
+          };
+          bar.appendChild(b);
+        });
+        root.appendChild(bar);
+      }
+
+      body.appendChild(root);
+      App.renderDiag();
+    },
+
     _renderOnce: async function () {
       var body = document.getElementById('heartgame-body');
       if (!body) return;
       var H = HG.H, K = HG.K, U = HG.U, C = HG.C;
       // 防御：state 未绑定完成时直接跳过（boot 是异步的，期间可能有并发重绘请求）
       if (!K.state) return;
+
+      // ---------- 视图路由：独立页面分支 ----------
+      // 页面只需要 state，不需要读档案（省掉两次带超时的档案读取）
+      if (App.view !== 'lobby' && HG.Panels && HG.Panels.pages && HG.Panels.pages[App.view]) {
+        App._renderPage(body);
+        return;
+      }
+      App.view = 'lobby';
+
       // 档案读取一律带超时兜底：任何一次底层存储挂起都不允许把整个看板卡死
       var profile = await HG.K.readGuarded(function () { return K.charProfile(); }, 6000,
         { id: K.charId, name: 'TA', avatar: '', persona: '', remark: '', raw: null });
@@ -417,27 +541,34 @@
       // ---------- 舞台（立绘 + 热区） ----------
       var stage = H.el('div', { class: 'hg-lobby-stage' });
       stage.style.cssText = 'position:absolute; inset:0; overflow:hidden;';
-      // 背景层
-      // 背景层：**主页刻意不铺场景插画** —— 看板已经有立绘，
-      // 再叠一张写实场景会喧宾夺主（画面里会出现两个视觉中心）。
-      // 场景插画只服务于 VN 剧情舞台与静室（那里没有立绘抢焦点）。
-      var bgLayer = H.el('div');
+      // 背景层（v1.5.35 重做）
+      // 以前这里把「内置场景」整个排除掉了，于是背景抽屉里**选内置场景 → 主页不铺图**，
+      // 用户看到的就是「背景点击后应用不上去」。现在只要用户**显式选过**背景就铺，
+      // 内置场景同样算数 —— 立绘是抠过图的透明底，场景放后面不会互相打架。
+      // 没选过（currentBackgroundId 为空）时仍然用原来的流光渐变底，保持默认观感不变。
+      var bgLayer = H.el('div', { id: 'hg-lobby-bg' });
       bgLayer.style.cssText = 'position:absolute; inset:0; transition:opacity .5s ease;'
         + 'background-size:cover; background-position:center;';
-      var userBg = K.currentBackground();
-      var bgIsBuiltin = !!(userBg && userBg.builtin);
-      if (userBg && userBg.src && !bgIsBuiltin) {
+      var bgId = (K.state.assets && K.state.assets.currentBackgroundId) || null;
+      var userBg = bgId ? K.currentBackground() : null;
+      var hasScene = !!(userBg && userBg.src);
+      if (hasScene) {
         bgLayer.style.backgroundImage = 'url(' + userBg.src + ')';
         bgLayer.style.opacity = '.92';
       } else {
         bgLayer.style.backgroundImage = 'linear-gradient(170deg,#FFF3F8 0%,#F6F1FB 48%,#EFF3FB 100%)';
       }
       stage.appendChild(bgLayer);
-      // 氛围光
+      // 氛围光 / 压暗蒙版：铺了场景图时补一层很淡的暗角，
+      // 保证立绘依然是画面里唯一的视觉中心（蒙版在立绘**下面**，不会把人物压灰）。
       var aura = H.el('div');
       aura.style.cssText = 'position:absolute; inset:0; pointer-events:none;'
         + 'background:radial-gradient(circle at 50% 30%, rgba(255,255,255,0.55) 0%, rgba(255,255,255,0) 56%),'
-        + 'linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0) 22%, rgba(255,247,251,0.92) 100%);';
+        + (hasScene
+          ? 'linear-gradient(180deg, rgba(255,247,251,0.34) 0%, rgba(255,247,251,0.06) 26%,'
+            + ' rgba(255,247,251,0.42) 74%, rgba(250,246,252,0.90) 100%),'
+            + 'linear-gradient(180deg, rgba(255,247,251,0.10), rgba(60,40,70,0.22));'
+          : 'linear-gradient(180deg, rgba(255,255,255,0.30) 0%, rgba(255,255,255,0) 22%, rgba(255,247,251,0.92) 100%);');
       stage.appendChild(aura);
       // 立绘挂载点
       var portraitHost = H.el('div', { id: 'hg-portrait-host' });
@@ -448,8 +579,9 @@
       App._dom.portraitHost = portraitHost;
 
       // 气泡（戳戳反馈）
+      // 位置从 16%（压在脸上）挪到 56%：立绘是 2:3 竖构图，中下部才是"说话的位置"。
       var bubbleHost = H.el('div', { id: 'hg-touch-bubble' });
-      bubbleHost.style.cssText = 'position:absolute; left:16px; right:16px; top:16%; z-index:8;'
+      bubbleHost.style.cssText = 'position:absolute; left:16px; right:16px; top:56%; z-index:8;'
         + 'display:flex; justify-content:center; pointer-events:none; opacity:0; transition:opacity .3s ease;';
       root.appendChild(bubbleHost);
       App._dom.bubbleHost = bubbleHost;
@@ -945,24 +1077,30 @@
       if (res.gated) H.toast('经验槽已满，去牵绊面板完成晋阶任务');
     },
 
-    /** 戳戳气泡 */
+    /**
+     * 戳戳气泡（v1.5.35 重做）
+     * 以前是一张带渐变底 + 边框 + 阴影的卡片，压在立绘脸上；用户要求「只有文字、位置偏下」。
+     * 现在：无底、无边框、无阴影，只靠文字投影保证可读性；位置挪到立绘中下部。
+     */
     showTouchBubble: function (text, profile) {
       var H = HG.H, U = HG.U;
       var host = App._dom && App._dom.bubbleHost;
       if (!host) return;
       host.innerHTML = '';
       var bubble = H.el('div');
-      bubble.style.cssText = 'position:relative; max-width:86%; padding:11px 14px; border-radius:18px 18px 18px 5px;'
-        + 'background:linear-gradient(150deg, rgba(255,255,255,0.97), rgba(255,246,250,0.92));'
-        + 'border:1px solid rgba(216,160,190,0.32); border-left:3px solid #D97FA8;'
-        + 'box-shadow:0 10px 28px rgba(150,120,150,0.18);'
-        + 'font-size:12.4px; line-height:1.8; color:#5c4450;'
-        + 'backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);';
+      bubble.style.cssText = 'position:relative; max-width:88%; text-align:center;'
+        + 'background:none; border:none; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none;'
+        + 'font-size:13.4px; line-height:1.86; font-weight:600; color:#4a4050;'
+        // 可读性靠文字投影而不是底板：先在字外围铺一圈近白柔光（暗背景上不糊），
+        // 再给一点极淡的深色投影压住浅色背景（浅背景上不飘）。
+        + 'text-shadow:0 1px 6px rgba(255,255,255,0.98), 0 0 18px rgba(255,247,251,0.95),'
+        + ' 0 2px 12px rgba(0,0,0,0.10);';
       var who = H.el('div');
-      who.style.cssText = 'display:flex; align-items:center; gap:5px; margin-bottom:5px;';
-      who.innerHTML = '<span style="width:13px; height:13px; color:#D97FA8; display:inline-flex;">'
-        + H.icon('heart', 13, { strokeWidth: 2 }) + '</span>'
-        + '<span style="font-size:9.8px; font-weight:800; color:#B0728F;">' + U.esc(profile.name) + '</span>';
+      who.style.cssText = 'display:flex; align-items:center; justify-content:center; gap:5px; margin-bottom:6px;'
+        + 'font-size:10.4px; font-weight:800; color:#B0728F; letter-spacing:.06em;';
+      who.innerHTML = '<span style="width:12px; height:12px; display:inline-flex;">'
+        + H.icon('heart', 12, { strokeWidth: 2 }) + '</span>'
+        + '<span>' + U.esc(profile.name) + '</span>';
       bubble.appendChild(who);
       var t = H.el('div');
       t.textContent = text || '';
@@ -970,9 +1108,10 @@
       host.appendChild(bubble);
       host.style.opacity = '1';
       if (App._bubbleTimer) clearTimeout(App._bubbleTimer);
+      // 用户读一句 20~38 字的话需要时间，5.2 秒太赶
       App._bubbleTimer = setTimeout(function () {
         host.style.opacity = '0';
-      }, 5200);
+      }, 7600);
     },
 
     // ------------------------------------------------------------------
@@ -1047,6 +1186,7 @@
         subtitle: '心动游戏的数据按 角色 × 面具 双键隔离',
         icon: 'mask',
         height: '88%',
+        slot: 'char-switcher',
         content: body
       });
     },
@@ -1082,7 +1222,10 @@
         body.appendChild(row);
       });
 
-      H.sheet({ title: '心情指数', subtitle: '你为 TA 设定的心境', icon: 'smile', height: '76%', content: body });
+      H.sheet({
+        title: '心情指数', subtitle: '你为 TA 设定的心境', icon: 'smile', height: '76%',
+        slot: 'mood-picker', content: body
+      });
     },
 
     /** 平铺式背景切换抽屉 */
@@ -1149,6 +1292,7 @@
         subtitle: '主页看板与 VN 剧情引擎共用这套场景',
         icon: 'bg',
         height: '80%',
+        slot: 'bg-picker',
         content: body,
         buttons: [
           {
@@ -1288,6 +1432,7 @@
   //     每个动作都是「打开某个面板」这一类单一职责，便于排障与单测。
   // ==========================================================================
   App.ACTIONS = {
+    'page-back':    function () { App.backToLobby(); },
     'rail-task':    function () { HG.Panels.openTasks(); },
     'rail-shop':    function () { HG.Panels.openShop(); },
     'rail-bond':    function () { HG.Panels.openBond(); },
@@ -1315,5 +1460,16 @@
     },
     'aff-mood':     function () { App.openMoodPicker(); },
     'aff-goto':     function () { HG.Panels.openBond('ladder'); }
+  };
+
+  // ==========================================================================
+  //  4. 看板内视图路由（v1.5.35）
+  //     注册之后，任务 / 商店 / 牵绊三个入口不再开 body 级抽屉，而是在
+  //     #heartgame-mount 里换一页 —— 从根上解决「连点叠两层」与「层级被压住看不见」。
+  // ==========================================================================
+  HG.H.pageRouter = function (kind, arg) {
+    if (!HG.Panels || !HG.Panels.pages || typeof HG.Panels.pages[kind] !== 'function') return false;
+    App.setView(kind, arg);
+    return true;
   };
 })();

@@ -1058,6 +1058,7 @@
         subtitle: '多套服装 / 形态轮换 · Live2D 与静态立绘混用',
         icon: 'portrait',
         height: '88%',
+        slot: 'portrait-manager',
         content: body,
         buttons: [
           {
@@ -1373,6 +1374,7 @@
         subtitle: '供主页看板与 VN 剧情引擎调用',
         icon: 'bg',
         height: '86%',
+        slot: 'portrait-bg-manager',
         content: body,
         buttons: [{
           text: '上传背景', icon: 'upload', kind: 'primary',
@@ -1744,6 +1746,7 @@
         subtitle: '世界线 · 身份字段 · 记忆格式化',
         icon: 'admin',
         height: '92%',
+        slot: 'portrait-admin',
         content: body
       });
     },

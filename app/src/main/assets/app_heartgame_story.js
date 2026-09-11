@@ -703,17 +703,31 @@
       return stage;
     },
 
-    /** 设置背景（图片优先，其次按 bg 关键词给渐变色） */
+    /** 设置背景（用户自定义图 > 内置场景插画 > 关键词渐变） */
     setBackground: async function (bgKey) {
       var layer = Stage._bgLayer;
       if (!layer) return;
       var custom = K.currentBackground();
-      if (custom && custom.src && (!bgKey || custom.scene === bgKey)) {
+      var picked = (K.state && K.state.assets) ? K.state.assets.currentBackgroundId : null;
+
+      // ① 用户自己上传并选中的背景优先（内置素材不算「用户指定」，否则会把剧情场景顶掉）
+      if (picked && custom && custom.src && !custom.builtin) {
         layer.style.backgroundImage = 'url(' + custom.src + ')';
         layer.style.backgroundSize = 'cover';
         layer.style.backgroundPosition = 'center';
         return;
       }
+
+      // ② 内置场景插画：按节点 bg 关键词映射（以前这里完全没接入这三张图）
+      var art = STAGE_SCENE_ART[bgKey];
+      if (art) {
+        layer.style.backgroundImage = 'url(' + art + ')';
+        layer.style.backgroundSize = 'cover';
+        layer.style.backgroundPosition = 'center';
+        return;
+      }
+
+      // ③ 兜底：关键词渐变
       var GRADS = {
         '雨天': 'linear-gradient(170deg,#3a4553 0%,#55606e 50%,#2b333d 100%)',
         '卧室': 'linear-gradient(170deg,#3b2f3d 0%,#6b5566 50%,#2a2130 100%)',
@@ -726,12 +740,6 @@
         '车内': 'linear-gradient(170deg,#25232c 0%,#454257 52%,#17161d 100%)'
       };
       layer.style.backgroundImage = GRADS[bgKey] || GRADS['卧室'];
-      // 有自定义背景时优先使用
-      if (custom && custom.src) {
-        layer.style.backgroundImage = 'url(' + custom.src + ')';
-        layer.style.backgroundSize = 'cover';
-        layer.style.backgroundPosition = 'center';
-      }
     },
 
     /** 立绘：切换表情 / 动作 */
@@ -754,6 +762,43 @@
   // ==========================================================================
   //  5. 主界面：篇章选择 / 剧情播放 / 分支树
   // ==========================================================================
+
+  /**
+   * 内置场景插画（v1.5.35）
+   * 以前 VN 舞台只认「9 个关键词渐变」，这三张真正的场景图从来没被用上。
+   * 现在按节点 bg 关键词映射过去：有图用图、没图回落渐变。
+   */
+  var STAGE_SCENE_ART = {
+    '卧室': 'images/heartgame/stage/bg-night.png',
+    '深夜': 'images/heartgame/stage/bg-night.png',
+    '房间': 'images/heartgame/stage/bg-night.png',
+    '咖啡店': 'images/heartgame/stage/bg-night.png',
+    '雨天': 'images/heartgame/stage/bg-rain.png',
+    '雨夜': 'images/heartgame/stage/bg-rain.png',
+    '街道': 'images/heartgame/stage/bg-rain.png',
+    '车内': 'images/heartgame/stage/bg-rain.png',
+    '黄昏': 'images/heartgame/stage/bg-dusk.png',
+    '露台': 'images/heartgame/stage/bg-dusk.png',
+    '天台': 'images/heartgame/stage/bg-dusk.png',
+    '校园': 'images/heartgame/stage/bg-dusk.png',
+    '海边': 'images/heartgame/stage/bg-dusk.png'
+  };
+
+  /**
+   * 退出主线后把主页立绘重新挂上（v1.5.35）
+   * 主线与主页**共用同一个 Portraits 单例**：进主线时 Stage.mount() 已经销毁了主页的
+   * renderer 与资源池，退出时如果没人复挂，回到看板就只剩一片空舞台。
+   * 只在心动游戏窗口仍然打开时复挂 —— 否则就是「关应用时反而把界面重新画出来」。
+   */
+  function remountLobbyPortrait() {
+    try {
+      var win = document.getElementById('win-heartgame');
+      if (!win || !win.classList.contains('active')) return;
+      if (window.heartGameApp && typeof window.heartGameApp.render === 'function') {
+        window.heartGameApp.render();
+      }
+    } catch (e) { }
+  }
 
   var UI = {
     _arc: null,
@@ -846,6 +891,7 @@
         subtitle: '多篇章并行 · 存档点 · 分支回溯',
         icon: 'book',
         height: '90%',
+        slot: 'story',
         content: body,
         buttons: [{
           text: 'AI 写一个新篇章', icon: 'sparkle', kind: 'primary', keepOpen: true,
@@ -930,12 +976,23 @@
       optsHost.style.cssText = 'display:flex; flex-direction:column; gap:8px; margin-top:11px;';
 
       var exit = function () {
+        if (exit._closed) return;      // 关闭按钮与 closeAllLayers 可能同时来，防重入
+        exit._closed = true;
         overlay.style.opacity = '0';
+        // 自建浮层从登记表里摘掉，避免留下死引用
+        if (HG.H && HG.H.forgetLayer) { try { HG.H.forgetLayer(overlay); } catch (e) { } }
         setTimeout(function () {
           if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
-          if (HG.Portraits) HG.Portraits.teardown();
+          if (HG.Portraits) { try { HG.Portraits.teardown(); } catch (e) { } }
+          // 复挂主页立绘：不做这一步，"从主线返回后看板立绘消失"就会一直复现
+          remountLobbyPortrait();
         }, 300);
       };
+
+      // 这个 overlay 是**自建**的（不走 H._layer），必须登记进浮层体系：
+      // 否则 H.closeAllLayers() 根本关不掉它 —— 用户反馈的「有些弹窗不会自己关闭」里，
+      // 主线就是最典型的一个。
+      if (HG.H && HG.H.registerLayer) HG.H.registerLayer(overlay, function () { exit(); }, 'story-play');
 
       // 点击叙事窗推进
       winCard.onclick = function (e) {
@@ -1425,6 +1482,7 @@
         subtitle: a.title,
         icon: 'branch',
         height: '92%',
+        slot: 'story-tree',
         content: body,
         buttons: [{
           text: '回到这一章', icon: 'play', kind: 'primary',

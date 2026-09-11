@@ -147,15 +147,57 @@
   //  2. 静室主界面
   // ==========================================================================
 
+  /**
+   * 静室场景 → 素材的**显式映射**（v1.5.35）
+   * 以前这里靠 `背景.scene === 场景.bg` 字符串全等来匹配，而内置背景的 scene 只有
+   * 「卧室 / 雨天 / 黄昏」，静室场景却是「卧室 / 雨天 / 露台 / 咖啡店 / 车内」——
+   * 后三个永远匹配不上，用户看到的就是「切了场景背景图不生效」。
+   * 现在按场景 id 直接映射，不再依赖字符串相等。
+   */
+  var QUIET_SCENE_ART = {
+    default: 'images/heartgame/stage/bg-night.png',   // 深夜房间
+    rain: 'images/heartgame/stage/bg-rain.png',       // 雨夜窗边
+    rooftop: 'images/heartgame/stage/bg-dusk.png',    // 天台的风（黄昏天台）
+    cafe: 'images/heartgame/stage/bg-night.png',      // 打烊的咖啡店
+    car: 'images/heartgame/stage/bg-night.png'        // 夜里的车内
+  };
+
   var UI = {
     _overlay: null,
     _busy: false,
     _alive: false,
     _scrollHost: null,
 
-    /** 打开静室 */
-    open: async function () {
+    /**
+     * 当前静室场景该用哪张图（v1.5.35）
+     * 优先级：用户手动选过的**自定义**背景 > 内置场景插画。
+     * 内置背景不算「用户指定」，否则用户在背景抽屉里选过一次内置图，
+     * 静室切场景就再也不生效了 —— 那正是这次的 bug。
+     */
+    sceneArt: function (sceneId) {
+      try {
+        var picked = (K.state && K.state.assets) ? K.state.assets.currentBackgroundId : null;
+        var custom = K.currentBackground();
+        if (picked && custom && custom.src && !custom.builtin) return custom.src;
+      } catch (e) { }
+      return QUIET_SCENE_ART[sceneId] || QUIET_SCENE_ART.default;
+    },
+
+    /** 换场景时把背景层换掉（不再依赖 scene 字符串相等） */
+    applySceneArt: function () {
+      if (!UI._bg) return;
       var st = K.state;
+      var src = UI.sceneArt(st.quiet.sceneId);
+      if (src) {
+        UI._bg.style.backgroundImage = 'url(' + src + ')';
+        UI._bg.style.opacity = '.42';
+      } else {
+        UI._bg.style.opacity = '.18';
+      }
+    },
+
+    /** 打开静室 */
+    open: async function () {      var st = K.state;
       if (!st) { H.toast('状态还没准备好，稍后再试'); return; }
       // 已打开就直接复用，避免叠出两层静室
       if (UI._overlay && UI._overlay.parentNode) return;
@@ -172,14 +214,18 @@
       document.body.appendChild(overlay);
       UI._overlay = overlay;
       UI._alive = true;
+      // 自建 overlay 登记进浮层体系：closeAllLayers() 才关得掉它
+      // （「有些弹窗不会自己关闭」的另一半来源）
+      if (H && H.registerLayer) H.registerLayer(overlay, function () { UI.close(); }, 'quiet');
       requestAnimationFrame(function () { overlay.style.opacity = '1'; });
 
       // 背景层
+      // 场景图按**当前静室场景**取（以前这里拿的是全局背景，和静室场景根本没关系，
+      // 所以「切场景背景不生效」从一开始就注定）。用户在「切换背景」里选过的自定义图优先。
       var bg = H.el('div');
       bg.style.cssText = 'position:absolute; inset:0; opacity:.42; transition:opacity .6s ease; background-size:cover;'
         + 'background-position:center;';
-      var custom = K.currentBackground();
-      if (custom && custom.src) bg.style.backgroundImage = 'url(' + custom.src + ')';
+      bg.style.backgroundImage = 'url(' + UI.sceneArt(st.quiet.sceneId) + ')';
       overlay.appendChild(bg);
       UI._bg = bg;
 
@@ -225,13 +271,15 @@
           K.pushQuietSystem('*你们换了个地方：' + s.name + ' —— ' + s.desc + '*', 'system');
           renderSceneLabel();
           renderThread();
-          var cbg = K.currentBackground();
-          if (cbg && cbg.scene === s.bg) {
-            UI._bg.style.backgroundImage = 'url(' + cbg.src + ')';
-            UI._bg.style.opacity = '.42';
-          } else {
-            UI._bg.style.opacity = '.18';
-          }
+          UI.applySceneArt();
+          // 场景 chip 的高亮也要跟着走（以前只换了图，chip 还是旧的选中态）
+          Array.prototype.forEach.call(sceneBar.children, function (c, i) {
+            var on = Prompt.SCENES[i] && Prompt.SCENES[i].id === st.quiet.sceneId;
+            c.style.background = on ? 'linear-gradient(135deg,#D97FA8,#B79EDC)'
+              : 'rgba(255,255,255,0.14)';
+            c.style.color = on ? '#fff' : 'rgba(255,255,255,0.76)';
+            c.style.border = on ? 'none' : '1px solid rgba(255,255,255,0.16)';
+          });
         };
         sceneBar.appendChild(chip);
       });
@@ -450,6 +498,8 @@
       if (UI._unsub) { UI._unsub(); UI._unsub = null; }
       var o = UI._overlay;
       if (!o) return;
+      // 从浮层登记表里摘掉（静室是自建 overlay，登记过才关得掉，见 open()）
+      if (H && H.forgetLayer) { try { H.forgetLayer(o); } catch (e) { } }
       o.style.opacity = '0';
       setTimeout(function () { if (o.parentNode) o.parentNode.removeChild(o); }, 300);
       UI._overlay = null;
