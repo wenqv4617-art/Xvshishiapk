@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v114'; // v114: Live2D 真正能跑（Cubism4 运行时一键配置 + 自动补 model3.json + 坏包提示与图片兜底）+ 心动游戏去掉页头改全屏沉浸; v1.5.36
+const CACHE_NAME = 'story-phone-v115'; // v115: 热区涂抹编辑器（缩放/画笔/橡皮擦/撤销，14 个部位可留空）+ 涂抹结果真正参与看板命中; v1.5.37
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

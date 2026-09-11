@@ -891,6 +891,7 @@
      *   offsetX 只在需要时做整体平移（百分比是相对舞台宽度，安全）。
      */
     var ox = (portrait && typeof portrait.offsetX === 'number') ? portrait.offsetX : 0;
+    this.offsetX = ox;   // 掩码命中测试要按同样的偏移反推图片矩形
     img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%;'
       + 'object-fit:' + (o.fit || 'contain') + '; object-position:50% 100%;'
       + 'transform:translateX(' + (ox * 100) + '%);'
@@ -925,6 +926,27 @@
     overlay.innerHTML = '';
     var spots = this.hotspots || {};
 
+    // v1.5.37：这套立绘涂过掩码 -> 用**整块可点层 + 掩码命中测试**，
+    // 而不是一堆椭圆 DOM（涂抹出来的形状没法用 DOM 摆）。
+    var maskKeys = (this.portraitId && K.maskKeys) ? K.maskKeys(this.portraitId) : [];
+    if (!o.editable && maskKeys.length) {
+      var tap = H.el('div', { class: 'hg-hotspot-tap' });
+      tap.style.cssText = 'position:absolute; inset:0; cursor:pointer; touch-action:manipulation;';
+      tap.onclick = function (ev) {
+        ev.stopPropagation();
+        var p = self._normFromEvent(ev);
+        if (!p) return;
+        var key = K.hitHotspot(self.portraitId, p.nx, p.ny);
+        if (!key) return;
+        var spot = null;
+        for (var i = 0; i < C.HOTSPOTS.length; i++) if (C.HOTSPOTS[i].key === key) spot = C.HOTSPOTS[i];
+        self._pulse(tap, ev, key);
+        if (typeof o.onTouch === 'function') o.onTouch(key, ev, spot);
+      };
+      overlay.appendChild(tap);
+      return;
+    }
+
     C.HOTSPOTS.forEach(function (spot) {
       var g = spots[spot.key];
       if (!g) return;
@@ -958,9 +980,44 @@
     });
   };
 
+  /**
+   * 把一次点击换算成「立绘画面内的归一化坐标」(0~1)。
+   * 必须按 object-fit:contain + object-position:50% 100% 反推出图片**实际画出来的矩形**，
+   * 否则在宽高比不同的舞台上会整体偏移（涂抹出来的掩码就对不上了）。
+   */
+  SpriteRenderer.prototype._normFromEvent = function (ev) {
+    var img = this.img;
+    if (!img || !img.getBoundingClientRect) return null;
+    var box = img.getBoundingClientRect();
+    var nw = img.naturalWidth, nh = img.naturalHeight;
+    if (!nw || !nh || !box.width || !box.height) return null;
+    var s = Math.min(box.width / nw, box.height / nh);
+    var dw = nw * s, dh = nh * s;
+    var dx = box.left + (box.width - dw) / 2 + (this.offsetX || 0) * box.width;
+    var dy = box.top + (box.height - dh);          // object-position:50% 100%
+    var nx = (ev.clientX - dx) / dw;
+    var ny = (ev.clientY - dy) / dh;
+    if (nx < -0.02 || nx > 1.02 || ny < -0.02 || ny > 1.02) return null;
+    return { nx: Math.min(1, Math.max(0, nx)), ny: Math.min(1, Math.max(0, ny)) };
+  };
+
+  /** 命中反馈：在点击处放一个扩散的光环 */
+  SpriteRenderer.prototype._pulse = function (host, ev, key) {
+    try {
+      var box = host.getBoundingClientRect();
+      var col = (HG.C.HOTSPOT_COLORS && HG.C.HOTSPOT_COLORS[key]) || '#D97FA8';
+      var dot = H.el('div');
+      dot.style.cssText = 'position:absolute; width:56px; height:56px; margin:-28px 0 0 -28px; border-radius:50%;'
+        + 'pointer-events:none; left:' + (ev.clientX - box.left) + 'px; top:' + (ev.clientY - box.top) + 'px;'
+        + 'background:radial-gradient(circle,' + col + '66 0%,' + col + '00 70%);'
+        + 'border:1.5px solid ' + col + 'aa; animation:hg-pulse .72s ease-out;';
+      host.appendChild(dot);
+      setTimeout(function () { if (dot.parentNode) dot.parentNode.removeChild(dot); }, 760);
+    } catch (e) { }
+  };
+
   /** 编辑模式：拖动 / 缩放热区 */
-  SpriteRenderer.prototype._bindEdit = function (node, key) {
-    var self = this;
+  SpriteRenderer.prototype._bindEdit = function (node, key) {    var self = this;
     var dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
     var rectOf = function () { return self.overlay.getBoundingClientRect(); };
 
@@ -1286,9 +1343,65 @@
     /** 戳戳反应的短时缓存（同一阶梯同一部位 3 分钟内复用，省接口也更稳） */
     _reactCache: {},
 
-    /** 内置反应库：7 部位 × 6 阶梯分档 */
+    /** 内置反应库：14 部位 × 6 阶梯分档（模型不可用时的兜底，不能是同一句话复读） */
     fallbackLine: function (key, tierIdx, name) {
       var L = {
+        head: [
+          '手刚落到发顶，TA 的肩膀几不可查地松了一下。',
+          'TA 微微低头让你摸得更顺手，嘴上什么也没说。',
+          '被拍头顶时 TA 停下手里的动作，安静了两秒。',
+          'TA 顺着你的力道低了低头，像是早就习惯了。',
+          'TA 把额头抵在你掌心，闭了一会儿眼。',
+          '「摸吧，」TA 的声音很轻，「反正我在你面前也没什么形象可言。」'
+        ],
+        eye: [
+          '指尖靠近眼角时 TA 下意识闭了眼，睫毛扫过你的指腹。',
+          'TA 没有后退，只是睁开眼看着你，眼神里有点探究。',
+          '被碰眼角时 TA 的呼吸慢了半拍，视线垂下去。',
+          'TA 任由你的拇指沿着眼眶描了一圈，没有躲。',
+          'TA 的眼睛在灯下泛着水光，一直看着你，没眨眼。',
+          '「你再看下去，」TA 低声说，「我就不装没事了。」'
+        ],
+        mouth: [
+          '指尖擦过唇边，TA 别开脸，耳根却先红了。',
+          'TA 抿了下唇，把那点不自在压了回去。',
+          '被碰到嘴角时 TA 抬眼看你，眼神停了一瞬。',
+          'TA 没有躲开，只是轻轻咬了下你的指尖。',
+          'TA 侧过头，唇几乎贴上你的指节，却又停在那里。',
+          '「要碰就碰，」TA 哑着嗓子说，「别这样试探我。」'
+        ],
+        shoulder: [
+          '手搭上肩膀时 TA 僵了一下，随后若无其事地继续做事。',
+          'TA 没甩开，只是往旁边让了半寸。',
+          'TA 的肩膀在你的掌心下慢慢放松下来。',
+          'TA 顺势往你这边靠了靠，像是无意。',
+          'TA 抬手覆上你的手背，把它按得更稳。',
+          '「靠一会儿也行，」TA 说，「反正没人看见。」'
+        ],
+        heart: [
+          '手掌按上心口的一刻，TA 整个人都顿住了。',
+          'TA 抓住你的手腕，却没有把它拿开。',
+          '隔着衣料，心跳一下一下撞在你掌心。',
+          'TA 把手压在你手背上：「数清楚了吗。」',
+          'TA 垂下眼，任由你按着那个位置，呼吸很轻。',
+          '「从很早以前就是了，」TA 说，「只是你现在才听见。」'
+        ],
+        waist: [
+          '手碰到腰侧时 TA 明显绷紧了，往旁边让了半步。',
+          'TA 没说话，只是把外套下摆往下拉了拉。',
+          '腰侧的触碰让 TA 吸了口气，耳尖红透。',
+          'TA 反手按住你的手，却没有把它挪开的意思。',
+          'TA 顺着你的力道贴近了一点，没再躲。',
+          '「别在这儿，」TA 低声说，却没有真的推开。'
+        ],
+        forearm: [
+          '你握住小臂时 TA 顿了一下，没有抽开。',
+          'TA 低头看了眼你的手，什么也没说。',
+          'TA 的手臂在你掌心里慢慢卸了力。',
+          'TA 反手把小臂让给你，像是默许。',
+          'TA 的指腹在你手背上轻轻磨了一下。',
+          '「抓着吧，」TA 说，「反正我也没打算走。」'
+        ],
         hair: [
           '你碰到发梢的一瞬间，TA 微微偏了偏头，没有躲开。',
           'TA 任由你把那缕头发拨到耳后，喉结轻轻动了一下。',
@@ -1406,6 +1519,16 @@
                 };
                 box.appendChild(setB);
               }
+              // ★ 热区涂抹入口：**每一套立绘**都有（v1.5.37）
+              var mk = K.maskKeys(p.id).length;
+              var hotB = H.button(mk ? ('热区 ' + mk) : '划热区', {
+                kind: 'soft', pad: '5px 9px', size: 10.5, soft: '#F3EEFF', color: '#7d63a8'
+              });
+              hotB.onclick = function (ev) {
+                ev.stopPropagation();
+                Portraits.openMaskEditor(onChanged, p.id);
+              };
+              box.appendChild(hotB);
               var del = H.iconButton('trash', { size: 28, color: '#c2607c' });
               del.onclick = function (ev) {
                 ev.stopPropagation();
@@ -1653,9 +1776,332 @@
     },
 
     // ------------------------------------------------------------------
-    //  4.2 热区涂抹划分系统
+    //  4.2 热区涂抹划分系统（v1.5.37 重做：真的是"涂"出来的）
+    //     · 所有立绘都能进（立绘管理每一行都有入口）
+    //     · 缩放 / 平移画面
+    //     · 画笔 + 橡皮擦 + 笔刷大小
+    //     · 每个部位一张 80×120 的 1 位掩码，可留空
     // ------------------------------------------------------------------
 
+    openMaskEditor: function (onChanged, portraitId) {
+      var MW = K.MASK_W, MH = K.MASK_H;
+      var all = (K.state && K.state.assets && K.state.assets.portraits) || [];
+      var pid = portraitId || (K.currentPortrait() || {}).id || 'default';
+      var portrait = all.filter(function (p) { return p.id === pid; })[0] || null;
+
+      // 内存里的掩码（key -> Uint8Array），保存时才落库
+      var masks = {};
+      C.HOTSPOTS.forEach(function (s) {
+        var m = K.maskOf(pid, s.key);
+        if (m) masks[s.key] = m;
+      });
+      var active = C.HOTSPOTS[0].key;
+      var brush = 5;
+      var erase = false;
+      var zoom = 1, panX = 0, panY = 0;
+      var undo = [];
+
+      var body = H.el('div');
+
+      // ---------- 顶部：缩放 / 平移 ----------
+      var topBar = H.el('div');
+      topBar.style.cssText = 'display:flex; align-items:center; gap:7px; margin-bottom:9px; flex-wrap:wrap;';
+      var zoomLabel = H.el('span');
+      zoomLabel.style.cssText = 'font-size:11px; font-weight:800; color:#7d7484; min-width:46px; text-align:center;';
+      var mkBtn = function (txt, fn, title) {
+        var b = H.el('button', { type: 'button', title: title || txt });
+        b.style.cssText = 'padding:6px 11px; border-radius:11px; font-size:11.5px; font-weight:800; cursor:pointer;'
+          + 'border:1px solid rgba(190,180,195,0.3); background:rgba(255,255,255,0.85); color:#7d7484;';
+        b.textContent = txt;
+        b.onclick = fn;
+        return b;
+      };
+      var setZoom = function (z) { zoom = U.clamp(z, 0.5, 6); applyTransform(); };
+      topBar.appendChild(mkBtn('－', function () { setZoom(zoom / 1.25); }, '缩小'));
+      topBar.appendChild(zoomLabel);
+      topBar.appendChild(mkBtn('＋', function () { setZoom(zoom * 1.25); }, '放大'));
+      topBar.appendChild(mkBtn('1:1', function () { zoom = 1; panX = 0; panY = 0; applyTransform(); }, '复位'));
+      var hint = H.el('span');
+      hint.style.cssText = 'font-size:10px; color:#a99fae; margin-left:auto;';
+      hint.textContent = '双指缩放 / 拖动空白处平移';
+      topBar.appendChild(hint);
+      body.appendChild(topBar);
+
+      // ---------- 舞台 ----------
+      var stage = H.el('div');
+      stage.style.cssText = 'position:relative; width:100%; height:330px; border-radius:18px; overflow:hidden;'
+        + 'background:linear-gradient(160deg,#FDF7FB 0%,#F1EEF9 100%); border:1px solid rgba(216,160,190,0.24);'
+        + 'touch-action:none;';
+      body.appendChild(stage);
+
+      var wrapper = H.el('div');
+      wrapper.style.cssText = 'position:absolute; inset:0; transform-origin:50% 50%;';
+      stage.appendChild(wrapper);
+
+      var img = H.el('img', { alt: '' });
+      img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:contain;'
+        + 'object-position:50% 100%; user-select:none; -webkit-user-drag:none; pointer-events:none;';
+      if (portrait && portrait.src) img.src = portrait.src;
+      wrapper.appendChild(img);
+
+      // 模型立绘没有静态图：给一个提示底，掩码同样按归一化坐标工作
+      var noImg = H.el('div');
+      noImg.style.cssText = 'position:absolute; inset:0; display:none; align-items:center; justify-content:center;'
+        + 'font-size:11px; color:#a99fae; text-align:center; line-height:1.8; pointer-events:none;';
+      noImg.textContent = '这套立绘是 Live2D 模型，没有静态图可参考。\n' +
+        '掩码按「画面比例」记录，照着模型大致位置涂即可。';
+      wrapper.appendChild(noImg);
+
+      var cv = H.el('canvas', { width: MW, height: MH });
+      cv.style.cssText = 'position:absolute; image-rendering:pixelated; cursor:crosshair; touch-action:none;'
+        + 'border-radius:6px;';
+      wrapper.appendChild(cv);
+      var ctx = cv.getContext('2d');
+
+      function applyTransform() {
+        wrapper.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
+        zoomLabel.textContent = U.round(zoom * 100, 0) + '%';
+      }
+
+      /** 把 canvas 对齐到「图片实际画出来的区域」 */
+      function layoutCanvas() {
+        var bw = stage.clientWidth, bh = stage.clientHeight;
+        var nw = img.naturalWidth || 1024, nh = img.naturalHeight || 1536;
+        var hasImg = !!(portrait && portrait.src) && !!img.naturalWidth;
+        if (!hasImg) { nw = 2; nh = 3; }
+        noImg.style.display = hasImg ? 'none' : 'flex';
+        var sc = Math.min(bw / nw, bh / nh);
+        var dw = nw * sc, dh = nh * sc;
+        var dx = (bw - dw) / 2;
+        var dy = bh - dh;                       // object-position:50% 100%
+        cv.style.left = dx + 'px';
+        cv.style.top = dy + 'px';
+        cv.style.width = dw + 'px';
+        cv.style.height = dh + 'px';
+      }
+
+      function drawMask() {
+        ctx.clearRect(0, 0, MW, MH);
+        C.HOTSPOTS.forEach(function (s) {
+          var m = masks[s.key];
+          if (!m) return;
+          var col = C.HOTSPOT_COLORS[s.key] || '#D97FA8';
+          ctx.fillStyle = col;
+          ctx.globalAlpha = (s.key === active) ? 0.62 : 0.26;
+          for (var y = 0; y < MH; y++) {
+            for (var x = 0; x < MW; x++) {
+              if (m[y * MW + x]) ctx.fillRect(x, y, 1, 1);
+            }
+          }
+        });
+        ctx.globalAlpha = 1;
+      }
+
+      function paintAt(gx, gy) {
+        var m = masks[active];
+        if (!m) { m = masks[active] = new Uint8Array(MW * MH); }
+        var r = brush;
+        for (var y = Math.max(0, Math.floor(gy - r)); y <= Math.min(MH - 1, Math.ceil(gy + r)); y++) {
+          for (var x = Math.max(0, Math.floor(gx - r)); x <= Math.min(MW - 1, Math.ceil(gx + r)); x++) {
+            var dx = x - gx, dy = y - gy;
+            if (dx * dx + dy * dy <= r * r) m[y * MW + x] = erase ? 0 : 1;
+          }
+        }
+      }
+
+      function emptyOf(bytes) {
+        if (!bytes) return true;
+        for (var i = 0; i < bytes.length; i++) if (bytes[i]) return false;
+        return true;
+      }
+
+      // ---------- 指针交互：画笔 / 橡皮擦 / 平移 ----------
+      var painting = false, panning = false, moved = false;
+      var lastPan = null;
+
+      cv.onpointerdown = function (ev) {
+        ev.preventDefault();
+        // 合成事件下 pointerId 不是"活动指针"，setPointerCapture 会抛 NotFoundError
+        try { cv.setPointerCapture && cv.setPointerCapture(ev.pointerId); } catch (e) { }
+        undo.push(masks[active] ? masks[active].slice() : null);
+        if (undo.length > 24) undo.shift();
+        painting = true; moved = false;
+        strokeAt(ev);
+      };
+      cv.onpointermove = function (ev) {
+        if (!painting) return;
+        ev.preventDefault();
+        moved = true;
+        strokeAt(ev);
+      };
+      var endStroke = function () {
+        if (!painting) return;
+        painting = false;
+        if (!moved && !erase) {
+          // 点一下也算一笔：保持行为一致，不做特殊处理
+        }
+        drawMask();
+        renderChips();
+      };
+      cv.onpointerup = endStroke;
+      cv.onpointercancel = endStroke;
+      cv.onpointerleave = function () { if (painting) endStroke(); };
+
+      function strokeAt(ev) {
+        var r = cv.getBoundingClientRect();
+        if (!r.width || !r.height) return;
+        var gx = (ev.clientX - r.left) / r.width * MW;
+        var gy = (ev.clientY - r.top) / r.height * MH;
+        paintAt(gx, gy);
+        drawMask();
+      }
+
+      // 空白处拖动 = 平移
+      stage.onpointerdown = function (ev) {
+        if (ev.target === cv) return;
+        panning = true; lastPan = { x: ev.clientX, y: ev.clientY };
+        try { stage.setPointerCapture && stage.setPointerCapture(ev.pointerId); } catch (e) { }
+      };
+      stage.onpointermove = function (ev) {
+        if (!panning) return;
+        panX += ev.clientX - lastPan.x;
+        panY += ev.clientY - lastPan.y;
+        lastPan = { x: ev.clientX, y: ev.clientY };
+        applyTransform();
+      };
+      var stopPan = function () { panning = false; };
+      stage.onpointerup = stopPan;
+      stage.onpointercancel = stopPan;
+
+      // 滚轮缩放（桌面端）
+      stage.onwheel = function (ev) {
+        ev.preventDefault();
+        setZoom(zoom * (ev.deltaY < 0 ? 1.12 : 1 / 1.12));
+      };
+
+      // ---------- 部位选择 ----------
+      var chipsWrap = H.el('div');
+      chipsWrap.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin:11px 0 9px;';
+      body.appendChild(chipsWrap);
+
+      function renderChips() {
+        chipsWrap.innerHTML = '';
+        C.HOTSPOTS.forEach(function (s) {
+          var on = s.key === active;
+          var painted = !emptyOf(masks[s.key]);
+          var col = C.HOTSPOT_COLORS[s.key] || '#D97FA8';
+          var chip = H.el('div');
+          chip.style.cssText = 'display:inline-flex; align-items:center; gap:4px; padding:5px 10px; border-radius:11px;'
+            + 'cursor:pointer; font-size:11px; font-weight:700; transition:all .18s ease;'
+            + (on ? 'background:' + col + '; color:#fff; box-shadow:0 4px 12px ' + col + '55;'
+              : 'background:rgba(255,255,255,0.8); color:#8b8292; border:1px solid rgba(190,180,195,0.28);');
+          chip.innerHTML = '<span style="width:7px; height:7px; border-radius:50%; background:'
+            + (on ? '#fff' : col) + ';' + (painted ? '' : 'opacity:.28;') + '"></span>'
+            + '<span>' + U.esc(s.name) + '</span>';
+          chip.title = painted ? '已涂抹' : '还没涂（留空也可以）';
+          chip.onclick = function () {
+            active = s.key;
+            erase = false;
+            renderTools();
+            renderChips();
+            drawMask();
+          };
+          chipsWrap.appendChild(chip);
+        });
+      }
+
+      // ---------- 工具条 ----------
+      var tools = H.el('div');
+      tools.style.cssText = 'display:flex; align-items:center; gap:9px; flex-wrap:wrap;';
+      body.appendChild(tools);
+      var brushLabel;
+
+      function renderTools() {
+        tools.innerHTML = '';
+        var paintB = H.button('画笔', {
+          kind: erase ? 'soft' : 'primary', pad: '7px 13px', size: 11,
+          soft: '#FFEBF3', color: '#B0728F'
+        });
+        paintB.onclick = function () { erase = false; renderTools(); };
+        var eraseB = H.button('橡皮擦', {
+          kind: erase ? 'primary' : 'soft', pad: '7px 13px', size: 11,
+          soft: '#EDF2FB', color: '#5f7aa8'
+        });
+        eraseB.onclick = function () { erase = true; renderTools(); };
+        tools.appendChild(paintB);
+        tools.appendChild(eraseB);
+
+        brushLabel = H.el('span');
+        brushLabel.style.cssText = 'font-size:10.6px; color:#8b8292; font-weight:700;';
+        brushLabel.textContent = '笔刷 ' + brush;
+        tools.appendChild(brushLabel);
+
+        var slider = H.el('input', { type: 'range', min: '1', max: '16', value: String(brush) });
+        slider.style.cssText = 'flex:1; min-width:100px; accent-color:#D97FA8;';
+        slider.oninput = function () { brush = Number(slider.value) || 1; brushLabel.textContent = '笔刷 ' + brush; };
+        tools.appendChild(slider);
+
+        var undoB = H.button('撤销', { kind: 'ghost', pad: '7px 11px', size: 11, color: '#9a8f9e' });
+        undoB.onclick = function () {
+          if (!undo.length) { H.toast('没有可撤销的操作'); return; }
+          var prev = undo.pop();
+          if (prev) masks[active] = prev; else delete masks[active];
+          drawMask(); renderChips();
+        };
+        tools.appendChild(undoB);
+
+        var clearB = H.button('清空此部位', { kind: 'ghost', pad: '7px 11px', size: 11, color: '#c2607c' });
+        clearB.onclick = function () {
+          undo.push(masks[active] ? masks[active].slice() : null);
+          delete masks[active];
+          drawMask(); renderChips();
+          H.toast('已清空这个部位（会回落到默认椭圆）');
+        };
+        tools.appendChild(clearB);
+      }
+
+      renderTools();
+      renderChips();
+      drawMask();
+      applyTransform();
+
+      H.sheet({
+        title: '热区涂抹划分',
+        subtitle: (portrait ? portrait.name : '默认版式') + ' · 点部位 -> 涂抹 -> 保存',
+        icon: 'hand',
+        height: '94%',
+        slot: 'hotspot-editor',
+        content: body,
+        buttons: [{
+          text: '保存热区', icon: 'check', kind: 'primary',
+          onClick: function () {
+            var saved = 0, cleared = 0;
+            C.HOTSPOTS.forEach(function (s) {
+              var m = masks[s.key];
+              if (m && !emptyOf(m)) { K.setMask(pid, s.key, m); saved++; }
+              else if (K.maskOf(pid, s.key)) { K.setMask(pid, s.key, null); cleared++; }
+            });
+            K.save(true);
+            H.toast('已保存 ' + saved + ' 个部位' + (cleared ? '（清空 ' + cleared + ' 个）' : ''));
+            if (typeof onChanged === 'function') onChanged();
+            if (window.heartGameApp && typeof window.heartGameApp.render === 'function') {
+              try { window.heartGameApp.render(); } catch (e) { }
+            }
+          }
+        }]
+      });
+
+      // 图片解码完成后再对齐一次（尺寸依赖 naturalWidth）
+      if (img.complete) setTimeout(layoutCanvas, 0);
+      else img.onload = function () { layoutCanvas(); };
+      setTimeout(layoutCanvas, 60);
+      window.addEventListener('resize', layoutCanvas);
+    },
+
+    /**
+     * 旧版「椭圆微调」编辑器（保留：涂抹版不适合精修单个部位的位置，
+     * 这里可以拖圆心、缩放半径，并且能编辑每个部位的动作库）。
+     */
     openHotspotEditor: function (onChanged) {
       var portrait = K.currentPortrait();
       var portraitId = portrait ? portrait.id : 'default';

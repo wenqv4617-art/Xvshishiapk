@@ -78,16 +78,38 @@
     tenMinRarity: 'SR'      // 十连保底稀有度
   };
 
-  /** Live2D / 立绘身体热区（序号对应 PortraitManager 的掩码层） */
+  /**
+   * Live2D / 立绘身体热区
+   * 用户 2026-09-11 指定的部位表（可以留空 —— 没涂的部位就自动回落到"整块椭圆版式"）。
+   * order 是交互等级，同时决定默认椭圆的位置顺序，不要随便改数值。
+   */
   var HOTSPOTS = [
-    { key: 'hair',     name: '头发', hint: '随手拨乱 TA 的发顶', order: 1 },
-    { key: 'face',     name: '脸颊', hint: '指尖擦过脸颊', order: 2 },
-    { key: 'neck',     name: '脖颈', hint: '轻轻碰了碰颈侧', order: 3 },
-    { key: 'chest',    name: '胸腹', hint: '掌心贴在胸口附近', order: 4 },
-    { key: 'arm',      name: '手臂', hint: '拉住 TA 的小臂', order: 5 },
-    { key: 'hand',     name: '双手', hint: '扣住 TA 的手指', order: 6 },
-    { key: 'leg',      name: '下肢', hint: '膝盖不小心碰到一起', order: 7 }
+    { key: 'head',     name: '头顶', hint: '揉了揉 TA 的发顶', order: 1 },
+    { key: 'hair',     name: '头发', hint: '随手拨乱 TA 的发丝', order: 2 },
+    { key: 'face',     name: '脸蛋', hint: '指尖擦过脸颊', order: 3 },
+    { key: 'eye',      name: '眼睛', hint: '拇指轻轻掠过眼角', order: 4 },
+    { key: 'mouth',    name: '嘴巴', hint: '指腹蹭过唇边', order: 5 },
+    { key: 'neck',     name: '脖子', hint: '轻轻碰了碰颈侧', order: 6 },
+    { key: 'shoulder', name: '肩膀', hint: '把手搭在了肩上', order: 7 },
+    { key: 'chest',    name: '胸口', hint: '掌心贴了上去', order: 8 },
+    { key: 'heart',    name: '心口', hint: '把手按在心口的位置', order: 9 },
+    { key: 'waist',    name: '腰腹', hint: '指尖划过腰侧', order: 10 },
+    { key: 'arm',      name: '胳膊', hint: '拉住了 TA 的手臂', order: 11 },
+    { key: 'forearm',  name: '小臂', hint: '握住了 TA 的小臂', order: 12 },
+    { key: 'hand',     name: '手',   hint: '扣住 TA 的手指', order: 13 },
+    { key: 'leg',      name: '腿',   hint: '膝盖不小心碰到一起', order: 14 }
   ];
+
+  /** 热区命中优先级（从"更具体"到"更外围"）：掩码命中时按这个顺序取 */
+  var HOTSPOT_PRIORITY = ['eye', 'mouth', 'face', 'head', 'hair', 'neck', 'heart', 'chest',
+    'shoulder', 'waist', 'hand', 'forearm', 'arm', 'leg'];
+
+  /** 每个部位一个颜色（编辑器里区分用） */
+  var HOTSPOT_COLORS = {
+    head: '#E7B36A', hair: '#B79EDC', face: '#F0A8C4', eye: '#7EC8E3', mouth: '#E3779B',
+    neck: '#F2C9A0', shoulder: '#9FB3D9', chest: '#D97FA8', heart: '#C2607C',
+    waist: '#8FB8DE', arm: '#A8D5BA', forearm: '#7FC8A9', hand: '#F2B880', leg: '#9AA7C7'
+  };
 
   /** 商店分类 */
   var SHOP_CATEGORIES = [
@@ -1541,8 +1563,9 @@
         backgrounds: [],      // [{id, name, scene, src, tags}]
         currentPortraitId: null,
         currentBackgroundId: null,
-        hotspots: {},         // {portraitId: {hair:{x,y,rx,ry}, ...}}
+        hotspots: {},         // {portraitId: {head:{x,y,rx,ry}, ...}} 椭圆版式（兜底）
         hotspotActions: {},   // {portraitId: {hair:[{text, at}]}}
+        masks: {},            // {portraitId: {key: base64(1位掩码位图)}} 涂抹划分
         pool: []              // LRU 资源池 key 列表
       },
 
@@ -2685,6 +2708,102 @@
     },
 
     // ------------------------------------------------------------------
+    //  3.8b 热区掩码（涂抹划分）
+    //  用户在编辑器里"涂"出来的部位形状，比椭圆精确得多。
+    //  存储：每个部位一张 MASK_W × MASK_H 的 1 位位图，base64 后只有几百字节。
+    //  没涂过的部位 = 没有掩码，判定时自动回落到 DEFAULT_HOTSPOTS 的椭圆。
+    // ------------------------------------------------------------------
+
+    MASK_W: 80,
+    MASK_H: 120,
+
+    /** 位图打包成 base64（每 8 个像素 1 字节，就是个 1 位 alpha） */
+    packMask: function (bytes) {
+      try {
+        var n = K.MASK_W * K.MASK_H;
+        var s = '';
+        for (var i = 0; i < n; i += 8) {
+          var b = 0;
+          for (var j = 0; j < 8; j++) if (bytes[i + j]) b |= (1 << j);
+          s += String.fromCharCode(b);
+        }
+        return btoa(s);
+      } catch (e) { return ''; }
+    },
+
+    unpackMask: function (b64) {
+      var bytes = new Uint8Array(K.MASK_W * K.MASK_H);
+      if (!b64) return bytes;
+      try {
+        var s = atob(b64);
+        for (var i = 0; i < bytes.length; i++) {
+          var byte = s.charCodeAt(i >> 3) || 0;
+          bytes[i] = (byte >> (i & 7)) & 1;
+        }
+      } catch (e) { }
+      return bytes;
+    },
+
+    /** 读取某部位的掩码位图（没有就返回 null） */
+    maskOf: function (portraitId, key) {
+      var st = K.state;
+      var m = st && st.assets && st.assets.masks && st.assets.masks[portraitId];
+      var b64 = m && m[key];
+      return b64 ? K.unpackMask(b64) : null;
+    },
+
+    /** 写入 / 清除某部位的掩码（bytes 为 null 表示清除） */
+    setMask: function (portraitId, key, bytes) {
+      var st = K.state;
+      if (!st) return false;
+      st.assets.masks = st.assets.masks || {};
+      st.assets.masks[portraitId] = st.assets.masks[portraitId] || {};
+      if (bytes) st.assets.masks[portraitId][key] = K.packMask(bytes);
+      else delete st.assets.masks[portraitId][key];
+      K.save();
+      return true;
+    },
+
+    /** 这套立绘涂过几个部位 */
+    maskKeys: function (portraitId) {
+      var st = K.state;
+      var m = (st && st.assets && st.assets.masks && st.assets.masks[portraitId]) || {};
+      return Object.keys(m);
+    },
+
+    /**
+     * 命中测试：归一化坐标 -> 部位 key
+     * 规则（用户要求「部位可以留空」，所以两种判定要能共存）：
+     *   · **涂过掩码的部位**以涂抹为准（碰到就是它，没碰到就不算它）；
+     *   · **没涂过的部位**继续用默认椭圆兜底，不会因为只涂了两三个部位就整块失效。
+     * @returns {string|null}
+     */
+    hitHotspot: function (portraitId, nx, ny) {
+      if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return null;
+      var gx = Math.min(K.MASK_W - 1, Math.max(0, Math.floor(nx * K.MASK_W)));
+      var gy = Math.min(K.MASK_H - 1, Math.max(0, Math.floor(ny * K.MASK_H)));
+      var idx = gy * K.MASK_W + gx;
+      var spots = K.hotspotsOf(portraitId);
+      var ellipseHit = null;
+
+      for (var i = 0; i < HOTSPOT_PRIORITY.length; i++) {
+        var key = HOTSPOT_PRIORITY[i];
+        var m = K.maskOf(portraitId, key);
+        if (m) {
+          if (m[idx]) return key;   // 涂过的部位优先级最高
+          continue;                 // 涂过但这里没涂 -> 该部位不参与椭圆兜底
+        }
+        if (ellipseHit) continue;
+        var g = spots[key];
+        if (!g) continue;
+        var dx = (nx - g.x) / (g.rx || 0.01);
+        var dy = (ny - g.y) / (g.ry || 0.01);
+        if (dx * dx + dy * dy <= 1) ellipseHit = key;
+      }
+      return ellipseHit;
+    },
+
+    // ------------------------------------------------------------------
     //  3.9 记忆回流：把心动游戏的关键节点写进 db.summaries，让主聊天能召回
     // ------------------------------------------------------------------
 
@@ -2950,16 +3069,23 @@
     ];
   }
 
-  /** 标准热区版式（相对立绘画布 0-1） */
+  /** 标准热区版式（相对立绘画布 0-1）。没涂掩码的部位就按这套椭圆来判定 */
   function DEFAULT_HOTSPOTS() {
     return {
-      hair:  { x: 0.50, y: 0.10, rx: 0.19, ry: 0.11 },
-      face:  { x: 0.50, y: 0.22, rx: 0.12, ry: 0.08 },
-      neck:  { x: 0.50, y: 0.33, rx: 0.08, ry: 0.05 },
-      chest: { x: 0.50, y: 0.46, rx: 0.17, ry: 0.11 },
-      arm:   { x: 0.26, y: 0.52, rx: 0.10, ry: 0.14 },
-      hand:  { x: 0.74, y: 0.62, rx: 0.09, ry: 0.07 },
-      leg:   { x: 0.50, y: 0.82, rx: 0.18, ry: 0.14 }
+      head:     { x: 0.50, y: 0.055, rx: 0.15, ry: 0.055 },
+      hair:     { x: 0.50, y: 0.115, rx: 0.21, ry: 0.10 },
+      face:     { x: 0.50, y: 0.215, rx: 0.13, ry: 0.085 },
+      eye:      { x: 0.50, y: 0.205, rx: 0.085, ry: 0.035 },
+      mouth:    { x: 0.50, y: 0.255, rx: 0.05, ry: 0.025 },
+      neck:     { x: 0.50, y: 0.315, rx: 0.075, ry: 0.045 },
+      shoulder: { x: 0.50, y: 0.38, rx: 0.24, ry: 0.06 },
+      chest:    { x: 0.50, y: 0.45, rx: 0.15, ry: 0.085 },
+      heart:    { x: 0.455, y: 0.455, rx: 0.055, ry: 0.05 },
+      waist:    { x: 0.50, y: 0.565, rx: 0.14, ry: 0.075 },
+      arm:      { x: 0.255, y: 0.50, rx: 0.09, ry: 0.13 },
+      forearm:  { x: 0.215, y: 0.63, rx: 0.07, ry: 0.10 },
+      hand:     { x: 0.185, y: 0.755, rx: 0.075, ry: 0.06 },
+      leg:      { x: 0.50, y: 0.855, rx: 0.19, ry: 0.14 }
     };
   }
 
@@ -3003,6 +3129,8 @@
       RARITY: RARITY,
       GACHA_RULES: GACHA_RULES,
       HOTSPOTS: HOTSPOTS,
+    HOTSPOT_COLORS: HOTSPOT_COLORS,
+    HOTSPOT_PRIORITY: HOTSPOT_PRIORITY,
       SHOP_CATEGORIES: SHOP_CATEGORIES,
       MOODS: MOODS,
       LOG_TONES: LOG_TONES,

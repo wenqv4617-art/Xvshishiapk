@@ -1054,7 +1054,12 @@
       K.progressQuest('touch', 1);
 
       // 好感：不同部位权重不同，同一天反复戳同一处收益衰减
-      var WEIGHT = { hair: 3, face: 5, neck: 6, chest: 7, arm: 4, hand: 6, leg: 5 };
+      // （部位表见 core 的 C.HOTSPOTS；越"亲密/具体"的部位收益越高）
+      var WEIGHT = {
+        head: 3, hair: 3, face: 5, eye: 4, mouth: 6, neck: 6,
+        shoulder: 3, chest: 7, heart: 8, waist: 6,
+        arm: 4, forearm: 4, hand: 6, leg: 5
+      };
       var todayKey = 'touch_' + U.dayKey() + '_' + key;
       st.stats.touchToday = st.stats.touchToday || {};
       var times = U.int(st.stats.touchToday[todayKey], 0);
