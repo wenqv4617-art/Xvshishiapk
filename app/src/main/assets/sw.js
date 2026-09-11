@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v105'; // v105: 图标点击改由 document 捕获阶段统一接管(不再依赖逐个挂监听) + 编辑模式死局兜底; v1.5.27
+const CACHE_NAME = 'story-phone-v106'; // v106: 心动游戏标题与页面标题显示当前版本号(便于确认设备跑的是哪一版); v1.5.28
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

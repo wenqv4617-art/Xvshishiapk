@@ -292,7 +292,13 @@
       root.appendChild(bubbleHost);
       App._dom.bubbleHost = bubbleHost;
 
-      // ---------- 顶部栏 ----------
+      var title = document.querySelector('#win-heartgame .win-header h3');
+      if (title) {
+        var appV = appVersionLabel();
+        title.textContent = '心动游戏' + (appV ? ' · ' + appV : '');
+      }
+
+      // 顶部栏
       var topbar = H.el('div', { class: 'hg-lobby-top' });
       topbar.style.cssText = 'position:relative; z-index:10; display:flex; align-items:flex-start;'
         + 'justify-content:space-between; gap:10px; padding:12px 13px 0; pointer-events:none;';
@@ -954,7 +960,34 @@
    * 每次打开都重建视图，但全局事件只绑定一次。
    * 真正的界面挂在 #heartgame-mount（id="heartgame-mount"）。
    */
+  /**
+   * 取用户可识别的「应用版本号」＝更新日志最新一条（如 v4.40）。
+   * 这个号在设置-更新日志里也看得到，方便一眼对齐「设备上跑的是哪一版」。
+   */
+  function appVersionLabel() {
+    try {
+      if (typeof CHANGELOG_DATA !== 'undefined' && CHANGELOG_DATA && CHANGELOG_DATA[0] && CHANGELOG_DATA[0].version) {
+        return CHANGELOG_DATA[0].version;
+      }
+    } catch (e) { }
+    try {
+      if (window.CHANGELOG_DATA && window.CHANGELOG_DATA[0]) return window.CHANGELOG_DATA[0].version;
+    } catch (e) { }
+    return '';
+  }
+
+  /**
+   * 心动游戏：初始化入口（openApp('heartgame') 会调到这里）
+   * 每次打开都重建视图，但全局事件只绑定一次。
+   * 真正的界面挂在 #heartgame-mount（id="heartgame-mount"）。
+   */
   window.initHeartGameApp = function () {
+    // 把版本号打到标题栏，方便一眼确认设备上跑的是哪一版
+    // （排查「改了没生效 / 打不开」时，第一步永远是确认版本）
+    try {
+      var appV = appVersionLabel();
+      if (appV) document.title = '叙事诗小手机 · ' + appV;
+    } catch (e) { }
     // 同步异常也必须可见：以前只有 Promise 的 catch，
     // 若同步阶段抛错就会「点了图标毫无反应」，非常难排查。
     try {
