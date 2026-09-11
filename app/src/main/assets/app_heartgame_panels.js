@@ -192,7 +192,7 @@
         buttons: [{
           text: reverse ? '发布新任务' : '让 TA 派一个委托',
           icon: 'plus', kind: 'primary', keepOpen: true,
-          onClick: function () { reverse ? Tasks.openPublishForm() : Tasks.requestDynamic(); }
+          onClick: function (api, node) { reverse ? Tasks.openPublishForm(node) : Tasks.requestDynamic(node); }
         }]
       };
     },
@@ -375,7 +375,10 @@
     },
 
     /** 攻略模式：让 Char 派一个动态委托 */
-    requestDynamic: async function () {
+    requestDynamic: async function (node) {
+      // 要调模型，防重复点击（v1.5.41）
+      if (H.blocked('quest-dynamic', 2000)) { H.toast('正在让 TA 想，稍等一下'); return; }
+      if (node) { var _r = H.busy(node, 'TA 正在想…'); setTimeout(_r, 2000); }
       var profile = await K.charProfile();
       var user = await K.userProfile();
       var st = K.state;

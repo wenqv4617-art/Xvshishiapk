@@ -126,7 +126,7 @@
         '并且用同样简短的（括号）描写你的动作与神情；不要把括号内容当成台词念出来。',
         '',
         // 被攻略模式才有「主动汇报游戏行为」的特殊指令（攻略模式下 Char 不该去氪金）
-        st.mode === C.MODE.REVERSE_STRATEGY ? Ops.promptBlock() : ''
+        Ops.promptBlock(st.mode)
       ];
       return head.filter(function (s) { return s !== ''; }).join('\n');
     },
@@ -170,6 +170,10 @@
     _busy: false,
     _alive: false,
     _scrollHost: null,
+
+    /** 静室气泡 / 系统提示的透明度（v1.5.41，用户要求调低，让场景透出来） */
+    BUBBLE_OPACITY: 0.82,
+    SYSTEM_OPACITY: 0.6,
 
     /**
      * 当前静室场景该用哪张图（v1.5.35）
@@ -417,15 +421,21 @@
         }
         rows.forEach(function (m) {
           if (m.role === 'system') {
-            flowEl.appendChild(H.systemLog({ text: m.text, tone: m.tone || 'system' }));
+            var logEl = H.systemLog({ text: m.text, tone: m.tone || 'system' });
+            // 用户要求：调低系统提示的透明度，让场景透出来
+            if (logEl && logEl.style) logEl.style.opacity = String(UI.SYSTEM_OPACITY);
+            flowEl.appendChild(logEl);
           } else {
-            flowEl.appendChild(H.bubble({
+            var bub = H.bubble({
               side: m.role === 'user' ? 'user' : 'char',
               text: m.text,
               name: m.role === 'user' ? '你' : profile.name,
               meta: U.timeAgo(m.at),
               avatarNode: m.role === 'user' ? null : H.avatar(profile.avatar, profile.name, 30)
-            }));
+            });
+            // 用户要求：调低对话框的透明度（但保留可读性，所以只降到 0.82）
+            if (bub && bub.style) bub.style.opacity = String(UI.BUBBLE_OPACITY);
+            flowEl.appendChild(bub);
           }
         });
         scrollBottom();
@@ -681,24 +691,49 @@
 
     /** 指令表：标签 → 说明（说明会被写进 system prompt，让模型知道能用哪些） */
     CATALOG: [
-      { tag: 'HG_GACHA', args: '{"pool":"卡池名(可省)","times":10}', desc: '你去抽卡了。系统会真的执行抽卡并把结果告诉你（可能歪）。' },
-      { tag: 'HG_PAY', args: '{"amount":648}', desc: '你为 Ta 充值了（金额为整数，代表人民币档位）。' },
-      { tag: 'HG_BUY', args: '{"item":"星芒怀表","price":460}', desc: '你在商店为 Ta 买了一件礼物。' },
-      { tag: 'HG_GIFT', args: '{"item":"亲手做的便当"}', desc: '你把某样东西送给了 Ta。' },
-      { tag: 'HG_MOOD', args: '{"mood":"jealous","why":"看见Ta夸了别人"}', desc: '你的心境发生了变化（mood 取 ecstatic/happy/calm/anxious/jealous/possessive）。' },
-      { tag: 'HG_QUEST', args: '{"done":"为你录晚安语音"}', desc: '你完成了 Ta 布置的任务。' }
+      // —— 攻略模式（TA 是被追的一方：可以给出好感、可以把任务交给玩家） ——
+      { tag: 'HG_AFFINITY', modes: ['STRATEGY'], args: '{"delta":6,"why":"Ta 记住了我说过的话"}',
+        desc: '你因为这一刻对 Ta 心动，好感上升了（delta 取 1~12 的整数；也可以写负数表示退了一步）。' },
+      { tag: 'HG_ASSIGN', modes: ['STRATEGY'], args: '{"name":"替你挑一条领带","desc":"去商店挑一条你一眼就觉得是他的领带。","target":1,"reward":90}',
+        desc: '你给 Ta 派了一个只属于你们两人的日常委托。' },
+      { tag: 'HG_MOOD', modes: ['STRATEGY', 'REVERSE_STRATEGY'], args: '{"mood":"jealous","why":"看见Ta夸了别人"}',
+        desc: '你的心境发生了变化（mood 取 ecstatic/happy/calm/anxious/jealous/possessive）。' },
+      { tag: 'HG_GIFT', modes: ['STRATEGY', 'REVERSE_STRATEGY'], args: '{"item":"亲手做的便当"}',
+        desc: '你把某样东西送给了 Ta。' },
+      // —— 被攻略模式（TA 是追人的一方：会自己去抽卡 / 氪金 / 买礼物） ——
+      { tag: 'HG_GACHA', modes: ['REVERSE_STRATEGY'], args: '{"pool":"卡池名(可省)","times":10}',
+        desc: '你去抽卡了。系统会真的执行抽卡并把结果告诉你（可能歪）。' },
+      { tag: 'HG_PAY', modes: ['REVERSE_STRATEGY'], args: '{"amount":648}', desc: '你为 Ta 充值了（金额为整数，代表人民币档位）。' },
+      { tag: 'HG_BUY', modes: ['REVERSE_STRATEGY'], args: '{"item":"星芒怀表","price":460}', desc: '你在商店为 Ta 买了一件礼物。' },
+      { tag: 'HG_QUEST', modes: ['REVERSE_STRATEGY'], args: '{"done":"为你录晚安语音"}', desc: '你完成了 Ta 布置的任务。' }
     ],
 
-    /** 给 system prompt 用的指令说明块 */
-    promptBlock: function () {
+    /** 当前模式下可用的指令 */
+    catalogFor: function (mode) {
+      return Ops.CATALOG.filter(function (c) {
+        return !c.modes || c.modes.indexOf(mode) >= 0;
+      });
+    },
+
+    /** 给 system prompt 用的指令说明块（按模式给不同的指令集） */
+    promptBlock: function (mode) {
+      var list = Ops.catalogFor(mode);
+      if (!list.length) return '';
       var lines = ['【你可以使用的特殊指令】',
-        '当你想汇报一次真实的游戏行为时，在该条回复的**最末尾单独一行**写下对应指令。',
-        '系统会真的去执行它，并把结果作为系统提示插进你们的对话里。'];
-      Ops.CATALOG.forEach(function (c) {
+        '当你想真的做点什么（而不是只用嘴说）时，在该条回复的**最末尾单独一行**写下对应指令。',
+        '系统会真的去执行它，并把结果作为**系统消息**插进你们的对话里 —— 这样Ta 能看见你的行动，而不是只听你说。'];
+      list.forEach(function (c) {
         lines.push('· [' + c.tag + ']' + c.args + ' —— ' + c.desc);
       });
       lines.push('一次回复最多带 1 条指令；不想用就不写。指令行不会展示给 Ta 看。');
       lines.push('不要在正文里解释指令本身，也不要把它写在句子中间。');
+      // 让回应更贴合人设 / 当前好感：这是用户明确要求的
+      lines.push('');
+      lines.push('【回应的分寸】');
+      lines.push('· 你的语气、距离感、是否主动，必须符合你们**当前的关系阶段**与你的性格设定，'
+        + '不要一上来就越界，也不要一直冷淡。');
+      lines.push('· 参考你们的好感度与心境：好感越高越愿意示弱与主动，好感低时保持礼貌与距离。');
+      lines.push('· 优先回应 Ta 刚刚说的**具体内容**，不要答非所问地说套话。');
       return lines.join('\n');
     },
 
@@ -860,6 +895,41 @@
         }
         K.pushTimeline({ type: 'quest', title: name + '完成了任务', text: done });
         return { ok: true, tone: 'quest', log: '*' + name + '汇报：' + done + ' 已经做完了*', extra: done };
+      }
+
+      // —— 攻略模式：TA 因为这一刻动心，好感上升 ——（用户要求"对方可以加好感度"）
+      if (op.tag === 'HG_AFFINITY') {
+        var delta = U.clamp(U.int(op.args.delta, 4), -12, 12);
+        var why2 = String(op.args.why || '').slice(0, 40);
+        var res = K.addAffinity(delta, { reason: '静室 · ' + (why2 || '心动'), silent: true });
+        K.save(true);
+        return {
+          ok: true, tone: 'touch',
+          log: '*' + name + '的心动 +' + (res && res.applied != null ? res.applied : delta)
+            + (why2 ? '（' + why2 + '）' : '') + '*',
+          extra: '+' + (res && res.applied != null ? res.applied : delta)
+        };
+      }
+
+      // —— 攻略模式：TA 给你派一个委托 ——（用户要求"发布任务"，且以系统消息出现）
+      if (op.tag === 'HG_ASSIGN') {
+        var qName = String(op.args.name || '').trim().slice(0, 16);
+        if (!qName) return { ok: false, log: '', tone: 'system', extra: '' };
+        var qDesc = String(op.args.desc || '').trim().slice(0, 60);
+        var q = K.addDynamicQuest({
+          name: qName, desc: qDesc,
+          target: U.clamp(U.int(op.args.target, 1), 1, 9),
+          reward: U.clamp(U.int(op.args.reward, 80), 10, 999),
+          from: 'char'
+        });
+        K.pushTimeline({ type: 'quest', title: name + '派了委托', text: name + '：「' + qName + '」' });
+        K.save(true);
+        return {
+          ok: true, tone: 'quest',
+          log: '*' + name + '给你派了一个委托【' + qName + '】' + (qDesc ? '：' + qDesc : '')
+            + '（奖励 ' + (q ? q.reward : U.int(op.args.reward, 80)) + ' 心动代币）*',
+          extra: qName
+        };
       }
 
       return { ok: false, log: '', tone: 'system', extra: '' };

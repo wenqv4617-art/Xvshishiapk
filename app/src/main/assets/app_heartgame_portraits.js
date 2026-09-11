@@ -3045,9 +3045,109 @@
         Portraits.openAdmin(onChanged);
       }
 
+      // ------------------------------------------------------------------
+      //  文风管理器（v1.5.41，用户标了高优先级）
+      //  「主线剧情有时候生成的很短小很不好看。我们后台管理里要加一个文风管理器，
+      //    可以新增文风管理，优先级别要高。」
+      // ------------------------------------------------------------------
+      var styleSection = H.el('div');
+      styleSection.id = 'hg-style-manager';
+      function paintStyles() {
+        styleSection.innerHTML = '';
+        styleSection.appendChild(H.sectionTitle('文风管理器', { color: '#B79EDC' }));
+        var tip = H.el('div');
+        tip.style.cssText = 'font-size:10.6px; line-height:1.7; color:#8b8292; background:rgba(243,238,255,0.7);'
+          + 'border:1px solid rgba(183,158,220,0.22); border-radius:13px; padding:10px 12px; margin-bottom:10px;';
+        tip.textContent = '选中的文风会拼进主线剧情 / 卡池 / 静室的生成提示词，并且会附带"篇幅与质量下限"，'
+          + '避免生成得又短又空。内置文风不能删，但可以照着新增自己的。';
+        styleSection.appendChild(tip);
+
+        var activeId = K.state.activeStyleId;
+        K.allStyles().forEach(function (s) {
+          var on = activeId === s.id;
+          var row = H.listRow({
+            icon: s.builtin ? 'book' : 'edit',
+            color: on ? '#D97FA8' : '#9FB3D9',
+            soft: on ? '#FFEBF3' : '#EDF2FB',
+            title: s.name + (on ? '（当前）' : ''),
+            subtitle: (s.desc || '') + (s.builtin ? ' · 内置' : ' · 自定义'),
+            subtitleWrap: true,
+            rightNode: (function () {
+              var box = H.el('div');
+              box.style.cssText = 'display:flex; gap:6px; align-items:center; flex-shrink:0;';
+              if (!on) {
+                var useB = H.button('设为当前', { kind: 'soft', pad: '5px 9px', size: 10.5, soft: '#FFEBF3', color: '#B0728F' });
+                useB.onclick = function (ev) {
+                  ev.stopPropagation();
+                  K.setActiveStyle(s.id);
+                  H.toast('已切换到「' + s.name + '」');
+                  paintStyles();
+                };
+                box.appendChild(useB);
+              }
+              if (!s.builtin) {
+                var editB = H.iconButton('edit', { size: 26, color: '#B79EDC', title: '编辑' });
+                editB.onclick = function (ev) {
+                  ev.stopPropagation();
+                  H.prompt({
+                    title: '编辑文风：' + s.name,
+                    message: '写下这套文风的写作规范（会直接拼进提示词）。',
+                    multiline: true, rows: 6, value: s.prompt || ''
+                  }).then(function (txt) {
+                    if (txt === null) return;
+                    K.updateStyle(s.id, { prompt: txt });
+                    H.toast('已保存');
+                    paintStyles();
+                  });
+                };
+                box.appendChild(editB);
+                var delB = H.iconButton('trash', { size: 26, color: '#c2607c' });
+                delB.onclick = function (ev) {
+                  ev.stopPropagation();
+                  H.confirm({
+                    title: '删除文风', icon: 'trash', accent: '#c2607c', soft: '#FFEFF3',
+                    message: '删除「' + s.name + '」？', okText: '删除'
+                  }).then(function (ok) {
+                    if (!ok) return;
+                    K.removeStyle(s.id);
+                    H.toast('已删除');
+                    paintStyles();
+                  });
+                };
+                box.appendChild(delB);
+              }
+              return box;
+            })()
+          });
+          row.onclick = null;
+          styleSection.appendChild(row);
+        });
+
+        var addB = H.button('新增文风', { kind: 'primary', block: true, icon: 'plus' });
+        addB.onclick = async function () {
+          var name = await H.prompt({ title: '文风名称', placeholder: '例如：雨夜电影感', value: '' });
+          if (!name) return;
+          var desc = await H.prompt({ title: '一句话说明', placeholder: '例如：冷调、长镜头、大量留白', value: '' });
+          if (desc === null) return;
+          var bodyTxt = await H.prompt({
+            title: '写作规范',
+            message: '这套文风具体怎么写？越具体越有效（视角、句式、用词、节奏、要避免什么）。',
+            multiline: true, rows: 6, placeholder: '例如：以长镜头式的环境描写开场，句子偏长但每段只推进一件事；'
+              + '对白极少，靠动作与停顿传情；禁止出现感叹号。'
+          });
+          if (!bodyTxt) return;
+          var row = K.addStyle({ name: name, desc: desc, prompt: bodyTxt });
+          if (row) { K.setActiveStyle(row.id); H.toast('已新增并设为当前'); }
+          paintStyles();
+        };
+        styleSection.appendChild(addB);
+      }
+      paintStyles();
+      body.appendChild(styleSection);
+
       return H.sheet({
         title: '后台管理',
-        subtitle: '世界线 · 身份字段 · 记忆格式化',
+        subtitle: '世界线 · 身份字段 · 记忆格式化 · 文风',
         icon: 'admin',
         height: '92%',
         slot: 'portrait-admin',

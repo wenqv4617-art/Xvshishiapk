@@ -111,7 +111,50 @@
     waist: '#8FB8DE', arm: '#A8D5BA', forearm: '#7FC8A9', hand: '#F2B880', leg: '#9AA7C7'
   };
 
-  /** 商店分类 */
+  /**
+   * 内置文风（v1.5.41）
+   * 用户：「主线剧情有时候生成的很短小很不好看。我们后台管理里要加一个文风管理器，
+   *        可以新增文风管理，优先级别要高。主线剧情生成表单里也要加上文风选择器。」
+   * 每条 = 一段会拼进生成提示词的写作规范。
+   */
+  var BUILTIN_STYLES = [
+    {
+      id: 'builtin-restrained', name: '克制留白', builtin: true,
+      desc: '话少、留白多，情绪藏在动作里',
+      prompt: '文风：克制留白。多用短句与具体动作细节，少写心理直述；'
+        + '情绪靠停顿、视线、呼吸、手上的小动作带出来，不要写"他心里想"。'
+        + '对白简短克制，一句话只承载一个意思，允许沉默与答非所问。'
+    },
+    {
+      id: 'builtin-intense', name: '浓烈直白', builtin: true,
+      desc: '情绪外放，对白有压迫感',
+      prompt: '文风：浓烈直白。情绪允许外放，对白有压迫感与占有欲；'
+        + '多用短促的祈使句与打断，允许重复与追问。'
+        + '描写偏感官（温度、气味、触碰的力度），但要避免堆砌形容词。'
+    },
+    {
+      id: 'builtin-classical', name: '古风雅致', builtin: true,
+      desc: '用词典雅，节奏舒缓',
+      prompt: '文风：古风雅致。用词偏书面与古典意象（灯、雨、更漏、衣料摩擦声），'
+        + '句读讲究，长短句交错；避免现代口语与网络词。情绪要含蓄，'
+        + '以景写情，让景物承担一部分情绪。'
+    },
+    {
+      id: 'builtin-noir', name: '悬疑冷硬', builtin: true,
+      desc: '冷调、信息密度高、有悬念',
+      prompt: '文风：悬疑冷硬。叙述冷静克制，镜头感强，多用环境细节与时间点；'
+        + '每段留一个未解的钩子（一句没说完的话、一个不该出现的物件）。'
+        + '对白简洁、有试探性，双方都在隐藏信息。'
+    },
+    {
+      id: 'builtin-daily', name: '轻甜日常', builtin: true,
+      desc: '生活流、松弛、小打小闹',
+      prompt: '文风：轻甜日常。以生活细节推进（吃什么、几点、谁忘了带伞），'
+        + '节奏松弛，允许玩笑与小小的拌嘴；情绪落点轻但有温度。'
+        + '避免大起大落与苦情桥段。'
+    }
+  ];
+
   var SHOP_CATEGORIES = [
     { key: 'wear',    name: '服饰', color: '#B79EDC', soft: '#F3EEFF' },
     { key: 'accessory', name: '饰品', color: '#D97FA8', soft: '#FFEBF3' },
@@ -810,6 +853,163 @@
       return false;
     },
 
+    // ------------------------------------------------------------------
+    //  3.10b 防重复点击 / 缓冲态（v1.5.41）
+    //  用户：「一些调用 api 的地方应该加一些缓冲态，防止重复点击。但是尽量不要遮住视线。」
+    //  所以这里**不弹遮罩**，只做两件事：① 同名操作短时间只放行一次；② 按钮自身置灰换文案。
+    // ------------------------------------------------------------------
+
+    _locks: {},
+
+    /**
+     * 同名操作节流：同一个 key 在 ms 毫秒内只放行一次。
+     * @returns {boolean} true = 这次要拦掉（正在忙 / 刚点过）
+     */
+    blocked: function (key, ms) {
+      var now = Date.now();
+      var until = H._locks[key] || 0;
+      if (now < until) return true;
+      H._locks[key] = now + (ms || 1500);
+      return false;
+    },
+
+    /** 手动解锁（操作结束后想立刻允许下一次就调它） */
+    unlock: function (key) { if (key) delete H._locks[key]; },
+
+    /**
+     * 给一个按钮上"进行中"的缓冲态，返回恢复函数。
+     * 刻意不遮罩、不弹窗 —— 只在按钮上体现（用户要求不要遮住视线）。
+     */
+    busy: function (node, label) {
+      if (!node) return function () { };
+      var oldText = node.textContent;
+      var wasDisabled = node.disabled;
+      var oldOpacity = node.style.opacity;
+      try { node.disabled = true; } catch (e) { }
+      node.style.opacity = '0.55';
+      node.style.pointerEvents = 'none';
+      if (label) node.textContent = label;
+      return function () {
+        try { node.disabled = wasDisabled; } catch (e) { }
+        node.style.opacity = oldOpacity || '';
+        node.style.pointerEvents = '';
+        if (label) node.textContent = oldText;
+      };
+    },
+
+    /**
+     * 便捷包装：节流 + 缓冲态 + 保证恢复。
+     * @param {string} key 操作名（同名共用一个锁）
+     * @param {HTMLElement} node 要置灰的按钮（可空）
+     * @param {string} label 进行中的文案
+     * @param {Function} fn 真正要做的事（async）
+     */
+    runOnce: async function (key, node, label, fn) {
+      if (H.blocked(key)) { H.toast('正在处理，稍等一下'); return null; }
+      var restore = H.busy(node, label);
+      try {
+        return await fn();
+      } finally {
+        restore();
+        H.unlock(key);
+      }
+    },
+
+    // ------------------------------------------------------------------
+    //  3.10c 文风（v1.5.41）
+    //  内置几套 + 用户可新增；选中的文风会拼进主线 / 卡池 / 静室等生成提示词。
+    // ------------------------------------------------------------------
+
+    /** 全部文风：内置在前，用户新增在后 */
+    allStyles: function () {
+      var st = K.state;
+      var user = (st && Array.isArray(st.styles)) ? st.styles : [];
+      return BUILTIN_STYLES.concat(user);
+    },
+
+    styleById: function (id) {
+      var all = K.allStyles();
+      for (var i = 0; i < all.length; i++) if (all[i].id === id) return all[i];
+      return null;
+    },
+
+    activeStyle: function () {
+      var st = K.state;
+      return st && st.activeStyleId ? K.styleById(st.activeStyleId) : null;
+    },
+
+    setActiveStyle: function (id) {
+      var st = K.state;
+      if (!st) return false;
+      st.activeStyleId = (id && K.styleById(id)) ? id : null;
+      K.save();
+      K.emit('style', { id: st.activeStyleId });
+      return true;
+    },
+
+    addStyle: function (s) {
+      var st = K.state;
+      if (!st || !s || !String(s.name || '').trim()) return null;
+      st.styles = st.styles || [];
+      var row = {
+        id: U.uid('sty'),
+        name: String(s.name).trim().slice(0, 12),
+        desc: String(s.desc || '').trim().slice(0, 40),
+        prompt: String(s.prompt || '').trim(),
+        builtin: false,
+        createdAt: Date.now()
+      };
+      st.styles.push(row);
+      K.save();
+      K.emit('style', { added: row.id });
+      return row;
+    },
+
+    updateStyle: function (id, patch) {
+      var st = K.state;
+      if (!st || !Array.isArray(st.styles)) return false;
+      for (var i = 0; i < st.styles.length; i++) {
+        if (st.styles[i].id !== id) continue;
+        var p = patch || {};
+        if (p.name !== undefined) st.styles[i].name = String(p.name).trim().slice(0, 12);
+        if (p.desc !== undefined) st.styles[i].desc = String(p.desc).trim().slice(0, 40);
+        if (p.prompt !== undefined) st.styles[i].prompt = String(p.prompt).trim();
+        K.save();
+        return true;
+      }
+      return false;
+    },
+
+    removeStyle: function (id) {
+      var st = K.state;
+      if (!st || !Array.isArray(st.styles)) return false;
+      var before = st.styles.length;
+      st.styles = st.styles.filter(function (x) { return x.id !== id; });
+      if (st.activeStyleId === id) st.activeStyleId = null;
+      K.save();
+      return st.styles.length !== before;
+    },
+
+    /**
+     * 把当前文风拼成一段提示词（没选就返回空串）
+     * 除了文风本身，还会追加**篇幅与质量下限** ——
+     * 用户反馈「主线剧情有时候生成的很短小很不好看」，这一条是治它的。
+     */
+    styleBlock: function (idOverride) {
+      var s = idOverride ? K.styleById(idOverride) : K.activeStyle();
+      if (!s) return '';
+      return '【写作文风：' + s.name + '】\n' + (s.prompt || s.desc || '')
+        + '\n\n【篇幅与质量下限（必须满足，宁长勿短）】\n'
+        + '· 每个节点的正文不少于 120 字（对白节点 100 字以上），不要用一句话敷衍一个节点。\n'
+        + '· 每个节点至少有一个具体的感官细节（声音 / 温度 / 气味 / 光线 / 触感中的一项）。\n'
+        + '· 不要写"他笑了笑""气氛很微妙"这类空泛的概括句，要用具体动作或对白代替。\n'
+        + '· 选项之间必须产生真正不同的走向，不要给出意思相近的三个选项。';
+    },
+
+
+    api: null,
+
+
     /**
      * 抽屉 / 底部卡片面板
      * @param {object} opts { title, subtitle, icon, accent, content(Node), buttons:[{text,kind,onClick}],
@@ -888,7 +1088,8 @@
           });
           b.onclick = function () {
             if (typeof cfg.onClick === 'function') {
-              var r = cfg.onClick(api);
+              // 第二个参数给按钮本身，方便调用方做"进行中"缓冲态（见 H.busy / H.blocked）
+              var r = cfg.onClick(api, b);
               if (r === false) return;
             }
             if (cfg.keepOpen !== true) finish(cfg.value === undefined ? cfg.text : cfg.value);
@@ -1570,6 +1771,10 @@
         backgroundFit: {},    // {bgId: {x, y, scale}} 背景自己调过的位置与缩放
         pool: []              // LRU 资源池 key 列表
       },
+
+      // —— 文风（用户可在后台管理里新增） ——
+      styles: [],             // [{id, name, desc, prompt, builtin:false}]
+      activeStyleId: null,    // 当前选中的文风（内置的直接存 id）
 
       // —— 统计与其它 ——
       stats: {
@@ -2943,12 +3148,22 @@
       K.emit('cleared', { scope: scope });
       return true;
     },
-
     // ------------------------------------------------------------------
     //  3.11 LLM 适配（统一走 apiRoutes + fwCallLLM）
     // ------------------------------------------------------------------
 
-    api: null,
+    // ------------------------------------------------------------------
+    //  文风（v1.5.41）—— 实现在 H 上，这里转发给外部调用方（K.xxx 是模组的对外门面）
+    //  用户要求："后台管理里要加一个文风管理器，可以新增文风管理，优先级别要高。"
+    // ------------------------------------------------------------------
+    allStyles: function () { return H.allStyles(); },
+    styleById: function (id) { return H.styleById(id); },
+    activeStyle: function () { return H.activeStyle(); },
+    setActiveStyle: function (id) { return H.setActiveStyle(id); },
+    addStyle: function (s) { return H.addStyle(s); },
+    updateStyle: function (id, patch) { return H.updateStyle(id, patch); },
+    removeStyle: function (id) { return H.removeStyle(id); },
+    styleBlock: function (id) { return H.styleBlock(id); },
 
     resolveApi: async function () {
       try {

@@ -657,6 +657,8 @@
      * @param {object} opts { theme, kind:'limited'|'standard', cardCount, withArt }
      */
     generateByAI: async function (opts) {
+      // 生成卡池要调模型，防重复点击（v1.5.41）
+      if (H.blocked('gacha-genpool', 2000)) return null;
       var o = opts || {};
       var profile = await K.charProfile();
       var theme = o.theme || '雨夜重逢';
@@ -1006,12 +1008,12 @@
             text: '单抽 · ' + pool.singleCost, icon: 'die', kind: 'outline',
             color: '#8f6a80', border: 'rgba(216,160,190,0.5)',
             keepOpen: true,
-            onClick: function () { UI.doDraw(pool, 1); }
+            onClick: function (api, node) { UI.doDraw(pool, 1, node); }
           },
           {
             text: '十连 · ' + pool.tenCost, icon: 'sparkle', kind: 'primary',
             keepOpen: true,
-            onClick: function () { UI.doDraw(pool, 10); }
+            onClick: function (api, node) { UI.doDraw(pool, 10, node); }
           }
         ]
       });
@@ -1029,7 +1031,11 @@
     },
 
     /** 执行抽卡并播放演出 */
-    doDraw: async function (pool, times) {
+    doDraw: async function (pool, times, node) {
+      // 防重复点击（v1.5.41）：抽卡是真花钱的操作，连点两次会抽两次。
+      // 用的是自过期的时间锁，所以不需要在每个 return 前手动解锁。
+      if (H.blocked('gacha-draw', 1600)) return;
+      if (node) { var _r = H.busy(node, '抽卡中…'); setTimeout(_r, 1600); }
       var cost = times === 10 ? pool.tenCost : pool.singleCost;
       var st = K.state;
       var useDrawTicket = false;
@@ -1983,6 +1989,8 @@
 
     /** 批量出图进度面板 */
     runArtGeneration: function (pool, onDone) {
+      // 生图是真花钱的，双击等于生成两轮（v1.5.41）
+      if (H.blocked('gacha-artgen', 2500)) { H.toast('正在生成，稍等一下'); return; }
       var body = H.el('div');
       var prog = H.progress({ value: 0, color: '#D97FA8', color2: '#B79EDC' });
       var label = H.el('div');

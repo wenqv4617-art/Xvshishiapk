@@ -328,12 +328,17 @@
     },
 
     /** 生成一个新篇章（含 5~8 个节点） */
-    generateArc: async function (theme) {
+    generateArc: async function (theme, styleId) {
+      // 生成一整章很贵，双击会生成两章（v1.5.41）
+      if (HG.H.blocked('story-genarc', 2500)) { HG.H.toast('正在写，稍等一下'); return null; }
       var profile = await K.charProfile();
       var t = theme || '一场没有预告的重逢';
+      // 文风：表单里选的那套优先，其次全局当前文风；都没有就不注入
+      var styleBlock = K.styleBlock(styleId || null);
       var prompt = await Gen.baseSystem(
-        '请为下面的主题生成一个可玩的主线篇章，共 6 个节点。\n'
+        '请为下面的主题生成一个可玩的主线篇章，共 8 个节点。\n'
         + '主题：' + t + '\n\n'
+        + (styleBlock ? styleBlock + '\n\n' : '')
         + '严格只返回 JSON，结构如下：\n'
         + '{\n'
         + '  "title": "篇章名（6~10 字）",\n'
@@ -345,24 +350,27 @@
         + '      "scene": "场景描述，一句话（用于背景与氛围）",\n'
         + '      "bg": "场景关键词，例如 雨天 / 卧室 / 校园 / 黄昏",\n'
         + '      "speaker": "char" | "narration" | "user",\n'
-        + '      "text": "正文。dialogue 节点写 "char" 的对白（60~140 字，可含一句直接引语）；narration 写旁白（40~90 字）",\n'
+        + '      "text": "正文。dialogue 节点写 char 的对白（120~220 字，可含一到两句直接引语）；narration 写旁白（120~200 字）",\n'
         + '      "emotion": "calm" | "blush" | "surprise" | "away" | "shy",\n'
         + '      "options": [\n'
         + '        { "text": "选项文字（12~24 字）", "affinityDelta": 5, "verdictDelta": 0,\n'
-        + '          "result": "选择后 Char 的反应，50~100 字" }\n'
+        + '          "result": "选择后 Char 的反应，80~160 字" }\n'
         + '      ]\n'
         + '    }\n'
         + '  ]\n'
         + '}\n\n'
         + '规则：\n'
+        + '· 正好 8 个节点，且**每个节点的正文都要写满**，不要用一句话敷衍。\n'
         + '· 前 2 个节点铺陈氛围（可含 narration / dialogue）。\n'
-        + '· 中间节点必须给出 2~3 个 options（"options" 至少 2 个），且不同选项的 affinityDelta 要有差异（可为负）。\n'
+        + '· 中间节点必须给出 2~3 个 options（"options" 至少 2 个），且不同选项的 affinityDelta 要有差异（可为负），'
+        + '三个选项要导向真正不同的走向。\n'
         + '· 最后一个节点收束情绪，options 可以为空数组。\n'
         + '· sms / call / moment 三种节点是「剧情中途小手机」内容：\n'
         + '  sms = 一条短讯（text 写成短讯内容，speaker 写 char）；\n'
         + '  call = 一通电话（text 写来电时说的话）；\n'
         + '  moment = 一条朋友圈（text 写发的内容）。\n'
-        + '· 整个篇章至少包含 1 个 sms 或 call 节点。'
+        + '· 整个篇章至少包含 1 个 sms 或 call 节点。\n'
+        + '· 文风要求（若上面给了）必须体现在每一个节点的用词与节奏里，不能只在开头体现。'
       );
       var obj = await K.askJSON(prompt, null, { temperature: 0.95, maxTokens: 2400 });
       if (!obj || !Array.isArray(obj.nodes) || !obj.nodes.length) {
@@ -1082,6 +1090,41 @@
         quick.appendChild(b);
       });
       themeBox.appendChild(quick);
+
+      // 文风选择器（v1.5.41）：用户要求"主线剧情生成表单里也要加上文风选择器"
+      var styleLabel = H.el('div');
+      styleLabel.style.cssText = 'font-size:10.6px; font-weight:800; color:#8b8292; margin:12px 2px 6px;';
+      styleLabel.textContent = '文风（决定这一章的写法与篇幅）';
+      themeBox.appendChild(styleLabel);
+      var styleBar = H.el('div');
+      styleBar.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px;';
+      var pickedStyleId = K.state.activeStyleId || null;
+      var paintStyles = function () {
+        styleBar.innerHTML = '';
+        var rows = [{ id: null, name: '不指定', desc: '用模型默认写法' }].concat(K.allStyles());
+        rows.forEach(function (s) {
+          var on = pickedStyleId === s.id;
+          var b = H.el('button', { type: 'button', title: s.desc || s.prompt || '' });
+          b.style.cssText = 'padding:6px 11px; border-radius:11px; font-size:10.8px; font-weight:700; cursor:pointer;'
+            + 'transition:all .18s ease;'
+            + (on ? 'background:linear-gradient(135deg,#D97FA8,#B79EDC); color:#fff; border:none;'
+              : 'background:rgba(255,255,255,0.86); color:#8b8292; border:1px solid rgba(190,180,195,0.28);');
+          b.textContent = s.name + (s.builtin === false ? ' ·自定义' : '');
+          b.onclick = function () {
+            pickedStyleId = s.id;
+            K.setActiveStyle(s.id);      // 顺手记成当前文风，下次进来还是它
+            paintStyles();
+          };
+          styleBar.appendChild(b);
+        });
+      };
+      paintStyles();
+      themeBox.appendChild(styleBar);
+      var styleHint = H.el('div');
+      styleHint.style.cssText = 'font-size:10px; color:#a99fae; margin-top:6px; line-height:1.6;';
+      styleHint.textContent = '想自己写一套？去「后台管理 → 文风管理器」新增。';
+      themeBox.appendChild(styleHint);
+
       body.appendChild(themeBox);
 
       H.sheet({
@@ -1093,10 +1136,12 @@
         content: body,
         buttons: [{
           text: 'AI 写一个新篇章', icon: 'sparkle', kind: 'primary', keepOpen: true,
-          onClick: async function () {
+          onClick: async function (api, node) {
             var theme = input.value.trim() || '一场没有预告的重逢';
+            var restore = H.busy(node, '正在写…');
             H.toast('正在为你们写一个开局…');
-            var arc = await Gen.generateArc(theme);
+            var arc = await Gen.generateArc(theme, pickedStyleId);
+            restore();
             if (!arc) { H.toast('篇章生成失败'); return; }
             H.closeAllLayers();
             UI.play(arc);
