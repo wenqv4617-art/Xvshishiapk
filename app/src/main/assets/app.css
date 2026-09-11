@@ -8,7 +8,11 @@
 }
 
 .app-window {
-  position: absolute;
+  /* position 必须是 absolute：所有应用窗口都靠它脱离文档流、贴在容器顶部。
+     一旦被内联样式改成 relative，窗口会变成流内块级元素、被前面的窗口顶下去一屏，
+     而 #phone-container 是 overflow:hidden —— 表现就是「点了没反应」（active 加了但整窗在可视区外）。
+     加 !important 是为了让「谁在窗口上写内联 position」都不会再造成这个坑。 */
+  position: absolute !important;
   top: 0; left: 0;
   width: 100%; height: 100%;
   background-color: var(--bg-main);

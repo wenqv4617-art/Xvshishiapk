@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v106'; // v106: 心动游戏标题与页面标题显示当前版本号(便于确认设备跑的是哪一版); v1.5.28
+const CACHE_NAME = 'story-phone-v107'; // v107: 真根因修复——窗口内联 position:relative 导致整窗被顶出可视区(点图标没反应); v1.5.29
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

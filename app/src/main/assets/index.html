@@ -6650,7 +6650,7 @@
         </div> <!-- 工作台应用(win-workbench)结束 -->
 
         <!-- 仪轨：日程 / 穿着 / 随身物品 / 位置 四维状态（简约日历） -->
-        <div id="win-yigui" class="app-window" style="overflow:hidden; background:#f7f8fa; position:relative;">
+        <div id="win-yigui" class="app-window" style="overflow:hidden; background:#f7f8fa;">
           <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.55)); border-bottom:1px solid rgba(148,163,184,0.22);">
             <button class="btn-icon" id="yigui-close-btn" style="color:#475569;">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -6680,7 +6680,10 @@
         </div> <!-- 仪轨应用(win-yigui)结束 -->
 
         <!-- 心动游戏（v1.5.21 新增）：与购物 / 工作台同级的主界面入口，功能本体待后续实装 -->
-        <div id="win-heartgame" class="app-window" style="overflow:hidden; background:#fff7fb; position:relative;">
+        <!-- ⚠ 不要在这些窗口上写内联 position:relative！.app-window 靠 position:absolute 脱离文档流，
+             写了 relative 会让它变成流内元素被前面的窗口顶下去一屏（phone-container 是 overflow:hidden），
+             表现就是「点了没反应」——active 加了、内容也渲染了，但整窗在可视区外。 -->
+        <div id="win-heartgame" class="app-window" style="overflow:hidden; background:#fff7fb;">
           <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.55)); border-bottom:1px solid rgba(216,160,190,0.25);">
             <button class="btn-icon" id="heartgame-close-btn" style="color:#7c5a6b;">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
@@ -6692,7 +6695,8 @@
         </div> <!-- 心动游戏(win-heartgame)结束 -->
 
         <!-- 占位图标（v1.5.21 新增）：预留给下一个功能的入口 -->
-        <div id="win-placeholder" class="app-window" style="overflow:hidden; background:#f7f9fe; position:relative;">
+        <!-- ⚠ 同上：不要写内联 position:relative -->
+        <div id="win-placeholder" class="app-window" style="overflow:hidden; background:#f7f9fe;">
           <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.55)); border-bottom:1px solid rgba(148,163,184,0.25);">
             <button class="btn-icon" id="placeholder-close-btn" style="color:#475569;">
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
