@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v108'; // v108: 撤掉带白边的UI框框素材(回纯CSS) + 新增韩系立绘与3张场景背景 + 好感面板可收起; v1.5.30
+const CACHE_NAME = 'story-phone-v109'; // v109: 主页交互改捕获阶段动作委托(不再逐个挂监听) + 工具栏几何修正 + 立绘偏移补偿; v1.5.31
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

@@ -456,7 +456,11 @@
 
     // 立绘图片层
     var img = H.el('img', { class: 'hg-portrait-img', alt: '' });
-    img.style.cssText = 'position:absolute; left:50%; bottom:0; transform:translateX(-50%);'
+    // offsetX：逐立绘水平微调（占容器宽度的比例，负值左移）。
+    // 生成式立绘经常「人物没画在画布正中」，只靠居中会看着偏；
+    // 给每张立绘一个可调的偏移，比重新出图省事得多。
+    var ox = (portrait && typeof portrait.offsetX === 'number') ? portrait.offsetX : 0;
+    img.style.cssText = 'position:absolute; left:' + (50 + ox * 100) + '%; bottom:0; transform:translateX(-50%);'
       + 'width:auto; height:100%; max-width:100%; object-fit:' + (o.fit || 'contain') + ';'
       + 'transform-origin:50% 92%; user-select:none; -webkit-user-drag:none;'
       + 'filter:drop-shadow(0 18px 34px rgba(140,110,140,0.24));';
@@ -658,7 +662,12 @@
      * 内置默认立绘：开箱即用，避免新用户对着一个线稿占位小人。
      * 用户一旦自己上传/导入立绘，就完全以用户的为准（这里只是「没有立绘时」的兜底展示）。
      */
-    BUILTIN_PORTRAIT: { id: 'builtin-hero', name: '默认立绘（可替换）', kind: 'image', src: 'images/heartgame/portrait/default.png' },
+    BUILTIN_PORTRAIT: {
+      id: 'builtin-hero', name: '默认立绘（可替换）', kind: 'image',
+      src: 'images/heartgame/portrait/default.png',
+      // 这张图的人物主体画在画布偏右约 7%，居中摆放会看着偏 → 左移补偿
+      offsetX: -0.07
+    },
 
     /** 确保至少有一个可展示的立绘（不动用户数据，只在「一个都没有」时兜底） */
     ensureBuiltinPortrait: function () {
@@ -669,6 +678,7 @@
       var b = Portraits.BUILTIN_PORTRAIT;
       st.assets.portraits = [{
         id: b.id, name: b.name, kind: b.kind, src: b.src, modelUrl: '',
+        offsetX: b.offsetX,
         tags: ['内置'], current: true, createdAt: Date.now()
       }];
       st.assets.currentPortraitId = b.id;

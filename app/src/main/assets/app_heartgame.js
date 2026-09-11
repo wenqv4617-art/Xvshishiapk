@@ -101,6 +101,7 @@
       }
 
       App.bindLifecycle();
+      App.bindActions();
 
       // 载入状态
       body.innerHTML = '';
@@ -156,6 +157,53 @@
     exit: function () {
       App.teardown();
       if (typeof closeApp === 'function') closeApp('heartgame');
+    },
+
+    // ------------------------------------------------------------------
+    //  1.1b 动作委托：主页所有可点元素统一由 document 捕获阶段派发
+    // ------------------------------------------------------------------
+
+    /**
+     * 为什么不再逐个 `el.onclick = fn`：
+     *   主页入口的点击反复出现「点了没反应」，而我在探针里每次都测通过 ——
+     *   说明失败点在「我的探针复现不了的真实环境差异」上（透明层、stopPropagation、
+     *   重绘换节点、触摸事件顺序……）。逐个挂 onclick 的失败面太大且完全静默。
+     *
+     * 现在改为：元素只带 `data-hg-action="动作名"`，由 document 的**捕获阶段**统一派发：
+     *   · 捕获先于冒泡，任何人的 stopPropagation 都拦不住；
+     *   · 用 closest() 取动作，点在内部 SVG 上同样命中；
+     *   · 命中即 stopPropagation + preventDefault，不会误触桌面手势；
+     *   · 派发包 try/catch，出错直接 toast —— 永不再静默失败。
+     * 只绑定一次，重绘换节点也不受影响。
+     */
+    ACTIONS: null,
+
+    bindActions: function () {
+      if (App._actionsBound) return;
+      App._actionsBound = true;
+      document.addEventListener('click', function (e) {
+        var t = e.target;
+        if (!t || !t.closest) return;
+        var node = t.closest('[data-hg-action]');
+        if (!node) return;
+        var name = node.getAttribute('data-hg-action');
+        var fn = App.ACTIONS && App.ACTIONS[name];
+        if (typeof fn !== 'function') return;
+        e.stopPropagation();
+        e.preventDefault();
+        try {
+          fn(node, e);
+        } catch (err) {
+          console.error('[心动游戏] 动作执行失败: ' + name, err);
+          try { HG.H.toast('操作失败：' + (err && err.message ? err.message : err)); } catch (e2) { }
+        }
+      }, true);
+    },
+
+    /** 给元素打动作标记 */
+    act: function (el, name) {
+      if (el && el.setAttribute) el.setAttribute('data-hg-action', name);
+      return el;
     },
 
     /**
@@ -330,7 +378,7 @@
       charRow.onpointerdown = function () { charRow.style.transform = 'scale(0.97)'; };
       charRow.onpointerup = function () { charRow.style.transform = ''; };
       charRow.onpointerleave = function () { charRow.style.transform = ''; };
-      charRow.onclick = function () { App.openCharSwitcher(); };
+      App.act(charRow, 'char-switch');
       leftCol.appendChild(charRow);
 
       // 好感度面板（下拉）
@@ -348,7 +396,7 @@
         border: 'rgba(216,160,190,0.32)', title: '切换背景'
       });
       bgBtn.style.backdropFilter = 'blur(12px)';
-      bgBtn.onclick = function () { App.openBackgroundDrawer(); };
+      App.act(bgBtn, 'bg-picker');
       rightCol.appendChild(bgBtn);
       topbar.appendChild(rightCol);
 
@@ -372,7 +420,8 @@
 
       // ---------- 右下角：抽卡（大尺寸动态悬浮光晕） ----------
       var gachaWrap = H.el('div', { class: 'hg-lobby-gacha' });
-      gachaWrap.style.cssText = 'position:absolute; right:14px; bottom:74px; z-index:10;';
+      // 抬到工具栏上方：工具栏贴底，抽卡按钮留出它的高度（44+12）
+      gachaWrap.style.cssText = 'position:absolute; right:14px; bottom:62px; z-index:10;';
       var pool = HG.Gacha && HG.Gacha.Pools ? HG.Gacha.Pools.active() : null;
       var upCard = pool ? ((pool.cards || []).filter(function (c) { return c.up; })[0] || (pool.cards || [])[0]) : null;
       var gachaBtn = H.el('div');
@@ -404,15 +453,20 @@
       gachaBtn.onpointerdown = function () { gachaBtn.style.transform = 'scale(0.94)'; };
       gachaBtn.onpointerup = function () { gachaBtn.style.transform = ''; };
       gachaBtn.onpointerleave = function () { gachaBtn.style.transform = ''; };
-      gachaBtn.onclick = function () { HG.Gacha.open(); };
+      App.act(gachaBtn, 'gacha');
       gachaWrap.appendChild(gachaBtn);
       root.appendChild(gachaWrap);
 
       // ---------- 底部右对齐工具栏 ----------
       var bottom = H.el('div', { class: 'hg-lobby-bottom' });
-      bottom.style.cssText = 'position:absolute; left:0; right:0; bottom:0; z-index:11; padding:10px 12px 12px;'
+      // 贴到容器最底部：原来 bottom:0 + padding-bottom:12px，工具栏实际落在
+      // 容器底边上方约 82px 处；而手机容器在各种机型上会被上移/压缩，
+      // 结果工具栏正好卡在裁切边缘（探针里 4 个按钮全量不到命中）。
+      // 现在把工具栏压到最底、并给一层安全区内边距，保证它在任何机型上都完整可见。
+      bottom.style.cssText = 'position:absolute; left:0; right:0; bottom:0; z-index:11;'
+        + 'padding:16px 12px calc(8px + env(safe-area-inset-bottom, 0px));'
         + 'display:flex; align-items:center; justify-content:flex-end; gap:7px;'
-        + 'background:linear-gradient(0deg, rgba(255,247,251,0.96) 0%, rgba(255,247,251,0.72) 62%, rgba(255,247,251,0) 100%);';
+        + 'background:linear-gradient(0deg, rgba(255,247,251,0.98) 0%, rgba(255,247,251,0.80) 55%, rgba(255,247,251,0) 100%);';
       var TOOLS = [
         { key: 'exit', label: '退出', icon: 'exit', color: '#9a919f', soft: 'rgba(240,236,244,0.9)', open: function () { App.exit(); } },
         { key: 'admin', label: '后台管理', icon: 'admin', color: '#7E97C9', soft: '#EDF2FB', open: function () { HG.Portraits.openAdmin(function () { App.render(); }); } },
@@ -431,7 +485,7 @@
         b.onpointerdown = function () { b.style.transform = 'scale(0.95)'; };
         b.onpointerup = function () { b.style.transform = ''; };
         b.onpointerleave = function () { b.style.transform = ''; };
-        b.onclick = function () { t.open(); };
+        App.act(b, 'tool-' + t.key);
         bottom.appendChild(b);
       });
       root.appendChild(bottom);
@@ -503,7 +557,7 @@
       btn.onpointerdown = function () { btn.style.transform = 'scale(0.93)'; };
       btn.onpointerup = function () { btn.style.transform = ''; };
       btn.onpointerleave = function () { btn.style.transform = ''; };
-      btn.onclick = function () { item.open(); };
+      App.act(btn, 'rail-' + item.key);
       return btn;
     },
 
@@ -570,13 +624,14 @@
         bar.onpointerdown = function () { bar.style.transform = 'scale(0.97)'; };
         bar.onpointerup = function () { bar.style.transform = ''; };
         bar.onpointerleave = function () { bar.style.transform = ''; };
-        bar.onclick = function () { setCollapsed(false); };
+        App.act(bar, 'aff-expand');
         wrap.appendChild(bar);
         return;
       }
 
       var card = H.el('div', { id: 'hg-affinity-panel' });
       card.style.cssText = 'border-radius:18px; padding:11px 12px; max-width:230px; box-sizing:border-box;'
+        + 'position:relative;'
         + 'background:linear-gradient(150deg, rgba(255,255,255,0.88), rgba(255,247,251,0.74));'
         + 'border:1px solid rgba(216,160,190,0.30); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
         + 'box-shadow:0 10px 26px rgba(150,120,150,0.14);';
@@ -588,8 +643,7 @@
         + 'border:1px solid rgba(216,160,190,0.35); background:rgba(255,255,255,0.9); color:#b7adc0;'
         + 'display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; z-index:2;';
       fold.innerHTML = H.icon('up', 12, { strokeWidth: 2.4 });
-      fold.onclick = function (e) { e.stopPropagation(); setCollapsed(true); };
-      card.style.position = 'relative';
+      App.act(fold, 'aff-collapse');
       card.appendChild(fold);
 
       if (st.mode === C.MODE.REVERSE_STRATEGY) {
@@ -621,11 +675,8 @@
             + 'border:none;'
             + (n > 0 ? 'background:#FFEBF3; color:#B0728F;' : 'background:#EDF2FB; color:#5f7aa8;');
           b.textContent = (n > 0 ? '+' : '') + n;
-          b.onclick = function () {
-            K.nudgeVerdict(n);
-            App.renderAffinityPanel();
-            H.floatText((n > 0 ? '+' : '') + n, { host: card, x: '70%', y: '20%', color: n > 0 ? '#D97FA8' : '#7E97C9' });
-          };
+          b.setAttribute('data-delta', String(n));
+          App.act(b, 'aff-quick');
           quick.appendChild(b);
         });
         card.appendChild(quick);
@@ -635,7 +686,7 @@
           + 'font-weight:800; cursor:pointer; border:1px dashed rgba(183,158,220,0.5); background:rgba(243,238,255,0.7);'
           + 'color:#7d63a8;';
         setMood.textContent = '设定心情指数';
-        setMood.onclick = function () { App.openMoodPicker(); };
+        App.act(setMood, 'aff-mood');
         card.appendChild(setMood);
       } else {
         // —— 攻略模式：阶梯式好感进阶条 ——
@@ -674,7 +725,7 @@
           + 'font-weight:800; cursor:pointer; border:1px dashed rgba(217,127,168,0.45); background:rgba(255,241,247,0.75);'
           + 'color:#B0728F;';
         detail.textContent = '展开牵绊面板';
-        detail.onclick = function () { HG.Panels.openBond('ladder'); };
+        App.act(detail, 'aff-goto');
         card.appendChild(detail);
       }
 
@@ -1104,4 +1155,38 @@
 
   /** 调试 / 外部集成用 */
   window.heartGameApp = App;
+
+  // ==========================================================================
+  //  3. 主页动作表（配合 App.bindActions 的捕获阶段委托）
+  //     每个动作都是「打开某个面板」这一类单一职责，便于排障与单测。
+  // ==========================================================================
+  App.ACTIONS = {
+    'rail-task':    function () { HG.Panels.openTasks(); },
+    'rail-shop':    function () { HG.Panels.openShop(); },
+    'rail-bond':    function () { HG.Panels.openBond(); },
+    'rail-story':   function () { HG.Story.open(); },
+    'tool-exit':    function () { App.exit(); },
+    'tool-admin':   function () { HG.Portraits.openAdmin(function () { App.render(); }); },
+    'tool-portrait': function () { HG.Portraits.openManager(function () { App.render(); }); },
+    'tool-quiet':   function () { HG.Quiet.open(); },
+    'gacha':        function () { HG.Gacha.open(); },
+    'char-switch':  function () { App.openCharSwitcher(); },
+    'bg-picker':    function () { App.openBackgroundDrawer(); },
+    'aff-expand':   function () {
+      try { localStorage.setItem('hg-affinity-collapsed', '0'); } catch (e) { }
+      App.renderAffinityPanel();
+    },
+    'aff-collapse': function () {
+      try { localStorage.setItem('hg-affinity-collapsed', '1'); } catch (e) { }
+      App.renderAffinityPanel();
+    },
+    'aff-quick': function (node) {
+      var n = parseInt(node.getAttribute('data-delta'), 10) || 0;
+      HG.K.nudgeVerdict(n);
+      App.renderAffinityPanel();
+      HG.H.floatText((n > 0 ? '+' : '') + n, { host: node.parentNode, x: '70%', y: '20%', color: n > 0 ? '#D97FA8' : '#7E97C9' });
+    },
+    'aff-mood':     function () { App.openMoodPicker(); },
+    'aff-goto':     function () { HG.Panels.openBond('ladder'); }
+  };
 })();
