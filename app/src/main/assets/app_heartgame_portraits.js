@@ -849,6 +849,32 @@
   //  3. 静态立绘渲染器（Live2D 不可用时的主力：CSS 物理动效 + 热区触控）
   // ==========================================================================
 
+  /**
+   * 纯几何：算出一张图在给定舞台里应该画在哪（v1.5.38）
+   * 规则：contain 等比缩放 × 用户的 scale，水平居中 + 用户 offsetX，**底部对齐** + 用户 offsetY。
+   * 抽成纯函数是为了能在 Node 里直接单测（不用浏览器）。
+   * @returns {{dx:number, dy:number, dw:number, dh:number}}
+   */
+  function fitRect(boxW, boxH, natW, natH, fit) {
+    var f = fit || {};
+    var w = boxW > 0 ? boxW : 1, h = boxH > 0 ? boxH : 1;
+    var nw = natW > 0 ? natW : 1, nh = natH > 0 ? natH : 1;
+    var sc = Math.min(w / nw, h / nh) * (typeof f.scale === 'number' ? f.scale : 1);
+    var dw = nw * sc, dh = nh * sc;
+    return {
+      dx: (w - dw) / 2 + (typeof f.x === 'number' ? f.x : 0) * w,
+      dy: (h - dh) + (typeof f.y === 'number' ? f.y : 0) * h,
+      dw: dw,
+      dh: dh
+    };
+  }
+
+  /** 纯函数：矩形 + 页面坐标 -> 归一化坐标（fitRect 的逆运算） */
+  function normInRect(rect, px, py) {
+    if (!rect || !rect.dw || !rect.dh) return null;
+    return { nx: (px - rect.dx) / rect.dw, ny: (py - rect.dy) / rect.dh };
+  }
+
   function SpriteRenderer(opts) {
     this.opts = opts || {};
     this.root = null;
@@ -879,22 +905,22 @@
     // 立绘图片层
     var img = H.el('img', { class: 'hg-portrait-img', alt: '' });
     /**
-     * 立绘定位（v1.5.33 重做，之前的写法会把人裁成半张）：
+     * 立绘定位（v1.5.33 重做，v1.5.38 改成显式像素几何）
      *
-     * 旧写法 `height:100%; width:auto` 的问题：
-     *   立绘是「半身竖构图」（1024×1536，比例 2:3），而舞台是「宽而矮」的框。
-     *   按高度铺满 → 图片宽度只有舞台的 ~60%，再加上 left 偏移与 max-width 限制，
-     *   就表现为「人物挤在左边、只露出半边」。这不是轻微偏移，是**尺寸策略错了**。
+     * v1.5.33 的写法是 `inset:0 + object-fit:contain`，靠浏览器等比缩放居中 ——
+     * 修好了"只露半边"，但**没法再做用户自定义的位移/缩放**（object-fit 和 transform 叠在一起
+     * 会让命中测试的坐标换算变得很绕）。
      *
-     * 新写法：图片框直接铺满整个舞台，再用 object-fit:contain ——
-     *   由浏览器负责等比缩放并**居中**，绝不会裁切、也不会偏；
-     *   offsetX 只在需要时做整体平移（百分比是相对舞台宽度，安全）。
+     * 现在直接算出「图片实际要画在哪」：contain 缩放 × 用户的 scale，底部对齐 +
+     * 用户给的偏移。好处是图片元素的矩形**就等于**画面矩形，掩码命中换算变成一次除法。
      */
+    var fit = K.portraitFit(portrait ? portrait.id : null);
+    // 旧的 offsetX（逐立绘水平微调）折进 fit.x，保持向后兼容
     var ox = (portrait && typeof portrait.offsetX === 'number') ? portrait.offsetX : 0;
-    this.offsetX = ox;   // 掩码命中测试要按同样的偏移反推图片矩形
-    img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%;'
-      + 'object-fit:' + (o.fit || 'contain') + '; object-position:50% 100%;'
-      + 'transform:translateX(' + (ox * 100) + '%);'
+    this.fit = { x: fit.x + ox, y: fit.y, scale: fit.scale };
+    this.offsetX = 0;   // 已经折进 fit，命中换算不再单独加
+
+    img.style.cssText = 'position:absolute; left:0; top:0; width:0; height:0;'
       + 'user-select:none; -webkit-user-drag:none;'
       + 'filter:drop-shadow(0 18px 34px rgba(140,110,140,0.24));';
     if (portrait && portrait.src) img.src = portrait.src;
@@ -914,7 +940,42 @@
     if (o.showOverlay !== false) this.renderHotspots(o);
 
     host.appendChild(root);
+
+    // 图片尺寸算完（或解码完）后布局一次；舞台尺寸变化时重新贴合
+    var self2 = this;
+    var relayout = function () { self2._layout(); };
+    if (img.complete && img.naturalWidth) relayout();
+    else img.onload = function () { relayout(); };
+    setTimeout(relayout, 0);
+    setTimeout(relayout, 120);
+    this._relayout = relayout;
+    try {
+      if (typeof ResizeObserver === 'function') {
+        this._ro = new ResizeObserver(relayout);
+        this._ro.observe(root);
+      } else {
+        window.addEventListener('resize', relayout);
+      }
+    } catch (e) { window.addEventListener('resize', relayout); }
     return root;
+  };
+
+  /**
+   * 按当前容器尺寸 + 用户调过的 fit 把图片摆到确切像素位置。
+   * 图片元素的矩形 = 画面矩形，所以掩码命中换算只要一次除法。
+   */
+  SpriteRenderer.prototype._layout = function () {
+    var img = this.img, root = this.root;
+    if (!img || !root || img.style.display === 'none') return;
+    var bw = root.clientWidth, bh = root.clientHeight;
+    if (!bw || !bh) return;
+    var nw = img.naturalWidth || 1024, nh = img.naturalHeight || 1536;
+    var r = fitRect(bw, bh, nw, nh, this.fit);
+    img.style.left = r.dx + 'px';
+    img.style.top = r.dy + 'px';
+    img.style.width = r.dw + 'px';
+    img.style.height = r.dh + 'px';
+    this._rect = r;
   };
 
   /** 渲染热区（可交互 / 可编辑两种形态） */
@@ -982,23 +1043,18 @@
 
   /**
    * 把一次点击换算成「立绘画面内的归一化坐标」(0~1)。
-   * 必须按 object-fit:contain + object-position:50% 100% 反推出图片**实际画出来的矩形**，
-   * 否则在宽高比不同的舞台上会整体偏移（涂抹出来的掩码就对不上了）。
+   * v1.5.38 起图片元素本身就是画面矩形（见 _layout 的说明），
+   * 所以这里只要把点击相对图片矩形做一次除法 —— 不管用户怎么挪、怎么放缩都准。
    */
   SpriteRenderer.prototype._normFromEvent = function (ev) {
     var img = this.img;
     if (!img || !img.getBoundingClientRect) return null;
     var box = img.getBoundingClientRect();
-    var nw = img.naturalWidth, nh = img.naturalHeight;
-    if (!nw || !nh || !box.width || !box.height) return null;
-    var s = Math.min(box.width / nw, box.height / nh);
-    var dw = nw * s, dh = nh * s;
-    var dx = box.left + (box.width - dw) / 2 + (this.offsetX || 0) * box.width;
-    var dy = box.top + (box.height - dh);          // object-position:50% 100%
-    var nx = (ev.clientX - dx) / dw;
-    var ny = (ev.clientY - dy) / dh;
-    if (nx < -0.02 || nx > 1.02 || ny < -0.02 || ny > 1.02) return null;
-    return { nx: Math.min(1, Math.max(0, nx)), ny: Math.min(1, Math.max(0, ny)) };
+    if (!box.width || !box.height) return null;
+    var p = normInRect({ dx: box.left, dy: box.top, dw: box.width, dh: box.height }, ev.clientX, ev.clientY);
+    if (!p) return null;
+    if (p.nx < -0.02 || p.nx > 1.02 || p.ny < -0.02 || p.ny > 1.02) return null;
+    return { nx: Math.min(1, Math.max(0, p.nx)), ny: Math.min(1, Math.max(0, p.ny)) };
   };
 
   /** 命中反馈：在点击处放一个扩散的光环 */
@@ -1112,6 +1168,8 @@
 
   SpriteRenderer.prototype.teardown = function () {
     if (this._blinkTimer) { clearInterval(this._blinkTimer); this._blinkTimer = null; }
+    try { if (this._ro) { this._ro.disconnect(); this._ro = null; } } catch (e) { }
+    try { if (this._relayout) window.removeEventListener('resize', this._relayout); } catch (e) { }
     if (this.root && this.root.parentNode) this.root.parentNode.removeChild(this.root);
     this.root = null; this.img = null; this.overlay = null;
   };
@@ -1839,8 +1897,8 @@
       stage.appendChild(wrapper);
 
       var img = H.el('img', { alt: '' });
-      img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:contain;'
-        + 'object-position:50% 100%; user-select:none; -webkit-user-drag:none; pointer-events:none;';
+      img.style.cssText = 'position:absolute; left:0; top:0; width:0; height:0;'
+        + 'user-select:none; -webkit-user-drag:none; pointer-events:none;';
       if (portrait && portrait.src) img.src = portrait.src;
       wrapper.appendChild(img);
 
@@ -1863,21 +1921,22 @@
         zoomLabel.textContent = U.round(zoom * 100, 0) + '%';
       }
 
-      /** 把 canvas 对齐到「图片实际画出来的区域」 */
+      /** 把立绘与 canvas 一起对齐到「图片实际画出来的区域」 */
       function layoutCanvas() {
         var bw = stage.clientWidth, bh = stage.clientHeight;
-        var nw = img.naturalWidth || 1024, nh = img.naturalHeight || 1536;
         var hasImg = !!(portrait && portrait.src) && !!img.naturalWidth;
-        if (!hasImg) { nw = 2; nh = 3; }
         noImg.style.display = hasImg ? 'none' : 'flex';
-        var sc = Math.min(bw / nw, bh / nh);
-        var dw = nw * sc, dh = nh * sc;
-        var dx = (bw - dw) / 2;
-        var dy = bh - dh;                       // object-position:50% 100%
-        cv.style.left = dx + 'px';
-        cv.style.top = dy + 'px';
-        cv.style.width = dw + 'px';
-        cv.style.height = dh + 'px';
+        var r = fitRect(bw, bh, hasImg ? img.naturalWidth : 2, hasImg ? img.naturalHeight : 3, null);
+        if (hasImg) {
+          img.style.left = r.dx + 'px';
+          img.style.top = r.dy + 'px';
+          img.style.width = r.dw + 'px';
+          img.style.height = r.dh + 'px';
+        }
+        cv.style.left = r.dx + 'px';
+        cv.style.top = r.dy + 'px';
+        cv.style.width = r.dw + 'px';
+        cv.style.height = r.dh + 'px';
       }
 
       function drawMask() {
@@ -2223,6 +2282,209 @@
             K.save(true);
             H.toast('热区划分已保存');
             if (typeof onChanged === 'function') onChanged();
+          }
+        }]
+      });
+    },
+
+    // ------------------------------------------------------------------
+    //  4.4b 立绘 / 背景 位置与缩放编辑器（v1.5.38）
+    //  用户：「人物下方存在比较大的空隙 …… 可以自由移动、放缩立绘以及背景，
+    //        点击保存后此立绘与背景的位置持久化保存。」
+    // ------------------------------------------------------------------
+
+    openFitEditor: function (onChanged) {
+      var portrait = K.currentPortrait();
+      var bg = K.currentBackground();
+      var pid = portrait ? portrait.id : 'default';
+      var bgId = bg ? bg.id : 'none';
+
+      // 内存里的两份 fit，保存时才落库
+      var fits = {
+        portrait: K.portraitFit(pid),
+        background: K.backgroundFit(bgId)
+      };
+      var mode = 'portrait';       // 'portrait' | 'background'
+
+      var body = H.el('div');
+
+      // 模式切换
+      var modeBar = H.el('div');
+      modeBar.style.cssText = 'display:flex; gap:7px; margin-bottom:9px;';
+      var paintMode = function () {
+        modeBar.innerHTML = '';
+        [['portrait', '调整立绘'], ['background', '调整背景']].forEach(function (m) {
+          var on = mode === m[0];
+          var b = H.el('button', { type: 'button' });
+          b.style.cssText = 'flex:1; padding:8px 0; border-radius:12px; font-size:11.5px; font-weight:800;'
+            + 'cursor:pointer; transition:all .18s ease;'
+            + (on ? 'background:linear-gradient(135deg,#D97FA8,#B79EDC); color:#fff; border:none;'
+              : 'background:rgba(255,255,255,0.82); color:#9a919f; border:1px solid rgba(190,180,195,0.28);');
+          b.textContent = m[1];
+          b.onclick = function () { mode = m[0]; paintMode(); paintTools(); };
+          modeBar.appendChild(b);
+        });
+      };
+      body.appendChild(modeBar);
+
+      // 舞台：和看板一样的图层结构（背景 + 立绘），所见即所得
+      var stage = H.el('div');
+      stage.style.cssText = 'position:relative; width:100%; height:360px; border-radius:18px; overflow:hidden;'
+        + 'background:linear-gradient(170deg,#FFF3F8 0%,#F6F1FB 48%,#EFF3FB 100%);'
+        + 'border:1px solid rgba(216,160,190,0.24); touch-action:none;';
+      body.appendChild(stage);
+
+      var bgLayer = H.el('div');
+      bgLayer.style.cssText = 'position:absolute; inset:0; background-size:cover; background-position:center;'
+        + 'transform-origin:50% 50%;';
+      if (bg && bg.src) bgLayer.style.backgroundImage = 'url(' + bg.src + ')';
+      stage.appendChild(bgLayer);
+
+      var img = H.el('img', { alt: '' });
+      img.style.cssText = 'position:absolute; left:0; top:0; width:0; height:0;'
+        + 'user-select:none; -webkit-user-drag:none; pointer-events:none;';
+      if (portrait && portrait.src) img.src = portrait.src;
+      stage.appendChild(img);
+
+      var guide = H.el('div');
+      guide.style.cssText = 'position:absolute; inset:0; pointer-events:none;'
+        + 'background:linear-gradient(180deg, rgba(255,247,251,0.34) 0%, rgba(255,247,251,0.06) 26%,'
+        + ' rgba(255,247,251,0.42) 74%, rgba(250,246,252,0.90) 100%),'
+        + 'linear-gradient(180deg, rgba(255,247,251,0.10), rgba(60,40,70,0.22));';
+      stage.appendChild(guide);
+
+      var frame = H.el('div');
+      frame.style.cssText = 'position:absolute; left:8px; right:8px; top:6%; bottom:104px;'
+        + 'border:1.2px dashed rgba(217,127,168,0.55); border-radius:10px; pointer-events:none;';
+      stage.appendChild(frame);
+
+      var badge = H.el('div');
+      badge.style.cssText = 'position:absolute; left:8px; bottom:6px; font-size:10px; color:#8b8292;'
+        + 'background:rgba(255,255,255,0.86); border-radius:8px; padding:3px 7px; pointer-events:none;';
+      stage.appendChild(badge);
+
+      function applyAll() {
+        var bf = fits.background;
+        bgLayer.style.transform = 'translate(' + (bf.x * 100) + '%,' + (bf.y * 100) + '%) scale(' + bf.scale + ')';
+        var r = fitRect(stage.clientWidth, stage.clientHeight,
+          img.naturalWidth || 1024, img.naturalHeight || 1536, fits.portrait);
+        img.style.left = r.dx + 'px';
+        img.style.top = r.dy + 'px';
+        img.style.width = r.dw + 'px';
+        img.style.height = r.dh + 'px';
+        badge.textContent = '立绘 ' + U.round(fits.portrait.scale * 100, 0) + '% · 背景 '
+          + U.round(fits.background.scale * 100, 0) + '%';
+      }
+
+      // 拖动当前选中的那一层
+      var dragging = false, last = null;
+      stage.onpointerdown = function (ev) {
+        dragging = true;
+        last = { x: ev.clientX, y: ev.clientY };
+        try { stage.setPointerCapture && stage.setPointerCapture(ev.pointerId); } catch (e) { }
+        var b = stage.getBoundingClientRect();
+        stage._box = { w: b.width || 1, h: b.height || 1 };
+      };
+      stage.onpointermove = function (ev) {
+        if (!dragging) return;
+        ev.preventDefault();
+        var b = stage._box || { w: 1, h: 1 };
+        var f = fits[mode];
+        // 手指移动 1px = 该层移动 1/舞台尺寸 的比例
+        f.x = U.clamp(f.x + (ev.clientX - last.x) / b.w, -0.6, 0.6);
+        f.y = U.clamp(f.y + (ev.clientY - last.y) / b.h, -0.6, 0.6);
+        last = { x: ev.clientX, y: ev.clientY };
+        applyAll();
+        if (mode === 'portrait' && scaleLabel) { /* 缩放不变，只更新位置 */ }
+      };
+      var stopDrag = function () { dragging = false; };
+      stage.onpointerup = stopDrag;
+      stage.onpointercancel = stopDrag;
+
+      // 工具条：缩放滑杆 + 复位
+      var tools = H.el('div');
+      tools.style.cssText = 'display:flex; align-items:center; gap:9px; margin-top:10px; flex-wrap:wrap;';
+      body.appendChild(tools);
+      var scaleLabel = null;
+
+      function paintTools() {
+        tools.innerHTML = '';
+        scaleLabel = H.el('span');
+        scaleLabel.style.cssText = 'font-size:10.8px; color:#8b8292; font-weight:800; min-width:66px;';
+        scaleLabel.textContent = '缩放 ' + U.round(fits[mode].scale * 100, 0) + '%';
+        tools.appendChild(scaleLabel);
+
+        var slider = H.el('input', { type: 'range', min: '35', max: '260', value: String(Math.round(fits[mode].scale * 100)) });
+        slider.style.cssText = 'flex:1; min-width:110px; accent-color:#D97FA8;';
+        slider.oninput = function () {
+          fits[mode].scale = U.clamp(Number(slider.value) / 100, 0.35, 2.6);
+          scaleLabel.textContent = '缩放 ' + U.round(fits[mode].scale * 100, 0) + '%';
+          applyAll();
+        };
+        tools.appendChild(slider);
+
+        var nudge = H.el('div');
+        nudge.style.cssText = 'display:flex; gap:5px; width:100%; margin-top:2px;';
+        var mk = function (txt, fn) {
+          var b = H.el('button', { type: 'button' });
+          b.style.cssText = 'flex:1; padding:7px 0; border-radius:11px; font-size:11px; font-weight:800;'
+            + 'cursor:pointer; border:1px solid rgba(190,180,195,0.3); background:rgba(255,255,255,0.85); color:#7d7484;';
+          b.textContent = txt;
+          b.onclick = fn;
+          return b;
+        };
+        nudge.appendChild(mk('左移', function () { fits[mode].x = U.clamp(fits[mode].x - 0.02, -0.6, 0.6); applyAll(); }));
+        nudge.appendChild(mk('右移', function () { fits[mode].x = U.clamp(fits[mode].x + 0.02, -0.6, 0.6); applyAll(); }));
+        nudge.appendChild(mk('上移', function () { fits[mode].y = U.clamp(fits[mode].y - 0.02, -0.6, 0.6); applyAll(); }));
+        nudge.appendChild(mk('下移', function () { fits[mode].y = U.clamp(fits[mode].y + 0.02, -0.6, 0.6); applyAll(); }));
+        nudge.appendChild(mk('复位', function () {
+          fits[mode] = { x: 0, y: 0, scale: 1 };
+          paintTools();
+          applyAll();
+        }));
+        tools.appendChild(nudge);
+      }
+
+      paintMode();
+      paintTools();
+
+      var tip = H.el('div');
+      tip.style.cssText = 'font-size:10.6px; line-height:1.72; color:#9a8f9e; margin:10px 2px 0;';
+      tip.textContent = '拖动画面 = 移动当前选中的那一层；下面滑杆控制大小。'
+        + '虚线框是看板上立绘区域的位置，照着它对齐即可。保存后这套立绘 / 这张背景会记住自己的位置。';
+      body.appendChild(tip);
+
+      var paintAll = function () { applyAll(); };
+      if (img.complete) setTimeout(paintAll, 0);
+      else img.onload = paintAll;
+      setTimeout(paintAll, 60);
+      setTimeout(paintAll, 200);
+      window.addEventListener('resize', paintAll);
+      try {
+        if (typeof ResizeObserver === 'function') {
+          var ro = new ResizeObserver(paintAll);
+          ro.observe(stage);
+        }
+      } catch (e) { }
+
+      H.sheet({
+        title: '调整立绘与背景',
+        subtitle: '拖动移动 · 滑杆缩放 · 保存后按立绘/背景分别记住',
+        icon: 'portrait',
+        height: '92%',
+        slot: 'fit-editor',
+        content: body,
+        buttons: [{
+          text: '保存', icon: 'check', kind: 'primary',
+          onClick: function () {
+            K.setPortraitFit(pid, fits.portrait);
+            K.setBackgroundFit(bgId, fits.background);
+            K.save(true);
+            H.toast('位置已保存');
+            if (typeof onChanged === 'function') onChanged();
+            if (window.heartGameApp && typeof window.heartGameApp.render === 'function') {
+              try { window.heartGameApp.render(); } catch (e) { }
+            }
           }
         }]
       });
@@ -2718,6 +2980,9 @@
 
   HG.Portraits = Portraits;
   HG.AssetPool = AssetPool;
+  /** 纯几何工具（可在 Node 里直接单测，不依赖浏览器） */
+  HG.fitRect = fitRect;
+  HG.normInRect = normInRect;
   /** ZIP 模型包导入器（Live2D 最省事的用法：把整包 zip 丢进来） */
   HG.ZipModel = ZipModel;
 })();

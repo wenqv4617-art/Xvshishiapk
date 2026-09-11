@@ -579,6 +579,10 @@
       var bgId = (K.state.assets && K.state.assets.currentBackgroundId) || null;
       var userBg = bgId ? K.currentBackground() : null;
       var hasScene = !!(userBg && userBg.src);
+      // 背景自己调过的位置与缩放（v1.5.38）
+      var bgFit = K.backgroundFit(bgId);
+      bgLayer.style.transformOrigin = '50% 50%';
+      bgLayer.style.transform = 'translate(' + (bgFit.x * 100) + '%,' + (bgFit.y * 100) + '%) scale(' + bgFit.scale + ')';
       if (hasScene) {
         bgLayer.style.backgroundImage = 'url(' + userBg.src + ')';
         bgLayer.style.opacity = '.92';
@@ -1328,6 +1332,13 @@
         content: body,
         buttons: [
           {
+            text: '调整立绘与背景', icon: 'hand', kind: 'primary',
+            onClick: function () {
+              H.closeAllLayers();
+              HG.Portraits.openFitEditor(function () { App.render(); });
+            }
+          },
+          {
             text: '管理场景', icon: 'portrait', kind: 'soft', soft: '#EDF2FB', color: '#5f7aa8',
             onClick: function () {
               H.closeAllLayers();
@@ -1335,7 +1346,7 @@
             }
           },
           {
-            text: '上传新背景', icon: 'upload', kind: 'primary',
+            text: '上传新背景', icon: 'upload', kind: 'soft', soft: '#FFEBF3', color: '#B0728F',
             onClick: function () {
               H.closeAllLayers();
               HG.Portraits.openBackgroundManager(function () { App.render(); });

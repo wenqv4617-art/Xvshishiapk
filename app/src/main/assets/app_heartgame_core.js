@@ -1566,6 +1566,8 @@
         hotspots: {},         // {portraitId: {head:{x,y,rx,ry}, ...}} 椭圆版式（兜底）
         hotspotActions: {},   // {portraitId: {hair:[{text, at}]}}
         masks: {},            // {portraitId: {key: base64(1位掩码位图)}} 涂抹划分
+        portraitFit: {},      // {portraitId: {x, y, scale}} 立绘自己调过的位置与缩放
+        backgroundFit: {},    // {bgId: {x, y, scale}} 背景自己调过的位置与缩放
         pool: []              // LRU 资源池 key 列表
       },
 
@@ -2769,6 +2771,62 @@
       var st = K.state;
       var m = (st && st.assets && st.assets.masks && st.assets.masks[portraitId]) || {};
       return Object.keys(m);
+    },
+
+    // ------------------------------------------------------------------
+    //  3.8c 立绘 / 背景的"自己调位置与缩放"（v1.5.38）
+    //  用户反馈"人物下方有一大块空隙"，所以给他们一个能自由挪、自由放缩的调整视图，
+    //  保存后按 立绘id / 背景id 分别持久化。
+    // ------------------------------------------------------------------
+
+    _normFit: function (f) {
+      var o = f || {};
+      return {
+        x: U.clamp(typeof o.x === 'number' ? o.x : 0, -0.6, 0.6),
+        y: U.clamp(typeof o.y === 'number' ? o.y : 0, -0.6, 0.6),
+        scale: U.clamp(typeof o.scale === 'number' ? o.scale : 1, 0.35, 3)
+      };
+    },
+
+    /** 这套立绘调过的位置/缩放（没调过就是 x=0,y=0,scale=1） */
+    portraitFit: function (portraitId) {
+      var st = K.state;
+      var all = (st && st.assets && st.assets.portraitFit) || {};
+      return K._normFit(all[portraitId]);
+    },
+    setPortraitFit: function (portraitId, fit) {
+      var st = K.state;
+      if (!st) return false;
+      st.assets.portraitFit = st.assets.portraitFit || {};
+      st.assets.portraitFit[portraitId] = K._normFit(fit);
+      K.save();
+      return true;
+    },
+    clearPortraitFit: function (portraitId) {
+      var st = K.state;
+      if (st && st.assets && st.assets.portraitFit) delete st.assets.portraitFit[portraitId];
+      K.save();
+      return true;
+    },
+
+    backgroundFit: function (bgId) {
+      var st = K.state;
+      var all = (st && st.assets && st.assets.backgroundFit) || {};
+      return K._normFit(all[bgId]);
+    },
+    setBackgroundFit: function (bgId, fit) {
+      var st = K.state;
+      if (!st) return false;
+      st.assets.backgroundFit = st.assets.backgroundFit || {};
+      st.assets.backgroundFit[bgId] = K._normFit(fit);
+      K.save();
+      return true;
+    },
+    clearBackgroundFit: function (bgId) {
+      var st = K.state;
+      if (st && st.assets && st.assets.backgroundFit) delete st.assets.backgroundFit[bgId];
+      K.save();
+      return true;
     },
 
     /**
