@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v111'; // v111: 立绘定位重做(contain+object-position,去掉错误偏移) + 重绘串行化防闪烁 + 加机内诊断浮条; v1.5.33
+const CACHE_NAME = 'story-phone-v112'; // v112: 真凶——浮层z-index(96xx)低于应用窗口容器(9999)导致面板被盖住; 全部提到 100100+; v1.5.34
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

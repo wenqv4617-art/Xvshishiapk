@@ -873,7 +873,7 @@
 
       // 浮层：自定义行为输入（挂 body，避免被裁）
       var overlay = H.el('div');
-      overlay.style.cssText = 'position:fixed; inset:0; z-index:9500; padding:0; box-sizing:border-box;'
+      overlay.style.cssText = 'position:fixed; inset:0; z-index:100100; padding:0; box-sizing:border-box;'
         + 'background:#1b1319; opacity:0; transition:opacity .3s ease;';
       document.body.appendChild(overlay);
       requestAnimationFrame(function () { overlay.style.opacity = '1'; });

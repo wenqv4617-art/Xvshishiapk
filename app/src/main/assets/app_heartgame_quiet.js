@@ -166,7 +166,7 @@
       if (!document.body) { H.toast('页面还没准备好，稍后再试'); return; }
 
       var overlay = H.el('div', { class: 'hg-overlay hg-quiet' });
-      overlay.style.cssText = 'position:fixed; inset:0; z-index:9450; display:flex; flex-direction:column;'
+      overlay.style.cssText = 'position:fixed; inset:0; z-index:100100; display:flex; flex-direction:column;'
         + 'background:linear-gradient(170deg,#241a22 0%,#3a2a35 46%,#1b141a 100%);'
         + 'opacity:0; transition:opacity .3s ease; max-width:520px; margin:0 auto;';
       document.body.appendChild(overlay);

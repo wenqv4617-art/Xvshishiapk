@@ -1071,7 +1071,7 @@
         var topGlow = hasSSR ? C.RARITY.SSR.glow : (hasSR ? C.RARITY.SR.glow : C.RARITY.R.glow);
 
         var overlay = H.el('div');
-        overlay.style.cssText = 'position:fixed; inset:0; z-index:9700; display:flex; flex-direction:column;'
+        overlay.style.cssText = 'position:fixed; inset:0; z-index:100300; display:flex; flex-direction:column;'
           + 'align-items:center; justify-content:center; padding:20px; box-sizing:border-box;'
           + 'background:radial-gradient(circle at 50% 40%, ' + topGlow + ' 0%, rgba(28,18,26,0.94) 62%, #150d14 100%);'
           + 'opacity:0; transition:opacity .3s ease;';

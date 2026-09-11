@@ -674,7 +674,7 @@
     _layer: function (opts) {
       var o = opts || {};
       var overlay = H.el('div', { class: 'hg-overlay ' + (o.class || '') });
-      overlay.style.cssText = 'position:fixed; inset:0; z-index:' + (o.z || 9600) + ';'
+      overlay.style.cssText = 'position:fixed; inset:0; z-index:' + (o.z || 100200) + ';'
         + 'display:flex; ' + (o.align || 'align-items:flex-end;') + ' justify-content:center;'
         + 'background:' + (o.dim || 'rgba(70,50,66,0.34)') + ';'
         + 'backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);'
@@ -719,7 +719,10 @@
       var done = false;
       var promise = new Promise(function (res) { settle = res; });
 
-      var overlay = H._layer({ z: o.z || 9600, align: o.full ? 'align-items:stretch;' : 'align-items:flex-end;' });
+      // z-index 必须高于 #app-window-container（项目里是 9999）——
+      // 否则抽屉会被**不透明的应用窗口整个盖住**：动作明明执行成功、DOM 里也有面板，
+      // 但用户什么都看不见，表现就是「点了没反应」。这是本轮真正的主因。
+      var overlay = H._layer({ z: o.z || 100200, align: o.full ? 'align-items:stretch;' : 'align-items:flex-end;' });
       var panel = H.el('div', { class: 'hg-sheet' });
       var maxH = o.height || (o.full ? '100%' : '86%');
       panel.style.cssText = 'position:relative; width:100%; max-width:' + (o.maxWidth || '520px') + ';'
@@ -846,7 +849,7 @@
       var accent = o.accent || '#D97FA8';
       var settle, done = false;
       var promise = new Promise(function (res) { settle = res; });
-      var overlay = H._layer({ z: o.z || 9800, align: 'align-items:center;', pad: '22px' });
+      var overlay = H._layer({ z: o.z || 100400, align: 'align-items:center;', pad: '22px' });
       var card = H.el('div', { class: 'hg-modal' });
       card.style.cssText = 'width:100%; max-width:330px; border-radius:24px; overflow:hidden; text-align:center;'
         + 'background:linear-gradient(165deg, rgba(255,255,255,0.99), rgba(255,247,251,0.97));'
@@ -920,7 +923,7 @@
       var accent = o.accent || '#D97FA8';
       var settle, done = false;
       var promise = new Promise(function (res) { settle = res; });
-      var overlay = H._layer({ z: 9800, align: 'align-items:center;', pad: '18px' });
+      var overlay = H._layer({ z: 100400, align: 'align-items:center;', pad: '18px' });
       var card = H.el('div');
       card.style.cssText = 'width:100%; max-width:' + (o.maxWidth || '340px') + '; border-radius:22px;'
         + 'background:linear-gradient(165deg, rgba(255,255,255,0.99), rgba(255,248,252,0.97));'
@@ -1216,7 +1219,7 @@
       var host = o.host || document.body;
       var el = H.el('div');
       el.style.cssText = 'position:absolute; left:' + (o.x || '50%') + '; top:' + (o.y || '50%') + ';'
-        + 'transform:translate(-50%,-50%); pointer-events:none; z-index:9900; font-size:14px; font-weight:900;'
+        + 'transform:translate(-50%,-50%); pointer-events:none; z-index:100500; font-size:14px; font-weight:900;'
         + 'color:' + (o.color || '#D97FA8') + '; text-shadow:0 2px 10px rgba(255,255,255,0.95);'
         + 'animation:hg-float-up 1.5s cubic-bezier(.22,1,.36,1) forwards; white-space:nowrap;';
       el.textContent = text;
@@ -1228,7 +1231,7 @@
     toast: function (msg) {
       if (typeof window.showToast === 'function') { window.showToast(msg); return; }
       var t = H.el('div');
-      t.style.cssText = 'position:fixed; left:50%; bottom:88px; transform:translateX(-50%); z-index:9950;'
+      t.style.cssText = 'position:fixed; left:50%; bottom:88px; transform:translateX(-50%); z-index:100500;'
         + 'padding:10px 16px; border-radius:14px; background:rgba(70,50,66,0.86); color:#fff;'
         + 'font-size:12px; max-width:78%; text-align:center; line-height:1.6; backdrop-filter:blur(8px);';
       t.textContent = msg;
