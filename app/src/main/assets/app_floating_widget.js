@@ -698,6 +698,11 @@
     init: function () {
       const cfg = this.getConfig();
       if (cfg.enabled) this.mountWidget();
+      // v1.5.20：预热破限世界书缓存与预设索引（异步，失败静默）
+      try {
+        if (typeof window.refreshJailbreakCache === 'function') window.refreshJailbreakCache();
+        if (typeof window.rebuildJailbreakPresetIndex === 'function') window.rebuildJailbreakPresetIndex();
+      } catch (e) {}
     }
   };
 
@@ -720,6 +725,141 @@
     } catch (e) {}
   };
 
+  // ============================================================
+  //  破限世界书 · 全局下沉注入（v1.5.20）
+  //
+  //  背景：破限分组的世界书是用来让模型突破安全限制的。以前只有"主聊天"通过
+  //  worldBookEngine 挂载，其余 40 多处直接 fetch(`${api.url}/chat/completions`)
+  //  的调用（总结/翻译/心声/朋友圈/反查/深谈/桌宠/小剧场/工作台…）**完全没有破限内容**，
+  //  于是"有的地方破限成功、有的地方失败"。
+  //
+  //  做法：在 window.fetch 这一层做一次性拦截——
+  //    · 任何 POST 到 */chat/completions 的请求，只要带 messages，就按该 api 预设
+  //      的 jailbreakEntryIds 把破限世界书塞为**最高优先级的首条 system 消息**；
+  //    · 所有调用方（含流式、含 fwTrackedFetch、含用户自定义脚本）都自动获得破限，
+  //      不需要逐个改动 40 多处调用点；
+  //    · 没配置 / 内容为空 / 已经注入过 → 完全不动请求体，保证零副作用。
+  // ============================================================
+  var JAILBREAK_SEP = "\n\n==================== 以下为最高优先级强制设定（优先于其后所有内容） ====================\n";
+
+  window.__jailbreakCache = window.__jailbreakCache || { byId: {}, loadedAt: 0 };
+
+  window.refreshJailbreakCache = async function () {
+    try {
+      var list = await db.world_book_entries.toArray();
+      var byId = {};
+      (list || []).forEach(function (e) {
+        if (e && e.id != null) byId[String(e.id)] = { title: e.title || '', content: e.content || '', group: e.group || '' };
+      });
+      window.__jailbreakCache.byId = byId;
+      window.__jailbreakCache.loadedAt = Date.now();
+    } catch (e) {
+      console.warn('[破限] 世界书缓存刷新失败:', e);
+    }
+  };
+
+  // 若 api 预设 id 未知（部分调用只传了 url），按 url+model 回退到当前全局预设
+  window.resolveJailbreakEntryIds = function (api) {
+    try {
+      if (api && Array.isArray(api.jailbreakEntryIds)) return api.jailbreakEntryIds;
+      if (api && api.jailbreakEntryId != null) return [api.jailbreakEntryId];
+      var globalId = localStorage.getItem('global_api_preset_id');
+      if (!globalId || !api) return [];
+      var base = (api.url || '').replace(/\/+$/, '');
+      var match = window.__jailbreakPresetIndex && window.__jailbreakPresetIndex[base + '|' + (api.model || '')];
+      if (match) return match.ids || [];
+    } catch (e) {}
+    return [];
+  };
+
+  // 把破限内容拼进请求体（原地修改，返回是否发生了注入）
+  window.injectJailbreakIntoBody = function (api, body) {
+    try {
+      if (!body || !Array.isArray(body.messages) || body.messages.length === 0) return false;
+      var ids = window.resolveJailbreakEntryIds(api);
+      if (!ids || ids.length === 0) return false;
+      var cache = window.__jailbreakCache.byId || {};
+      var blocks = [];
+      ids.forEach(function (id) {
+        var e = cache[String(id)];
+        if (e && e.content && String(e.content).trim()) {
+          blocks.push('【' + (e.title || '破限设定') + '】\n' + e.content);
+        }
+      });
+      if (blocks.length === 0) return false;
+      var text = blocks.join('\n\n');
+      // 已经注入过就不重复（流式重试 / 同体复用场景）
+      if (body.messages[0] && typeof body.messages[0].content === 'string' && body.messages[0].content.indexOf('最高优先级强制设定') >= 0) return false;
+
+      var first = body.messages[0];
+      if (first && first.role === 'system' && typeof first.content === 'string') {
+        // 与首条 system 合并成一条，保证破限排在整个上下文最前面
+        first.content = text + JAILBREAK_SEP + first.content;
+      } else {
+        body.messages.unshift({ role: 'system', content: text });
+      }
+      body.__jailbreakInjected = true;
+      return true;
+    } catch (e) {
+      console.warn('[破限] 注入失败（已跳过，不影响请求）:', e);
+      return false;
+    }
+  };
+
+  // 全局 fetch 拦截：覆盖全部调用点（流式 / 非流式 / 追踪器 / 自定义脚本）
+  if (!window.__jailbreakFetchPatched) {
+    window.__jailbreakFetchPatched = true;
+    var __origFetch = window.fetch.bind(window);
+    window.fetch = function (input, init) {
+      try {
+        var url = (typeof input === 'string') ? input : (input && input.url) || '';
+        var method = ((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+        if (method === 'POST' && url.indexOf('/chat/completions') !== -1 && init && typeof init.body === 'string') {
+          var body = JSON.parse(init.body);
+          if (body && Array.isArray(body.messages)) {
+            var api = window.__jailbreakApiByUrl ? window.__jailbreakApiByUrl(url, body.model) : null;
+            var injected = window.injectJailbreakIntoBody(api, body);
+            if (injected) {
+              init = Object.assign({}, init, { body: JSON.stringify(body) });
+            }
+          }
+        }
+      } catch (e) {
+        // 任何解析异常都退回原始请求，绝不因为破限注入而让请求失败
+      }
+      return __origFetch(input, init);
+    };
+  }
+
+  // 预设索引：url+model → { ids }，供"只拿到 url 的调用点"回退匹配
+  window.rebuildJailbreakPresetIndex = async function () {
+    try {
+      var presets = await db.api_presets.toArray();
+      var idx = {};
+      (presets || []).forEach(function (p) {
+        var base = (p.url || '').replace(/\/+$/, '');
+        idx[base + '|' + (p.model || '')] = { ids: p.jailbreakEntryIds || [], name: p.name || '' };
+      });
+      window.__jailbreakPresetIndex = idx;
+      window.__jailbreakApiByUrl = function (url, model) {
+        try {
+          var base = url.replace(/\/chat\/completions.*$/, '').replace(/\/+$/, '');
+          var hit = idx[base + '|' + (model || '')];
+          if (hit) return { url: base, model: model, jailbreakEntryIds: hit.ids };
+          // 退一步：只按 url 匹配
+          var found = null;
+          Object.keys(idx).forEach(function (k) {
+            if (found) return;
+            if (k.split('|')[0] === base && idx[k].ids && idx[k].ids.length > 0) found = { url: base, model: model, jailbreakEntryIds: idx[k].ids };
+          });
+          return found;
+        } catch (e) { return null; }
+      };
+    } catch (e) {
+      console.warn('[破限] 预设索引构建失败:', e);
+    }
+  };
+
   // 全局集中式 LLM 调用追踪器：任何模块调用大模型 API 时均可使用此函数，
   // 自动将 token 用量与报错纳入悬浮窗监控，无需各模块重复编写 fwTrack 逻辑。
   // 参数：
@@ -735,6 +875,11 @@
       : body && body.input ? "/v1/embeddings"
       : body && body.prompt ? "/images/generations"
       : "/chat/completions";
+
+    // 破限世界书：作为下沉注入（fetch 拦截也会兜一次，这里显式做是为了让调用 api 对象的路径最快命中）
+    if (endpoint === "/chat/completions" && body && Array.isArray(body.messages)) {
+      window.injectJailbreakIntoBody(api, body);
+    }
 
     let response;
     try {

@@ -283,6 +283,11 @@ async function loadWorldBookData() {
   container.innerHTML = "";
 
   const list = await db.world_book_entries.toArray();
+
+  // v1.5.20：世界书内容变了就刷新「破限全局注入」的缓存，
+  // 否则刚编辑完破限底料，下一次请求注入的还是旧内容
+  try { if (typeof window.refreshJailbreakCache === 'function') window.refreshJailbreakCache(); } catch (e) {}
+
   if (list.length === 0) {
     container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">世界书内暂无任何知识条目，请点击右上角添加。</p>`;
     return;

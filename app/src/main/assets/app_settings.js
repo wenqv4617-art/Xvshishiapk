@@ -537,6 +537,8 @@ function handleSettingsBack() {
 async function loadPresetsList() {
   const select = document.getElementById("api-presets-select");
   const presets = await db.api_presets.toArray();
+  // v1.5.20：预设（含破限挂载）变化后重建索引，保证按 url 回退匹配也拿到最新配置
+  try { if (typeof window.rebuildJailbreakPresetIndex === 'function') window.rebuildJailbreakPresetIndex(); } catch (e) {}
   select.innerHTML = '<option value="">-- 选择已有预设 --</option>';
   presets.forEach(p => {
     const opt = document.createElement("option");
@@ -566,6 +568,153 @@ async function loadPresetToForm(id) {
   
   const modelSelect = document.getElementById("api-model-select");
   modelSelect.innerHTML = `<option value="${preset.model || ""}">${preset.model || "默认模型"}</option>`;
+
+  // v1.5.20：带上该预设的破限世界书挂载（切预设即切破限设定）
+  currentJailbreakEntryIds = Array.isArray(preset.jailbreakEntryIds) ? preset.jailbreakEntryIds.slice() : [];
+  renderJailbreakSummary();
+}
+
+// ==========================================
+// 1.4.5 破限世界书挂载（每个 API 预设各自携带）
+//   · 选择器是自绘淡彩卡片（不用原生弹窗）
+//   · 选中条目会作为最高优先级设定注入该预设的每一次模型调用
+// ==========================================
+let currentJailbreakEntryIds = [];
+
+// 本地转义：不依赖 app_chat.js 里的 escapeHtml（避免脚本顺序耦合）
+function jbEsc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+async function renderJailbreakSummary() {
+  const box = document.getElementById("api-jailbreak-summary");
+  if (!box) return;
+  const ids = currentJailbreakEntryIds || [];
+  if (ids.length === 0) {
+    box.innerHTML = '<div class="jb-summary-empty">未挂载 · 该预设的所有调用都不会注入破限设定</div>';
+    return;
+  }
+  let entries = [];
+  try { entries = await db.world_book_entries.toArray(); } catch (e) {}
+  const picked = ids.map(id => entries.find(e => Number(e.id) === Number(id))).filter(Boolean);
+  const missing = ids.length - picked.length;
+  box.innerHTML = '<div class="jb-chips">' + ids.map(id => {
+    const e = entries.find(x => Number(x.id) === Number(id));
+    const title = e ? (e.title || '未命名条目') : '（条目已删除）';
+    const grp = e && e.group ? e.group : '';
+    return '<span class="jb-chip' + (e ? '' : ' missing') + '">' +
+      '<span class="jb-chip-title">' + jbEsc(title) + '</span>' +
+      (grp ? '<span class="jb-chip-group">' + jbEsc(grp) + '</span>' : '') +
+      '</span>';
+  }).join('') + '</div>' +
+    '<div class="jb-summary-note">已挂载 ' + picked.length + ' 条' + (missing > 0 ? '（其中 ' + missing + ' 条已被删除）' : '') + ' · 每次调用都会作为最高优先级注入</div>';
+}
+
+async function openJailbreakPicker() {
+  let entries = [];
+  try { entries = await db.world_book_entries.toArray(); } catch (e) {}
+  if (!entries || entries.length === 0) {
+    showToast("世界书里还没有条目，先去「世界书」添加");
+    return;
+  }
+  // 破限底料 / 常驻 分组优先展示（这两组本身就是"常驻"语义，最常被当破限用）
+  const priorityGroups = ['破限底料', '常驻'];
+  entries.sort((a, b) => {
+    const ai = priorityGroups.indexOf(a.group || '');
+    const bi = priorityGroups.indexOf(b.group || '');
+    const av = ai === -1 ? 99 : ai;
+    const bv = bi === -1 ? 99 : bi;
+    if (av !== bv) return av - bv;
+    return String(a.group || '').localeCompare(String(b.group || ''));
+  });
+
+  const selected = new Set((currentJailbreakEntryIds || []).map(n => Number(n)));
+  const groups = [];
+  entries.forEach(e => {
+    const g = e.group || '默认分组';
+    let bucket = groups.find(x => x.name === g);
+    if (!bucket) { bucket = { name: g, items: [] }; groups.push(bucket); }
+    bucket.items.push(e);
+  });
+
+  const overlay = document.createElement("div");
+  overlay.className = "jb-picker-overlay";
+  overlay.innerHTML =
+    '<div class="jb-picker-sheet">' +
+      '<div class="jb-picker-head">' +
+        '<div>' +
+          '<div class="jb-picker-title">挂载破限世界书</div>' +
+          '<div class="jb-picker-sub">可多选 · 也可一条不选。选中的条目会注入这个 API 预设的每一次调用。</div>' +
+        '</div>' +
+        '<button class="jb-picker-close" id="jb-picker-close" aria-label="关闭">' +
+          '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>' +
+        '</button>' +
+      '</div>' +
+      '<div class="jb-picker-body" id="jb-picker-body">' +
+        groups.map(g =>
+          '<div class="jb-group">' +
+            '<div class="jb-group-name">' + jbEsc(g.name) + '<span class="jb-group-count">' + g.items.length + '</span></div>' +
+            '<div class="jb-group-cards">' +
+              g.items.map(e => {
+                const on = selected.has(Number(e.id));
+                const preview = String(e.content || '').replace(/\s+/g, ' ').slice(0, 54);
+                return '<button type="button" class="jb-card' + (on ? ' on' : '') + '" data-jb-id="' + e.id + '">' +
+                  '<span class="jb-card-check">' + (on ? '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>' : '') + '</span>' +
+                  '<span class="jb-card-main">' +
+                    '<span class="jb-card-title">' + jbEsc(e.title || '未命名条目') + '</span>' +
+                    '<span class="jb-card-preview">' + jbEsc(preview) + (String(e.content || '').length > 54 ? '…' : '') + '</span>' +
+                  '</span>' +
+                '</button>';
+              }).join('') +
+            '</div>' +
+          '</div>'
+        ).join('') +
+      '</div>' +
+      '<div class="jb-picker-foot">' +
+        '<span class="jb-picker-count" id="jb-picker-count"></span>' +
+        '<div style="display:flex; gap:8px;">' +
+          '<button type="button" class="jb-btn ghost" id="jb-picker-clear">清空</button>' +
+          '<button type="button" class="jb-btn primary" id="jb-picker-ok">完成</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+
+  document.body.appendChild(overlay);
+  requestAnimationFrame(() => overlay.classList.add("active"));
+
+  const countEl = overlay.querySelector("#jb-picker-count");
+  const refreshCount = () => { if (countEl) countEl.innerText = '已选 ' + selected.size + ' 条'; };
+  refreshCount();
+
+  const close = () => {
+    overlay.classList.remove("active");
+    setTimeout(() => overlay.remove(), 220);
+  };
+
+  overlay.querySelectorAll(".jb-card").forEach(card => {
+    card.onclick = () => {
+      const id = Number(card.getAttribute("data-jb-id"));
+      if (selected.has(id)) { selected.delete(id); card.classList.remove("on"); card.querySelector(".jb-card-check").innerHTML = ""; }
+      else { selected.add(id); card.classList.add("on"); card.querySelector(".jb-card-check").innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'; }
+      refreshCount();
+    };
+  });
+
+  overlay.querySelector("#jb-picker-close").onclick = close;
+  overlay.onclick = (e) => { if (e.target === overlay) close(); };
+  overlay.querySelector("#jb-picker-clear").onclick = () => {
+    selected.clear();
+    overlay.querySelectorAll(".jb-card").forEach(c => { c.classList.remove("on"); c.querySelector(".jb-card-check").innerHTML = ""; });
+    refreshCount();
+  };
+  overlay.querySelector("#jb-picker-ok").onclick = () => {
+    // 保持世界书原有顺序，便于展示稳定
+    currentJailbreakEntryIds = entries.filter(e => selected.has(Number(e.id))).map(e => Number(e.id));
+    renderJailbreakSummary();
+    close();
+  };
 }
 
 // ==========================================
@@ -672,31 +821,46 @@ document.getElementById("btn-save-preset").onclick = async () => {
   }
   
   const presetData = { name, protocol, url, key, model, temperature };
+  // v1.5.20：把破限世界书挂载一起存进预设（切预设 = 切破限设定）
+  presetData.jailbreakEntryIds = (currentJailbreakEntryIds || []).map(n => Number(n));
   
   if (idVal) {
     await db.api_presets.update(Number(idVal), presetData);
-    alert("预设更新成功");
+    showToast("预设已更新");
   } else {
     const newId = await db.api_presets.add(presetData);
-    alert("新预设添加成功");
+    showToast("新预设已添加");
     localStorage.setItem("global_api_preset_id", newId);
   }
   loadPresetsList();
 };
 
+// 破限选择器入口
+(function bindJailbreakPicker() {
+  const btn = document.getElementById("btn-api-jailbreak-pick");
+  if (btn) btn.onclick = () => openJailbreakPicker();
+  // 首次进入 API 页时渲染一次空态摘要
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => renderJailbreakSummary());
+  } else {
+    renderJailbreakSummary();
+  }
+})();
+
 document.getElementById("btn-apply-global").onclick = async () => {
   const select = document.getElementById("api-presets-select");
   const idVal = select.value;
   if (!idVal) {
-    alert("请先保存或选择一个预设进行应用");
+    showToast("请先保存或选择一个预设进行应用");
     return;
   }
   localStorage.setItem("global_api_preset_id", idVal);
-  alert("当前 API 预设已成功设定为全局应用！");
+  // v1.5.20：应用全局预设时同步刷新破限索引（切预设即切破限设定）
+  try { if (typeof window.rebuildJailbreakPresetIndex === 'function') await window.rebuildJailbreakPresetIndex(); } catch (e) {}
+  showToast("当前 API 预设已成功设定为全局应用");
 };
 
-document.getElementById("btn-delete-preset").onclick = async () => {
-  const select = document.getElementById("api-presets-select");
+document.getElementById("btn-delete-preset").onclick = async () => {  const select = document.getElementById("api-presets-select");
   const idVal = select.value;
   if (!idVal) {
     alert("请先选择一个预设进行删除");

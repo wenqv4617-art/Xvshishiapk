@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v95'; // v95: 心声按按钮精确隔离(修残留剧场标志) + 桌宠思考中不早退/回复停留更久 + 新增「允许突然发起查手机请求」; v1.5.19
+const CACHE_NAME = 'story-phone-v96'; // v96: 破限世界书全链路挂载(每个API预设自带/全局fetch拦截) + 网易云VIP全曲解析; v1.5.20
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

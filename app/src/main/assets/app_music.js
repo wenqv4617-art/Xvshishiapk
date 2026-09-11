@@ -1320,6 +1320,103 @@
     // 核心重构：0.01 秒极速唤起灵动岛播放 + 非阻塞后台异步静默补拉歌词！
     // 带有【多通道音源自愈熔断】与【自适应备用切换】的极速播放器
     // 若 currentPlaylistId 已设置，则播放范围限定为该歌单内的歌曲（顺序/循环/随机只在此歌单里）
+    // ============================================================
+    //  VIP 全曲解析（v1.5.20）
+    //
+    //  以前音源一律是 `https://music.163.com/song/media/outer/url?id=xxx.mp3`，
+    //  这条匿名的公开地址对 VIP 歌曲只会返回 30 秒试听（部分甚至直接 404），
+    //  所以即便登录了黑胶账号也只能听 30 秒。
+    //
+    //  现在改为：把登录 Cookie 交给本地网易云 API（NeteaseCloudMusicApi :3000）的
+    //  /song/url/v1 取真实播放地址 —— 服务端会带着你的会员身份签发带鉴权的 CDN 链接，
+    //  VIP 歌曲即可整首播放。取不到（没装本地服务/未登录/版权受限）时，
+    //  原样回落到旧的公开地址，行为与改动前一致。
+    // ============================================================
+    ncmCookieHeader() {
+      const parts = [];
+      if (this.ncmCookie) parts.push(this.ncmCookie);
+      if (this.ncmAnonCookie && String(this.ncmAnonCookie) !== String(this.ncmCookie || '')) {
+        parts.push(this.ncmAnonCookie);
+      }
+      return parts.filter(Boolean).join('; ');
+    },
+
+    // 带 Cookie 请求本地 API（ncmRequest 不带 Cookie，登录态接口不能用它）
+    async ncmRequestWithCookie(pathOrUrl, method = 'GET', bodyStr = '') {
+      const cookie = this.ncmCookieHeader();
+      const base = this.ncmApiBase || 'http://localhost:3000';
+      const url = pathOrUrl.indexOf('http') === 0 ? pathOrUrl : (base + pathOrUrl);
+      const headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36',
+        'Referer': 'https://music.163.com/',
+        'Content-Type': 'application/x-www-form-urlencoded'
+      };
+      if (cookie) headers['Cookie'] = cookie;
+      try {
+        if (window.AndroidMCP && typeof window.AndroidMCP.sendNativeHttpRequest === 'function') {
+          const resStr = window.AndroidMCP.sendNativeHttpRequest(url, method, JSON.stringify(headers), bodyStr);
+          const resObj = JSON.parse(resStr);
+          if (resObj.status === 500) return null;
+          let body = null;
+          try { body = typeof resObj.body === 'string' ? JSON.parse(resObj.body) : resObj.body; } catch (e) { body = resObj.body; }
+          return body;
+        }
+        const res = await fetch(url, { method, headers, body: method === 'POST' ? bodyStr : undefined });
+        if (!res.ok) return null;
+        return await res.json();
+      } catch (e) {
+        return null;
+      }
+    },
+
+    // 解析一首歌的真实播放地址；失败返回 null
+    async resolveNcmFullUrl(songId, opts) {
+      const id = String(songId || '').replace(/^ncm_/, '');
+      if (!id) return null;
+      const cookie = this.ncmCookieHeader();
+      // 没登录也能试一次匿名（个别曲目匿名即完整），但优先用登录态
+      const levels = (opts && opts.levels) || ['exhigh', 'lossless', 'higher', 'standard'];
+      const qs = (level) =>
+        `/song/url/v1?id=${encodeURIComponent(id)}&level=${level}` +
+        (cookie ? `&cookie=${encodeURIComponent(cookie)}` : '') +
+        `&timestamp=${Date.now()}`;
+
+      for (const level of levels) {
+        try {
+          const data = await this.ncmRequestWithCookie(qs(level));
+          const item = data && data.data && data.data[0];
+          const url = item && item.url;
+          // freeTrialInfo 不为空 = 仍然只是试听片段；试听片段也要（好过没有），但记日志
+          if (url) {
+            const isTrial = !!(item.freeTrialInfo);
+            this._lastResolveInfo = { id, level, isTrial, br: item.br, size: item.size };
+            console.log(`[NCM] 已解析播放地址 id=${id} level=${level} 试听片段=${isTrial} 码率=${item.br || '-'} code=${data.code}`);
+            return url;
+          }
+        } catch (e) { /* 换下一档 */ }
+      }
+      this._lastResolveInfo = { id, level: null, isTrial: null };
+      console.log(`[NCM] 未能解析完整播放地址 id=${id}（无本地 API / 未登录 / 版权受限），回落到公开试听地址`);
+      return null;
+    },
+
+    // 播放前尝试把公开试听地址换成完整地址（拿不到就保持原样，零风险）
+    async upgradeNcmPlayUrl(song) {
+      try {
+        if (!song || !song.id || String(song.id).indexOf('ncm_') !== 0) return;
+        if (!this.ncmApiBase) return;
+        // 本地曲（用户自己上传的 blob）不处理
+        if (song.blob instanceof Blob) return;
+        const full = await this.resolveNcmFullUrl(song.id);
+        if (full) {
+          song.url = full;
+          song._fullUrl = true;
+        }
+      } catch (e) {
+        console.warn('[NCM] 试听地址升级失败，沿用原地址', e);
+      }
+    },
+
     async playSongFromList(index) {
       let songs;
       // 搜索页点播：在线搜索歌曲（未持久化到曲库）直接在当前搜索结果列表中播放，不污染"我的"曲库
@@ -1349,6 +1446,9 @@
       // 重置音频错误自愈监听
       this.audio.onerror = null;
 
+      // VIP 全曲：播放前把公开试听地址换成带会员鉴权的完整地址（可失败，失败即沿用原地址）
+      await this.upgradeNcmPlayUrl(song);
+
       if (song.blob instanceof Blob) {
         this.audio.src = URL.createObjectURL(song.blob);
       } else {
@@ -1360,6 +1460,17 @@
         console.warn("主音源加载失败或触发限流，启动备用音源通道...");
         if (song.id && song.id.startsWith("ncm_")) {
           const rawId = song.id.replace("ncm_", "");
+          // 备用 1：本地 API 再解析一次（换一档音质）
+          try {
+            const retry = await this.resolveNcmFullUrl(rawId, { levels: ['standard', 'higher'] });
+            if (retry) {
+              this.audio.onerror = () => { if (typeof showToast === 'function') showToast("该曲目音源失效，已自动播放下一首"); this.nextSong(); };
+              this.audio.src = retry;
+              this.audio.play().catch(() => this.nextSong());
+              return;
+            }
+          } catch (e) {}
+          // 备用 2：公开第三方通道
           const backupUrl = `https://api.i-meto.com/meting/v1/url?id=${rawId}`;
           this.audio.onerror = () => {
             if (typeof showToast === 'function') showToast("该曲目版权受限或音源失效，已自动播放下一首");
