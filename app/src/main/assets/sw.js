@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v101'; // v101: 修桌面图标点击被滑动判定吞掉(直连兜底) + Live2D zip 模型包导入(JSZip); v1.5.24
+const CACHE_NAME = 'story-phone-v102'; // v102: 补齐底部工具栏 4 枚玻璃底美术(portrait/quiet); v1.5.24
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -79,6 +79,8 @@ const ASSETS = [
   './images/heartgame/rail/story.png',
   './images/heartgame/tool/exit.png',
   './images/heartgame/tool/admin.png',
+  './images/heartgame/tool/portrait.png',
+  './images/heartgame/tool/quiet.png',
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js',
