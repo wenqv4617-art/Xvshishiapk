@@ -1,6 +1,7 @@
 // app_status.js - 角色状态/内心窥探(心声)与数据引擎
 
 let activeStatusSessionId = null;
+let activeStatusScope = 'online';   // 当前这张心声卡看的是哪个场景：online / date / theater
 let isStatusInitializing = false;
 
 // 心声来源隔离：status_history 里 isTheater=0 同时被「线上」和「赴约」写入，
@@ -17,7 +18,15 @@ function statusRecordMatchesScope(h, scope) {
   if (h.source) return h.source === scope;
   // 旧数据兜底
   if (scope === 'theater') return h.isTheater === 1;
-  return h.isTheater === 0;
+  // 老数据里「线上」与「赴约」都是 isTheater=0 且 theaterId=0，无法区分；统一按线上处理
+  return h.isTheater === 0 && (Number(h.theaterId) || 0) === 0;
+}
+
+// 该场景的展示用标签
+function statusScopeLabel(scope) {
+  if (scope === 'theater') return '小剧场';
+  if (scope === 'date') return '赴约';
+  return '线上';
 }
 
 // 窥秘主逻辑初始化
@@ -32,13 +41,14 @@ function initStatusApp() {
     const onlineBtn = e.target.closest("#btn-char-status");
     if (onlineBtn) {
       e.preventDefault();
-      openStatusCard(activeSessionId);
+      openStatusCard(activeSessionId, 'online');
       return;
     }
     const offlineBtn = e.target.closest("#btn-offline-char-status");
     if (offlineBtn) {
       e.preventDefault();
-      openStatusCard(activeSessionId);
+      const scope = (typeof isOfflineTheater !== 'undefined' && isOfflineTheater) ? 'theater' : 'date';
+      openStatusCard(activeSessionId, scope);
       return;
     }
   });
@@ -47,12 +57,15 @@ function initStatusApp() {
   const btnOnline = document.getElementById("btn-char-status");
   if (btnOnline && !btnOnline.dataset.statusBound) {
     btnOnline.dataset.statusBound = "1";
-    btnOnline.onclick = () => openStatusCard(activeSessionId);
+    btnOnline.onclick = () => openStatusCard(activeSessionId, 'online');
   }
   const btnOffline = document.getElementById("btn-offline-char-status");
   if (btnOffline && !btnOffline.dataset.statusBound) {
     btnOffline.dataset.statusBound = "1";
-    btnOffline.onclick = () => openStatusCard(activeSessionId);
+    btnOffline.onclick = () => {
+      const scope = (typeof isOfflineTheater !== 'undefined' && isOfflineTheater) ? 'theater' : 'date';
+      openStatusCard(activeSessionId, scope);
+    };
   }
 
   // 关闭主卡片按钮
@@ -88,24 +101,31 @@ function initStatusApp() {
 }
 
 // 展开卡片，加载最新历史，若没有，则引导同步
-async function openStatusCard(sessionId) {
+// scope 由调用方（按钮）明确指定：'online' / 'date' / 'theater'
+async function openStatusCard(sessionId, scope) {
   if (!sessionId) {
-    alert("当前无活跃会话，请先选择一个角色进行对话。");
+    showToast("当前无活跃会话，请先选择一个角色进行对话");
     return;
   }
   activeStatusSessionId = sessionId;
+  activeStatusScope = (scope === 'theater' || scope === 'date') ? scope : 'online';
 
   document.getElementById("status-card-overlay").classList.add("active");
 
   // 先清空展示，加载已存的历史记录中最新的一条
   resetStatusFields();
 
+  // 标题上写清楚这张卡属于哪个场景，避免用户以为串台
+  try {
+    const titleEl = document.getElementById("status-card-scope-label");
+    if (titleEl) titleEl.innerText = statusScopeLabel(activeStatusScope);
+  } catch (e) {}
+
   try {
     // 按来源精确过滤（线上 / 赴约 / 小剧场 各自独立，互不串台）
-    const scope = resolveStatusScope();
     const list = await db.status_history
       .where('sessionId').equals(sessionId)
-      .and(h => statusRecordMatchesScope(h, scope))
+      .and(h => statusRecordMatchesScope(h, activeStatusScope))
       .toArray();
     list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
@@ -116,7 +136,7 @@ async function openStatusCard(sessionId) {
       document.getElementById("status-attire").innerText = "请点击下方深度同频同步状态...";
       document.getElementById("status-affection").innerText = "请点击下方深度同频同步状态...";
       document.getElementById("status-excitement").innerText = "请点击下方深度同频同步状态...";
-      document.getElementById("status-thoughts").innerText = "暂无脑电波心声数据。";
+      document.getElementById("status-thoughts").innerText = `暂无${statusScopeLabel(activeStatusScope)}心声数据。`;
       document.getElementById("status-hidden-corners").innerText = "未同频时，深藏心底的暗色情绪将无法洞察。";
     }
   } catch (err) {
@@ -153,6 +173,15 @@ async function syncStatusFromAPI() {
     const api = await db.api_presets.get(Number(presetId));
     if (!api) throw new Error("所选的 API 预设可能已被删除，请重新配置！");
 
+    // 兜底：如果卡片 scope 是线上，但全局标志还在线下（历史 bug 的残留状态），
+    // 强制把标志归位，保证「读哪套对话」与「写什么 source」都落在线上
+    const scopeGuard = activeStatusScope || 'online';
+    if (scopeGuard === 'online' && typeof isOfflineTheater !== 'undefined' && isOfflineTheater) {
+      console.warn('[心声] 检测到线下标志残留，已按线上场景生成');
+      isOfflineTheater = false;
+      activeTheaterId = 0;
+    }
+
     const sess = await db.sessions.get(activeStatusSessionId);
     if (!sess) throw new Error("无法加载当前会话。");
 
@@ -165,14 +194,21 @@ async function syncStatusFromAPI() {
     const userPersona = sess.customUserPersona || user?.persona || "";
 
     // 获取最近的对话内容
+    // v1.5.19：改用卡片自己的 activeStatusScope 决定读哪套对话，不再看残留的 isOfflineTheater
+    // （否则离开小剧场后，线上同频生成的仍然是剧场对话推理出来的心声，这就是「线上都有交流了、
+    //   生成的心声还是关于小剧场的」的直接原因）
+    const syncScope = activeStatusScope || 'online';
     let conversationText = "";
-    if (isOfflineTheater || (activeTheaterId && activeTheaterId > 0)) {
+    if (syncScope === 'theater' || syncScope === 'date') {
       // 线下对话记录
       let rawList = [];
-      if (activeTheaterId && activeTheaterId > 0) {
+      if (syncScope === 'theater' && typeof activeTheaterId !== 'undefined' && activeTheaterId > 0) {
         rawList = await db.offline_messages.where('theaterId').equals(activeTheaterId).sortBy('timestamp');
       } else {
-        rawList = await db.offline_messages.where('sessionId').equals(activeStatusSessionId).and(m => m.isTheater === 0).sortBy('timestamp');
+        rawList = await db.offline_messages
+          .where('sessionId').equals(activeStatusSessionId)
+          .and(m => Number(m.isTheater) === (syncScope === 'theater' ? 1 : 0))
+          .sortBy('timestamp');
       }
       const history = rawList.slice(-15);
       history.forEach(h => {
@@ -193,19 +229,12 @@ async function syncStatusFromAPI() {
       conversationText = "(暂无对话历史，双方尚未开始对话交流。)";
     }
 
-    // 查询社会关系网络
+    // 查询社会关系网络：复用统一的 queryRelationship（含关系网里的其他人物，
+    // 不再是只按 fromId/toId 裸查 relations 表那套取不到数据的写法）
     let relationshipDesc = "";
     try {
-      const rels = await db.relations.where('fromId').equals(Number(sess.userId)).toArray();
-      const matchedRel = rels.find(r => r.toId === Number(sess.charId));
-      if (matchedRel) {
-        relationshipDesc = `用户 [${userName}] 是 [${charName}] 的 [${matchedRel.relation}]`;
-      } else {
-        const rels2 = await db.relations.where('fromId').equals(Number(sess.charId)).toArray();
-        const matchedRel2 = rels2.find(r => r.toId === Number(sess.userId));
-        if (matchedRel2) {
-          relationshipDesc = `[${charName}] 是用户 [${userName}] 的 [${matchedRel2.relation}]`;
-        }
+      if (typeof queryRelationship === 'function') {
+        relationshipDesc = await queryRelationship(sess.userId, sess.charId, userName, charName);
       }
     } catch (e) {
       console.warn("查询关系失败", e);
@@ -301,10 +330,14 @@ JSON 格式格式如下：
     };
 
     // 保存到 IndexedDB
+    // v1.5.19：source 与 theaterId/isTheater 必须和卡片 scope 一致，
+    // 否则「手动深度同频」写出来的记录下一次按 scope 读不到（卡片就一直显示旧剧场那条）
+    const saveScope = activeStatusScope || 'online';
     const record = {
       sessionId: activeStatusSessionId,
-      theaterId: isOfflineTheater ? activeTheaterId : 0,
-      isTheater: isOfflineTheater ? 1 : 0,
+      theaterId: (saveScope === 'theater' && typeof activeTheaterId !== 'undefined' && activeTheaterId > 0) ? activeTheaterId : 0,
+      isTheater: saveScope === 'theater' ? 1 : 0,
+      source: saveScope,
       timestamp: Date.now(),
       attire: cleanProp(parsedData.attire) || "未详",
       affection: cleanProp(parsedData.affection) || "未详",
@@ -320,7 +353,7 @@ JSON 格式格式如下：
 
   } catch (err) {
     console.error("同步角色状态卡片失败", err);
-    alert(`深度同频失败: ${err.message}`);
+    showToast(`深度同频失败: ${err.message}`);
     // 恢复先前状态或引导重新获取
     document.getElementById("status-attire").innerText = "同频发生异常错误";
     document.getElementById("status-affection").innerText = "未能建立神经同步";
@@ -343,8 +376,8 @@ async function openStatusHistory() {
   document.getElementById("status-history-overlay").classList.add("active");
 
   try {
-    // 与主卡片同源：按 source 精确过滤，避免历史列表串台
-    const scope = resolveStatusScope();
+    // 与主卡片同源：沿用卡片打开时确定的 scope，避免历史列表串台
+    const scope = activeStatusScope || resolveStatusScope();
     const list = await db.status_history
       .where('sessionId').equals(activeStatusSessionId)
       .and(h => statusRecordMatchesScope(h, scope))
@@ -352,7 +385,7 @@ async function openStatusHistory() {
     list.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
     if (list.length === 0) {
-      container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该场景暂无心声同频历史</p>`;
+      container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">暂无${statusScopeLabel(scope)}心声历史</p>`;
       return;
     }
 
@@ -401,29 +434,31 @@ async function openStatusHistory() {
       if (delBtn) {
         delBtn.onclick = async (e) => {
           e.stopPropagation();
-          if (confirm('确定要删除这条同频记录吗？')) {
+          const doDelete = async () => {
             try {
               if (item.id) {
                 await db.status_history.delete(item.id);
                 card.style.opacity = '0';
                 card.style.transform = 'scale(0.95)';
                 setTimeout(() => card.remove(), 200);
-                
+
                 // 如果删除后列表空了，显示无数据提示
                 if (container.querySelectorAll('.history-item-card').length <= 1) {
                   setTimeout(() => {
-                    container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">该场景暂无心声同频历史</p>`;
+                    container.innerHTML = `<p style="text-align:center;color:var(--text-secondary);font-size:13px;padding:40px 0;">暂无${statusScopeLabel(activeStatusScope)}心声历史</p>`;
                   }, 250);
                 }
               }
             } catch (err) {
               console.error('删除心声记录失败:', err);
-              if (typeof showToast === 'function') {
-                showToast('删除失败: ' + err.message);
-              } else {
-                alert('删除失败: ' + err.message);
-              }
+              showToast('删除失败: ' + err.message);
             }
+          };
+          // 项目红线：不用原生 confirm
+          if (typeof showCustomConfirm === 'function') {
+            showCustomConfirm('删除同频记录', '确定要删除这一条心声记录吗？删除后无法恢复。', doDelete);
+          } else {
+            await doDelete();
           }
         };
       }

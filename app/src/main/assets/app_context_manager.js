@@ -71,7 +71,9 @@
     { id: "forum_roam",        label: "论坛漫游",         cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharForumRoam" }, depth: -83, domSync: "details-auto-forum-roam-toggle", desc: "允许角色自发去论坛发帖的指令说明。" },
     { id: "status_auto",       label: "心声随动",         cats: ["online","theater","date"], group: "开关", builtin: false, switch: { kind: "session", key: "statusAutoToggle" }, depth: 9995, appended: true, domSync: "details-status-auto", desc: "回复末尾附带角色真实心声 [STATUS]（固定追加，不参与排序）。" },
     { id: "translate_auto",    label: "翻译随动",         cats: ["online","theater","date"], group: "开关", builtin: false, switch: { kind: "session", key: "translateAutoToggle" }, depth: 9994, appended: true, domSync: "details-translate-auto", desc: "非中文内容附带结构化译文块（固定追加，不参与排序）。" },
-    { id: "miniprogram_share", label: "小程序分享",       cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowMiniprogramShare" }, depth: 9993, appended: true, domSync: "details-allow-miniprogram-share", desc: "允许角色发起小程序分享卡片（固定追加，不参与排序）。" }
+    { id: "miniprogram_share", label: "小程序分享",       cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowMiniprogramShare" }, depth: 9993, appended: true, domSync: "details-allow-miniprogram-share", desc: "允许角色发起小程序分享卡片（固定追加，不参与排序）。" },
+    { id: "auto_call",         label: "主动发起通话",     cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharAutoCall" }, depth: 9992, appended: true, domSync: "details-autocall-toggle", desc: "允许角色用 [AUTO_CALL] 主动打来语音/视频（固定追加，不参与排序）。" },
+    { id: "auto_check_phone",  label: "突然查手机请求",   cats: ["online"], group: "开关", builtin: false, switch: { kind: "session", key: "allowCharAutoCheckPhone" }, depth: 9991, appended: true, domSync: "details-allow-auto-check-phone", desc: "允许角色用 [CHECK_PHONE] 在聊天里突然要求翻你的手机（会先弹确认卡，可同意或抗议；固定追加，不参与排序）。" }
   ];
 
   var CATALOG_BY_ID = {};

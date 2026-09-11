@@ -252,6 +252,28 @@
       }, duration);
     },
 
+    // 「思考中」常驻：请求可能要几十秒，旧实现只冒一次 3 秒的气泡，
+    // 等回复真的回来时用户早就看不到任何提示了，观感上就是「等了很久突然只闪一下」。
+    // 这里按 2.2 秒的节奏续着，回复落地的瞬间由 stopThinkingBubble 接管。
+    startThinkingBubble: function(text) {
+      this.stopThinkingBubble();
+      const show = () => this.popBubble(text || "思考中...", 2600);
+      show();
+      this._thinkingTimer = setInterval(show, 2200);
+    },
+    stopThinkingBubble: function() {
+      if (this._thinkingTimer) {
+        clearInterval(this._thinkingTimer);
+        this._thinkingTimer = null;
+      }
+    },
+
+    // 回复气泡的停留时长：至少 6 秒，长句按字数延长（让用户来得及读完）
+    replyBubbleDuration: function(text) {
+      const len = String(text || '').length;
+      return Math.max(6000, Math.min(12000, len * 350));
+    },
+
     // 解析桌宠对应的目标会话（会话级字段缺失时按“当前会话 → 当前面具 → 任意会话 → 自建”逐级兜底）
     // 返回 { sess, created } 或 null；不再依赖“当前是否停在对话页”
     resolvePetSession: async function(charId) {
@@ -453,7 +475,8 @@
 
     // 实时生成 API 交互 (作用于当前活跃活跃桌宠) [1]
     triggerApiInteraction: async function() {
-      this.popBubble("思考中...");
+      // 思考中气泡按节奏续着，避免「请求慢 → 提示早没了 → 回复只闪一下」
+      this.startThinkingBubble("思考中...");
 
       try {
         const presetId = localStorage.getItem("global_api_preset_id");
@@ -538,8 +561,9 @@
         } catch (e) {
           console.error("桌宠双击回复写入会话失败:", e);
         }
-        // 浮窗气泡提示
-        this.popBubble(finalReply);
+        // 浮窗气泡提示：先收掉「思考中」，再让回复停留够久（至少 6 秒，长句更长）
+        this.stopThinkingBubble();
+        this.popBubble(finalReply, this.replyBubbleDuration(finalReply));
         // 系统通知（App 在后台或桌面浮窗时也能感知）
         try {
           if (window.AndroidMCP && typeof window.AndroidMCP.showSystemNotification === 'function') {
@@ -549,7 +573,8 @@
         } catch (e) {}
       } catch (e) {
         console.error("桌宠实时生成 API 出错:", e);
-        this.popBubble("气流阻塞了...");
+        this.stopThinkingBubble();
+        this.popBubble("气流阻塞了...", 5000);
       }
     },
 

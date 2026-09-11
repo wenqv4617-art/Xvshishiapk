@@ -884,6 +884,76 @@
     }
   }
 
+  // ==================== 突然发起查手机（[CHECK_PHONE] 指令） ====================
+  // 与 [AUTO_CALL] 同源思路：开关打开后，char 可以在回复末尾单独打一行指令，
+  // 系统随即弹出「TA 正拿着你的手机」确认卡（复用 askAndStart，用户仍可否决）。
+  async function buildAutoCheckPhonePromptSegment(sessionId) {
+    try {
+      var sess = await db.sessions.get(Number(sessionId));
+      if (!sess || sess.allowCharAutoCheckPhone !== 1) return "";
+      if (state.running) return "";
+      var recent = await db.messages.where('sessionId').equals(Number(sessionId)).reverse().limit(1).toArray();
+      // 刚查过就别追着查，避免刷屏
+      if (recent.length > 0 && recent[0].contentType === 'reverse_check_report') return "";
+      return [
+        '【突然查手机特权】',
+        '你现在被允许在聊天中**突然发起一次「查对方手机」**的请求。适用时机：你起了疑心、吃醋、想问清楚某件事、或者只是忍不住想看看对方最近在跟谁说话。',
+        '发起方式：在你回复的最后一行单独占一行输出指令：',
+        '- 指令格式：[CHECK_PHONE]{"reason":"你这次想看手机的原因，12字以内"}',
+        '输出指令后，系统会向对方弹出「你发现 TA 正拿着你的手机翻看」的确认卡，对方可以同意，也可以抗议（有概率抗议成功）。',
+        '注意：',
+        '1. 这是**请求**而不是结果，不要在台词里提前宣告"我看到你手机里有什么"。',
+        '2. 用得要克制：只在你真的起了疑心或被触动的当口用，不要每次回复都发。',
+        '3. [CHECK_PHONE] 不是 MCP 工具，不要试图用任何工具去读对方的手机。',
+        '4. 其余正常对白照常输出，指令行不会展示给对方看。'
+      ].join('\n');
+    } catch (e) { return ""; }
+  }
+
+  // 从 char 回复里检测 [CHECK_PHONE]{...}，弹出确认卡并清洗掉指令文本
+  function detectAndTriggerCheckPhone(text, sessionId) {
+    if (!text) return text;
+    var idx = text.indexOf('[CHECK_PHONE]');
+    if (idx === -1) return text;
+    var after = text.substring(idx + '[CHECK_PHONE]'.length);
+    var jsonStart = after.indexOf('{');
+    var reason = '';
+    var cutEnd = idx + '[CHECK_PHONE]'.length;
+    if (jsonStart !== -1) {
+      // 用括号平衡法提取 JSON（与其它指令一致，容忍内容里有括号）
+      var depth = 0, inStr = false, esc = false, end = -1;
+      for (var i = jsonStart; i < after.length; i++) {
+        var ch = after[i];
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === '\\') esc = true;
+          else if (ch === '"') inStr = false;
+          continue;
+        }
+        if (ch === '"') { inStr = true; continue; }
+        if (ch === '{') depth++;
+        else if (ch === '}') { depth--; if (depth === 0) { end = i; break; } }
+      }
+      if (end !== -1) {
+        try { reason = (JSON.parse(after.substring(jsonStart, end + 1)) || {}).reason || ''; } catch (e) {}
+        cutEnd = idx + '[CHECK_PHONE]'.length + end + 1;
+      }
+    }
+    var cleaned = (text.substring(0, idx) + text.substring(cutEnd)).replace(/\n{3,}/g, '\n\n').trim();
+
+    // 指令被系统捕获，但用户随时可以拒绝
+    setTimeout(function () {
+      try {
+        if (state.running || asking) return;
+        if (typeof showToast === 'function' && reason) {
+          showToast('TA 想知道：' + String(reason).slice(0, 20));
+        }
+        askAndStart(Number(sessionId));
+      } catch (e) { console.warn('[查手机] 触发失败', e); }
+    }, 700);
+    return cleaned;
+  }
+
   // ==================== 对外接口 ====================
   window.reverseCheckSystem = {
     FREQ: FREQ,
@@ -895,6 +965,8 @@
     getSelectedFreq: getSelectedFreq,
     setSelectedFreq: setSelectedFreq,
     isRunning: function () { return state.running; },
+    buildAutoCheckPhonePromptSegment: buildAutoCheckPhonePromptSegment,
+    detectAndTriggerCheckPhone: detectAndTriggerCheckPhone,
     _readCharOutput: readCharOutput,
     _parseJsonLoose: parseJsonLoose,
     _state: state

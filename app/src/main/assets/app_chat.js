@@ -5383,6 +5383,32 @@ function bindChatAppEvents() {
           } catch (e) {}
         }
 
+        // 主动发起通话特权（开关打开才注入；该段以前只定义了 builder 却从没被调用）
+        if (window.callSystem && typeof window.callSystem.buildAutoCallPromptSegment === "function") {
+          try {
+            const callPrompt = await window.callSystem.buildAutoCallPromptSegment(activeSessionId);
+            if (callPrompt) {
+              finalSystemPrompt += "\n\n" + callPrompt;
+              if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+                window.contextManager.pushExtraSection("online", { id: "auto_call", label: "主动发起通话", group: "开关", content: callPrompt, enabled: true });
+              }
+            }
+          } catch (e) {}
+        }
+
+        // 突然发起查手机特权（开关打开才注入；由 char 在对话里用 [CHECK_PHONE] 自己挑时机）
+        if (window.reverseCheckSystem && typeof window.reverseCheckSystem.buildAutoCheckPhonePromptSegment === "function") {
+          try {
+            const cpPrompt = await window.reverseCheckSystem.buildAutoCheckPhonePromptSegment(activeSessionId);
+            if (cpPrompt) {
+              finalSystemPrompt += "\n\n" + cpPrompt;
+              if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+                window.contextManager.pushExtraSection("online", { id: "auto_check_phone", label: "突然查手机请求", group: "开关", content: cpPrompt, enabled: true });
+              }
+            }
+          } catch (e) {}
+        }
+
         // 注入回溯重回要求（若存在），约束 char 本次重回的内容方向
         if (window._rerollRequirement) {
           const rerollExtra = `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
@@ -6509,6 +6535,10 @@ function bindChatAppEvents() {
               if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
                 textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, reqSessionId);
               }
+              // 检测 char 突然发起查手机指令 [CHECK_PHONE]{...}，触发后清洗指令文本
+              if (window.reverseCheckSystem && typeof window.reverseCheckSystem.detectAndTriggerCheckPhone === 'function') {
+                textToSave = window.reverseCheckSystem.detectAndTriggerCheckPhone(textToSave, reqSessionId);
+              }
               // 翻译随动：优先取上屏前预生成的逐气泡译文；兼容旧版 [TRANSLATE] 标签
               const transForThis = translationText || autoTranslationByIndex[currentItemIndex - 1] || null;
               translationText = null;
@@ -7108,6 +7138,9 @@ if (btnDialogDetails) {
       if (window.reverseCheckSystem && typeof window.reverseCheckSystem.setSelectedFreq === "function") {
         window.reverseCheckSystem.setSelectedFreq(sess.reverseCheckFrequency || "medium");
       }
+      // 「允许突然发起查手机请求」：由 char 在对话里用 [CHECK_PHONE] 自己挑时机
+      const autoCheckPhoneToggle = document.getElementById("details-allow-auto-check-phone");
+      if (autoCheckPhoneToggle) autoCheckPhoneToggle.checked = sess.allowCharAutoCheckPhone === 1;
 
       // 渲染「仪轨状态进入对话上下文」开关
       const ritualStateToggle = document.getElementById("details-ritual-state-toggle");
@@ -7299,6 +7332,10 @@ if (btnSaveDetails) {
     const autoCallVideoToggleEl = document.getElementById("details-autocall-video-toggle");
     const allowCharAutoCallVideo = autoCallVideoToggleEl ? (autoCallVideoToggleEl.checked ? 1 : 0) : 0;
 
+    // 读取「允许突然发起查手机请求」开关
+    const autoCheckPhoneToggleEl = document.getElementById("details-allow-auto-check-phone");
+    const allowCharAutoCheckPhone = autoCheckPhoneToggleEl ? (autoCheckPhoneToggleEl.checked ? 1 : 0) : 0;
+
     // 读取自动发朋友圈、论坛漫游、建立小号开关
     const autoMomentToggleEl = document.getElementById("details-auto-moment-toggle");
     const allowCharAutoMoment = autoMomentToggleEl ? (autoMomentToggleEl.checked ? 1 : 0) : 0;
@@ -7340,6 +7377,7 @@ if (btnSaveDetails) {
       ttsVoiceId: ttsVoiceId,
       allowCharAutoCall: allowCharAutoCall,
       allowCharAutoCallVideo: allowCharAutoCallVideo,
+      allowCharAutoCheckPhone: allowCharAutoCheckPhone,
       allowCharAutoMoment: allowCharAutoMoment,
       allowCharForumRoam: allowCharForumRoam,
       allowCharForumAltAccount: allowCharForumAltAccount,
@@ -7831,6 +7869,19 @@ function triggerAppointmentMode() {
 
 function exitOfflineChat() {
   document.getElementById("win-offline-chat").classList.remove("active");
+
+  // ⚠️ v1.5.19 关键修复：以前只关窗口、**从不重置线下标志**。
+  // 于是离开赴约/小剧场之后 isOfflineTheater 仍为 true（activeTheaterId 也还留着），
+  // 后果是：
+  //   ① 心声卡与「手动深度同频」都以为自己在剧场里 → 小剧场心声溢到线上；
+  //   ② 线上对话里生成的心声被写成剧场记录，卡片按线上 scope 读不到，显示的还是旧剧场那条；
+  //   ③ 同一声明全局，可能连带影响其它角色会话的心声读取。
+  isOfflineTheater = false;
+  activeTheaterId = 0;
+
+  // 顺便把线下详情面板收起来，避免残留状态被下一次打开继承
+  const detailsWin = document.getElementById("win-offline-details");
+  if (detailsWin) detailsWin.classList.remove("active");
 }
 
 // 线下折叠思维链交互开关 (控制卡片延伸与小三角旋转)

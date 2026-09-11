@@ -3368,6 +3368,19 @@
                 立刻触发一次
               </button>
             </div>
+            <!-- 允许突然发起查手机请求：char 可在聊天中用 [CHECK_PHONE] 指令突然要求翻你的手机 -->
+            <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:4px;">
+              <label style="margin-bottom:0; display:flex; align-items:center; gap:6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;">
+                  <path d="M13 2 3 14h7l-1 8 10-12h-7z"/>
+                </svg> 允许突然发起查手机请求
+              </label>
+              <label class="switch">
+                <input type="checkbox" id="details-allow-auto-check-phone">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div style="font-size:10px; color:var(--text-secondary); margin:-6px 0 8px; line-height:1.55;">开启后，对方在聊天里可以像发语音、发朋友圈一样，突然丢出一个「查你手机」的请求（会先弹卡问你是否同意，你也可以抗议）。与上面「翻看你的手机」是两套：上面的按频率自动触发，这个由对方在对话里自己挑时机。</div>
 
             <!-- 仪轨：四维状态进入对话上下文 -->
             <div class="form-group" style="display:flex; align-items:center; justify-content:space-between; border-top:1px solid var(--border); padding-top:14px; margin-top:14px;">
@@ -5471,7 +5484,7 @@
                 <line x1="12" y1="2" x2="12" y2="4"/>
                 <line x1="12" y1="20" x2="12" y2="22"/>
                 <circle cx="12" cy="12" r="3"/>
-              </svg> 同心脑电波心声</h4>
+              </svg> 同心脑电波心声<span id="status-card-scope-label" style="font-size:10.5px; font-weight:700; color:#ec4899; background:rgba(236,72,153,0.10); border-radius:8px; padding:2px 8px; margin-left:8px; vertical-align:middle;">线上</span></h4>
             <div style="display: flex; gap: 8px; align-items: center;">
               <button class="btn btn-outline" id="btn-status-history" style="font-size: 11px; padding: 6px 12px; border-radius:12px; font-weight:700;">
                 历史记录
