@@ -416,6 +416,9 @@
 
     /** 切换看板视图并重绘（幂等：重复点同一个入口只是重绘同一页） */
     setView: function (v, arg) {
+      // 换页先收掉 body 级浮层：否则抽屉会压在页面上
+      // （例如从「抽卡」抽屉里点到右侧入口，页面换了但抽屉还在）
+      if (HG && HG.H && HG.H.closeAllLayers) { try { HG.H.closeAllLayers(); } catch (e) { } }
       App.view = v || 'lobby';
       App.viewArg = (arg === undefined) ? null : arg;
       return App.render();
