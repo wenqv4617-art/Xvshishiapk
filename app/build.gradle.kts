@@ -1,4 +1,4 @@
-plugins {
+﻿plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
@@ -11,8 +11,8 @@ android {
         applicationId = "com.story.phone"
         minSdk = 26
         targetSdk = 34
-        versionCode = 56
-        versionName = "1.5.25"
+        versionCode = 57
+        versionName = "1.5.26"
     }
 
     signingConfigs {

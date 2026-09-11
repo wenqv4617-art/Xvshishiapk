@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v103'; // v103: 真修桌面点击被 touchmove 拦截吞掉(滑动翻页的 preventDefault 无条件执行); v1.5.25
+const CACHE_NAME = 'story-phone-v104'; // v104: 桌面点击诊断埋点(每次点击尝试+打开后校验窗口是否真的显示); v1.5.26
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

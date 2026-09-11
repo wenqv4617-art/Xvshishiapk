@@ -1622,10 +1622,10 @@ document.addEventListener("pointerdown", (e) => {
   lastPointerDownY = e.clientY;
 });
 
-// 桌面图标被「明确点击」时的召回回调（由每个 .app-icon 的 onclick 触发）。
-// 背景：body 上的委托用「位移 >15px 视为滑动」过滤点击，而在部分触屏 WebView 上
-// pointerdown 不会可靠更新坐标，导致一次纯粹的点击被判成滑动而被吞掉
-// —— 表现就是「点图标完全没反应」。这里给图标一条直连路径。
+// 桌面图标被「明确点击」时的召回回调（由每个 .app-icon 的 pointerup/click 触发）。
+// 背景：body 上的委托用「位移 >15px 视为滑动」过滤点击，而滑动翻页的 touchmove 拦截器
+// 又可能在真机上把这一次的 click 合成取消掉 —— 表现就是「点图标完全没反应」。
+// 这里给图标一条直连路径，并且把每一次打开尝试的失败原因暴露出来（不再静默）。
 window.__deskIconTapRecall = function (iconEl) {
   if (!iconEl) return;
   // 位移判定显式放行（仅对这一次点击）
@@ -1636,11 +1636,39 @@ window.__deskIconTapRecall = function (iconEl) {
   if (iconEl.style && iconEl.style.position === "fixed") return;
   var appId = iconEl.getAttribute("data-app");
   if (!appId) return;
+  // 轻量诊断：记下每一次图标点击尝试，方便用户反馈「点了没反应」时定位
   try {
-    if (typeof window.openApp === "function") window.openApp(appId);
+    window.__hgDeskTapLog = window.__hgDeskTapLog || [];
+    window.__hgDeskTapLog.push({ app: appId, at: Date.now() });
+    if (window.__hgDeskTapLog.length > 40) window.__hgDeskTapLog.shift();
+  } catch (e) { }
+  try {
+    if (typeof window.openApp !== "function") {
+      throw new Error("openApp 未就绪（路由脚本可能没加载成功）");
+    }
+    window.openApp(appId);
+    // 打开后确认窗口真的显示出来了；没显示就把原因说出来，避免再次「静默失败」
+    setTimeout(function () {
+      var w = document.getElementById("win-" + appId);
+      if (!w) {
+        console.warn("[Desktop] 找不到 #win-" + appId + "，该应用页可能未注册");
+        if (typeof window.showToast === "function") {
+          window.showToast("「" + appId + "」页面不存在（#win-" + appId + " 未注册）");
+        }
+        return;
+      }
+      if (!w.classList.contains("active")) {
+        console.warn("[Desktop] 调用了 openApp('" + appId + "') 但窗口没有激活");
+        if (typeof window.showToast === "function") {
+          window.showToast("「" + appId + "」没能打开（窗口未激活）");
+        }
+      }
+    }, 120);
   } catch (err) {
     console.error("[Desktop] 直连开应用失败:", appId, err);
-    if (typeof window.showToast === "function") window.showToast("打开「" + appId + "」失败：" + (err && err.message));
+    if (typeof window.showToast === "function") {
+      window.showToast("打开「" + appId + "」失败：" + (err && err.message ? err.message : err));
+    }
   }
   // 消费掉这次点击，避免同一次冒泡里再走一遍委托
   setTimeout(function () { try { iconEl.__hgTapOk = false; } catch (e) { } }, 0);
