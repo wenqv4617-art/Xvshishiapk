@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v104'; // v104: 桌面点击诊断埋点(每次点击尝试+打开后校验窗口是否真的显示); v1.5.26
+const CACHE_NAME = 'story-phone-v105'; // v105: 图标点击改由 document 捕获阶段统一接管(不再依赖逐个挂监听) + 编辑模式死局兜底; v1.5.27
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

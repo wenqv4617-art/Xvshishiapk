@@ -1558,32 +1558,11 @@ function renderLayout(container, layoutArray, slotClass) {
           <div class="icon-wrapper">${iconHtml}</div>
           ${nameHtml}
         `;
-        // 每个图标自带一条直连点击通道（v1.5.24/25）：
-        //  · 桌面滑动翻页的 touchmove 拦截器在真机上可能把这次点击的 click 合成取消掉，
-        //    导致「点图标完全没反应」。所以这里不依赖 click，而是用 pointerdown/up 自己
-        //    算位移，位移在容差内就判定为一次点击。
-        //  · 只做「置标记 + 调 __deskIconTapRecall」，不改变拖拽/长按/编辑模式的任何行为。
-        (function (el) {
-          var downX = 0, downY = 0, downAt = 0, tracked = false;
-          el.addEventListener('pointerdown', function (e) {
-            tracked = true;
-            downX = e.clientX; downY = e.clientY; downAt = Date.now();
-          }, { passive: true });
-          el.addEventListener('pointerup', function (e) {
-            if (!tracked) return;
-            tracked = false;
-            var moved = Math.hypot(e.clientX - downX, e.clientY - downY);
-            // 位移超 14px 视为滑动；按住超 700ms 视为长按（编辑模式），都不当点击
-            if (moved > 14 || (Date.now() - downAt) > 700) return;
-            if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(el);
-          });
-          el.addEventListener('pointercancel', function () { tracked = false; });
-          // 桌面端（鼠标）保留原生 click 兜底；触屏上 click 可能已被取消，故加 light 去重
-          el.addEventListener('click', function () {
-            if (el.__hgTapOk) return;         // 已经由 pointerup 处理过
-            if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(el);
-          });
-        })(div);
+        // 点击统一由 document 捕获阶段的处理器接管（见文件下方的全局监听）。
+        // 这里不再逐个图标挂监听：图标有多条渲染路径，逐个挂容易漏，
+        // 而漏挂的表现就是「点这个图标完全没反应」。
+        // 只保留一个标记位，供 __deskIconTapRecall 做去重。
+        div.__hgTapOk = false;
         slot.appendChild(div);
 
         // 编辑模式下应用支持红叉删除卸载 (系统应用卸载)
@@ -1622,7 +1601,50 @@ document.addEventListener("pointerdown", (e) => {
   lastPointerDownY = e.clientY;
 });
 
-// 桌面图标被「明确点击」时的召回回调（由每个 .app-icon 的 pointerup/click 触发）。
+// 桌面图标点击的**全局捕获阶段**处理器。
+// 为什么用捕获阶段挂在 document 上，而不是逐个图标挂监听：
+//   图标可能由多条渲染路径产生（预设布局 / 迁移补位 / 手动添加 / dock），
+//   只要有一条路径漏挂了监听，那个图标就会「点了完全没反应」。
+//   挂 document + capture 可以保证**任何**来源的 .app-icon 都被接管到。
+// 判定方式与逐个挂监听时完全一致：自己比较按下/抬起位移，14px 内且未长按视为点击。
+(function () {
+  var downX = 0, downY = 0, downAt = 0, downIcon = null;
+
+  function iconOf(e) {
+    var t = e.target;
+    if (!t || !t.closest) return null;
+    return t.closest('.app-icon');
+  }
+
+  document.addEventListener('pointerdown', function (e) {
+    var icon = iconOf(e);
+    if (!icon) { downIcon = null; return; }
+    downIcon = icon;
+    downX = e.clientX; downY = e.clientY; downAt = Date.now();
+  }, true);
+
+  document.addEventListener('pointerup', function (e) {
+    if (!downIcon) return;
+    var icon = downIcon;
+    downIcon = null;
+    var moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+    // 位移 >14px 视为滑动翻页；按住 >700ms 视为长按（编辑模式）
+    if (moved > 14 || (Date.now() - downAt) > 700) return;
+    if (icon.__hgTapOk) return;                 // 已由其它路径处理
+    if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(icon);
+  }, true);
+
+  document.addEventListener('pointercancel', function () { downIcon = null; }, true);
+
+  // 鼠标 / 无 pointer 事件环境下的兜底（capture 保证先于 body 委托）
+  document.addEventListener('click', function (e) {
+    var icon = iconOf(e);
+    if (!icon || icon.__hgTapOk) return;
+    if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(icon);
+  }, true);
+})();
+
+// 桌面图标被「明确点击」时的召回回调。
 // 背景：body 上的委托用「位移 >15px 视为滑动」过滤点击，而滑动翻页的 touchmove 拦截器
 // 又可能在真机上把这一次的 click 合成取消掉 —— 表现就是「点图标完全没反应」。
 // 这里给图标一条直连路径，并且把每一次打开尝试的失败原因暴露出来（不再静默）。
@@ -1630,12 +1652,23 @@ window.__deskIconTapRecall = function (iconEl) {
   if (!iconEl) return;
   // 位移判定显式放行（仅对这一次点击）
   iconEl.__hgTapOk = true;
-  // 编辑模式下点击图标依然只用于退出编辑，不在这里打开应用
-  if (typeof isDesktopEditMode !== 'undefined' && isDesktopEditMode) return;
-  // 已被拖拽固定的图标不触发（与原委托行为一致）
-  if (iconEl.style && iconEl.style.position === "fixed") return;
   var appId = iconEl.getAttribute("data-app");
-  if (!appId) return;
+  if (!appId) { iconEl.__hgTapOk = false; return; }
+  // 编辑模式下点击图标依然只用于退出编辑，不在这里打开应用
+  if (typeof isDesktopEditMode !== 'undefined' && isDesktopEditMode) {
+    // 但绝不能让「停在编辑模式」变成「所有图标都点不动」这种死局：
+    // 第一次点直接退出编辑并明确告知，第二次点就正常打开。
+    try {
+      if (typeof exitDesktopEditMode === 'function') exitDesktopEditMode();
+      if (typeof window.showToast === 'function') {
+        window.showToast('已退出桌面编辑模式，再点一次就能打开「' + appId + '」');
+      }
+    } catch (e) { }
+    iconEl.__hgTapOk = false;
+    return;
+  }
+  // 已被拖拽固定的图标不触发（与原委托行为一致）
+  if (iconEl.style && iconEl.style.position === "fixed") { iconEl.__hgTapOk = false; return; }
   // 轻量诊断：记下每一次图标点击尝试，方便用户反馈「点了没反应」时定位
   try {
     window.__hgDeskTapLog = window.__hgDeskTapLog || [];
