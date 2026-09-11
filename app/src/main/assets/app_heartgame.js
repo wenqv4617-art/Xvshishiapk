@@ -138,9 +138,100 @@
       App.startOnlineTracking();
     },
 
-    /** 生成式 UI 素材探测：不阻塞首屏，素材到位后补一次重绘 */
+    /**
+     * 诊断浮条（v1.5.33）：
+     * 之前所有排查都卡在「我这边测不出来、你那边一直不对」。
+     * 这条浮标把**真实环境数据**直接画在屏幕上（视口/容器/立绘的真实矩形 + 每次点击结果），
+     * 截图一张就能定位，不用再来回猜。
+     * 点它可收起；顶部仍保留一个极小的「诊断」角标可再展开。
+     */
+    DIAG_KEY: 'hg-diag',
+
+    diagEnabled: function () {
+      try {
+        var v = localStorage.getItem(App.DIAG_KEY);
+        return v === null ? true : v === '1';   // 默认开：等这次问题解决后可关掉
+      } catch (e) { return true; }
+    },
+
+    setDiag: function (on) {
+      try { localStorage.setItem(App.DIAG_KEY, on ? '1' : '0'); } catch (e) { }
+      App.renderDiag();
+    },
+
+    /** 记录一次动作执行结果（供诊断浮条显示） */
+    logAction: function (name, ok, detail) {
+      App._actLog = App._actLog || [];
+      App._actLog.unshift({ name: name, ok: ok !== false, detail: detail || '', at: Date.now() });
+      if (App._actLog.length > 6) App._actLog.pop();
+      App.renderDiag();
+    },
+
+    /** 绘制/刷新诊断浮条 */
+    renderDiag: function () {
+      var H = HG.H;
+      var old = document.getElementById('hg-diag-bar');
+      if (old && old.parentNode) old.parentNode.removeChild(old);
+      var oldBtn = document.getElementById('hg-diag-btn');
+      if (oldBtn && oldBtn.parentNode) oldBtn.parentNode.removeChild(oldBtn);
+      var host = document.getElementById('heartgame-body');
+      if (!host || !App.diagEnabled()) return;
+
+      var r = function (el) {
+        if (!el) return 'null';
+        var b = el.getBoundingClientRect();
+        return [b.left, b.top, b.right, b.bottom].map(function (v) { return Math.round(v); }).join(',');
+      };
+      var ph = document.getElementById('phone-container');
+      var hgWin = document.getElementById('win-heartgame');
+      var mount = document.getElementById('heartgame-mount');
+      var pAnn = document.getElementById('hg-portrait-host');
+      var pImg = pAnn ? pAnn.querySelector('img') : null;
+      var nat = pImg && pImg.naturalWidth ? (pImg.naturalWidth + 'x' + pImg.naturalHeight) : '未加载';
+
+      var lines = [];
+      lines.push('版本 ' + (typeof CHANGELOG_DATA !== 'undefined' && CHANGELOG_DATA[0] ? CHANGELOG_DATA[0].version : '?')
+        + '  · 视口 ' + window.innerWidth + 'x' + window.innerHeight + ' @' + (window.devicePixelRatio || 1));
+      lines.push('手机容器 ' + r(ph));
+      lines.push('应用窗口 ' + r(hgWin) + ' ' + (hgWin ? (hgWin.classList.contains('active') ? 'active' : 'inactive') : ''));
+      lines.push('看板 ' + r(mount));
+      lines.push('立绘舞台 ' + r(pAnn));
+      lines.push('立绘图 ' + r(pImg) + ' 原始 ' + nat);
+      if (pImg) {
+        var cs = getComputedStyle(pImg);
+        lines.push('立绘样式 fit=' + cs.objectFit + ' pos=' + cs.objectPosition + ' tr=' + cs.transform);
+      }
+      lines.push('--- 最近点击 ---');
+      (App._actLog || []).slice(0, 5).forEach(function (a) {
+        // 不用对勾/叉号符号：项目红线禁止任何 emoji 区间字符（全量自检会拦）
+        lines.push((a.ok ? '[成功] ' : '[失败] ') + a.name + (a.detail ? ' · ' + a.detail : ''));
+      });
+      if (!(App._actLog || []).length) lines.push('（还没有点击记录）');
+
+      var bar = H.el('div', { id: 'hg-diag-bar' });
+      // pointer-events:none —— 诊断浮条绝不能挡住底部工具栏与抽卡按钮
+      // （之前它是可点的，会吃掉落在它上面的点击）
+      bar.style.cssText = 'position:absolute; left:6px; right:6px; bottom:6px; z-index:40;'
+        + 'max-height:46%; overflow:hidden; box-sizing:border-box; pointer-events:none;'
+        + 'background:rgba(20,14,26,0.84); color:#EBD9F0; border:1px solid rgba(217,127,168,0.5);'
+        + 'border-radius:12px; padding:8px 10px; font-size:9.5px; line-height:1.62;'
+        + 'font-family:ui-monospace,Menlo,Consolas,monospace; white-space:pre-wrap; word-break:break-all;';
+      bar.textContent = lines.join('\n');
+      host.appendChild(bar);
+
+      // 收起按钮：唯一可点的一小块，放在浮条右上角
+      var hide = H.el('div', { id: 'hg-diag-hide' });
+      hide.style.cssText = 'position:absolute; right:10px; bottom:calc(46% + 2px); z-index:41;'
+        + 'padding:2px 8px; border-radius:99px; cursor:pointer;'
+        + 'background:rgba(20,14,26,0.86); color:#EBD9F0; font-size:9px;'
+        + 'border:1px solid rgba(217,127,168,0.5);';
+      hide.textContent = '收起诊断';
+      hide.onclick = function (e) { e.stopPropagation(); App.setDiag(false); };
+      host.appendChild(hide);
+    },
     probeSkin: async function () {
       if (!HG.Skin || !HG.SKIN_MANIFEST) return;
+      if (App._skinApplied) return;                 // 防重入：绝不重复重绘（重复重绘会叠加闪烁）
       try {
         var found = await HG.Skin.probeAll(HG.SKIN_MANIFEST);
         var n = Object.keys(found).reduce(function (a, g) { return a + Object.keys(found[g]).length; }, 0);
@@ -188,12 +279,14 @@
         if (!node) return;
         var name = node.getAttribute('data-hg-action');
         var fn = App.ACTIONS && App.ACTIONS[name];
-        if (typeof fn !== 'function') return;
+        if (typeof fn !== 'function') { App.logAction(name, false, '未注册的动作'); return; }
         e.stopPropagation();
         e.preventDefault();
         try {
           fn(node, e);
+          App.logAction(name, true, '');
         } catch (err) {
+          App.logAction(name, false, (err && err.message) ? err.message : String(err));
           console.error('[心动游戏] 动作执行失败: ' + name, err);
           try { HG.H.toast('操作失败：' + (err && err.message ? err.message : err)); } catch (e2) { }
         }
@@ -283,6 +376,23 @@
     // ------------------------------------------------------------------
 
     render: async function () {
+      // 串行化重绘（v1.5.33）：render 是异步的（要读档案、等立绘挂载），
+      // 皮肤探测与点击可能**并发**触发两次重绘，两次 DOM 重建交错就会表现为「剧烈闪烁」。
+      // 这里保证同一时刻只有一次重绘在跑；期间来的请求合并为「跑完后再来一次」。
+      if (App._rendering) { App._renderQueued = true; return; }
+      App._rendering = true;
+      try {
+        await App._renderOnce();
+      } finally {
+        App._rendering = false;
+        if (App._renderQueued) {
+          App._renderQueued = false;
+          App.render();
+        }
+      }
+    },
+
+    _renderOnce: async function () {
       var body = document.getElementById('heartgame-body');
       if (!body) return;
       var H = HG.H, K = HG.K, U = HG.U, C = HG.C;
@@ -515,6 +625,7 @@
       // 那样底部工具栏与皮肤重绘都到不了，界面就永久停在旧一帧。
       await App.mountPortraitSafe();
       App.subscribe();
+      App.renderDiag();
     },
 
     /** 挂载立绘，带 5 秒硬超时（超时就用剪影占位继续） */

@@ -456,13 +456,23 @@
 
     // 立绘图片层
     var img = H.el('img', { class: 'hg-portrait-img', alt: '' });
-    // offsetX：逐立绘水平微调（占容器宽度的比例，负值左移）。
-    // 生成式立绘经常「人物没画在画布正中」，只靠居中会看着偏；
-    // 给每张立绘一个可调的偏移，比重新出图省事得多。
+    /**
+     * 立绘定位（v1.5.33 重做，之前的写法会把人裁成半张）：
+     *
+     * 旧写法 `height:100%; width:auto` 的问题：
+     *   立绘是「半身竖构图」（1024×1536，比例 2:3），而舞台是「宽而矮」的框。
+     *   按高度铺满 → 图片宽度只有舞台的 ~60%，再加上 left 偏移与 max-width 限制，
+     *   就表现为「人物挤在左边、只露出半边」。这不是轻微偏移，是**尺寸策略错了**。
+     *
+     * 新写法：图片框直接铺满整个舞台，再用 object-fit:contain ——
+     *   由浏览器负责等比缩放并**居中**，绝不会裁切、也不会偏；
+     *   offsetX 只在需要时做整体平移（百分比是相对舞台宽度，安全）。
+     */
     var ox = (portrait && typeof portrait.offsetX === 'number') ? portrait.offsetX : 0;
-    img.style.cssText = 'position:absolute; left:' + (50 + ox * 100) + '%; bottom:0; transform:translateX(-50%);'
-      + 'width:auto; height:100%; max-width:100%; object-fit:' + (o.fit || 'contain') + ';'
-      + 'transform-origin:50% 92%; user-select:none; -webkit-user-drag:none;'
+    img.style.cssText = 'position:absolute; inset:0; width:100%; height:100%;'
+      + 'object-fit:' + (o.fit || 'contain') + '; object-position:50% 100%;'
+      + 'transform:translateX(' + (ox * 100) + '%);'
+      + 'user-select:none; -webkit-user-drag:none;'
       + 'filter:drop-shadow(0 18px 34px rgba(140,110,140,0.24));';
     if (portrait && portrait.src) img.src = portrait.src;
     // 立绘不存在时给一个优雅的剪影占位（不是破图）
@@ -665,8 +675,11 @@
     BUILTIN_PORTRAIT: {
       id: 'builtin-hero', name: '默认立绘（可替换）', kind: 'image',
       src: 'images/heartgame/portrait/default.png',
-      // 这张图的人物主体画在画布偏右约 7%，居中摆放会看着偏 → 左移补偿
-      offsetX: -0.07
+      // offsetX 必须为 0：新版定位用 object-fit:contain + object-position，
+      // 图片内容**本身就已经居中**了。曾经为「人物画得偏右」补过 -0.07，
+      // 但在新定位下那是把已经居中的整幅图又左推 27px → 左边被切、右边留白，
+      // 看起来就是「人跑到最左边、只露半边」。补偿随定位方式一起作废。
+      offsetX: 0
     },
 
     /** 确保至少有一个可展示的立绘（不动用户数据，只在「一个都没有」时兜底） */
