@@ -2902,11 +2902,12 @@
      */
     SKIN_MANIFEST: [
       // 插画类（这些是生成式素材的正确用途）
+      ['gacha', 'entry'],        // 抽卡入口：星盘法阵徽记（已抠白）
       ['gacha', 'banner'],        // 卡池主视觉
       ['portrait', 'default'],    // 内置默认立绘（黑发黑眸韩系厚涂，已抠白）
-      ['stage', 'bg-night'],      // 场景：深夜房间
-      ['stage', 'bg-rain'],       // 场景：雨夜窗边
-      ['stage', 'bg-dusk']        // 场景：黄昏天台
+      ['stage', 'bg-night'],      // 场景：深夜房间（2.5D 厚涂）
+      ['stage', 'bg-rain'],       // 场景：雨夜窗边（2.5D 厚涂）
+      ['stage', 'bg-dusk']        // 场景：黄昏天台（2.5D 厚涂）
     ],
     C: {
       MODE: MODE,

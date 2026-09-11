@@ -425,29 +425,45 @@
       var pool = HG.Gacha && HG.Gacha.Pools ? HG.Gacha.Pools.active() : null;
       var upCard = pool ? ((pool.cards || []).filter(function (c) { return c.up; })[0] || (pool.cards || [])[0]) : null;
       var gachaBtn = H.el('div');
-      gachaBtn.style.cssText = 'position:relative; width:84px; height:84px; border-radius:26px; cursor:pointer;'
-        + 'overflow:hidden; border:1.8px solid rgba(255,255,255,0.85);'
-        + 'background:linear-gradient(150deg,#D97FA8,#B79EDC);'
-        + 'box-shadow:0 12px 32px rgba(217,127,168,0.42), 0 0 0 6px rgba(217,127,168,0.10);'
+      gachaBtn.style.cssText = 'position:relative; width:88px; height:88px; border-radius:50%; cursor:pointer;'
         + 'transition:transform .2s cubic-bezier(.22,1,.36,1);';
-      if (upCard && (upCard.thumb || upCard.image)) {
+      // 抽卡入口优先用生成式「星盘法阵」徽记（已抠白）：
+      // 深色法阵叠在浅色主页上对比强烈、仪式感足，正是用户要的那种入口。
+      var entryArt = HG.Skin && HG.Skin.get('gacha', 'entry');
+      if (entryArt) {
+        var gface = H.el('div');
+        gface.style.cssText = 'position:absolute; inset:0; border-radius:50%;'
+          + 'background-image:url(' + entryArt + '); background-size:cover; background-position:center;'
+          + 'filter:drop-shadow(0 8px 18px rgba(90,60,120,0.38));';
+        gachaBtn.appendChild(gface);
+      } else if (upCard && (upCard.thumb || upCard.image)) {
         var gim = H.el('img', { alt: '' });
         gim.src = upCard.thumb || upCard.image;
-        gim.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover;';
+        gim.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:50%;';
         gachaBtn.appendChild(gim);
+      } else if (HG.Skin && HG.Skin.has('gacha', 'banner')) {
+        var gbanner = H.el('img', { alt: '' });
+        gbanner.src = HG.Skin.get('gacha', 'banner');
+        gbanner.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover; border-radius:50%;';
+        gachaBtn.appendChild(gbanner);
+      } else {
+        gachaBtn.style.background = 'linear-gradient(150deg,#D97FA8,#B79EDC)';
+        gachaBtn.style.boxShadow = '0 12px 32px rgba(217,127,168,0.42)';
       }
       var gshine = H.el('div');
       gshine.className = 'hg-shimmer';
-      gshine.style.cssText = 'position:absolute; inset:0; pointer-events:none; opacity:.5;';
+      gshine.style.cssText = 'position:absolute; inset:0; border-radius:50%; pointer-events:none; opacity:.30;';
       gachaBtn.appendChild(gshine);
       var glabel = H.el('div');
-      glabel.style.cssText = 'position:absolute; left:0; right:0; bottom:0; padding:5px 0 6px; text-align:center;'
-        + 'background:linear-gradient(180deg,transparent,rgba(40,20,36,0.78));';
-      glabel.innerHTML = '<div style="font-size:10.4px; font-weight:900; color:#fff; letter-spacing:.16em;">抽卡</div>';
+      glabel.style.cssText = 'position:absolute; left:50%; bottom:-5px; transform:translateX(-50%);'
+        + 'padding:3px 13px; border-radius:99px; white-space:nowrap;'
+        + 'background:linear-gradient(135deg, rgba(58,38,78,0.94), rgba(92,62,122,0.94));'
+        + 'border:1px solid rgba(206,176,124,0.6); box-shadow:0 5px 16px rgba(60,30,70,0.38);';
+      glabel.innerHTML = '<span style="font-size:9.6px; font-weight:900; color:#F4E4C2; letter-spacing:.24em;">抽 卡</span>';
       gachaBtn.appendChild(glabel);
       var ghalo = H.el('div');
-      ghalo.style.cssText = 'position:absolute; inset:-12px; border-radius:34px; pointer-events:none;'
-        + 'background:radial-gradient(circle, rgba(217,127,168,0.42) 0%, transparent 68%);'
+      ghalo.style.cssText = 'position:absolute; inset:-12px; border-radius:50%; pointer-events:none;'
+        + 'background:radial-gradient(circle, rgba(183,158,220,0.45) 0%, transparent 70%);'
         + 'animation:hg-pulse 2.6s ease-in-out infinite; z-index:-1;';
       gachaBtn.appendChild(ghalo);
       gachaBtn.onpointerdown = function () { gachaBtn.style.transform = 'scale(0.94)'; };

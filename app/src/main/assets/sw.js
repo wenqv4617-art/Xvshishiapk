@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v109'; // v109: 主页交互改捕获阶段动作委托(不再逐个挂监听) + 工具栏几何修正 + 立绘偏移补偿; v1.5.31
+const CACHE_NAME = 'story-phone-v110'; // v110: 抽卡入口改星盘法阵徽记 + 三张场景重出为2.5D厚涂; v1.5.32
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -72,6 +72,7 @@ const ASSETS = [
   // 心动游戏 · 生成式插画素材（立绘 / 场景 / 卡池主视觉；缺失时自动回落纯 CSS）
   // 注：UI 装饰（按钮玻璃底 / 面板底 / 弹窗底）一律改为纯 CSS + 内联 SVG，不再用生成图 ——
   //     玻璃元件自身是白的，白底图非抠即留边，CSS 在浅色底上反而更干净且不占体积。
+  './images/heartgame/gacha/entry.png',
   './images/heartgame/gacha/banner.png',
   './images/heartgame/portrait/default.png',
   './images/heartgame/stage/bg-night.png',
