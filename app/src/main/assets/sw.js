@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v120'; // v120: 抽卡与主线剧情改成全屏页并铺页面背景（H.sheet 支持 bg + 浅色蒙版保证可读）; v1.5.42
+const CACHE_NAME = 'story-phone-v121'; // v121: 7 张竖构图页面氛围底图（主页/抽卡/主线/静室/任务/商店/牵绊），主页与各页面铺上背景，抽卡与主线为全屏页; v1.5.43
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -21,6 +21,14 @@ const ASSETS = [
   './app_heartgame_story.js',     // 主线 VN + 分支树 + 剧情小手机
   './app_heartgame_quiet.js',     // 静室 + 赠礼 + 双轨 Prompt 注入
   './app_heartgame_panels.js',    // 任务 / 商店 / 牵绊
+  // 页面氛围底图（v1.5.43，gameui-art 生成的竖构图插画）
+  './images/heartgame/page/lobby.jpg',
+  './images/heartgame/page/gacha.jpg',
+  './images/heartgame/page/story.jpg',
+  './images/heartgame/page/quiet.jpg',
+  './images/heartgame/page/tasks.jpg',
+  './images/heartgame/page/shop.jpg',
+  './images/heartgame/page/bond.jpg',
   './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
   './app_workbench_agent.js', // 工作台 Agent 引擎（Skill/Agent 配置 + MCP http+sse + @引用 + 成熟模式渲染）
   './workbench.css',      // 工作台样式

@@ -71,6 +71,18 @@
     _dom: null,
     _unsubs: [],
 
+    /**
+     * 各页面的氛围底图（v1.5.43，用 gameui-art 生成的竖构图插画）
+     * 统一放在 images/heartgame/page/，都是 1024x1536 竖构图，
+     * 上面再叠一层浅色蒙版保证内容可读。
+     */
+    PAGE_BG: {
+      lobby: 'url(images/heartgame/page/lobby.jpg)',
+      tasks: 'images/heartgame/page/tasks.jpg',
+      shop: 'images/heartgame/page/shop.jpg',
+      bond: 'images/heartgame/page/bond.jpg'
+    },
+
     // ------------------------------------------------------------------
     //  1.1 启动
     // ------------------------------------------------------------------
@@ -488,9 +500,18 @@
       body.innerHTML = '';
       var root = H.el('div', { id: 'heartgame-mount', class: 'hg-page' + (App._painted ? '' : ' hg-rise') });
       App._painted = true;
+      var pageBg = App.PAGE_BG[App.view] || '';
       root.style.cssText = 'position:relative; width:100%; height:100%; min-height:560px;'
         + 'display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;'
+        + (pageBg ? ('background:' + pageBg + ' center/cover no-repeat;') : '')
         + 'background:linear-gradient(170deg,#FFF7FB 0%,#FBF4FA 52%,#F4F2FB 100%);';
+      // 有氛围底图时，再叠一层浅色蒙版（保证浅色内容可读）
+      if (pageBg) {
+        root.style.backgroundImage = 'linear-gradient(180deg, rgba(255,250,252,0.78) 0%,'
+          + ' rgba(255,247,251,0.88) 46%, rgba(248,246,255,0.93) 100%), ' + pageBg;
+        root.style.backgroundSize = 'cover';
+        root.style.backgroundPosition = 'center';
+      }
       App._dom = { root: root };
 
       // ---------- 顶栏：返回 + 标题 ----------
@@ -616,7 +637,10 @@
         bgLayer.style.backgroundImage = 'url(' + userBg.src + ')';
         bgLayer.style.opacity = '.92';
       } else {
-        bgLayer.style.backgroundImage = 'linear-gradient(170deg,#FFF3F8 0%,#F6F1FB 48%,#EFF3FB 100%)';
+        // 没选场景时用**主页氛围底**（v1.5.43）：比原来的纯渐变好看得多，
+        // 而且立绘依然是画面主角（上面还有一层压暗蒙版）
+        bgLayer.style.backgroundImage = App.PAGE_BG.lobby;
+        bgLayer.style.opacity = '1';
       }
       stage.appendChild(bgLayer);
       // 氛围光 / 压暗蒙版：铺了场景图时补一层很淡的暗角，

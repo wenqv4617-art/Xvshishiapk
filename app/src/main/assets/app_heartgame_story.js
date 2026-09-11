@@ -1135,7 +1135,7 @@
         slot: 'story',
         // 全屏页 + 生图背景（v1.5.42）
         full: true,
-        bg: 'images/heartgame/stage/bg-dusk.png',
+        bg: 'images/heartgame/page/story.jpg',
         content: body,
         buttons: [{
           text: 'AI 写一个新篇章', icon: 'sparkle', kind: 'primary', keepOpen: true,

@@ -158,7 +158,7 @@
    * 现在按场景 id 直接映射，不再依赖字符串相等。
    */
   var QUIET_SCENE_ART = {
-    default: 'images/heartgame/stage/bg-night.png',   // 深夜房间
+    default: 'images/heartgame/page/quiet.jpg',   // 深夜房间
     rain: 'images/heartgame/stage/bg-rain.png',       // 雨夜窗边
     rooftop: 'images/heartgame/stage/bg-dusk.png',    // 天台的风（黄昏天台）
     cafe: 'images/heartgame/stage/bg-night.png',      // 打烊的咖啡店

@@ -1112,8 +1112,8 @@
         panel.insertBefore(bgEl, panel.firstChild);
         var scrim = H.el('div');
         scrim.style.cssText = 'position:absolute; inset:0; z-index:0; pointer-events:none;'
-          + 'background:' + (o.bgScrim || 'linear-gradient(180deg, rgba(255,250,252,0.80) 0%,'
-            + ' rgba(255,247,251,0.90) 46%, rgba(248,246,255,0.94) 100%)') + ';';
+          + 'background:' + (o.bgScrim || 'linear-gradient(180deg, rgba(255,250,252,0.68) 0%,'
+            + ' rgba(255,247,251,0.80) 46%, rgba(248,246,255,0.90) 100%)') + ';';
         panel.insertBefore(scrim, bgEl.nextSibling);
         // 内容浮在背景之上
         Array.prototype.forEach.call(panel.children, function (ch) {
