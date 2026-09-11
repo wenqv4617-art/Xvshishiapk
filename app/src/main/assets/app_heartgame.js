@@ -246,7 +246,6 @@
       var user = await HG.K.readGuarded(function () { return K.userProfile(); }, 6000,
         { id: K.meId, name: '你', avatar: '', persona: '', tags: [], reactPref: '', raw: null });
       var st = K.state;
-      var bg = K.currentBackground();
 
       body.innerHTML = '';
       var root = H.el('div', { id: 'heartgame-mount', class: 'hg-lobby hg-rise' });
@@ -261,11 +260,16 @@
       var stage = H.el('div', { class: 'hg-lobby-stage' });
       stage.style.cssText = 'position:absolute; inset:0; overflow:hidden;';
       // 背景层
+      // 背景层：**主页刻意不铺场景插画** —— 看板已经有立绘，
+      // 再叠一张写实场景会喧宾夺主（画面里会出现两个视觉中心）。
+      // 场景插画只服务于 VN 剧情舞台与静室（那里没有立绘抢焦点）。
       var bgLayer = H.el('div');
       bgLayer.style.cssText = 'position:absolute; inset:0; transition:opacity .5s ease;'
         + 'background-size:cover; background-position:center;';
-      if (bg && bg.src) {
-        bgLayer.style.backgroundImage = 'url(' + bg.src + ')';
+      var userBg = K.currentBackground();
+      var bgIsBuiltin = !!(userBg && userBg.builtin);
+      if (userBg && userBg.src && !bgIsBuiltin) {
+        bgLayer.style.backgroundImage = 'url(' + userBg.src + ')';
         bgLayer.style.opacity = '.92';
       } else {
         bgLayer.style.backgroundImage = 'linear-gradient(170deg,#FFF3F8 0%,#F6F1FB 48%,#EFF3FB 100%)';
@@ -417,20 +421,12 @@
       ];
       TOOLS.forEach(function (t) {
         var b = H.el('button', { class: 'hg-tool-btn', type: 'button' });
-        var base = 'display:inline-flex; align-items:center; gap:5px; padding:8px 12px; border-radius:13px;'
+        // 同样刻意用纯 CSS：见 buildRailButton 的说明
+        b.style.cssText = 'display:inline-flex; align-items:center; gap:5px; padding:8px 12px; border-radius:13px;'
           + 'font-size:11px; font-weight:700; cursor:pointer;'
-          + 'transition:transform .16s ease, box-shadow .2s ease;';
-        if (HG.Skin && HG.Skin.has('tool', t.key)) {
-          b.style.cssText = base
-            + 'border:none; background-image:url(' + HG.Skin.get('tool', t.key) + ');'
-            + 'background-size:100% 100%; background-repeat:no-repeat; background-position:center;'
-            + 'mix-blend-mode:multiply; color:' + t.color + ';'
-            + 'box-shadow:0 4px 14px rgba(150,120,150,0.10);';
-        } else {
-          b.style.cssText = base
-            + 'border:1px solid rgba(190,180,195,0.24); background:' + t.soft + '; color:' + t.color + ';'
-            + 'backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);';
-        }
+          + 'transition:transform .16s ease, box-shadow .2s ease;'
+          + 'border:1px solid rgba(190,180,195,0.24); background:' + t.soft + '; color:' + t.color + ';'
+          + 'backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);';
         b.innerHTML = H.icon(t.icon, 14, { strokeWidth: 2 }) + '<span>' + t.label + '</span>';
         b.onpointerdown = function () { b.style.transform = 'scale(0.95)'; };
         b.onpointerup = function () { b.style.transform = ''; };
@@ -463,31 +459,22 @@
       }
     },
 
-    /** 右侧图标组按钮（生成式玻璃底 + 内联 SVG glyph） */
+    /** 右侧图标组按钮（纯 CSS 玻璃拟态 + 内联 SVG glyph）
+     *  说明：这里刻意不用生成式素材做按钮底。玻璃元件本身是白的，
+     *  生成图只能输出白底，抠白会把元件高光一起抠掉、不抠就留白边；
+     *  而纯 CSS 在浅色底上无色差、无白边、不占体积，观感更干净。 */
     buildRailButton: function (item) {
-      var H = HG.H, Skin = HG.Skin;
+      var H = HG.H;
       var btn = H.el('div', { class: 'hg-rail-btn' });
-      var base = 'position:relative; width:52px; height:52px; border-radius:18px; cursor:pointer;'
+      btn.style.cssText = 'position:relative; width:52px; height:52px; border-radius:18px; cursor:pointer;'
         + 'display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;'
+        + 'background:linear-gradient(150deg, rgba(255,255,255,0.86), rgba(255,255,255,0.62));'
+        + 'border:1px solid ' + item.color + '33;'
+        + 'backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
+        + 'box-shadow:0 8px 22px rgba(150,120,150,0.14), inset 0 1px 0 rgba(255,255,255,0.9);'
         + 'transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .22s ease;';
-      if (Skin && Skin.has('rail', item.key)) {
-        // 素材自带玻璃质感与珠光描边：铺满 + multiply 把纯白底混进浅色背景，
-        // 这样连按钮四周的白边也看不出接缝（纯白 × 任意色 = 该色）。
-        btn.style.cssText = base
-          + 'background-image:url(' + Skin.get('rail', item.key) + ');'
-          + 'background-size:100% 100%; background-repeat:no-repeat; background-position:center;'
-          + 'mix-blend-mode:multiply;'
-          + 'box-shadow:0 6px 18px rgba(150,120,150,0.12);';
-      } else {
-        btn.style.cssText = base
-          + 'background:linear-gradient(150deg, rgba(255,255,255,0.86), rgba(255,255,255,0.62));'
-          + 'border:1px solid ' + item.color + '33;'
-          + 'backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
-          + 'box-shadow:0 8px 22px rgba(150,120,150,0.14), inset 0 1px 0 rgba(255,255,255,0.9);';
-      }
       var ic = H.el('span');
-      ic.style.cssText = 'color:' + item.color + '; display:flex;'
-        + (Skin && Skin.has('rail', item.key) ? 'filter:drop-shadow(0 1px 2px rgba(255,255,255,0.9));' : '');
+      ic.style.cssText = 'color:' + item.color + '; display:flex;';
       ic.innerHTML = H.icon(item.icon, 19, { strokeWidth: 1.7 });
       btn.appendChild(ic);
       var lb = H.el('span');
@@ -520,7 +507,10 @@
       return btn;
     },
 
-    /** 好感度面板：攻略模式走阶梯进阶条，反向模式走 User 好感裁定器 */
+    /**
+     * 好感度面板：默认收起为「一行条」，点一下展开完整卡片。
+     * 收起状态持久化在 localStorage（按 面具×角色 不区分，全局一个偏好即可）。
+     */
     renderAffinityPanel: function () {
       var H = HG.H, K = HG.K, U = HG.U, C = HG.C;
       var wrap = App._dom && App._dom.affWrap;
@@ -528,12 +518,79 @@
       var st = K.state;
       wrap.innerHTML = '';
 
+      var LS_KEY = 'hg-affinity-collapsed';
+      var collapsed = true;
+      try {
+        var saved = localStorage.getItem(LS_KEY);
+        collapsed = (saved === null) ? true : (saved === '1');
+      } catch (e) { }
+
+      function setCollapsed(v) {
+        collapsed = v;
+        try { localStorage.setItem(LS_KEY, v ? '1' : '0'); } catch (e) { }
+        App.renderAffinityPanel();
+      }
+
+      // ---- 收起态：一行薄条（等级 + 数值 + 迷你进度） ----
+      if (collapsed) {
+        var bar = H.el('div', { id: 'hg-affinity-panel', class: 'hg-aff-mini' });
+        bar.style.cssText = 'display:flex; align-items:center; gap:8px; padding:6px 10px 6px 7px; border-radius:999px;'
+          + 'cursor:pointer; max-width:230px; box-sizing:border-box;'
+          + 'background:linear-gradient(150deg, rgba(255,255,255,0.88), rgba(255,247,251,0.72));'
+          + 'border:1px solid rgba(216,160,190,0.30); backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);'
+          + 'box-shadow:0 6px 18px rgba(150,120,150,0.12); transition:transform .16s ease;';
+        var isRev = st.mode === C.MODE.REVERSE_STRATEGY;
+        var tier = K.tier();
+        var mood = K.moodOf(st.verdict.mood);
+        var accent = isRev ? mood.color : tier.color;
+        var ic = H.el('span');
+        ic.style.cssText = 'width:20px; height:20px; border-radius:50%; flex-shrink:0; display:flex; align-items:center;'
+          + 'justify-content:center; background:' + accent + '22; color:' + accent + ';';
+        ic.innerHTML = H.icon(isRev ? mood.icon : 'heart', 12, { strokeWidth: 2.2 });
+        bar.appendChild(ic);
+        var txt = H.el('span');
+        txt.style.cssText = 'font-size:10.6px; font-weight:800; color:#7d7484; white-space:nowrap;';
+        txt.textContent = isRev
+          ? (mood.name + ' ' + U.int(st.verdict.value, 0) + '%')
+          : (tier.name + ' ' + U.comma(st.affinity));
+        bar.appendChild(txt);
+        var dash = H.el('span');
+        dash.style.cssText = 'flex:1; min-width:24px; height:5px; border-radius:99px; overflow:hidden;'
+          + 'background:rgba(216,190,210,0.28); position:relative;';
+        var fill = H.el('span');
+        fill.style.cssText = 'position:absolute; left:0; top:0; bottom:0; width:'
+          + (isRev ? U.int(st.verdict.value, 0) : K.tierProgress()) + '%;'
+          + 'background:linear-gradient(90deg,' + accent + ',#B79EDC);';
+        dash.appendChild(fill);
+        bar.appendChild(dash);
+        var exp = H.el('span');
+        exp.style.cssText = 'color:#b7adc0; display:flex; flex-shrink:0;';
+        exp.innerHTML = H.icon('down', 13, { strokeWidth: 2.4 });
+        bar.appendChild(exp);
+        bar.onpointerdown = function () { bar.style.transform = 'scale(0.97)'; };
+        bar.onpointerup = function () { bar.style.transform = ''; };
+        bar.onpointerleave = function () { bar.style.transform = ''; };
+        bar.onclick = function () { setCollapsed(false); };
+        wrap.appendChild(bar);
+        return;
+      }
+
       var card = H.el('div', { id: 'hg-affinity-panel' });
       card.style.cssText = 'border-radius:18px; padding:11px 12px; max-width:230px; box-sizing:border-box;'
         + 'background:linear-gradient(150deg, rgba(255,255,255,0.88), rgba(255,247,251,0.74));'
         + 'border:1px solid rgba(216,160,190,0.30); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
         + 'box-shadow:0 10px 26px rgba(150,120,150,0.14);';
       wrap.appendChild(card);
+
+      // 收起按钮（右上角小箭头）
+      var fold = H.el('button', { type: 'button', title: '收起好感度面板' });
+      fold.style.cssText = 'position:absolute; right:8px; top:8px; width:22px; height:22px; border-radius:50%;'
+        + 'border:1px solid rgba(216,160,190,0.35); background:rgba(255,255,255,0.9); color:#b7adc0;'
+        + 'display:flex; align-items:center; justify-content:center; cursor:pointer; padding:0; z-index:2;';
+      fold.innerHTML = H.icon('up', 12, { strokeWidth: 2.4 });
+      fold.onclick = function (e) { e.stopPropagation(); setCollapsed(true); };
+      card.style.position = 'relative';
+      card.appendChild(fold);
 
       if (st.mode === C.MODE.REVERSE_STRATEGY) {
         // —— 被攻略模式：User 对 Char 的好感裁定器 ——

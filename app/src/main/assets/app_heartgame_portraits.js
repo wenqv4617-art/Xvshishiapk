@@ -655,6 +655,60 @@
     },
 
     /**
+     * 内置默认立绘：开箱即用，避免新用户对着一个线稿占位小人。
+     * 用户一旦自己上传/导入立绘，就完全以用户的为准（这里只是「没有立绘时」的兜底展示）。
+     */
+    BUILTIN_PORTRAIT: { id: 'builtin-hero', name: '默认立绘（可替换）', kind: 'image', src: 'images/heartgame/portrait/default.png' },
+
+    /** 确保至少有一个可展示的立绘（不动用户数据，只在「一个都没有」时兜底） */
+    ensureBuiltinPortrait: function () {
+      var st = K.state;
+      if (!st || !st.assets) return false;
+      // 用户有自己的立绘 → 一律尊重用户
+      if ((st.assets.portraits || []).length > 0) return false;
+      var b = Portraits.BUILTIN_PORTRAIT;
+      st.assets.portraits = [{
+        id: b.id, name: b.name, kind: b.kind, src: b.src, modelUrl: '',
+        tags: ['内置'], current: true, createdAt: Date.now()
+      }];
+      st.assets.currentPortraitId = b.id;
+      st.assets.builtinPortrait = true;   // 标记为内置，便于用户立绘到位后自动让位
+      K.save();
+      return true;
+    },
+
+    /**
+     * 内置场景背景（生成式插画，开箱即用）。
+     * 用途分工（重要）：这些是**场景插画**，给 VN 剧情舞台与静室用；
+     * **主页看板不用图**（看板已经有立绘 + 纯色氛围底，再铺场景图会喧宾夺主）。
+     */
+    BUILTIN_BACKGROUNDS: [
+      { id: 'builtin-bg-night', name: '深夜房间', scene: '卧室', src: 'images/heartgame/stage/bg-night.png' },
+      { id: 'builtin-bg-rain', name: '雨夜窗边', scene: '雨天', src: 'images/heartgame/stage/bg-rain.png' },
+      { id: 'builtin-bg-dusk', name: '黄昏天台', scene: '黄昏', src: 'images/heartgame/stage/bg-dusk.png' }
+    ],
+
+    /** 把内置场景并入背景库（不动用户已上传的；只在缺失时补齐） */
+    ensureBuiltinBackgrounds: function () {
+      var st = K.state;
+      if (!st || !st.assets) return false;
+      st.assets.backgrounds = st.assets.backgrounds || [];
+      var existing = {};
+      st.assets.backgrounds.forEach(function (b) { existing[b.id] = 1; });
+      var added = 0;
+      Portraits.BUILTIN_BACKGROUNDS.forEach(function (b) {
+        if (existing[b.id]) return;
+        st.assets.backgrounds.push({
+          id: b.id, name: b.name, scene: b.scene, src: b.src,
+          tags: ['内置'], builtin: true, createdAt: Date.now()
+        });
+        added++;
+      });
+      if (added) K.save();
+      return added > 0;
+    },
+
+    /**
      * 在看板容器里挂载立绘（Live2D 可用则 Live2D，否则静态 + 热区）
      * @param {HTMLElement} host
      * @param {object} cfg { onTouch, editable, onSelect, fit }
@@ -664,6 +718,9 @@
       var o = cfg || {};
       Portraits.teardown();
       Portraits._stage = host;
+      // 没有立绘时用内置默认立绘，而不是留一个线稿占位小人
+      Portraits.ensureBuiltinPortrait();
+      Portraits.ensureBuiltinBackgrounds();
       var portrait = K.currentPortrait();
       if (!portrait) {
         // 没有立绘：直接渲染剪影 + 默认热区，功能仍可用

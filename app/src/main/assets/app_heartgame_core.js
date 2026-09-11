@@ -730,11 +730,8 @@
         + 'transform:translateY(28px); opacity:.6;'
         + 'transition:transform .34s cubic-bezier(.22,1,.36,1), opacity .3s ease;'
         + 'padding-top:6px;';
-      // 生成式面板皮肤：有素材就铺上（stretch 铺满，白底成为卡面的一部分），
-      // 没有素材则完整保留上面的渐变观感 —— 素材是增强不是依赖。
-      if (Skin.has('panel', 'glass-card')) {
-        Skin.applyBg(panel, 'panel', 'glass-card');
-      }
+      // 说明：抽屉面板刻意不使用生成式「面板底图」——
+      // 玻璃元件是白的，白底图非抠即留边，而纯 CSS 渐变+毛玻璃在浅色底上完全干净。
 
       // 顶部拖拽条
       var handle = H.el('div');
@@ -855,8 +852,7 @@
         + 'background:linear-gradient(165deg, rgba(255,255,255,0.99), rgba(255,247,251,0.97));'
         + 'box-shadow:0 22px 60px rgba(110,80,110,0.26); padding:24px 20px 18px; box-sizing:border-box;'
         + 'transform:scale(.92); opacity:0; transition:transform .3s cubic-bezier(.22,1,.36,1), opacity .26s ease;';
-      // 弹窗卡皮肤（自研弹层的美术设计）：有素材即铺满，白底与卡面融为一体
-      if (Skin.has('modal', 'card')) Skin.applyBg(card, 'modal', 'card');
+      // 同样刻意不用生成式弹窗底图（原因同抽屉面板）
       var halo = H.el('div');
       halo.style.cssText = 'width:56px; height:56px; margin:0 auto 12px; border-radius:20px; display:flex;'
         + 'align-items:center; justify-content:center; color:' + accent + '; background:'
@@ -2892,19 +2888,25 @@
     H: H,
     U: U,
     Skin: Skin,
-    /** 本模组用到的全部生成式素材清单（Skin.probeAll 的入参；缺哪张就回落哪张） */
+    /**
+     * 本模组用到的生成式素材清单（Skin.probeAll 的入参；缺哪张就回落哪张）。
+     *
+     * ⚠ 这里**只登记真的存在、且真的需要**的素材。曾经登记过一批「UI 框框 / 按钮玻璃底」，
+     * 后来全部撤掉了，原因（留给后续不要再犯）：
+     *   1) 生成模型只会输出不透明图（白底），而玻璃元件本身就是白色的 ——
+     *      按亮度抠白必然把元件自己的高光一起抠掉，抠完比不抠更脏（实测过）；
+     *   2) 不抠就只能靠 multiply 混色，在浅色底上等于没效果，白边照旧可见；
+     *   3) 纯 CSS 的玻璃拟态在浅色底上无色差、无白边、体积极小，观感反而更干净。
+     * 所以：**UI 装饰一律用 CSS / 内联 SVG，生成式素材只用来做「插画类」内容**
+     * （立绘、场景背景、卡池主视觉）——那才是模型真正擅长的东西。
+     */
     SKIN_MANIFEST: [
-      ['panel', 'glass-card'],
-      ['gacha', 'banner'],
-      ['modal', 'card'],
-      // 右侧竖排入口的玻璃底（glyph 由内联 SVG 叠加，保证清晰与一致）
-      ['rail', 'task'], ['rail', 'shop'], ['rail', 'bond'], ['rail', 'story'],
-      // 底部工具栏的玻璃底
-      ['tool', 'exit'], ['tool', 'admin'], ['tool', 'portrait'], ['tool', 'quiet'],
-      // 商品 / 货币 / 卡面等级（后续批次产出，缺图自动回落）
-      ['item', 'token'], ['item', 'voucher'], ['item', 'gift'],
-      ['card', 'frame-r'], ['card', 'frame-sr'], ['card', 'frame-ssr'],
-      ['stage', 'bg-night'], ['stage', 'bg-rain'], ['stage', 'bg-dusk']
+      // 插画类（这些是生成式素材的正确用途）
+      ['gacha', 'banner'],        // 卡池主视觉
+      ['portrait', 'default'],    // 内置默认立绘（黑发黑眸韩系厚涂，已抠白）
+      ['stage', 'bg-night'],      // 场景：深夜房间
+      ['stage', 'bg-rain'],       // 场景：雨夜窗边
+      ['stage', 'bg-dusk']        // 场景：黄昏天台
     ],
     C: {
       MODE: MODE,

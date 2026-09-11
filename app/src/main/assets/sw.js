@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v107'; // v107: 真根因修复——窗口内联 position:relative 导致整窗被顶出可视区(点图标没反应); v1.5.29
+const CACHE_NAME = 'story-phone-v108'; // v108: 撤掉带白边的UI框框素材(回纯CSS) + 新增韩系立绘与3张场景背景 + 好感面板可收起; v1.5.30
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -69,18 +69,14 @@ const ASSETS = [
   './images/widget_polaroid_photo.jpg',
   './images/avatar_char1.jpg',
   './images/avatar_char2.jpg',
-  // 心动游戏 · 生成式 UI 素材（美术工具产出，缺失时前端自动回落内联 SVG / 纯 CSS）
-  './images/heartgame/panel/glass-card.png',
-  './images/heartgame/modal/card.png',
+  // 心动游戏 · 生成式插画素材（立绘 / 场景 / 卡池主视觉；缺失时自动回落纯 CSS）
+  // 注：UI 装饰（按钮玻璃底 / 面板底 / 弹窗底）一律改为纯 CSS + 内联 SVG，不再用生成图 ——
+  //     玻璃元件自身是白的，白底图非抠即留边，CSS 在浅色底上反而更干净且不占体积。
   './images/heartgame/gacha/banner.png',
-  './images/heartgame/rail/task.png',
-  './images/heartgame/rail/shop.png',
-  './images/heartgame/rail/bond.png',
-  './images/heartgame/rail/story.png',
-  './images/heartgame/tool/exit.png',
-  './images/heartgame/tool/admin.png',
-  './images/heartgame/tool/portrait.png',
-  './images/heartgame/tool/quiet.png',
+  './images/heartgame/portrait/default.png',
+  './images/heartgame/stage/bg-night.png',
+  './images/heartgame/stage/bg-rain.png',
+  './images/heartgame/stage/bg-dusk.png',
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js',
