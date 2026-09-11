@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v97'; // v97: 新增「心动游戏」+「占位图标」两个主界面入口(薄秋第2页第5行 / 清透凉夏仪轨后) + 设置图标位 + API 路由位; v1.5.21
+const CACHE_NAME = 'story-phone-v98'; // v98: 修薄秋第2页右下角照片跑偏(补 colStart 显式列号 + 照片收成 2x2 正方形); v1.5.22
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [

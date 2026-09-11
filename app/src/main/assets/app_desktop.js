@@ -1487,7 +1487,20 @@ function renderLayout(container, layoutArray, slotClass) {
       const col0 = index % cols;
       const actualW = Math.min(parseInt(wData.widthSpan) || 1, cols - col0);
 
-      slot.style.gridColumn = `span ${actualW}`;
+      // v1.5.21：支持「显式列号」。
+      // 网格是 grid-auto-flow:row 且历史上只设置 span（没有列号），所以组件的**列位置**
+      // 实际由自动排布决定 —— 槽位号只能决定"第几行第几个"，一旦同一行前面少了元素，
+      // 组件就会被自动挤到左边（薄秋第二页右下角那张照片就是这么跑偏的）。
+      // 预设可给卡片声明 colStart（1 基，设计稿列号），这里落成 grid-column-start，
+      // 让「第 6-7 行、右侧两列」这种意图能被精确表达；未声明的卡片行为完全不变。
+      const colStart = parseInt(wData.colStart);
+      if (isDesktopType && colStart >= 1) {
+        const safeStart = Math.min(colStart, cols);
+        const safeSpan = Math.min(actualW, cols - safeStart + 1);
+        slot.style.gridColumn = `${safeStart} / span ${safeSpan}`;
+      } else {
+        slot.style.gridColumn = `span ${actualW}`;
+      }
       slot.style.gridRow = `span ${wData.heightSpan || 1}`;
       // 设计稿模式：卡片可以带固定高度（设计稿单位），顶部对齐，多余行高留在下方
       if (isDesktopType && wData.fixedH) {

@@ -663,12 +663,17 @@ window.DESKTOP_PRESETS = {
       },
       tile_thin_autumn_photo_c: {
         id: "tile_thin_autumn_photo_c",
-        name: "照片 · 竖版",
+        // v1.5.21：新设计稿里右下角这张从「竖版 182×240」改成了正方形 182×182（box size=182 size2=182），
+        // 与第一页的照片 A/B 同尺寸；因此占位也从 2×3 收到 2×2
+        name: "照片 · 右下",
         tile: "photo",
         widthSpan: 2,
-        heightSpan: 3,
-        fixedH: 240,
-        config: { key: "c", maxPx: 1600 }
+        heightSpan: 2,
+        fixedH: 182,
+        // 显式落在第 3 列（设计稿 x=214 = 右侧两列）；
+        // 不声明的话会被 grid 自动排到左边两列（用户报的「图片跑到左边」就是这个）
+        colStart: 3,
+        config: { key: "c", maxPx: 1200 }
       },
       // 第二页横幅（背景图 + 可编辑文字），设计稿 380×223
       tile_thin_autumn_banner: {
@@ -693,15 +698,18 @@ window.DESKTOP_PRESETS = {
     },
 
     // 卡片落位（28 格/页的槽位号）
+    // 说明：网格是 grid-auto-flow:row，槽位号决定「第几行第几个」；要让卡片落在
+    //       指定列上，需要额外声明 colStart（1 基列号），见下方照片 C。
     placedDesktop: {
       "4": "tile_thin_autumn_clock",     // 第一页 第2-3行 整宽（设计稿 y=150）
       "12": "tile_thin_autumn_photo_a",  // 第一页 第4-5行 左两列（y=337）
       "22": "tile_thin_autumn_photo_b",  // 第一页 第6-7行 右两列（y=535）
       "28": "tile_thin_autumn_banner",   // 第二页 第1-3行 整宽（y=57）
       "40": "tile_thin_autumn_search",   // 第二页 第4行 整宽（y=343）
-      // 第二页 第5-7行 右两列（y=443）：v1.5.21 起第5行补入 心动游戏/占位图标，
-      // 照片 C 因此右移到 24/25 并下移到第6行起（槽位 48），保持两列宽度不变
-      "48": "tile_thin_autumn_photo_c"
+      // 第二页 第6-7行（设计稿 x=214 / y=521，正方形 182×182）
+      // v1.5.21：第 5 行补入 心动游戏/占位图标，照片 C 由「2×3 竖版」缩为「2×2 正方形」；
+      //          同时必须显式声明 colStart:3，否则自动排布会把它挤到左边两列
+      "50": "tile_thin_autumn_photo_c"
     },
 
     // 两页图标排布（每页 28 格：4 列 × 7 行；行位置按设计稿 y=150/337/428/519/535/637… 对齐）
