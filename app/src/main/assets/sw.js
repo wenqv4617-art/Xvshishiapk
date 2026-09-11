@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v98'; // v98: 修薄秋第2页右下角照片跑偏(补 colStart 显式列号 + 照片收成 2x2 正方形); v1.5.22
+const CACHE_NAME = 'story-phone-v99'; // v99: 心动游戏玩法本体实装(新增内核/立绘/抽卡/剧情/静室/面板 6 个脚本); v1.5.23
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -14,7 +14,13 @@ const ASSETS = [
   './sticker.css',
   './app_quicktravel.js',
   './app_ritual.js',      // 仪轨（日程/穿着/随身物品/位置 四维状态）
-  './app_heartgame.js',   // 心动游戏 + 占位图标（主界面入口）
+  './app_heartgame.js',   // 心动游戏主界面看板 + 生命周期（玩法本体入口）
+  './app_heartgame_core.js',      // 心动游戏内核：状态中枢 K + 自绘 UI 组件库 H
+  './app_heartgame_portraits.js', // 立绘/背景/热区涂抹/后台管理
+  './app_heartgame_gacha.js',     // 抽卡工坊 + 锁脸生图 + 钱包
+  './app_heartgame_story.js',     // 主线 VN + 分支树 + 剧情小手机
+  './app_heartgame_quiet.js',     // 静室 + 赠礼 + 双轨 Prompt 注入
+  './app_heartgame_panels.js',    // 任务 / 商店 / 牵绊
   './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
   './app_workbench_agent.js', // 工作台 Agent 引擎（Skill/Agent 配置 + MCP http+sse + @引用 + 成熟模式渲染）
   './workbench.css',      // 工作台样式
@@ -63,6 +69,10 @@ const ASSETS = [
   './images/widget_polaroid_photo.jpg',
   './images/avatar_char1.jpg',
   './images/avatar_char2.jpg',
+  // 心动游戏 · 生成式 UI 素材（美术工具产出，缺失时前端自动回落内联 SVG / 纯 CSS）
+  './images/heartgame/panel/glass-card.png',
+  './images/heartgame/modal/card.png',
+  './images/heartgame/gacha/banner.png',
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js'

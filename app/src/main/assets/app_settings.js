@@ -1103,8 +1103,10 @@ async function saveBeautifyConfig() {
     localStorage.setItem("settings-enter-send", enterSendInput.checked ? "true" : "false");
   }
 
-  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples, encounter)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench", "yigui"];
+  // 依次读取平铺列表中的应用图标配置 (加入 deeptalk, reader, forum, couples, encounter, heartgame, placeholder)
+  // 注：此行必须与 loadBeautifyForm() 里的 apps 列表保持一致 —— 早先漏了 heartgame / placeholder，
+  //     导致在设置里给「心动游戏」选的图标点保存后不落库（重进设置又变回默认）。
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench", "yigui", "heartgame", "placeholder"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
