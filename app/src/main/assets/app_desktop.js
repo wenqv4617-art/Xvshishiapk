@@ -1558,13 +1558,32 @@ function renderLayout(container, layoutArray, slotClass) {
           <div class="icon-wrapper">${iconHtml}</div>
           ${nameHtml}
         `;
-        // 每个图标自带一个直连点击兜底：全局的 body 委托带「位移 >15px 视为滑动」的过滤，
-        // 在部分触屏环境下会把这个点击吞掉（表现就是「点图标完全没反应」）。
-        // 这里只做一件极轻的事：置一个标记，交给同一次冒泡里的委托去走标准链路，
-        // 既不会重复打开应用，也不会改变原有拖拽/长按行为。
-        div.onclick = function () {
-          if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(this);
-        };
+        // 每个图标自带一条直连点击通道（v1.5.24/25）：
+        //  · 桌面滑动翻页的 touchmove 拦截器在真机上可能把这次点击的 click 合成取消掉，
+        //    导致「点图标完全没反应」。所以这里不依赖 click，而是用 pointerdown/up 自己
+        //    算位移，位移在容差内就判定为一次点击。
+        //  · 只做「置标记 + 调 __deskIconTapRecall」，不改变拖拽/长按/编辑模式的任何行为。
+        (function (el) {
+          var downX = 0, downY = 0, downAt = 0, tracked = false;
+          el.addEventListener('pointerdown', function (e) {
+            tracked = true;
+            downX = e.clientX; downY = e.clientY; downAt = Date.now();
+          }, { passive: true });
+          el.addEventListener('pointerup', function (e) {
+            if (!tracked) return;
+            tracked = false;
+            var moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+            // 位移超 14px 视为滑动；按住超 700ms 视为长按（编辑模式），都不当点击
+            if (moved > 14 || (Date.now() - downAt) > 700) return;
+            if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(el);
+          });
+          el.addEventListener('pointercancel', function () { tracked = false; });
+          // 桌面端（鼠标）保留原生 click 兜底；触屏上 click 可能已被取消，故加 light 去重
+          el.addEventListener('click', function () {
+            if (el.__hgTapOk) return;         // 已经由 pointerup 处理过
+            if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(el);
+          });
+        })(div);
         slot.appendChild(div);
 
         // 编辑模式下应用支持红叉删除卸载 (系统应用卸载)
@@ -2034,8 +2053,19 @@ function initDesktopSwipeEvents() {
   });
 
   // 核心阻断：向整个桌面绑定 touchmove 的拦截器，并强行阻断默认回弹，确保真机 pointermove 的手势事件不被系统蚕食丢包 [1]
+  // ⚠ 关键修正（v1.5.25）：只有在「确实横滑超过阈值」时才 preventDefault。
+  //   旧写法一进入 isSwipingDesktop 就无条件 preventDefault，而 isSwipingDesktop 在
+  //   pointerdown 时只要不是点在 button/badge 上就立刻置 true ——
+  //   于是**任何**触摸都会在第一次 touchmove（哪怕只抖了 1~2px）时取消默认行为。
+  //   浏览器一旦在 touchmove 上 preventDefault，这次的 click 就永远不会被合成
+  //   —— 表现就是「点图标完全没反应、也不报错」。这就是根因。
   desktop.addEventListener("touchmove", (e) => {
-    if (isSwipingDesktop) {
+    if (!isSwipingDesktop) return;
+    if (!e.touches || !e.touches[0]) return;
+    const dx = Math.abs(e.touches[0].clientX - swipeStartX);
+    const dy = Math.abs(e.touches[0].clientY - swipeStartY);
+    // 横滑明显、且纵向没有大偏离，才算真正的翻页手势
+    if (dx > 10 && dx > dy) {
       e.preventDefault();
     }
   }, { passive: false });

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v102'; // v102: 补齐底部工具栏 4 枚玻璃底美术(portrait/quiet); v1.5.24
+const CACHE_NAME = 'story-phone-v103'; // v103: 真修桌面点击被 touchmove 拦截吞掉(滑动翻页的 preventDefault 无条件执行); v1.5.25
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
