@@ -20,6 +20,103 @@
   'use strict';
 
   var HG = window.HeartGame;
+
+  // ==========================================================================
+  //  0. 剧本分镜（纯函数，可在 Node 里直接单测）
+  //     用户要求：「对话框过于复杂了，我们要透明化，字体缩小一些，并且做好段落切分，
+  //                基本一句话一个分镜，角色说话要单独分镜。」
+  // ==========================================================================
+
+  var Script = {
+    /** 一句话的结束标点（保留标点，切在标点之后） */
+    SENT_END: /[。！？!?…；;]+["'」』”’）)]*/g,
+
+    /**
+     * 把一段原文切成"分镜"。
+     * 规则：
+     *   1. 「…」/ “… ” 里的内容 = 角色台词（单独一个分镜，带说话人）
+     *   2. 其余 = 旁白
+     *   3. 旁白与台词都再按句末标点切，**一句话一个分镜**
+     *   4. 太短的碎句（<=2 字）并进上一句；过长的句子（>60 字）按逗号再切一刀
+     * @returns {Array<{kind:'narration'|'speech', text:string}>}
+     */
+    splitSegments: function (text) {
+      var raw = String(text == null ? '' : text).replace(/\r/g, '');
+      if (!raw.trim()) return [];
+      var out = [];
+
+      var pushNarration = function (s) {
+        var t = String(s).trim();
+        if (!t) return;
+        Script._sentences(t).forEach(function (one) {
+          var prev = out[out.length - 1];
+          if (prev && prev.kind === 'narration' && one.length <= 2) {
+            prev.text += one;              // 「……。」这种碎句并进上一句
+          } else {
+            out.push({ kind: 'narration', text: one });
+          }
+        });
+      };
+      var pushSpeech = function (s) {
+        var t = String(s).trim();
+        if (!t) return;
+        Script._sentences(t).forEach(function (one) {
+          out.push({ kind: 'speech', text: one });
+        });
+      };
+
+      // 先按行处理，再在行内挑出台词
+      raw.split('\n').forEach(function (line) {
+        var src = line.trim();
+        if (!src) return;
+        // 「…」或 “…” 交替匹配
+        var re = /[「“]([^」”]*)[」”]/g;
+        var last = 0, m;
+        while ((m = re.exec(src)) !== null) {
+          if (m.index > last) pushNarration(src.slice(last, m.index));
+          pushSpeech(m[1]);
+          last = re.lastIndex;
+        }
+        if (last < src.length) pushNarration(src.slice(last));
+      });
+
+      return out.length ? out : [{ kind: 'narration', text: raw.trim() }];
+    },
+
+    /** 把一段旁白按句末标点切成若干句（过长再按逗号补一刀） */
+    _sentences: function (t) {
+      var parts = [];
+      var buf = '';
+      for (var i = 0; i < t.length; i++) {
+        buf += t[i];
+        if ('。！？!?…'.indexOf(t[i]) >= 0) {
+          // 把连续的标点一起吃进来
+          while (i + 1 < t.length && '。！？!?…；;'.indexOf(t[i + 1]) >= 0) { buf += t[++i]; }
+          parts.push(buf.trim());
+          buf = '';
+        }
+      }
+      if (buf.trim()) parts.push(buf.trim());
+
+      var out = [];
+      parts.forEach(function (p) {
+        if (p.length <= 60) { out.push(p); return; }
+        // 太长：按逗号再切，每段尽量不超过 34 字
+        var acc = '';
+        p.split('，').forEach(function (chunk, idx, arr) {
+          acc += chunk + (idx < arr.length - 1 ? '，' : '');
+          if (acc.length >= 34) { out.push(acc.trim()); acc = ''; }
+        });
+        if (acc.trim()) out.push(acc.trim());
+      });
+      return out.filter(function (s) { return s.length > 0; });
+    },
+
+    /** 这一段是不是"小手机"剧情（需要用户在手机里回应） */
+    isPhoneKind: function (kind) {
+      return kind === 'sms' || kind === 'call' || kind === 'moment';
+    }
+  };
   if (!HG) { console.warn('[心动游戏] core 未加载，剧情引擎已跳过'); return; }
   var K = HG.K, H = HG.H, U = HG.U, C = HG.C;
 
@@ -481,9 +578,98 @@
       return null;
     },
 
-    /** 小手机界面 */
-    open: async function (arc) {
+    /**
+     * 在剧情里给出「在手机里回一句」的界面（v1.5.39）
+     * 用户：「当提示有小手机剧情时，需要 user 真的能用小手机回复，或者在小手机里选择回复，
+     *        这样才沉浸感。」
+     * 做法参考乙女游戏：不是弹一个普通对话框，而是把**手机本体**呈现在剧情里 ——
+     * 上面是 TA 发来的那条消息，下面是回复候选 + 自己打一句。
+     */
+    buildReplyOptions: function (node, host, onPick) {
+      var wrap = H.el('div');
+      wrap.style.cssText = 'border-radius:18px; padding:11px 11px 12px; margin-bottom:4px;'
+        + 'background:linear-gradient(165deg,#2c2130,#463247 62%,#2c2130);'
+        + 'box-shadow:0 10px 26px rgba(40,24,38,0.42), inset 0 1px 0 rgba(255,255,255,0.10);';
+      var notch = H.el('div');
+      notch.style.cssText = 'width:44px;height:4px;border-radius:3px;background:rgba(255,255,255,0.22);margin:0 auto 8px;';
+      wrap.appendChild(notch);
+
+      var screen = H.el('div');
+      screen.style.cssText = 'border-radius:13px; padding:10px 11px; background:rgba(255,255,255,0.95);';
+      var from = node.kind === 'call' ? '正在通话' : (node.kind === 'moment' ? 'TA 的动态' : '刚刚');
+      screen.innerHTML = '<div style="font-size:9.4px; color:#a99fae; margin-bottom:5px;">' + U.esc(from) + '</div>'
+        + '<div style="font-size:12px; line-height:1.7; color:#4a4050; white-space:pre-wrap;">'
+        + U.esc(node.text || '') + '</div>';
+      wrap.appendChild(screen);
+
+      var tip = H.el('div');
+      tip.style.cssText = 'font-size:9.6px; color:rgba(255,255,255,0.72); margin:9px 2px 6px;';
+      tip.textContent = node.kind === 'call' ? '接起来，说点什么：' : '回一句：';
+      wrap.appendChild(tip);
+
+      SubPhone.replyCandidates(node).forEach(function (text) {
+        var b = H.el('button', { type: 'button' });
+        b.style.cssText = 'display:block; width:100%; text-align:left; box-sizing:border-box;'
+          + 'margin-bottom:6px; padding:9px 11px; border-radius:12px; font-size:11.6px; line-height:1.55;'
+          + 'cursor:pointer; border:1px solid rgba(240,196,216,0.45); background:rgba(255,255,255,0.96); color:#4a4050;';
+        b.textContent = text;
+        b.onclick = function () { onPick(text); };
+        wrap.appendChild(b);
+      });
+
+      var row = H.el('div');
+      row.style.cssText = 'display:flex; gap:7px;';
+      var input = H.el('input', { type: 'text', placeholder: '自己打一句回过去…' });
+      input.style.cssText = 'flex:1; box-sizing:border-box; border-radius:12px; border:1px solid rgba(240,196,216,0.4);'
+        + 'padding:9px 11px; font-size:11.8px; color:#3a3040; background:#fff; outline:none; font-family:inherit;';
+      row.appendChild(input);
+      var send = H.iconButton('send', { size: 36, color: '#fff', bg: 'linear-gradient(135deg,#D97FA8,#B79EDC)', border: 'none' });
+      send.onclick = function () {
+        var t = input.value.trim();
+        if (!t) { H.toast('先打一句'); return; }
+        onPick(t);
+      };
+      input.onkeydown = function (e) { if (e.key === 'Enter') send.onclick(); };
+      row.appendChild(send);
+      wrap.appendChild(row);
+
+      host.appendChild(wrap);
+      setTimeout(function () { try { input.focus(); } catch (e) { } }, 120);
+    },
+
+    /**
+     * 回复候选（纯函数，可单测）
+     * 优先用节点自带的 options；没有就给几条符合手机语境的通用候选。
+     */
+    replyCandidates: function (node) {
+      var opts = (node && node.options) || [];
+      var fromNode = opts.map(function (o) { return String((o && o.text) || '').trim(); }).filter(Boolean);
+      if (fromNode.length) return fromNode.slice(0, 4);
+      var kind = node && node.kind;
+      if (kind === 'call') return ['接起来，先不出声', '「喂？」', '「你怎么突然打过来。」'];
+      if (kind === 'moment') return ['点了个赞', '在下面回一句', '私聊 TA'];
+      return ['「在。」', '「怎么了？」', '「我马上过去。」', '先不回，等 TA 再说'];
+    },
+
+    /** 把用户的回复也记进小手机的短讯流（这样之后翻手机能看到自己说过的话） */
+    pushUserReply: function (text, node, arc) {
       var st = K.state;
+      if (!st || !text) return null;
+      var phone = st.story.phone;
+      var bucket = (node && node.kind === 'call') ? phone.calls
+        : (node && node.kind === 'moment') ? phone.moments : phone.sms;
+      var row = {
+        id: U.uid('me'), text: String(text), from: 'user', at: Date.now(),
+        arcId: arc ? arc.id : null, read: true
+      };
+      bucket.unshift(row);
+      if (bucket.length > 120) bucket.length = 120;
+      K.save();
+      return row;
+    },
+
+    /** 小手机界面 */
+    open: async function (arc) {      var st = K.state;
       var profile = await K.charProfile();
       var user = await K.userProfile();
       var body = H.el('div');
@@ -847,6 +1033,18 @@
               UI.play(a);
             };
             box.appendChild(go);
+            // 从头回看：不动进度地重看一遍（用户要的"可以多次回看播放"）
+            if (U.int(a.nodeIndex, 0) > 0) {
+              var replay = H.button('从头回看', {
+                kind: 'soft', pad: '5px 10px', size: 10.6, soft: '#EDF2FB', color: '#5f7aa8'
+              });
+              replay.onclick = function (ev) {
+                ev.stopPropagation();
+                Arc.setActive(a.id);
+                UI.play(a, { replay: true });
+              };
+              box.appendChild(replay);
+            }
             var tree = H.iconButton('branch', { size: 26, color: '#B79EDC', title: '分支树' });
             tree.onclick = function (ev) { ev.stopPropagation(); UI.openBranchTree(a); };
             box.appendChild(tree);
@@ -907,11 +1105,18 @@
       });
     },
 
-    /** 播放一个篇章 */
-    play: async function (arc) {
+    /** 播放一个篇章（opts.replay = true 表示"从头回看"，结束时回到原来的进度） */
+    play: async function (arc, opts) {
       var a = arc || Arc.active();
       if (!a) { UI.openArcList(); return; }
       UI._arc = a;
+      var replay = !!(opts && opts.replay);
+      // 回看：先把进度记下来，退出时还原（用户要的"可以多次回看播放"）
+      var replayFrom = replay ? U.int(a.nodeIndex, 0) : null;
+      if (replay) {
+        a.nodeIndex = 0;
+        a._replayDepth = U.int(a._replayDepth, 0) + 1;
+      }
 
       var st = K.state;
       var host = H.el('div');
@@ -959,16 +1164,24 @@
       topbar.appendChild(saveB);
       inner.appendChild(topbar);
 
-      // 叙事窗（乙游定制半透明磨砂）
+      // 叙事窗（v1.5.39 重做：**透明化**、字更小，只显示当前这一个分镜）
+      // 用户：「对话框过于复杂了，我们要透明化，字体缩小一些，并且做好段落切分，
+      //        基本一句话一个分镜，角色说话要单独分镜。」
+      // 所以这里不再是一张白卡片，而是"文字直接落在画面上 + 一层柔和的可读性衬底"。
       var win = H.el('div');
-      win.style.cssText = 'position:absolute; left:0; right:0; bottom:0; z-index:5; padding:0 12px 14px;';
+      win.style.cssText = 'position:absolute; left:0; right:0; bottom:0; z-index:5; padding:0 14px 16px;';
       var winCard = H.el('div');
-      winCard.style.cssText = 'border-radius:22px; padding:15px 15px 13px; box-sizing:border-box;'
-        + 'background:linear-gradient(170deg, rgba(255,255,255,0.90) 0%, rgba(255,247,251,0.80) 60%, rgba(246,242,251,0.88) 100%);'
-        + 'backdrop-filter:blur(20px) saturate(1.2); -webkit-backdrop-filter:blur(20px) saturate(1.2);'
-        + 'border:1px solid rgba(255,255,255,0.55);'
-        + 'box-shadow:0 -8px 34px rgba(20,12,18,0.32), inset 0 1px 0 rgba(255,255,255,0.9);';
+      winCard.style.cssText = 'position:relative; padding:34px 4px 6px; box-sizing:border-box;'
+        + 'background:linear-gradient(180deg, rgba(18,12,20,0) 0%, rgba(18,12,20,0.30) 38%,'
+        + ' rgba(18,12,20,0.46) 100%);'
+        + 'border-radius:18px; cursor:pointer;';
       win.appendChild(winCard);
+      // 推进提示（右下角的小三角）
+      var nextHint = H.el('div');
+      nextHint.style.cssText = 'position:absolute; right:8px; bottom:4px; font-size:10px;'
+        + 'color:rgba(255,255,255,0.62); letter-spacing:.08em; pointer-events:none;';
+      nextHint.textContent = '轻触继续';
+      winCard.appendChild(nextHint);
       inner.appendChild(win);
 
       var body = H.el('div');
@@ -979,6 +1192,11 @@
         if (exit._closed) return;      // 关闭按钮与 closeAllLayers 可能同时来，防重入
         exit._closed = true;
         overlay.style.opacity = '0';
+        // 回看模式：把进度还原回进来之前，存档点/分支不会因为"重看一遍"被改乱
+        if (replay && replayFrom !== null) {
+          a.nodeIndex = replayFrom;
+          K.save();
+        }
         // 自建浮层从登记表里摘掉，避免留下死引用
         if (HG.H && HG.H.forgetLayer) { try { HG.H.forgetLayer(overlay); } catch (e) { } }
         setTimeout(function () {
@@ -994,17 +1212,64 @@
       // 主线就是最典型的一个。
       if (HG.H && HG.H.registerLayer) HG.H.registerLayer(overlay, function () { exit(); }, 'story-play');
 
-      // 点击叙事窗推进
+      // 当前节点的分镜（一句话一个）与游标
+      var segs = [];
+      var segIdx = 0;
+      var curNode = null;
+      var curProfile = null;
+
+      /**
+       * 点击叙事窗：**先把分镜走完，再推进剧情**。
+       * 这正是用户要的"一句话一个分镜"——一句话一次轻触，节奏由玩家自己控制。
+       */
       winCard.onclick = function (e) {
         if (e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea')) return;
         if (winCard._hasOptions) return;
+        if (segIdx < segs.length - 1) { segIdx++; paintSegment(); return; }
+        advanceFlow();
+      };
+
+      /** 画当前这一个分镜：旁白与台词分开呈现（角色说话单独分镜） */
+      function paintSegment() {
+        body.innerHTML = '';
+        var seg = segs[segIdx];
+        if (!seg) return;
+        var isSpeech = seg.kind === 'speech';
+        var box = H.el('div');
+        box.style.cssText = isSpeech
+          ? 'font-size:13.2px; line-height:1.72; color:#fff; font-weight:600;'
+          : 'font-size:12.1px; line-height:1.76; color:rgba(255,255,255,0.90);';
+        // 透明化之后靠文字投影保证可读性（不再压一张白卡片）
+        box.style.textShadow = '0 1px 8px rgba(0,0,0,0.55), 0 2px 18px rgba(0,0,0,0.42)';
+        if (isSpeech) {
+          var who = H.el('div');
+          who.style.cssText = 'font-size:10px; font-weight:800; letter-spacing:.18em; color:#F2C7DA; margin-bottom:5px;';
+          who.textContent = (curProfile && curProfile.name) || 'TA';
+          box.appendChild(who);
+        }
+        var txt = H.el('div');
+        txt.style.cssText = 'white-space:pre-wrap;';
+        txt.textContent = seg.text;
+        box.appendChild(txt);
+        body.appendChild(box);
+        nextHint.textContent = (segIdx < segs.length - 1) ? ('轻触继续 · ' + (segIdx + 1) + '/' + segs.length) : '';
+      }
+
+      /** 分镜走完之后：有选项就先出选项，否则推进到下一个节点 */
+      function advanceFlow() {
+        var node = curNode;
+        if (node && !winCard._optionsShown && !winCard._hasOptions
+          && a.nodeIndex < a.nodes.length - 1 && (node.options || []).length) {
+          showOptions(node);
+          return;
+        }
         var next = Arc.advance(a);
         if (!next) {
           finishArc(a, inner, body, optsHost, winCard, exit);
           return;
         }
         renderNode();
-      };
+      }
 
       // ------------------------------------------------------------------
       // 节点渲染
@@ -1012,8 +1277,10 @@
       async function renderNode() {
         var node = Arc.node(a);
         if (!node) { finishArc(a, inner, body, optsHost, winCard, exit); return; }
+        curNode = node;
         var profile = await K.charProfile();
-        var user = await K.userProfile();
+        curProfile = profile;
+        await K.userProfile();
 
         var prog = document.getElementById('hg-vn-progress');
         if (prog) prog.textContent = (node.title || '') + ' · ' + (U.int(a.nodeIndex, 0) + 1) + ' / ' + a.nodes.length;
@@ -1021,81 +1288,57 @@
         Stage.setBackground(node.bg);
         Stage.setEmotion(node.emotion);
         // 剧情小手机内容自动落库
-        if (node.kind === 'sms' || node.kind === 'moment' || node.kind === 'call') {
+        if (Script.isPhoneKind(node.kind)) {
           SubPhone.capture(node, a);
           H.toast(node.kind === 'sms' ? '手机震了一下…' : (node.kind === 'call' ? '有电话打进来' : 'TA 发了朋友圈'));
         }
 
         winCard._hasOptions = false;
+        winCard._optionsShown = false;
         body.innerHTML = '';
         optsHost.innerHTML = '';
 
-        // 说话人气泡
-        if (node.kind === 'dialogue' || node.speaker === 'char') {
-          var headRow = H.el('div');
-          headRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-bottom:9px;';
-          headRow.appendChild(H.avatar(profile.avatar, profile.name, 32));
-          var who = H.el('div');
-          who.style.cssText = 'flex:1; min-width:0;';
-          who.innerHTML = '<div style="display:flex; align-items:center; gap:5px;">'
-            + '<span style="font-size:12px; font-weight:800; color:#B0728F;">' + U.esc(profile.name) + '</span>'
-            + H.chip(K.tier().name, { color: C.RARITY.SSR.color, soft: '#FFEBF3' })
-            + '</div>'
-            + (node.scene ? '<div style="font-size:9.8px; color:#a99fae; margin-top:2px; white-space:nowrap;'
-              + 'overflow:hidden; text-overflow:ellipsis;">' + U.esc(node.scene) + '</div>' : '');
-          headRow.appendChild(who);
-          if (node.kind === 'sms') headRow.appendChild(H.chip('短讯', { color: '#5f7aa8', soft: '#EDF2FB' }));
-          if (node.kind === 'call') headRow.appendChild(H.chip('来电', { color: '#D97FA8', soft: '#FFEBF3' }));
-          if (node.kind === 'moment') headRow.appendChild(H.chip('朋友圈', { color: '#7E97C9', soft: '#EDF2FB' }));
-          body.appendChild(headRow);
+        // 拆分成「一句话一个分镜」；「…」里的角色台词单独成镜
+        segs = Script.splitSegments(node.text);
+        if (!segs.length) segs = [{ kind: 'narration', text: '' }];
+        segIdx = 0;
 
-          var bubble = H.el('div');
-          bubble.style.cssText = 'position:relative; border-radius:16px 16px 16px 4px; padding:12px 13px;'
-            + 'font-size:12.8px; line-height:1.86; color:#5c4450; white-space:pre-wrap; box-sizing:border-box;'
-            + 'background:linear-gradient(150deg, rgba(255,255,255,0.98), rgba(255,248,252,0.92));'
-            + 'border:1px solid rgba(216,160,190,0.28); border-left:3px solid #D97FA8;'
-            + 'box-shadow:0 6px 18px rgba(150,120,150,0.12);';
-          bubble.textContent = node.text || '';
-          body.appendChild(bubble);
-        } else {
-          var nar = H.el('div');
-          nar.style.cssText = 'font-size:12.4px; line-height:1.9; color:#4d4453; white-space:pre-wrap; text-align:justify;';
-          if (node.title) {
-            var t = H.el('div', {}, U.esc(node.title));
-            t.style.cssText = 'font-size:10.6px; letter-spacing:.2em; color:#B0728F; font-weight:800; margin-bottom:8px;';
-            body.appendChild(t);
-          }
-          nar.textContent = node.text || '';
-          body.appendChild(nar);
+        if (node.title) {
+          var t = H.el('div');
+          t.style.cssText = 'font-size:10px; letter-spacing:.2em; color:#F2C7DA; font-weight:800; margin-bottom:7px;'
+            + 'text-shadow:0 1px 8px rgba(0,0,0,0.6);';
+          t.textContent = node.title;
+          body.appendChild(t);
         }
+        paintSegment();
+      }
 
-        // 结局 / 收束
-        if (a.nodeIndex >= a.nodes.length - 1 || !(node.options || []).length) {
-          winCard._hasOptions = false;
-          var tail = H.el('div');
-          tail.style.cssText = 'font-size:10.8px; color:#a99fae; text-align:center; margin-top:12px;';
-          tail.textContent = (a.nodeIndex >= a.nodes.length - 1) ? '点击这里收下这段结尾' : '点击继续';
-          body.appendChild(tail);
-          return;
-        }
-
-        // 选项
+      /**
+       * 出选项（分镜全部走完之后）
+       * 攻略模式：系统分支 + **永远可用的自由输入**（用户要的"选项可以自己写"）；
+       * 被攻略模式：User 设定的抉择交给 Char 自主选择。
+       */
+      function showOptions(node) {
+        winCard._optionsShown = true;
         winCard._hasOptions = true;
+        optsHost.innerHTML = '';
+        nextHint.textContent = '';
         if (K.isReverse()) {
           // 反向模式：User 已设定的抉择，交给 Char 自主选择
           var hint = H.el('div');
-          hint.style.cssText = 'font-size:10.6px; color:#a99fae; text-align:center; margin-bottom:7px;';
+          hint.style.cssText = 'font-size:10.4px; color:rgba(255,255,255,0.78); text-align:center; margin-bottom:7px;'
+            + 'text-shadow:0 1px 8px rgba(0,0,0,0.5);';
           hint.textContent = '以下抉择由你设定，TA 会依自己的性格做出选择';
           optsHost.appendChild(hint);
           (node.options || []).forEach(function (o) {
             var rowEl = H.el('div');
             rowEl.style.cssText = 'border-radius:14px; padding:10px 12px; box-sizing:border-box;'
-              + 'background:rgba(255,255,255,0.7); border:1.2px dashed rgba(216,160,190,0.4);';
-            rowEl.innerHTML = '<div style="font-size:12px; color:#5c4450; line-height:1.6;">' + U.esc(o.text) + '</div>'
+              + 'background:rgba(28,20,30,0.52); border:1.2px dashed rgba(240,196,216,0.5);';
+            rowEl.innerHTML = '<div style="font-size:12px; color:#fff; line-height:1.6;">' + U.esc(o.text) + '</div>'
               + '<div style="display:flex; gap:6px; margin-top:6px;">'
-              + '<span style="font-size:9.6px; font-weight:800; color:' + (o.affinityDelta >= 0 ? '#D97FA8' : '#7E97C9') + ';">'
+              + '<span style="font-size:9.6px; font-weight:800; color:#F2C7DA;">'
               + '好感 ' + (o.affinityDelta >= 0 ? '+' : '') + o.affinityDelta + '</span>'
-              + '<span style="font-size:9.6px; font-weight:800; color:' + (o.verdictDelta >= 0 ? '#B79EDC' : '#8FB8DE') + ';">'
+              + '<span style="font-size:9.6px; font-weight:800; color:#C9B6EE;">'
               + '裁定 ' + (o.verdictDelta >= 0 ? '+' : '') + o.verdictDelta + '</span>'
               + '</div>';
             optsHost.appendChild(rowEl);
@@ -1104,9 +1347,16 @@
           decideB.onclick = function () { UI.resolveReverseChoice(a, node, body, optsHost, winCard); };
           optsHost.appendChild(decideB);
         } else {
+          // 小手机剧情：先给「在手机里回一句」的界面（沉浸感）
+          if (Script.isPhoneKind(node.kind)) {
+            SubPhone.buildReplyOptions(node, optsHost, function (text) {
+              SubPhone.pushUserReply(text, node, a);
+              UI.resolveFreeAction(a, node, text, body, optsHost, winCard);
+            });
+          }
           (node.options || []).forEach(function (o) {
             var b = H.button(o.text, {
-              kind: 'soft', block: true, color: '#8f6a80', soft: 'rgba(255,241,247,0.92)',
+              kind: 'soft', block: true, color: '#8f6a80', soft: 'rgba(255,241,247,0.94)',
               pad: '11px 13px', size: 12
             });
             b.style.textAlign = 'left';
@@ -1115,12 +1365,12 @@
             optsHost.appendChild(b);
           });
 
-          // 自由行动输入框（保留底层自定义行为）
+          // 自由行动输入框：**总是出现**（用户要的"选项由自己输入"）
           var freeWrap = H.el('div');
           freeWrap.style.cssText = 'display:flex; gap:7px; margin-top:4px;';
-          var freeInput = H.el('input', { type: 'text', placeholder: '或者，自己写一个动作…' });
-          freeInput.style.cssText = 'flex:1; box-sizing:border-box; border-radius:12px; border:1px solid rgba(216,160,190,0.34);'
-            + 'padding:9px 11px; font-size:11.8px; color:#5c4450; background:rgba(255,255,255,0.9); outline:none;'
+          var freeInput = H.el('input', { type: 'text', placeholder: '或者，自己写一个动作 / 一句话…' });
+          freeInput.style.cssText = 'flex:1; box-sizing:border-box; border-radius:12px; border:1px solid rgba(240,196,216,0.42);'
+            + 'padding:9px 11px; font-size:11.8px; color:#3a3040; background:rgba(255,255,255,0.94); outline:none;'
             + 'font-family:inherit;';
           freeWrap.appendChild(freeInput);
           var freeB = H.iconButton('send', { size: 36, color: '#fff', bg: 'linear-gradient(135deg,#D97FA8,#B79EDC)', border: 'none' });
@@ -1134,6 +1384,7 @@
           optsHost.appendChild(freeWrap);
         }
       }
+
 
       winCard.appendChild(body);
       winCard.appendChild(optsHost);
@@ -1498,6 +1749,7 @@
     SubPhone: SubPhone,
     Stage: Stage,
     UI: UI,
+    Script: Script,
     open: function () { UI.openArcList(); }
   };
 })();
