@@ -214,6 +214,47 @@
       return out;
     },
 
+    /**
+     * 逐池概率覆写（反向模式：User 是卡池规划师，可为任意已存在的卡池单独调参）
+     * @param {string} poolId
+     * @param {object} patch { ssrRate, srRate, upRate, hardPity, softPityStart, guaranteeCount, singleCost, tenCost }
+     * @param {boolean} reset 为真则清空覆写、回落全局默认
+     * @returns {object|null} 更新后的卡池快照
+     */
+    updateRates: function (poolId, patch, reset) {
+      var pool = Pools.byId(poolId);
+      if (!pool) return null;
+      if (reset) {
+        pool.ssrRate = RULES.ssrBase;
+        pool.srRate = RULES.srBase;
+        pool.upRate = 0.5;
+        pool.hardPity = RULES.hardPity;
+        pool.softPityStart = RULES.softPityStart;
+        pool.guaranteeCount = RULES.guaranteeOn;
+        pool.singleCost = RULES.singleCost;
+        pool.tenCost = RULES.tenCost;
+        pool.rateOverridden = false;
+        K.save(true);
+        K.emit('gacha', { rates: pool.id, reset: true });
+        return U.plain(pool);
+      }
+      var p = patch || {};
+      if (typeof p.ssrRate === 'number') pool.ssrRate = U.clamp(p.ssrRate, 0.001, 0.5);
+      if (typeof p.srRate === 'number') pool.srRate = U.clamp(p.srRate, 0.01, 0.9);
+      if (typeof p.upRate === 'number') pool.upRate = U.clamp(p.upRate, 0.05, 1);
+      if (typeof p.hardPity === 'number') pool.hardPity = U.clamp(Math.round(p.hardPity), 10, 300);
+      if (typeof p.softPityStart === 'number') pool.softPityStart = U.clamp(Math.round(p.softPityStart), 5, 299);
+      // 软保底起点必须早于硬保底，否则概率函数会跳变
+      if (pool.softPityStart >= pool.hardPity) pool.softPityStart = Math.max(5, pool.hardPity - 5);
+      if (typeof p.guaranteeCount === 'number') pool.guaranteeCount = U.clamp(Math.round(p.guaranteeCount), 10, 600);
+      if (typeof p.singleCost === 'number') pool.singleCost = U.clamp(Math.round(p.singleCost), 0, 100000);
+      if (typeof p.tenCost === 'number') pool.tenCost = U.clamp(Math.round(p.tenCost), 0, 1000000);
+      pool.rateOverridden = true;
+      K.save(true);
+      K.emit('gacha', { rates: pool.id });
+      return U.plain(pool);
+    },
+
     /** 当前池的概率总览（给卡池详情展示） */
     rateSummary: function (pool) {
       var p = Engine.pityOf(pool.id);
@@ -1294,23 +1335,41 @@
 
       var actRow = H.el('div');
       actRow.style.cssText = 'display:flex; gap:8px; margin-top:12px; flex-wrap:wrap;';
-      var replayB = H.button('再演一次', { kind: 'soft', icon: 'play', soft: '#F3EEFF', color: '#7d63a8' });
-      replayB.onclick = async function () {
-        replayB.disabled = true;
+
+      /**
+       * 生成/重写一段卡面私语
+       * @param {object} opts { tone:'tender'|'tease'|'possessive'|'sad', custom:'用户自定义走向' }
+       */
+      async function writeStory(opts) {
+        var o = opts || {};
         var profile = await K.charProfile();
-        var prompt = '你要为一张恋爱手游卡面「' + card.name + '」补写/重演一段独家私语剧情。\n'
-          + '角色：' + profile.name + '\n角色设定：' + U.cut(profile.persona || '（未填写）', 300) + '\n'
-          + '卡面场景：' + (card.scene || '') + '\n卡面文案：' + (card.caption || '') + '\n'
-          + '当前关系阶段：' + K.tier().name + '\n\n'
-          + '用第二人称写 120~200 字：TA 在这张卡的场景里对你说话、做了某个动作，'
-          + '至少包含一句直接引语。不要旁白腔，不要写标题。';
-        var out = await K.ask(prompt, { temperature: 0.95 });
-        replayB.disabled = false;
-        if (!out) { H.toast('模型不可用，无法再演'); return; }
-        card.story = out.trim();
-        card.storyTurns = U.int(card.storyTurns, 0) + 1;
-        // 同步到卡池模板与卡册副本
+        var TIERS = {
+          tender: '温柔克制，克制里带一点藏不住的偏心',
+          tease: '带点玩笑与挑衅，像在逗你，但眼神一直落在你身上',
+          possessive: '占有欲很强，反复确认「你是不是只看我」',
+          sad: '带一点将失去的预感，克制地挽留',
+          custom: '按用户给出的新走向写'
+        };
+        var toneLine = TIERS[o.tone] || TIERS.tender;
+        var prompt = '你要为一张恋爱手游卡面「' + card.name + '」写一段独家私语剧情。\n'
+          + '角色：' + profile.name + '\n'
+          + '角色设定：' + U.cut(profile.persona || '（未填写）', 300) + '\n'
+          + '卡面场景：' + (card.scene || '') + '\n'
+          + '卡面文案：' + (card.caption || '') + '\n'
+          + '当前关系阶段：' + K.tier().name + '\n'
+          + '基调要求：' + toneLine + '\n'
+          + (o.custom ? '用户指定的新走向：' + o.custom + '\n' : '')
+          + (card.story ? '（这是重写，请给出与下面旧版本不同的角度）\n旧版本：' + U.cut(card.story, 200) + '\n' : '')
+          + '\n用第二人称写 120~200 字：TA 在这个场景里对你说话、做了某个动作，'
+          + '至少包含一句直接引语。不要旁白腔，不要写标题，不要出现 emoji。';
+        return K.ask(prompt, { temperature: 0.95 });
+      }
+
+      function applyStory(text) {
         var st = K.state;
+        card.story = String(text).trim();
+        card.storyTurns = U.int(card.storyTurns, 0) + 1;
+        // 同步到卡册副本与卡池模板，任何入口看到的都是同一段
         st.gacha.owned.forEach(function (c) { if (c.id === card.id) c.story = card.story; });
         st.gacha.pools.forEach(function (p) {
           (p.cards || []).forEach(function (c) { if (c.id === card.id) c.story = card.story; });
@@ -1318,9 +1377,30 @@
         K.save(true);
         K.pushTimeline({ type: 'story', title: '卡面私语', text: '重演了「' + card.name + '」的独家私语。' });
         storyBox.textContent = card.story;
-        H.toast('私语已重演');
-      };
+      }
+
+      var replayB = H.button('再演一次', { kind: 'soft', icon: 'play', soft: '#F3EEFF', color: '#7d63a8' });
+      replayB.onclick = function () { UI.openStoryTonePicker(card, writeStory, applyStory, storyBox); };
       actRow.appendChild(replayB);
+
+      // 自定义走向（用户键入新剧情方向，让模型据此重写）
+      var branchB = H.button('自定义走向', { kind: 'soft', icon: 'branch', soft: '#EAF3FF', color: '#4A7DBF' });
+      branchB.onclick = async function () {
+        var dir = await H.prompt({
+          title: '这一段往哪走',
+          message: '写下你希望的剧情走向，模型会基于它重写这段私语。',
+          multiline: true, rows: 3,
+          placeholder: '例如：他其实早就知道你要走，只是一直没说 / 换成他先开口告白'
+        });
+        if (!dir) return;
+        branchB.disabled = true;
+        var out = await writeStory({ tone: 'custom', custom: dir });
+        branchB.disabled = false;
+        if (!out) { H.toast('模型不可用，无法生成'); return; }
+        applyStory(out);
+        H.toast('已按你的走向重写');
+      };
+      actRow.appendChild(branchB);
 
       var regenB = H.button('重新生成卡面', { kind: 'soft', icon: 'refresh', soft: '#FFEBF3', color: '#B0728F' });
       regenB.onclick = async function () {
@@ -1339,6 +1419,25 @@
         UI.openCardDetail(card, onBack);
       };
       actRow.appendChild(regenB);
+
+      // 自己上传卡面（反向模式：User 是卡面美术）
+      var uploadB = H.button('上传卡面', { kind: 'soft', icon: 'upload', soft: '#FFEBF3', color: '#B0728F' });
+      uploadB.onclick = function () {
+        if (!HG.Portraits || !HG.Portraits.pickImage) { H.toast('图片选择器不可用'); return; }
+        HG.Portraits.pickImage(1200, function (dataUrl) {
+          card.image = dataUrl;
+          card.thumb = dataUrl;
+          var st = K.state;
+          st.gacha.owned.forEach(function (c) { if (c.id === card.id) { c.image = dataUrl; c.thumb = dataUrl; } });
+          st.gacha.pools.forEach(function (p) {
+            (p.cards || []).forEach(function (c) { if (c.id === card.id) { c.image = dataUrl; c.thumb = dataUrl; } });
+          });
+          K.save(true);
+          H.toast('卡面已更新');
+          UI.openCardDetail(card, onBack);
+        });
+      };
+      actRow.appendChild(uploadB);
 
       var lockB = H.button('锁脸配置', { kind: 'ghost', icon: 'lock', color: '#9a8f9e' });
       lockB.onclick = function () { LockFace.openConfig(); };
@@ -1508,6 +1607,12 @@
               UI.runArtGeneration(p, function () { UI.openPoolStudio(); });
             };
             box.appendChild(artB);
+            var rateB = H.button('调概率', { kind: 'soft', pad: '5px 9px', size: 10.5, soft: '#EDF2FB', color: '#5f7aa8' });
+            rateB.onclick = function (ev) {
+              ev.stopPropagation();
+              UI.openRateEditor(p.id);
+            };
+            box.appendChild(rateB);
             var del = H.iconButton('trash', { size: 26, color: '#c2607c' });
             del.onclick = function (ev) {
               ev.stopPropagation();
@@ -1547,7 +1652,213 @@
       });
     },
 
-    /** 手写卡池编辑器（反向模式） */
+    /**
+     * 逐池概率覆写面板（反向模式核心：你是卡池规划师）
+     * 每个已存在的卡池都能单独调 SSR/SR/UP 概率、软硬保底、大保底与单抽花费。
+     */
+    openRateEditor: function (poolId) {
+      var pool = Pools.byId(poolId);
+      if (!pool) { H.toast('找不到这个卡池'); return; }
+      var body = H.el('div');
+
+      var intro = H.el('div');
+      intro.style.cssText = 'font-size:10.8px; line-height:1.72; color:#8b8292; background:rgba(255,241,247,0.8);'
+        + 'border:1px solid rgba(217,127,168,0.22); border-radius:13px; padding:11px 12px; margin-bottom:12px;';
+      intro.innerHTML = '为「<b>' + U.esc(pool.name) + '</b>」单独设定抽卡参数。'
+        + '软保底起点必须早于硬保底；大保底计数满额时，下一次 SSR 必为当期 UP。<br>'
+        + '当前状态：' + (pool.rateOverridden ? '<b style="color:#D97FA8;">已自定义</b>' : '使用全局默认') + '。';
+      body.appendChild(intro);
+
+      // 草稿（点保存才写库，避免拖滑块时疯狂落盘）
+      var draft = {
+        ssrRate: typeof pool.ssrRate === 'number' ? pool.ssrRate : RULES.ssrBase,
+        srRate: typeof pool.srRate === 'number' ? pool.srRate : RULES.srBase,
+        upRate: typeof pool.upRate === 'number' ? pool.upRate : 0.5,
+        hardPity: U.int(pool.hardPity, RULES.hardPity),
+        softPityStart: U.int(pool.softPityStart, RULES.softPityStart),
+        guaranteeCount: U.int(pool.guaranteeCount, RULES.guaranteeOn),
+        singleCost: U.int(pool.singleCost, RULES.singleCost)
+      };
+
+      // 实时预览
+      var preview = H.card({ accent: '#D97FA8', soft: '#FFEBF3', pad: 12 });
+      preview.style.marginBottom = '12px';
+      preview.appendChild(H.sectionTitle('效果预览', { color: '#D97FA8', margin: '4px 0 9px' }));
+      var previewBody = H.el('div');
+      previewBody.style.cssText = 'font-size:10.8px; color:#7d7484; line-height:1.8;';
+      preview.appendChild(previewBody);
+
+      function renderPreview() {
+        var probe = { id: '__probe', ssrRate: draft.ssrRate, srRate: draft.srRate, hardPity: draft.hardPity, softPityStart: draft.softPityStart };
+        var r1 = Engine.ssrRateAt(1, probe);
+        var rSoft = Engine.ssrRateAt(draft.softPityStart + 1, probe);
+        var expected = 0;
+        for (var i = 1; i <= draft.hardPity; i++) expected += Engine.ssrRateAt(i, probe);
+        previewBody.innerHTML =
+          '第 1 抽 SSR：<b style="color:#D97FA8;">' + U.round(r1 * 100, 2) + '%</b><br>'
+          + '第 ' + (draft.softPityStart + 1) + ' 抽（软保底起）：<b style="color:#B79EDC;">' + U.round(rSoft * 100, 2) + '%</b><br>'
+          + '第 ' + draft.hardPity + ' 抽：<b style="color:#D97FA8;">100%</b>（硬保底）<br>'
+          + '到硬保底为止的期望 SSR 数量：<b>' + U.round(expected, 2) + '</b> 张<br>'
+          + 'UP 占比：<b>' + U.round(draft.upRate * 100, 0) + '%</b> · 大保底：<b>' + draft.guaranteeCount + '</b> 抽内必得 UP<br>'
+          + '单抽消耗：<b>' + U.comma(draft.singleCost) + '</b> 心动代币';
+      }
+
+      function slider(label, key, min, max, step, fmt) {
+        var wrap = H.el('div');
+        wrap.style.cssText = 'background:rgba(255,255,255,0.74); border:1px solid rgba(159,179,217,0.22);'
+          + 'border-radius:14px; padding:10px 12px; margin-bottom:9px;';
+        var lab = H.el('div', {}, U.esc(label));
+        lab.style.cssText = 'font-size:10.6px; font-weight:700; color:#8b8292; margin-bottom:6px;';
+        wrap.appendChild(lab);
+        wrap.appendChild(H.slider({
+          min: min, max: max, step: step, value: draft[key],
+          color: '#7E97C9', color2: '#B79EDC',
+          format: fmt,
+          onChange: function (v) { draft[key] = (step < 1 ? Number(v) : Math.round(Number(v))); renderPreview(); }
+        }));
+        return wrap;
+      }
+
+      body.appendChild(H.sectionTitle('掉落概率', { color: '#D97FA8' }));
+      body.appendChild(slider('SSR 基础概率', 'ssrRate', 0.005, 0.2, 0.005, function (v) { return U.round(v * 100, 1) + '%'; }));
+      body.appendChild(slider('SR 基础概率', 'srRate', 0.02, 0.6, 0.01, function (v) { return U.round(v * 100, 0) + '%'; }));
+      body.appendChild(slider('当期 UP 占比（出 SSR 时）', 'upRate', 0.05, 1, 0.05, function (v) { return U.round(v * 100, 0) + '%'; }));
+
+      body.appendChild(H.sectionTitle('保底曲线', { color: '#B79EDC' }));
+      body.appendChild(slider('软保底起点（抽）', 'softPityStart', 5, 200, 1, function (v) { return v + ' 抽'; }));
+      body.appendChild(slider('硬保底（抽）', 'hardPity', 20, 300, 1, function (v) { return v + ' 抽'; }));
+      body.appendChild(H.slider ? (function () {
+        var t = H.el('div');
+        t.style.cssText = 'font-size:10px; color:#a99fae; margin:-4px 2px 10px; line-height:1.6;';
+        t.textContent = '提示：把硬保底调小、软保底起点调早，会让 TA 更容易出货；反过来则会看到 TA 破防。';
+        return t;
+      })() : H.el('div'));
+
+      body.appendChild(slider('大保底（抽内必得 UP）', 'guaranteeCount', 20, 400, 5, function (v) { return v + ' 抽'; }));
+
+      body.appendChild(H.sectionTitle('消耗', { color: '#7E97C9' }));
+      body.appendChild(slider('单抽消耗（心动代币）', 'singleCost', 0, 2000, 10, function (v) { return U.comma(v); }));
+
+      renderPreview();
+
+      // 快捷预设：直接落到草稿并重开面板（因为滑块内部值不可外部回写，重开最直观）
+      body.appendChild(H.sectionTitle('快捷预设', { color: '#9FB3D9' }));
+      var quickTip = H.el('div');
+      quickTip.style.cssText = 'font-size:10px; color:#a99fae; margin-bottom:8px; line-height:1.6;';
+      quickTip.textContent = '点选后面板会按该预设重开，确认无误再点「保存参数」。';
+      body.appendChild(quickTip);
+      var quick = H.el('div');
+      quick.style.cssText = 'display:flex; flex-wrap:wrap; gap:7px; margin-bottom:6px;';
+      [
+        { name: '良心池', p: { ssrRate: 0.08, srRate: 0.3, upRate: 0.75, hardPity: 50, softPityStart: 30, guaranteeCount: 90, singleCost: 120 } },
+        { name: '标准池', p: { ssrRate: RULES.ssrBase, srRate: RULES.srBase, upRate: 0.5, hardPity: RULES.hardPity, softPityStart: RULES.softPityStart, guaranteeCount: RULES.guaranteeOn, singleCost: RULES.singleCost } },
+        { name: '坑钱池', p: { ssrRate: 0.01, srRate: 0.12, upRate: 0.3, hardPity: 120, softPityStart: 95, guaranteeCount: 240, singleCost: 300 } },
+        { name: '慈善池', p: { ssrRate: 0.2, srRate: 0.5, upRate: 1, hardPity: 30, softPityStart: 15, guaranteeCount: 60, singleCost: 60 } }
+      ].forEach(function (preset) {
+        var b = H.button(preset.name, { kind: 'soft', pad: '7px 12px', size: 11, soft: '#EDF2FB', color: '#5f7aa8' });
+        b.onclick = function () {
+          // 先把预设写进卡池（updateRates 内部会做合法区间夹取），再重开面板回显
+          Engine.updateRates(poolId, preset.p);
+          H.closeAllLayers();
+          setTimeout(function () { UI.openRateEditor(poolId); }, 260);
+        };
+        quick.appendChild(b);
+      });
+      body.appendChild(quick);
+
+      H.sheet({
+        title: '卡池概率规划',
+        subtitle: pool.name,
+        icon: 'chart',
+        height: '92%',
+        content: body,
+        buttons: [
+          {
+            text: '恢复全局默认', icon: 'refresh', kind: 'outline',
+            color: '#8f6a80', border: 'rgba(190,180,195,0.5)',
+            onClick: function () {
+              Engine.updateRates(poolId, null, true);
+              H.toast('已恢复全局默认');
+              H.closeAllLayers();
+              UI.openPoolStudio();
+            }
+          },
+          {
+            text: '保存参数', icon: 'check', kind: 'primary',
+            onClick: function () {
+              Engine.updateRates(poolId, draft);
+              H.toast('「' + pool.name + '」的概率已更新');
+              H.closeAllLayers();
+              UI.openPoolStudio();
+            }
+          }
+        ]
+      });
+    },
+
+    /**
+     * 卡面私语的基调选择（「再演」的入口）
+     * 四种基调 + 自定义走向，让同一张卡的独家故事可以反复重演成不同版本。
+     */
+    openStoryTonePicker: function (card, writeStory, applyStory, storyBox) {
+      var body = H.el('div');
+      var tip = H.el('div');
+      tip.style.cssText = 'font-size:10.8px; line-height:1.72; color:#8b8292; background:rgba(255,241,247,0.8);'
+        + 'border:1px solid rgba(217,127,168,0.22); border-radius:13px; padding:11px 12px; margin-bottom:12px;';
+      tip.innerHTML = '同一张卡可以演出不同的版本。选一个基调，模型会基于角色设定与当前关系阶段重写这段私语。'
+        + '<br>已重演 <b>' + U.int(card.storyTurns, 0) + '</b> 次。';
+      body.appendChild(tip);
+
+      var TONES = [
+        { key: 'tender', name: '温柔', desc: '克制里带一点藏不住的偏心', color: '#D97FA8', soft: '#FFEBF3', icon: 'heart' },
+        { key: 'tease', name: '撩拨', desc: '像在逗你，但眼神一直落在你身上', color: '#E39BC0', soft: '#FDEDF4', icon: 'smile' },
+        { key: 'possessive', name: '占有', desc: '反复确认「你是不是只看我」', color: '#A85C86', soft: '#FBE9F2', icon: 'lock' },
+        { key: 'sad', name: '怅然', desc: '带一点将失去的预感，克制地挽留', color: '#7E97C9', soft: '#EDF2FB', icon: 'cloud' }
+      ];
+
+      var busy = false;
+      TONES.forEach(function (t) {
+        var row = H.listRow({
+          icon: t.icon, color: t.color, soft: t.soft,
+          title: t.name,
+          subtitle: t.desc,
+          rightNode: H.iconButton('play', { size: 28, color: t.color })
+        });
+        row.onclick = async function () {
+          if (busy) return;
+          busy = true;
+          H.toast('正在重演：' + t.name);
+          var out = await writeStory({ tone: t.key });
+          busy = false;
+          if (!out) { H.toast('模型不可用，无法重演'); return; }
+          applyStory(out);
+          H.closeAllLayers();
+          H.toast('已重演为「' + t.name + '」版本');
+        };
+        body.appendChild(row);
+      });
+
+      var cur = H.el('div');
+      cur.style.cssText = 'margin-top:12px;';
+      cur.appendChild(H.sectionTitle('当前版本', { color: '#B79EDC' }));
+      var box = H.el('div');
+      box.style.cssText = 'font-size:11.6px; line-height:1.82; color:#5c4450; white-space:pre-wrap;'
+        + 'background:rgba(255,255,255,0.76); border:1px solid rgba(216,160,190,0.22); border-radius:14px; padding:12px;'
+        + 'max-height:180px; overflow-y:auto;';
+      box.textContent = card.story || '（还没有内容）';
+      cur.appendChild(box);
+      body.appendChild(cur);
+
+      H.sheet({
+        title: '重演这段私语',
+        subtitle: card.name,
+        icon: 'play',
+        height: '86%',
+        content: body
+      });
+    },
+
+    /** 手动卡池编辑器（反向模式） */
     openManualPoolEditor: function () {
       var draft = {
         name: '',

@@ -1533,6 +1533,24 @@
     },
 
     /**
+     * 读取兜底：把任意异步读取包进「软超时」。
+     * 底层存储（IndexedDB / Dexie）在异常环境下可能整体挂起，
+     * 只要有一处 await 永远不落，整条渲染链就会断在半路 ——
+     * 所以 UI 层读数据一律走这里，超时就用 fallback 继续往下渲染。
+     * @param {Function} fn 返回 Promise 的读取动作
+     * @param {number} ms 软超时
+     * @param {*} fallback 超时/异常时的替代值
+     */
+    readGuarded: function (fn, ms, fallback) {
+      var timeout = new Promise(function (resolve) {
+        setTimeout(function () { resolve(fallback); }, ms || 6000);
+      });
+      var run;
+      try { run = Promise.resolve(fn()); } catch (e) { run = Promise.resolve(fallback); }
+      return Promise.race([run.catch(function () { return fallback; }), timeout]);
+    },
+
+    /**
      * 绑定关系：解析当前 char / me，载入或初始化 state
      * @param {object} opts { charId, meId, sessionId }
      * @returns {Promise<object>} state
@@ -2877,10 +2895,13 @@
     /** 本模组用到的全部生成式素材清单（Skin.probeAll 的入参；缺哪张就回落哪张） */
     SKIN_MANIFEST: [
       ['panel', 'glass-card'],
-      ['rail', 'task'], ['rail', 'shop'], ['rail', 'bond'], ['rail', 'story'],
       ['gacha', 'banner'],
       ['modal', 'card'],
+      // 右侧竖排入口的玻璃底（glyph 由内联 SVG 叠加，保证清晰与一致）
+      ['rail', 'task'], ['rail', 'shop'], ['rail', 'bond'], ['rail', 'story'],
+      // 底部工具栏的玻璃底
       ['tool', 'exit'], ['tool', 'admin'], ['tool', 'portrait'], ['tool', 'quiet'],
+      // 商品 / 货币 / 卡面等级（后续批次产出，缺图自动回落）
       ['item', 'token'], ['item', 'voucher'], ['item', 'gift'],
       ['card', 'frame-r'], ['card', 'frame-sr'], ['card', 'frame-ssr'],
       ['stage', 'bg-night'], ['stage', 'bg-rain'], ['stage', 'bg-dusk']

@@ -120,9 +120,12 @@
           : Prompt.strategyPersonaBlock(profile, user, st),
         '',
         '输出要求：每次回复 1~3 句，40~110 字。可以拆成多个气泡时用 [SPLIT] 分隔。',
-        '直接说话，不要写你的名字前缀，不要旁白，不要解释你在扮演。'
+        '直接说话，不要写你的名字前缀，不要旁白，不要解释你在扮演。',
+        '',
+        // 被攻略模式才有「主动汇报游戏行为」的特殊指令（攻略模式下 Char 不该去氪金）
+        st.mode === C.MODE.REVERSE_STRATEGY ? Ops.promptBlock() : ''
       ];
-      return head.join('\n');
+      return head.filter(function (s) { return s !== ''; }).join('\n');
     },
 
     /**
@@ -387,13 +390,22 @@
         }
         var parts = String(out).split(/\[SPLIT\]|【SPLIT】/i).map(function (s) { return s.trim(); }).filter(Boolean);
         if (!parts.length) parts = [String(out)];
+        var queuedOps = [];
         parts.forEach(function (p) {
-          p = p.replace(/^["「『]|["」』]$/g, '').trim();
+          // 每条气泡都可能带特殊指令：先剥掉、收集起来，再上屏干净的对白
+          var ex = Ops.extract(p);
+          if (ex.ops && ex.ops.length) queuedOps = queuedOps.concat(ex.ops);
+          p = ex.text.replace(/^["「『]|["」』]$/g, '').trim();
           if (!p) return;
           var bump = K.isReverse() ? 0 : U.clamp(Math.round(p.length / 26), 1, 4);
           K.pushQuiet({ role: 'char', text: p });
           if (bump) K.addAffinity(bump, { reason: '静室私语', silent: true });
         });
+        // 真实执行 TA 汇报的游戏行为（抽卡会真的抽、充值会真的记账）
+        if (queuedOps.length) {
+          renderThread();
+          await Ops.runAll(queuedOps, profile);
+        }
         // 心情随动
         st.quiet.mood = K.deriveMood().key;
         K.save();
@@ -559,6 +571,221 @@
   };
 
   // ==========================================================================
+  //  3.5 静室「特殊指令」引擎（被攻略模式的核心交互）
+  //      Char 在回复末尾写一行 [HG_XXX]{json}，系统解析 → 真实执行 → 转成系统日志卡，
+  //      并把指令行从对白里剥掉（玩家看不到裸 JSON）。
+  //      这是被攻略模式「TA 主动汇报游戏行为」的落地机制：
+  //      TA 说「我又去抽了」的同时，系统真的会去抽、真的会掉代币、真的会写进时空足迹。
+  // ==========================================================================
+
+  var Ops = {
+
+    /** 指令表：标签 → 说明（说明会被写进 system prompt，让模型知道能用哪些） */
+    CATALOG: [
+      { tag: 'HG_GACHA', args: '{"pool":"卡池名(可省)","times":10}', desc: '你去抽卡了。系统会真的执行抽卡并把结果告诉你（可能歪）。' },
+      { tag: 'HG_PAY', args: '{"amount":648}', desc: '你为 Ta 充值了（金额为整数，代表人民币档位）。' },
+      { tag: 'HG_BUY', args: '{"item":"星芒怀表","price":460}', desc: '你在商店为 Ta 买了一件礼物。' },
+      { tag: 'HG_GIFT', args: '{"item":"亲手做的便当"}', desc: '你把某样东西送给了 Ta。' },
+      { tag: 'HG_MOOD', args: '{"mood":"jealous","why":"看见Ta夸了别人"}', desc: '你的心境发生了变化（mood 取 ecstatic/happy/calm/anxious/jealous/possessive）。' },
+      { tag: 'HG_QUEST', args: '{"done":"为你录晚安语音"}', desc: '你完成了 Ta 布置的任务。' }
+    ],
+
+    /** 给 system prompt 用的指令说明块 */
+    promptBlock: function () {
+      var lines = ['【你可以使用的特殊指令】',
+        '当你想汇报一次真实的游戏行为时，在该条回复的**最末尾单独一行**写下对应指令。',
+        '系统会真的去执行它，并把结果作为系统提示插进你们的对话里。'];
+      Ops.CATALOG.forEach(function (c) {
+        lines.push('· [' + c.tag + ']' + c.args + ' —— ' + c.desc);
+      });
+      lines.push('一次回复最多带 1 条指令；不想用就不写。指令行不会展示给 Ta 看。');
+      lines.push('不要在正文里解释指令本身，也不要把它写在句子中间。');
+      return lines.join('\n');
+    },
+
+    /**
+     * 从一段回复里抽出指令并剥掉。
+     * 支持：一行一条、一行多条相邻、参数里带嵌套花括号。
+     * 早期版本用单个正则同时找标签与 JSON，遇到 `[A]{}[B]{}` 这种相邻写法只会命中第一条 ——
+     * 所以改成「顺序扫描：先定位标签，再按花括号配平切出参数，边扫边拼干净文本」。
+     * @returns {{text:string, ops:Array<{tag:string,args:object}>}}
+     */
+    extract: function (raw) {
+      var src = String(raw || '');
+      var ops = [];
+      var out = '';
+      var i = 0;
+      var re = /\[(HG_[A-Z_]+)\]/g;
+      var m;
+      while ((m = re.exec(src)) !== null) {
+        out += src.slice(i, m.index);          // 标签之前的正常文本
+        var cursor = m.index + m[0].length;
+        // 跳过标签后的空格，看有没有 JSON 参数
+        var sp = cursor;
+        while (sp < src.length && (src.charAt(sp) === ' ' || src.charAt(sp) === '\t')) sp++;
+        if (src.charAt(sp) === '{') {
+          var depth = 0, inStr = false, esc = false, end = -1;
+          for (var k = sp; k < src.length; k++) {
+            var ch = src.charAt(k);
+            if (inStr) {
+              if (esc) esc = false;
+              else if (ch === '\\') esc = true;
+              else if (ch === '"') inStr = false;
+              continue;
+            }
+            if (ch === '"') { inStr = true; continue; }
+            if (ch === '{') depth++;
+            else if (ch === '}') {
+              depth--;
+              if (depth === 0) { end = k; break; }
+            }
+          }
+          var args = {};
+          if (end > sp) {
+            try { args = JSON.parse(src.slice(sp, end + 1)) || {}; } catch (e) { args = {}; }
+            ops.push({ tag: m[1], args: args });
+            cursor = end + 1;
+          } else {
+            // 花括号没配平（模型写坏了）：整条吃掉，不留裸 JSON
+            ops.push({ tag: m[1], args: {} });
+            cursor = src.length;
+          }
+        } else {
+          ops.push({ tag: m[1], args: {} });
+        }
+        i = cursor;
+        re.lastIndex = cursor;
+      }
+      out += src.slice(i);
+
+      // 收拾残留：空行折叠、行尾空格、连续空格
+      out = out.replace(/[ \t]+$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/[ \t]{2,}/g, ' ')
+        .trim();
+      return { text: out, ops: ops.slice(0, 3) };
+    },
+
+    /**
+     * 执行一条指令：真实改状态 + 产出系统日志文案
+     * @returns {Promise<{ok:boolean, log:string, tone:string, extra:string}>}
+     */
+    run: async function (op, profile) {
+      var st = K.state;
+      var G = HG.Gacha;
+      var name = profile ? profile.name : 'TA';
+
+      if (op.tag === 'HG_GACHA') {
+        if (!G || !G.Pools) return { ok: false, log: '', tone: 'system', extra: '' };
+        var pool = null;
+        if (op.args.pool) {
+          (st.gacha.pools || []).forEach(function (p) { if (p.name === op.args.pool) pool = p; });
+        }
+        pool = pool || G.Pools.active();
+        if (!pool) return { ok: false, log: '', tone: 'system', extra: '' };
+        var times = U.clamp(U.int(op.args.times, 1), 1, 10);
+        var results = [];
+        for (var i = 0; i < times; i++) results.push(G.Engine.performDraw(pool, 0, {}));
+        var ssr = results.filter(function (r) { return r.rarity === 'SSR'; });
+        var sr = results.filter(function (r) { return r.rarity === 'SR'; });
+        var spent = times * U.int(pool.singleCost, C.GACHA_RULES.singleCost);
+        st.wallet.totalRecharge = U.int(st.wallet.totalRecharge, 0) + spent;
+        var line = '*' + name + '自己跑去「' + pool.name + '」抽了 ' + times + ' 次，结果 '
+          + results.map(function (r) { return r.rarity; }).join(' / ')
+          + '，消耗 ' + U.comma(spent) + ' 心动代币'
+          + (ssr.length ? ' —— 抽到了当期 UP！' : (sr.length ? '，没出 SSR。' : '，全歪了。')) + '*';
+        st.verdict.mood = ssr.length ? 'ecstatic' : (sr.length ? 'anxious' : 'jealous');
+        K.save(true);
+        return {
+          ok: true, log: line, tone: 'gacha',
+          extra: ssr.length ? '「' + (ssr[0].card ? ssr[0].card.name : 'SSR') + '」到手'
+            : (sr.length ? '只出了 SR' : '又歪了')
+        };
+      }
+
+      if (op.tag === 'HG_PAY') {
+        var amount = U.clamp(U.int(op.args.amount, 6), 1, 100000);
+        st.wallet.vouchers = U.int(st.wallet.vouchers, 0) + Math.round(amount * 10);
+        st.wallet.totalRecharge = U.int(st.wallet.totalRecharge, 0) + amount * 10;
+        K.pushTimeline({ type: 'recharge', title: name + '充值了', text: name + '往「心动游戏」里充了 ¥' + amount + '。' });
+        K.save(true);
+        return {
+          ok: true, tone: 'pay',
+          log: '*' + name + '刚刚充了 ¥' + amount + '，只为了多抽几次你的卡池*', extra: '¥' + amount
+        };
+      }
+
+      if (op.tag === 'HG_BUY') {
+        var item = String(op.args.item || '一件礼物').slice(0, 30);
+        var price = U.clamp(U.int(op.args.price, 120), 0, 999999);
+        st.wallet.totalSpent = U.int(st.wallet.totalSpent, 0) + price;
+        st.shop.owned.unshift({ goodsId: 'hg-op-' + U.uid('i'), at: Date.now(), count: 1, fromChar: true, label: item });
+        st.bond.giftsReceived = U.int(st.bond.giftsReceived, 0) + 1;
+        K.pushTimeline({ type: 'buy', title: name + '买了礼物', text: name + '买下了「' + item + '」（' + U.comma(price) + ' 心动代币）。' });
+        K.save(true);
+        return {
+          ok: true, tone: 'gift',
+          log: '*' + name + '买下了【' + item + '】并送给你（' + U.comma(price) + ' 心动代币）*', extra: item
+        };
+      }
+
+      if (op.tag === 'HG_GIFT') {
+        var g = String(op.args.item || '一样东西').slice(0, 30);
+        st.bond.giftsReceived = U.int(st.bond.giftsReceived, 0) + 1;
+        K.pushTimeline({ type: 'gift', title: name + '送了你礼物', text: name + '送给你「' + g + '」。' });
+        K.save(true);
+        return { ok: true, tone: 'gift', log: '*' + name + '把【' + g + '】递到了你面前*', extra: g };
+      }
+
+      if (op.tag === 'HG_MOOD') {
+        var moodKey = op.args.mood;
+        if (!C.MOODS.some(function (m) { return m.key === moodKey; })) moodKey = K.deriveMood().key;
+        var why = String(op.args.why || '').slice(0, 40);
+        K.setVerdict(U.int(st.verdict.value, 0), { mood: moodKey, note: why || st.verdict.note });
+        st.quiet.mood = moodKey;
+        K.save(true);
+        return {
+          ok: true, tone: 'system',
+          log: '*' + name + '的心境变成了「' + K.moodOf(moodKey).name + '」' + (why ? '：' + why : '') + '*',
+          extra: K.moodOf(moodKey).name
+        };
+      }
+
+      if (op.tag === 'HG_QUEST') {
+        var done = String(op.args.done || '').slice(0, 40);
+        // 命中已发布的任务就结算，否则记一条动态委托完成
+        var hit = (st.quests.reverse || []).filter(function (q) { return !q.done && (q.name === done || done.indexOf(q.name) >= 0); })[0];
+        if (hit) {
+          K.settleReverseQuest(hit.key, { result: '「' + hit.name + '」我做完了。', verdictDelta: 3 });
+          return { ok: true, tone: 'quest', log: '*' + name + '完成了你发布的任务【' + hit.name + '】*', extra: hit.name };
+        }
+        K.pushTimeline({ type: 'quest', title: name + '完成了任务', text: done });
+        return { ok: true, tone: 'quest', log: '*' + name + '汇报：' + done + ' 已经做完了*', extra: done };
+      }
+
+      return { ok: false, log: '', tone: 'system', extra: '' };
+    },
+
+    /**
+     * 批量执行并把日志推进静室流
+     * @returns {Promise<Array>} 已执行的指令结果
+     */
+    runAll: async function (ops, profile) {
+      var done = [];
+      for (var i = 0; i < (ops || []).length; i++) {
+        try {
+          var r = await Ops.run(ops[i], profile);
+          if (r && r.ok && r.log) {
+            K.pushQuietSystem(r.log, r.tone);
+            done.push(r);
+          }
+        } catch (e) { console.warn('[心动游戏·静室] 指令执行失败 ' + ops[i].tag, e); }
+      }
+      return done;
+    }
+  };
+
+  // ==========================================================================
   //  4. 离线兜底回应（没有 API 时静室仍然可玩）
   // ==========================================================================
 
@@ -592,6 +819,8 @@
     Prompt: Prompt,
     UI: UI,
     Gift: Gift,
+    /** 静室特殊指令引擎（TA 主动汇报抽卡/充值/送礼 等真实游戏行为） */
+    Ops: Ops,
     open: function () { UI.open(); },
     close: function () { UI.close(); },
     pushLog: function (t, tone) { UI.pushLog(t, tone); },

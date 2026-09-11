@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v99'; // v99: 心动游戏玩法本体实装(新增内核/立绘/抽卡/剧情/静室/面板 6 个脚本); v1.5.23
+const CACHE_NAME = 'story-phone-v100'; // v100: 心动游戏补深度(静室特殊指令/逐池概率/卡面重演)+第二批入口按钮美术; v1.5.23
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -73,6 +73,12 @@ const ASSETS = [
   './images/heartgame/panel/glass-card.png',
   './images/heartgame/modal/card.png',
   './images/heartgame/gacha/banner.png',
+  './images/heartgame/rail/task.png',
+  './images/heartgame/rail/shop.png',
+  './images/heartgame/rail/bond.png',
+  './images/heartgame/rail/story.png',
+  './images/heartgame/tool/exit.png',
+  './images/heartgame/tool/admin.png',
   './icon-144.png',
   './icon-512.png',
   'https://unpkg.com/dexie@4.0.1/dist/dexie.js'

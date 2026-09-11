@@ -240,8 +240,11 @@
       var H = HG.H, K = HG.K, U = HG.U, C = HG.C;
       // 防御：state 未绑定完成时直接跳过（boot 是异步的，期间可能有并发重绘请求）
       if (!K.state) return;
-      var profile = await K.charProfile();
-      var user = await K.userProfile();
+      // 档案读取一律带超时兜底：任何一次底层存储挂起都不允许把整个看板卡死
+      var profile = await HG.K.readGuarded(function () { return K.charProfile(); }, 6000,
+        { id: K.charId, name: 'TA', avatar: '', persona: '', remark: '', raw: null });
+      var user = await HG.K.readGuarded(function () { return K.userProfile(); }, 6000,
+        { id: K.meId, name: '你', avatar: '', persona: '', tags: [], reactPref: '', raw: null });
       var st = K.state;
       var bg = K.currentBackground();
 
@@ -406,10 +409,20 @@
       ];
       TOOLS.forEach(function (t) {
         var b = H.el('button', { class: 'hg-tool-btn', type: 'button' });
-        b.style.cssText = 'display:inline-flex; align-items:center; gap:5px; padding:8px 12px; border-radius:13px;'
-          + 'font-size:11px; font-weight:700; cursor:pointer; border:1px solid rgba(190,180,195,0.24);'
-          + 'background:' + t.soft + '; color:' + t.color + '; transition:transform .16s ease, box-shadow .2s ease;'
-          + 'backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);';
+        var base = 'display:inline-flex; align-items:center; gap:5px; padding:8px 12px; border-radius:13px;'
+          + 'font-size:11px; font-weight:700; cursor:pointer;'
+          + 'transition:transform .16s ease, box-shadow .2s ease;';
+        if (HG.Skin && HG.Skin.has('tool', t.key)) {
+          b.style.cssText = base
+            + 'border:none; background-image:url(' + HG.Skin.get('tool', t.key) + ');'
+            + 'background-size:100% 100%; background-repeat:no-repeat; background-position:center;'
+            + 'mix-blend-mode:multiply; color:' + t.color + ';'
+            + 'box-shadow:0 4px 14px rgba(150,120,150,0.10);';
+        } else {
+          b.style.cssText = base
+            + 'border:1px solid rgba(190,180,195,0.24); background:' + t.soft + '; color:' + t.color + ';'
+            + 'backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);';
+        }
         b.innerHTML = H.icon(t.icon, 14, { strokeWidth: 2 }) + '<span>' + t.label + '</span>';
         b.onpointerdown = function () { b.style.transform = 'scale(0.95)'; };
         b.onpointerup = function () { b.style.transform = ''; };
@@ -423,23 +436,50 @@
 
       // 好感面板 + 立绘挂载 + 事件订阅
       App.renderAffinityPanel();
-      await App.mountPortrait();
+      // 立绘挂载必须带超时：档案读取走的是带兜底的 _withTimeout，
+      // 但若底层存储整体挂起，这里会把整个 render 卡在半路 ——
+      // 那样底部工具栏与皮肤重绘都到不了，界面就永久停在旧一帧。
+      await App.mountPortraitSafe();
       App.subscribe();
     },
 
-    /** 右侧图标组按钮（玻璃拟态 + 呼吸） */
+    /** 挂载立绘，带 5 秒硬超时（超时就用剪影占位继续） */
+    mountPortraitSafe: async function () {
+      try {
+        await Promise.race([
+          App.mountPortrait(),
+          new Promise(function (resolve) { setTimeout(resolve, 5000); })
+        ]);
+      } catch (e) {
+        console.warn('[心动游戏] 立绘挂载失败（继续渲染其余部分）:', e);
+      }
+    },
+
+    /** 右侧图标组按钮（生成式玻璃底 + 内联 SVG glyph） */
     buildRailButton: function (item) {
-      var H = HG.H;
+      var H = HG.H, Skin = HG.Skin;
       var btn = H.el('div', { class: 'hg-rail-btn' });
-      btn.style.cssText = 'position:relative; width:52px; height:52px; border-radius:18px; cursor:pointer;'
+      var base = 'position:relative; width:52px; height:52px; border-radius:18px; cursor:pointer;'
         + 'display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;'
-        + 'background:linear-gradient(150deg, rgba(255,255,255,0.86), rgba(255,255,255,0.62));'
-        + 'border:1px solid ' + item.color + '33;'
-        + 'backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
-        + 'box-shadow:0 8px 22px rgba(150,120,150,0.14), inset 0 1px 0 rgba(255,255,255,0.9);'
         + 'transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .22s ease;';
+      if (Skin && Skin.has('rail', item.key)) {
+        // 素材自带玻璃质感与珠光描边：铺满 + multiply 把纯白底混进浅色背景，
+        // 这样连按钮四周的白边也看不出接缝（纯白 × 任意色 = 该色）。
+        btn.style.cssText = base
+          + 'background-image:url(' + Skin.get('rail', item.key) + ');'
+          + 'background-size:100% 100%; background-repeat:no-repeat; background-position:center;'
+          + 'mix-blend-mode:multiply;'
+          + 'box-shadow:0 6px 18px rgba(150,120,150,0.12);';
+      } else {
+        btn.style.cssText = base
+          + 'background:linear-gradient(150deg, rgba(255,255,255,0.86), rgba(255,255,255,0.62));'
+          + 'border:1px solid ' + item.color + '33;'
+          + 'backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
+          + 'box-shadow:0 8px 22px rgba(150,120,150,0.14), inset 0 1px 0 rgba(255,255,255,0.9);';
+      }
       var ic = H.el('span');
-      ic.style.cssText = 'color:' + item.color + '; display:flex;';
+      ic.style.cssText = 'color:' + item.color + '; display:flex;'
+        + (Skin && Skin.has('rail', item.key) ? 'filter:drop-shadow(0 1px 2px rgba(255,255,255,0.9));' : '');
       ic.innerHTML = H.icon(item.icon, 19, { strokeWidth: 1.7 });
       btn.appendChild(ic);
       var lb = H.el('span');
@@ -591,8 +631,7 @@
     mountPortrait: async function () {
       var H = HG.H, K = HG.K;
       var host = App._dom && App._dom.portraitHost;
-      if (!host) return;
-      var profile = await K.charProfile();
+      if (!host) return null;
       var res = await HG.Portraits.mount(host, {
         fit: 'contain',
         onTouch: function (key, ev, spot) { App.handleTouch(key, ev, spot); }
