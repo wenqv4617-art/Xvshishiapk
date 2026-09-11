@@ -1083,6 +1083,30 @@
                     </div>
                   </div>
                 </div>
+                <!-- 心动游戏 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-heartgame" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">心动游戏</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-heartgame" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="heartgame" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="heartgame" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
+                <!-- 占位图标 -->
+                <div class="beautify-icon-row" style="display: flex; gap: 12px; align-items: center; background: var(--surface); padding: 8px; border-radius: 12px; border: 1px solid var(--border);">
+                  <div class="icon-preview-box" id="beautify-preview-placeholder" style="width: 44px; height: 44px; border-radius: 12px; border: 1.5px dashed var(--border); display: flex; align-items: center; justify-content: center; background: #f8fafc; flex-shrink: 0; overflow:hidden;"></div>
+                  <div style="flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                    <span style="font-size: 12px; font-weight: 700; color: var(--text-primary);">占位图标</span>
+                    <input type="text" class="beautify-icon-input" id="beautify-icon-url-placeholder" placeholder="输入图标 URL" style="padding: 6px 10px; font-size: 11px;">
+                    <div style="display: flex; gap: 6px;">
+                      <button class="btn btn-outline btn-icon-upload-trigger" data-app="placeholder" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">上传本地图</button>
+                      <button class="btn btn-danger-outline btn-icon-reset-trigger" data-app="placeholder" style="padding: 4px 8px; font-size: 10px; flex: 1; border-radius:6px;">恢复默认</button>
+                    </div>
+                  </div>
+                </div>
               </div>
               <!-- 全局单通道图标上传文件input -->
               <input type="file" id="file-beautify-icon-global" accept="image/*" style="display:none;">
@@ -6655,6 +6679,30 @@
           <div id="yigui-wardrobe" style="display:none; position:absolute; inset:0; z-index:20;"></div>
         </div> <!-- 仪轨应用(win-yigui)结束 -->
 
+        <!-- 心动游戏（v1.5.21 新增）：与购物 / 工作台同级的主界面入口，功能本体待后续实装 -->
+        <div id="win-heartgame" class="app-window" style="overflow:hidden; background:#fff7fb; position:relative;">
+          <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.55)); border-bottom:1px solid rgba(216,160,190,0.25);">
+            <button class="btn-icon" id="heartgame-close-btn" style="color:#7c5a6b;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h3 style="color:#5c4450; font-size:15px; font-weight:700; letter-spacing:1px;">心动游戏</h3>
+            <span style="width:20px;"></span>
+          </header>
+          <div class="win-body" id="heartgame-body" style="padding:0; position:relative; color:#5c4450;"></div>
+        </div> <!-- 心动游戏(win-heartgame)结束 -->
+
+        <!-- 占位图标（v1.5.21 新增）：预留给下一个功能的入口 -->
+        <div id="win-placeholder" class="app-window" style="overflow:hidden; background:#f7f9fe; position:relative;">
+          <header class="win-header" style="padding:10px 14px; background:linear-gradient(180deg, rgba(255,255,255,0.92), rgba(255,255,255,0.55)); border-bottom:1px solid rgba(148,163,184,0.25);">
+            <button class="btn-icon" id="placeholder-close-btn" style="color:#475569;">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h3 style="color:#334155; font-size:15px; font-weight:700; letter-spacing:1px;">占位图标</h3>
+            <span style="width:20px;"></span>
+          </header>
+          <div class="win-body" id="placeholder-body" style="padding:0; position:relative; color:#334155;"></div>
+        </div> <!-- 占位图标(win-placeholder)结束 -->
+
             </div> <!-- app-window-container 结束 -->
 
       <!-- ===== 应用小助手 悬浮小窗（跳转/执行命令时收起为此窗）===== -->
@@ -6767,6 +6815,8 @@
   <script src="app_workbench_agent.js"></script>
   <!-- 仪轨：日程/穿着/随身物品/位置 四维状态（简约日历） -->
   <script src="app_ritual.js"></script>
+  <!-- 心动游戏 + 占位图标：与购物/工作台同级的主界面入口（功能本体待实装，目前是自绘占位页） -->
+  <script src="app_heartgame.js"></script>
   <link rel="stylesheet" href="workbench.css">
   <script src="app_floating_widget.js"></script>
   <script src="app_miniprogram.js"></script>

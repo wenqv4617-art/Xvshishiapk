@@ -40,6 +40,8 @@ const AppAssistant = {
     'shopping': '购物',
     'quicktravel': '快穿局',
     'yigui': '仪轨',
+    'heartgame': '心动游戏',
+    'placeholder': '占位图标',
     'worldbook': '世界书'
   },
 
@@ -272,6 +274,10 @@ const AppAssistant = {
 - 退出查手机会清空危险度；内容持久化到 IndexedDB，直到手动刷新
 - 查手机系统消息会按会话折叠(一次查手机的所有操作收起为一个可展开条目)
 - 查手机所有 API 调用会计入悬浮窗监控(fwTrackUsage/fwTrackError)
+
+## 13.1 心动游戏（桌面 → 心动游戏）[跳转:heartgame]
+- 与购物 / 工作台同级的主界面入口，桌面第二页第 5 行（深谈、情侣空间之后）
+- 当前仅落地入口与占位页，玩法本体待实装
 
 ## 14. 向量记忆系统（设置 → 向量记忆）
 - 三角形总结检索: 按情感/事实/核心三类召回历史事件碎片
@@ -693,6 +699,8 @@ ${this.cssLibraryText}`;
       'shopping': () => openWin('shopping'),
       'quicktravel': () => openWin('quicktravel'),
       'yigui': () => openWin('yigui'),
+      'heartgame': () => openWin('heartgame'),
+      'placeholder': () => openWin('placeholder'),
       'worldbook': () => openWin('world_book')
     };
 

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v96'; // v96: 破限世界书全链路挂载(每个API预设自带/全局fetch拦截) + 网易云VIP全曲解析; v1.5.20
+const CACHE_NAME = 'story-phone-v97'; // v97: 新增「心动游戏」+「占位图标」两个主界面入口(薄秋第2页第5行 / 清透凉夏仪轨后) + 设置图标位 + API 路由位; v1.5.21
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -14,6 +14,7 @@ const ASSETS = [
   './sticker.css',
   './app_quicktravel.js',
   './app_ritual.js',      // 仪轨（日程/穿着/随身物品/位置 四维状态）
+  './app_heartgame.js',   // 心动游戏 + 占位图标（主界面入口）
   './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
   './app_workbench_agent.js', // 工作台 Agent 引擎（Skill/Agent 配置 + MCP http+sse + @引用 + 成熟模式渲染）
   './workbench.css',      // 工作台样式

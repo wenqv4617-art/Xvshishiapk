@@ -499,7 +499,13 @@ const DESKTOP_APPS_CONFIG = {
   encounter: { name: "邂逅", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(-30 12 12)"/><ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(30 12 12)"/><circle cx="20" cy="9" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="15" r="1.2" fill="currentColor" stroke="none"/></svg>' },
   quicktravel: { name: "快穿局", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/><path d="M5 5l3 3"/><path d="M19 5l-3 3"/><path d="M5 19l3-3"/><path d="M19 19l-3-3"/></svg>' },
   workbench: { name: "工作台", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 8 3 3-3 3"/><path d="M12 16h5"/><rect x="3" y="4" width="18" height="16" rx="2"/></svg>' },
-  yigui: { name: "仪轨", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M8 2v4M16 2v4M3 10h18"/><circle cx="8.5" cy="14.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="14.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="17.5" r="1.1" fill="currentColor" stroke="none"/></svg>' }
+  yigui: { name: "仪轨", svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="17" rx="3"/><path d="M8 2v4M16 2v4M3 10h18"/><circle cx="8.5" cy="14.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="12" cy="14.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="15.5" cy="17.5" r="1.1" fill="currentColor" stroke="none"/></svg>' },
+  // 心动游戏（v1.5.21 新增）：与购物 / 工作台 同级的主界面入口。
+  // svg 用 Material Symbols Rounded 的 fingerprint（与薄秋设计稿一致）；
+  // 功能本体留待后续窗口实装，当前先落一个占位页面。
+  heartgame: { name: "心动游戏", svg: '<svg viewBox="0 -960 960 960"><path fill="currentColor" d="M481-781q106 0 200 45.5T838-604q7 9 4.5 16t-8.5 12q-6 5-14 4.5t-14-8.5q-55-78-141.5-119.5T481-741q-97 0-182 41.5T158-580q-6 9-14 10t-14-4q-7-5-8.5-12.5T126-602q62-85 155.5-132T481-781Zm0 94q135 0 232 90t97 223q0 50-35.5 83.5T688-257q-51 0-87.5-33.5T564-374q0-33-24.5-55.5T481-452q-34 0-58.5 22.5T398-374q0 97 57.5 162T604-121q9 3 12 10t1 15q-2 7-8 12t-15 3q-104-26-170-103.5T358-374q0-50 36-84t87-34q51 0 87 34t36 84q0 33 25 55.5t59 22.5q34 0 58-22.5t24-55.5q0-116-85-195t-203-79q-118 0-203 79t-85 194q0 24 4.5 60t21.5 84q3 9-.5 16T208-205q-8 3-15.5-.5T182-217q-15-39-21.5-77.5T154-374q0-133 96.5-223T481-687Zm0-192q64 0 125 15.5T724-819q9 5 10.5 12t-1.5 14q-3 7-10 11t-17-1q-53-27-109.5-41.5T481-839q-58 0-114 13.5T260-783q-8 5-16 2.5T232-791q-4-8-2-14.5t10-11.5q56-30 117-46t124-16Zm0 289q93 0 160 62.5T708-374q0 9-5.5 14.5T688-354q-8 0-14-5.5t-6-14.5q0-75-55.5-125.5T481-550q-76 0-130.5 50.5T296-374q0 81 28 137.5T406-123q6 6 6 14t-6 14q-6 6-14 6t-14-6q-59-62-90.5-126.5T256-374q0-91 66-153.5T481-590Zm-1 196q9 0 14.5 6t5.5 14q0 75 54 123t126 48q6 0 17-1t23-3q9-2 15.5 2.5T744-191q2 8-3 14t-13 8q-18 5-31.5 5.5t-16.5.5q-89 0-154.5-60T460-374q0-8 5.5-14t14.5-6Z"/></svg>' },
+  // 占位图标（用户预留给下一个功能的入口，图标为 key）
+  placeholder: { name: "占位图标", svg: '<svg viewBox="0 -960 960 960"><path fill="currentColor" d="M280-400q-33 0-56.5-23.5T200-480q0-33 23.5-56.5T280-560q33 0 56.5 23.5T360-480q0 33-23.5 56.5T280-400Zm0 160q-100 0-170-70T40-480q0-100 70-170t170-70q67 0 121.5 33t86.5 87h335q8 0 15.5 3t13.5 9l80 80q6 6 8.5 13t2.5 15q0 8-2.5 15t-8.5 13L805-325q-5 5-12 8t-14 4q-7 1-14-1t-13-7l-52-39-57 43q-5 4-11 6t-12 2q-6 0-12.5-2t-11.5-6l-61-43h-47q-32 54-86.5 87T280-240Zm0-80q56 0 98.5-34t56.5-86h125l58 41v.5-.5l82-61 71 55 75-75h-.5.5l-40-40v-.5.5H435q-14-52-56.5-86T280-640q-66 0-113 47t-47 113q0 66 47 113t113 47Z"/></svg>' }
 };
 
 function loadDesktopLayout() {
@@ -545,6 +551,9 @@ function loadDesktopLayout() {
             desktopLayout[DESKTOP_PAGE_SIZE + 2] = 'quicktravel';
             desktopLayout[DESKTOP_PAGE_SIZE + 3] = 'workbench';
             desktopLayout[DESKTOP_PAGE_SIZE + 4] = 'yigui';
+            // 第二页第 6 格起：心动游戏 + 占位图标（v1.5.21 新增，紧随仪轨之后）
+            desktopLayout[DESKTOP_PAGE_SIZE + 5] = 'heartgame';
+            desktopLayout[DESKTOP_PAGE_SIZE + 6] = 'placeholder';
             // 关键修复：默认布局必须立即写回 localStorage，否则 isAppAlreadyPlaced / placeAppOnSlot
             //   会读到 null，导致"添加图标列表显示全部"+"添加后覆盖成空数组使全部图标消失"
             localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
@@ -653,6 +662,53 @@ function loadDesktopLayout() {
         desktopLayout[targetIdx3] = "yigui";
         localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
       }
+    }
+  }
+
+  // 1.8 强制迁移：心动游戏 + 占位图标 幂等补入（v1.5.21）
+  //     策略与仪轨一致：优先紧跟在仪轨后面连续两格，其次找第一个空位。
+  //     顺序固定为「心动游戏 -> 占位图标」，保证老用户升级后也能在仪轨后面看到它们。
+  {
+    const placedWidgetsDesktop4 = (() => {
+      try { return JSON.parse(localStorage.getItem("placed-widgets-desktop")) || {}; }
+      catch(e) { return {}; }
+    })();
+    const slotFree = (i) => (i >= 0 && i < desktopLayout.length && !desktopLayout[i] && !placedWidgetsDesktop4[String(i)]);
+    const inDock = (id) => Array.isArray(dockLayout) && dockLayout.includes(id);
+
+    const missing = ["heartgame", "placeholder"].filter(id =>
+      !inDock(id) && !(Array.isArray(desktopLayout) && desktopLayout.includes(id))
+    );
+
+    if (missing.length > 0) {
+      while (desktopLayout.length < DESKTOP_PAGE_SIZE * 2) desktopLayout.push(null);
+      // 先算好起点：仪轨之后；否则从工作台之后；再否则第一个空位
+      let cursor = -1;
+      const ygIdx = desktopLayout.indexOf("yigui");
+      const wbIdx2 = desktopLayout.indexOf("workbench");
+      if (ygIdx >= 0) cursor = ygIdx + 1;
+      else if (wbIdx2 >= 0) cursor = wbIdx2 + 1;
+
+      for (const appId of missing) {
+        let target = -1;
+        // 1) 从 cursor 往右找第一个空位
+        if (cursor >= 0) {
+          for (let i = cursor; i < desktopLayout.length; i++) {
+            if (slotFree(i)) { target = i; break; }
+          }
+        }
+        // 2) 仍没有则从头找
+        if (target < 0) {
+          for (let i = 0; i < desktopLayout.length; i++) {
+            if (slotFree(i)) { target = i; break; }
+          }
+        }
+        if (target >= 0) {
+          desktopLayout[target] = appId;
+          cursor = target + 1;
+        }
+      }
+      localStorage.setItem("desktop-layout-v3", JSON.stringify(desktopLayout));
     }
   }
 
@@ -1581,6 +1637,9 @@ function openApp(app) {
     if (app === 'quicktravel' && typeof initQuickTravelApp === 'function') initQuickTravelApp();
     if (app === 'workbench' && typeof initWorkbenchApp === 'function') initWorkbenchApp();
     if (app === 'yigui' && typeof initYiguiApp === 'function') initYiguiApp();
+    // 心动游戏 / 占位图标：功能本体由后续窗口实装，这里只在函数存在时调用
+    if (app === 'heartgame' && typeof initHeartGameApp === 'function') initHeartGameApp();
+    if (app === 'placeholder' && typeof initPlaceholderApp === 'function') initPlaceholderApp();
   }
 }
 
@@ -2015,7 +2074,7 @@ function openAddSelector(type, slotIndex) {
   } catch(e) {}
 
   const widgetIds = Object.keys(widgets);
-  const appsList = ["encounter", "settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "quicktravel", "workbench", "yigui"];
+  const appsList = ["encounter", "settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "quicktravel", "workbench", "yigui", "heartgame", "placeholder"];
 
   let html = `<div style="padding:16px;">
     <h4 style="margin:0 0 12px;font-size:14px;font-weight:700;text-align:center;">选择要添加的内容</h4>
@@ -2041,6 +2100,8 @@ function openAddSelector(type, slotIndex) {
       else if (appId === "quicktravel") name = "快穿局";
       else if (appId === "workbench") name = "工作台";
       else if (appId === "yigui") name = "仪轨";
+      else if (appId === "heartgame") name = "心动游戏";
+      else if (appId === "placeholder") name = "占位图标";
 
       html += `
         <button onclick="placeAppOnSlot('${type}', ${slotIndex}, '${appId}')" style="width:100%; padding:8px 10px; border-radius:10px; border:1px solid #e2e8f0; background:#f8fafc; font-size:12px; font-weight:600; text-align:left; cursor:pointer; display:flex; align-items:center; gap:6px;">

@@ -272,7 +272,9 @@
         couples: "initCouplesApp",
         music: "initMusicApp",
         workbench: "initWorkbenchApp",
-        yigui: "initYiguiApp"
+        yigui: "initYiguiApp",
+        heartgame: "initHeartGameApp",
+        placeholder: "initPlaceholderApp"
       };
       Object.keys(appInits).forEach(function (appId) {
         const fnName = appInits[appId];

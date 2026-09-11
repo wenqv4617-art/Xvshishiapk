@@ -20,7 +20,7 @@
 
   var STORE_KEY = 'feature_api_presets';
 
-  // 12 个需要独立 API 的功能位（顺序即设置页展示顺序）
+  // 需要独立 API 的功能位（顺序即设置页展示顺序）
   var FEATURES = [
     { key: 'chat', label: '聊天', desc: '微信式对话的日常回复' },
     { key: 'memory', label: '总结与记忆', desc: '对话总结、长期记忆与向量记忆' },
@@ -34,7 +34,8 @@
     { key: 'shopping', label: '购物', desc: '商品/店铺生成与订单演出' },
     { key: 'quicktravel', label: '快穿局', desc: '快穿剧情的世界与分幕' },
     { key: 'workbench', label: '工作台', desc: '工作台 Agent 的多轮工具调用' },
-    { key: 'ritual', label: '仪轨', desc: '日程 / 穿着 / 随身物品 / 位置 的推演' }
+    { key: 'ritual', label: '仪轨', desc: '日程 / 穿着 / 随身物品 / 位置 的推演' },
+    { key: 'heartgame', label: '心动游戏', desc: '心动游戏的出题、判定与结算' }
   ];
 
   function getMap() {

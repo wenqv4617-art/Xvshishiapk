@@ -1018,8 +1018,8 @@ function loadBeautifyForm() {
   const enterSendInput = document.getElementById("settings-enter-send-toggle");
   if (enterSendInput) enterSendInput.checked = enterSend;
 
-  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples, encounter)
-  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench", "yigui"];
+  // 循环载入并高精度绘制应用图标的平铺预览图 (加入 deeptalk, reader, forum, couples, encounter, heartgame, placeholder)
+  const apps = ["settings", "archive", "world_book", "chat", "deeptalk", "reader", "forum", "couples", "music", "shopping", "encounter", "quicktravel", "workbench", "yigui", "heartgame", "placeholder"];
   let customIcons = {};
   try {
     customIcons = JSON.parse(localStorage.getItem("beautify-custom-icons")) || {};
