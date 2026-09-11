@@ -250,7 +250,9 @@
 
       body.innerHTML = '';
       var root = H.el('div', { id: 'heartgame-mount', class: 'hg-lobby hg-rise' });
-      root.style.cssText = 'position:relative; width:100%; height:100%; min-height:100%;'
+      // 高度写成「100% 撑满 + 不低于 560px」：只看板容器本身撑不住，
+      // 祖先链任何一环没有确定高度时 100% 会塌成 0，用户看到的就只是「打开了但一片空白」。
+      root.style.cssText = 'position:relative; width:100%; height:100%; min-height:560px;'
         + 'display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;'
         + 'background:linear-gradient(170deg,#FFF7FB 0%,#FBF4FA 52%,#F4F2FB 100%);';
       App._dom = { root: root };
@@ -953,24 +955,35 @@
    * 真正的界面挂在 #heartgame-mount（id="heartgame-mount"）。
    */
   window.initHeartGameApp = function () {
-    App.boot().catch(function (e) {
-      App.bootError = (e && e.message) ? e.message : String(e);
-      console.error('[心动游戏] 启动失败:', e);
-      var body = document.getElementById('heartgame-body');
-      if (!body) return;
-      // 启动失败时把真实原因写在页面上（而不是留一片空白），便于用户/开发者定位
-      if (window.HeartGame && window.HeartGame.H) {
-        var box = window.HeartGame.H.empty(
-          '心动游戏启动失败：' + App.bootError + '\n\n（请把这段提示反馈给开发者）',
-          { icon: 'info' });
-        box.style.whiteSpace = 'pre-wrap';
-        body.innerHTML = '';
-        body.appendChild(box);
-      } else {
-        body.style.padding = '24px';
-        body.textContent = '心动游戏启动失败：' + App.bootError;
-      }
-    });
+    // 同步异常也必须可见：以前只有 Promise 的 catch，
+    // 若同步阶段抛错就会「点了图标毫无反应」，非常难排查。
+    try {
+      App._heartgameBooted = true;
+      App.boot().catch(function (e) {
+        App.showBootFailure(e);
+      });
+    } catch (e) {
+      App.showBootFailure(e);
+    }
+  };
+
+  /** 启动失败：把真实原因写到页面上（而不是留一片空白） */
+  App.showBootFailure = function (e) {
+    App.bootError = (e && e.message) ? e.message : String(e);
+    console.error('[心动游戏] 启动失败:', e);
+    var body = document.getElementById('heartgame-body');
+    if (!body) return;
+    if (window.HeartGame && window.HeartGame.H) {
+      var box = window.HeartGame.H.empty(
+        '心动游戏启动失败：' + App.bootError + '\n\n（请把这段提示反馈给开发者）',
+        { icon: 'info' });
+      box.style.whiteSpace = 'pre-wrap';
+      body.innerHTML = '';
+      body.appendChild(box);
+    } else {
+      body.style.padding = '24px';
+      body.textContent = '心动游戏启动失败：' + App.bootError;
+    }
   };
 
   // 入口挂载点常量（供自检与外部集成引用）

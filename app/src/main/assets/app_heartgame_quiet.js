@@ -385,8 +385,11 @@
         if (typing.parentNode) typing.parentNode.removeChild(typing);
 
         if (!out) {
-          // 离线兜底：分模式 × 分好感的内置回应（保证静室永远有回应）
+          // 离线兜底：分模式 × 分好感的内置回应。
+          // 说明：这只是「模型不可用」时的保底，正常路径一定是 AI 现场生成
+          // （静室是暧昧浓度最高的地方，不允许用固定台词糊弄过去）。
           out = Quiet.fallbackReply(st, profile);
+          logPresetFallback();
         }
         var parts = String(out).split(/\[SPLIT\]|【SPLIT】/i).map(function (s) { return s.trim(); }).filter(Boolean);
         if (!parts.length) parts = [String(out)];
@@ -418,6 +421,13 @@
         var m = K.moodOf(st.quiet.mood || st.verdict.mood);
         moodChip.textContent = m.name;
         moodChip.style.color = m.color;
+      }
+
+      /** 用了本地兜底台词时给一个不打扰的提示，避免用户误以为是 AI 写的 */
+      function logPresetFallback() {
+        if (UI._fallbackNoticed) return;
+        UI._fallbackNoticed = true;
+        H.toast('模型暂时不可用，这段是本地保底回应（配好 API 后会由 AI 现场生成）');
       }
 
       sendB.onclick = function () { send(input.value.trim()); };

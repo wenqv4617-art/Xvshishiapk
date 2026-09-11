@@ -1558,6 +1558,13 @@ function renderLayout(container, layoutArray, slotClass) {
           <div class="icon-wrapper">${iconHtml}</div>
           ${nameHtml}
         `;
+        // 每个图标自带一个直连点击兜底：全局的 body 委托带「位移 >15px 视为滑动」的过滤，
+        // 在部分触屏环境下会把这个点击吞掉（表现就是「点图标完全没反应」）。
+        // 这里只做一件极轻的事：置一个标记，交给同一次冒泡里的委托去走标准链路，
+        // 既不会重复打开应用，也不会改变原有拖拽/长按行为。
+        div.onclick = function () {
+          if (typeof window.__deskIconTapRecall === 'function') window.__deskIconTapRecall(this);
+        };
         slot.appendChild(div);
 
         // 编辑模式下应用支持红叉删除卸载 (系统应用卸载)
@@ -1596,13 +1603,40 @@ document.addEventListener("pointerdown", (e) => {
   lastPointerDownY = e.clientY;
 });
 
+// 桌面图标被「明确点击」时的召回回调（由每个 .app-icon 的 onclick 触发）。
+// 背景：body 上的委托用「位移 >15px 视为滑动」过滤点击，而在部分触屏 WebView 上
+// pointerdown 不会可靠更新坐标，导致一次纯粹的点击被判成滑动而被吞掉
+// —— 表现就是「点图标完全没反应」。这里给图标一条直连路径。
+window.__deskIconTapRecall = function (iconEl) {
+  if (!iconEl) return;
+  // 位移判定显式放行（仅对这一次点击）
+  iconEl.__hgTapOk = true;
+  // 编辑模式下点击图标依然只用于退出编辑，不在这里打开应用
+  if (typeof isDesktopEditMode !== 'undefined' && isDesktopEditMode) return;
+  // 已被拖拽固定的图标不触发（与原委托行为一致）
+  if (iconEl.style && iconEl.style.position === "fixed") return;
+  var appId = iconEl.getAttribute("data-app");
+  if (!appId) return;
+  try {
+    if (typeof window.openApp === "function") window.openApp(appId);
+  } catch (err) {
+    console.error("[Desktop] 直连开应用失败:", appId, err);
+    if (typeof window.showToast === "function") window.showToast("打开「" + appId + "」失败：" + (err && err.message));
+  }
+  // 消费掉这次点击，避免同一次冒泡里再走一遍委托
+  setTimeout(function () { try { iconEl.__hgTapOk = false; } catch (e) { } }, 0);
+};
+
 function initAppClickEvents() {
   if (isAppClickEventsInitialized) return;
   isAppClickEventsInitialized = true;
 
   document.body.addEventListener("click", (e) => {
-    // 如果手指按下和抬起之间的位移超过 15px，判定为滑动操作，直接忽略点击
-    const dist = Math.hypot(e.clientX - lastPointerDownX, e.clientY - lastPointerDownY);
+    // 兜底：如果图标自己的 onclick 已经明确表示「这是一次点击（不是滑动）」，
+    // 就跳过位移判定，避免触屏环境下点击被吞掉。
+    const dist = (e.target.closest && e.target.closest(".app-icon") && e.target.closest(".app-icon").__hgTapOk)
+      ? 0
+      : Math.hypot(e.clientX - lastPointerDownX, e.clientY - lastPointerDownY);
     if (dist > 15) return;
 
     // 编辑模式下，点击任何外部区域自动安全退出编辑模式
@@ -1615,6 +1649,9 @@ function initAppClickEvents() {
 
     const icon = e.target.closest(".app-icon");
     if (icon) {
+      // 图标自己的 onclick 已经直连打开过了（见 window.__deskIconTapRecall），
+      // 这里只清理标记，不再重复 openApp。
+      if (icon.__hgTapOk) { try { icon.__hgTapOk = false; } catch (e2) { } return; }
       const app = icon.getAttribute("data-app");
       // 仅当图标没有处于被拖拽移动的状态时，才触发应用开启
       if (icon.style.position !== "fixed") {

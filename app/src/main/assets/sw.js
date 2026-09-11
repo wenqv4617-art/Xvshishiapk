@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v100'; // v100: 心动游戏补深度(静室特殊指令/逐池概率/卡面重演)+第二批入口按钮美术; v1.5.23
+const CACHE_NAME = 'story-phone-v101'; // v101: 修桌面图标点击被滑动判定吞掉(直连兜底) + Live2D zip 模型包导入(JSZip); v1.5.24
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -81,7 +81,8 @@ const ASSETS = [
   './images/heartgame/tool/admin.png',
   './icon-144.png',
   './icon-512.png',
-  'https://unpkg.com/dexie@4.0.1/dist/dexie.js'
+  'https://unpkg.com/dexie@4.0.1/dist/dexie.js',
+  'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js'
 ];
 
 // 安装阶段：预缓存所有资源

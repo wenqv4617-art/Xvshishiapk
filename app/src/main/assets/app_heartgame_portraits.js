@@ -218,6 +218,212 @@
   };
 
   // ==========================================================================
+  //  2.5 ZIP 模型包导入（Live2D 最省事的用法）
+  //      用户手上通常是「一个 zip 里塞着 moc3 + model3.json + 贴图 + 物理」，
+  //      所以这里引入 JSZip，把整包解成内存文件表 → 每个文件生成 blob URL →
+  //      把 model3.json 里的相对路径改写成 blob URL → 得到一个可直接加载的模型入口。
+  //      JSZip 按需从 CDN 拉（与 dexie 同源 unpkg，已进 SW 缓存），失败不阻塞其它功能。
+  // ==========================================================================
+
+  var ZipModel = {
+    CDN: 'https://unpkg.com/jszip@3.10.1/dist/jszip.min.js',
+    _loading: null,
+    _ready: false,
+
+    /** 是否已具备 JSZip */
+    available: function () { return typeof window.JSZip !== 'undefined' && !!window.JSZip; },
+
+    /**
+     * 按需加载 JSZip（本地没有就从 CDN 拉一次）
+     * @returns {Promise<boolean>}
+     */
+    ensure: function () {
+      if (ZipModel.available()) { ZipModel._ready = true; return Promise.resolve(true); }
+      if (ZipModel._loading) return ZipModel._loading;
+      ZipModel._loading = new Promise(function (resolve) {
+        var s = document.createElement('script');
+        var done = false;
+        var finish = function (ok) {
+          if (done) return; done = true;
+          ZipModel._ready = !!ok;
+          if (!ok) console.warn('[心动游戏] JSZip 加载失败，zip 导入不可用');
+          resolve(!!ok);
+        };
+        s.src = ZipModel.CDN;
+        s.async = true;
+        s.onload = function () { finish(ZipModel.available()); };
+        s.onerror = function () { finish(false); };
+        setTimeout(function () { finish(ZipModel.available()); }, 15000);
+        (document.head || document.documentElement).appendChild(s);
+      });
+      return ZipModel._loading;
+    },
+
+    /** 取相对路径的目录名（'' 或 'foo/' 或 'a/b/'） */
+    _dirOf: function (p) {
+      var i = String(p).lastIndexOf('/');
+      return i >= 0 ? String(p).slice(0, i + 1) : '';
+    },
+
+    /** 归一化 zip 内路径（去 ./、去前导 /） */
+    _norm: function (p) {
+      return String(p || '').replace(/^\.\//, '').replace(/^\/+/, '');
+    },
+
+    /** 以 base 为基准解析相对路径 */
+    _resolve: function (base, rel) {
+      if (/^(https?:|blob:|data:)/i.test(rel)) return rel;
+      var stack = (base + rel).split('/');
+      var out = [];
+      for (var i = 0; i < stack.length; i++) {
+        var seg = stack[i];
+        if (seg === '' && i > 0) continue;
+        if (seg === '.') continue;
+        if (seg === '..') { out.pop(); continue; }
+        out.push(seg);
+      }
+      return out.join('/');
+    },
+
+    /** MIME */
+    _mime: function (name) {
+      var n = String(name).toLowerCase();
+      if (/\.json$/.test(n)) return 'application/json';
+      if (/\.moc3?$/.test(n)) return 'application/octet-stream';
+      if (/\.png$/.test(n)) return 'image/png';
+      if (/\.jpe?g$/.test(n)) return 'image/jpeg';
+      if (/\.webp$/.test(n)) return 'image/webp';
+      if (/\.(mp3|wav|m4a|ogg)$/.test(n)) return 'audio/mpeg';
+      return 'application/octet-stream';
+    },
+
+    /**
+     * 解析一个 zip 模型包
+     * @param {File|Blob} file
+     * @param {Function} onProgress (stage, detail)
+     * @returns {Promise<{ name, jsonPath, entryUrl, fileCount, files:[{path,url,size}], _urls }>}
+     */
+    parse: async function (file, onProgress) {
+      var report = function (s, d) { if (typeof onProgress === 'function') onProgress(s, d); };
+      report('loading-lib', '正在准备解压组件…');
+      var haveLib = await ZipModel.ensure();
+      if (!haveLib) throw new Error('解压组件加载失败（JSZip CDN 不可达），请检查网络后重试');
+
+      report('reading', '正在读取压缩包…');
+      var zip = await window.JSZip.loadAsync(file);
+
+      // 收集全部文件
+      var entries = [];
+      zip.forEach(function (path, entry) {
+        if (entry.dir) return;
+        var p = ZipModel._norm(path);
+        if (!p || /(^|\/)__MACOSX\//.test(p) || /(^|\/)\._/.test(p) || /(^|\/)\.DS_Store$/.test(p)) return;
+        entries.push({ path: p, entry: entry });
+      });
+      if (!entries.length) throw new Error('压缩包里没有找到任何文件');
+
+      report('extracting', '正在解出 ' + entries.length + ' 个文件…');
+      var urls = {};      // path -> blobURL
+      var files = [];
+      for (var i = 0; i < entries.length; i++) {
+        var e = entries[i];
+        var blob = await e.entry.async('blob');
+        var typed = new Blob([blob], { type: ZipModel._mime(e.path) });
+        var u = URL.createObjectURL(typed);
+        urls[e.path] = u;
+        files.push({ path: e.path, url: u, size: typed.size });
+      }
+
+      // 找模型入口：优先 model3.json，其次任何 .json
+      var jsonCandidates = entries.filter(function (e) { return /\.model3\.json$/i.test(e.path); });
+      if (!jsonCandidates.length) jsonCandidates = entries.filter(function (e) { return /\.json$/i.test(e.path); });
+      // 优先选「同目录下存在 .moc3」的那个 json
+      var mocPaths = entries.filter(function (e) { return /\.moc3$/i.test(e.path); }).map(function (e) { return e.path; });
+      var jsonEntry = null;
+      for (var j = 0; j < jsonCandidates.length; j++) {
+        var dir = ZipModel._dirOf(jsonCandidates[j].path);
+        if (mocPaths.some(function (m) { return ZipModel._dirOf(m) === dir; })) { jsonEntry = jsonCandidates[j]; break; }
+      }
+      if (!jsonEntry) jsonEntry = jsonCandidates[0];
+      if (!jsonEntry) {
+        throw new Error(mocPaths.length
+          ? '找到了 moc3 模型文件，但缺少配套的 model3.json（Live2D 需要它来描述模型结构）'
+          : '这个压缩包里没有 .moc3 模型文件，可能不是 Live2D 模型包');
+      }
+
+      report('rewriting', '正在改写模型内的资源引用…');
+      var jsonText = await jsonEntry.entry.async('string');
+      var model = null;
+      try { model = JSON.parse(jsonText); } catch (e) { model = null; }
+      if (!model) throw new Error('model3.json 解析失败（文件可能已损坏）');
+
+      var baseDir = ZipModel._dirOf(jsonEntry.path);
+      var selfBase = jsonEntry.path;
+      var mapped = 0, missing = [];
+
+      var mapPath = function (rel) {
+        if (!rel || typeof rel !== 'string') return rel;
+        if (/^(https?:|blob:|data:)/i.test(rel)) return rel;
+        var target = ZipModel._resolve(baseDir, ZipModel._norm(rel));
+        if (urls[target]) { mapped++; return urls[target]; }
+        // 有些包会把路径写成含自身文件名前缀，再试一次去前缀
+        var alt = ZipModel._resolve(baseDir, ZipModel._norm(rel.replace(/^[^/]*\.model3\.json\//, '')));
+        if (urls[alt]) { mapped++; return urls[alt]; }
+        missing.push(rel);
+        return rel;
+      };
+
+      try {
+        if (model.FileReferences) {
+          var fr = model.FileReferences;
+          if (fr.Moc) fr.Moc = mapPath(fr.Moc);
+          if (Array.isArray(fr.Textures)) fr.Textures = fr.Textures.map(mapPath);
+          if (Array.isArray(fr.Physics)) fr.Physics = fr.Physics.map(mapPath);
+          if (Array.isArray(fr.Pose)) fr.Pose = fr.Pose.map(mapPath);
+          if (Array.isArray(fr.Expressions)) {
+            fr.Expressions.forEach(function (x) { if (x && x.File) x.File = mapPath(x.File); });
+          }
+          if (Array.isArray(fr.Motions)) {
+            fr.Motions.forEach(function (g) {
+              if (g && Array.isArray(g.File)) g.File = mapPath(g.File);
+            });
+          }
+          if (fr.DisplayInfo) fr.DisplayInfo = mapPath(fr.DisplayInfo);
+        }
+      } catch (e2) {
+        console.warn('[心动游戏] 模型引用改写时出错（继续用原始路径）:', e2);
+      }
+
+      // 入口模型本身也用 blob URL（避免依赖原 zip 路径）
+      var entryBlob = new Blob([JSON.stringify(model)], { type: 'application/json' });
+      var entryUrl = URL.createObjectURL(entryBlob);
+      urls[selfBase] = entryUrl;
+
+      return {
+        name: (model && (model.name || (model.FileReferences && model.FileReferences.Moc))) || file.name.replace(/\.zip$/i, ''),
+        jsonPath: jsonEntry.path,
+        entryUrl: entryUrl,
+        fileCount: files.length,
+        mocFound: mocPaths.length > 0,
+        mapped: mapped,
+        missing: missing,
+        files: files,
+        urls: urls
+      };
+    },
+
+    /** 释放一次导入占用的 blob URL（页面销毁或换模型时调用） */
+    release: function (record) {
+      if (!record || !record.urls) return 0;
+      var n = 0;
+      Object.keys(record.urls).forEach(function (k) {
+        try { URL.revokeObjectURL(record.urls[k]); n++; } catch (e) { }
+      });
+      return n;
+    }
+  };
+
+  // ==========================================================================
   //  3. 静态立绘渲染器（Live2D 不可用时的主力：CSS 物理动效 + 热区触控）
   // ==========================================================================
 
@@ -516,26 +722,27 @@
       return { kind: 'sprite', renderer: r, portrait: portrait };
     },
 
-    /** 触控反应：返回一句专属文本（优先动作库 → 内置分部位文案） */
+    /**
+     * 触控反应：**优先交给模型生成**（暧昧/细腻的地方必须是 AI 现写，而不是背预设），
+     * 生成不可用时才回落到动作库 / 内置分部位文案库。
+     * 生成成功的结果会顺手写进动作库，作为该部位该阶段的「已解锁台词」沉淀下来。
+     */
     react: async function (key, ctx) {
       var o = ctx || {};
       var portraitId = (K.currentPortrait() || {}).id || 'default';
       var profile = await K.charProfile();
       var tier = K.tier();
       var reverse = K.isReverse();
-
-      // 1) 动作库命中（同部位、同阶梯或更早的，随机一条）
-      var lib = K.hotspotActionsOf(portraitId, key);
       var tierIdx = K.tierIndex();
-      var usable = lib.filter(function (a) {
-        return K.tierIndex(a.tier || 'acquaint') <= tierIdx;
-      });
-      if (usable.length) {
-        var pick = usable[Math.floor(Math.random() * usable.length)];
-        return { text: pick.text, source: 'library', expression: 'blush' };
+
+      // ① 首选：让模型基于角色设定 + 当前阶梯现写一句
+      //    （戳戳是高频交互，缓存命中同一阶梯时直接复用，避免每次都打接口）
+      var cacheKey = portraitId + '|' + key + '|' + tier.key + '|' + (o.mood || K.state.quiet.mood);
+      var cached = Portraits._reactCache[cacheKey];
+      if (cached && Date.now() - cached.at < 3 * 60 * 1000) {
+        return { text: cached.text, source: 'cache', expression: cached.expression || 'blush' };
       }
 
-      // 2) 模型生成（带角色设定与当前阶梯）
       var spot = C.HOTSPOTS.filter(function (s) { return s.key === key; })[0] || { name: '身体', hint: '碰了一下' };
       var mood = K.moodOf(o.mood || K.state.quiet.mood);
       var prompt = '你正在扮演「' + profile.name + '」。\n'
@@ -549,14 +756,31 @@
         + '不要写旁白括号，不要写你的名字，不要解释，直接给这一句话。';
       var out = await K.ask(prompt, { temperature: 0.95 });
       if (out) {
-        var clean = out.replace(/^["「『]|["」』]$/g, '').replace(/\n+/g, ' ').trim();
-        K.pushHotspotAction(portraitId, key, { text: clean });
-        return { text: clean, source: 'llm', expression: 'blush' };
+        var clean = String(out).replace(/^["「『]|["」』]$/g, '').replace(/\n+/g, ' ').trim();
+        if (clean) {
+          Portraits._reactCache[cacheKey] = { text: clean, at: Date.now(), expression: 'blush' };
+          // 沉淀成该部位该阶段的专属台词（下次即使离线也能用上）
+          K.pushHotspotAction(portraitId, key, { text: clean, tier: tier.key });
+          return { text: clean, source: 'llm', expression: 'blush' };
+        }
       }
 
-      // 3) 离线兜底：分部位 × 分阶梯的内置反应库（保证没 API 也有反馈）
+      // ② 回落：已解锁的动作库（同部位、同阶梯或更早的）
+      var lib = K.hotspotActionsOf(portraitId, key);
+      var usable = lib.filter(function (a) {
+        return K.tierIndex(a.tier || 'acquaint') <= tierIdx;
+      });
+      if (usable.length) {
+        var pick = usable[Math.floor(Math.random() * usable.length)];
+        return { text: pick.text, source: 'library', expression: 'blush' };
+      }
+
+      // ③ 最后兜底：内置分部位 × 分阶梯反应库（保证没 API 也有反馈）
       return { text: Portraits.fallbackLine(key, tierIdx, profile.name), source: 'fallback', expression: 'shy' };
     },
+
+    /** 戳戳反应的短时缓存（同一阶梯同一部位 3 分钟内复用，省接口也更稳） */
+    _reactCache: {},
 
     /** 内置反应库：7 部位 × 6 阶梯分档 */
     fallbackLine: function (key, tierIdx, name) {
@@ -774,7 +998,79 @@
             }
           },
           {
-            text: '绑定 Live2D 模型', icon: 'sparkle', kind: 'outline',
+            text: '导入模型包 (zip)', icon: 'upload', kind: 'primary', keepOpen: true,
+            onClick: function () {
+              Portraits.pickZip(async function (file) {
+                var sheetBody = H.el('div');
+                var stage = H.el('div');
+                stage.style.cssText = 'font-size:11.4px; color:#8d8397; line-height:1.9; text-align:center; padding:18px 8px;';
+                sheetBody.appendChild(stage);
+                var sheetPromise = H.sheet({
+                  title: '正在导入模型包',
+                  subtitle: file.name,
+                  icon: 'sparkle',
+                  height: '46%',
+                  content: sheetBody,
+                  dismissible: false
+                });
+                var step = function (s, d) { stage.textContent = d || s; };
+                try {
+                  var parsed = await ZipModel.parse(file, step);
+                  // 记录到资源池，页面销毁时统一释放 blob URL
+                  Portraits._zipRecords = Portraits._zipRecords || [];
+                  Portraits._zipRecords.push(parsed);
+                  Portraits.pool.acquire('zip:' + parsed.jsonPath, { kind: 'image', url: parsed.entryUrl });
+
+                  var created = K.addPortrait({
+                    name: parsed.name || 'Live2D 模型',
+                    kind: 'live2d',
+                    modelUrl: parsed.entryUrl,
+                    // 注意：src 不存 blob URL —— 那是本次会话的临时地址，
+                    // 重启后必然失效；留空让 Live2D 分支自己渲染，失败则回落剪影。
+                    src: '',
+                    tags: (parsed.mocFound ? [] : ['仅贴图']).concat(['zip 导入'])
+                  });
+                  H.closeAllLayers();
+                  H.toast('模型包已导入（' + parsed.fileCount + ' 个文件）');
+                  if (!parsed.mocFound) {
+                    H.modal({
+                      title: '导入完成，但没找到 moc3',
+                      icon: 'info', accent: '#9FB3D9',
+                      message: '包里没有 .moc3 模型文件，可能只包含贴图。已按静态立绘处理。'
+                    });
+                  }
+                  refresh();
+                  if (typeof onChanged === 'function') onChanged();
+                  // 导入即尝试驱动一次，能跑起来就直接看到效果
+                  if (parsed.entryUrl) {
+                    setTimeout(function () {
+                      var cv = document.createElement('canvas');
+                      Live2DLoader.mount(cv, parsed.entryUrl).then(function (inst) {
+                        if (!inst) {
+                          H.modal({
+                            title: '模型已导入，但未能驱动',
+                            icon: 'info', accent: '#9FB3D9',
+                            message: '模型包已存好（' + parsed.fileCount + ' 个文件）。\n'
+                              + '要真正跑起来还需要 Live2D 运行时：在本页下方的「Live2D 运行时」里填入运行时脚本地址即可。'
+                              + '\n在此之前会以静态立绘 + 物理动效展示。'
+                          });
+                        }
+                      });
+                    }, 300);
+                  }
+                } catch (err) {
+                  H.closeAllLayers();
+                  H.modal({
+                    title: '导入失败',
+                    icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
+                    message: (err && err.message) ? err.message : String(err)
+                  });
+                }
+              });
+            }
+          },
+          {
+            text: '绑定模型地址', icon: 'sparkle', kind: 'outline',
             color: '#7d63a8', border: 'rgba(183,158,220,0.5)',
             keepOpen: true,
             onClick: function () {
@@ -1059,6 +1355,22 @@
           if (!out) { H.toast('这张图片解析失败：可能是 HEIC 等本机不支持的格式'); return; }
           if (typeof cb === 'function') cb(out);
         });
+      };
+      input.click();
+    },
+
+    /** 选一个 zip 模型包 */
+    pickZip: function (cb) {
+      var input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.zip,application/zip,application/x-zip-compressed';
+      input.style.display = 'none';
+      document.body.appendChild(input);
+      input.onchange = function () {
+        var file = input.files && input.files[0];
+        if (input.parentNode) input.parentNode.removeChild(input);
+        if (!file) return;
+        if (typeof cb === 'function') cb(file);
       };
       input.click();
     },
@@ -1360,7 +1672,7 @@
     //  4.5 生命周期
     // ------------------------------------------------------------------
 
-    /** 页面销毁：卸载 Live2D 实例、回收资源池、清理定时器 */
+    /** 页面销毁：卸载 Live2D 实例、回收资源池、释放 zip 导入的 blob URL、清理定时器 */
     teardown: function () {
       if (Portraits.live2d && typeof Portraits.live2d.destroy === 'function') {
         try { Portraits.live2d.destroy(); } catch (e) {}
@@ -1368,6 +1680,11 @@
       Portraits.live2d = null;
       if (Portraits.renderer) Portraits.renderer.teardown();
       Portraits.renderer = null;
+      // zip 导入产生的 blob URL 必须显式释放，否则整包贴图会一直留在内存里
+      (Portraits._zipRecords || []).forEach(function (rec) {
+        try { ZipModel.release(rec); } catch (e) {}
+      });
+      Portraits._zipRecords = [];
       Portraits.pool.clear();
       // 同步内存态的池顺序（避免下次进来引用已卸载资源）
       if (K.state && K.state.assets) K.state.assets.pool = [];
@@ -1394,4 +1711,6 @@
 
   HG.Portraits = Portraits;
   HG.AssetPool = AssetPool;
+  /** ZIP 模型包导入器（Live2D 最省事的用法：把整包 zip 丢进来） */
+  HG.ZipModel = ZipModel;
 })();
