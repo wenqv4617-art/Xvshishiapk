@@ -121,6 +121,9 @@
         '',
         '输出要求：每次回复 1~3 句，40~110 字。可以拆成多个气泡时用 [SPLIT] 分隔。',
         '直接说话，不要写你的名字前缀，不要旁白，不要解释你在扮演。',
+        // 动描（括号里的动作描写）—— 用户 2026-09-11 要求静室允许括号动描
+        '（括号）里的内容是**动作 / 神态描写**：玩家用括号写自己的动作时，你要当作他真的做了这个动作来回应，',
+        '并且用同样简短的（括号）描写你的动作与神情；不要把括号内容当成台词念出来。',
         '',
         // 被攻略模式才有「主动汇报游戏行为」的特殊指令（攻略模式下 Char 不该去氪金）
         st.mode === C.MODE.REVERSE_STRATEGY ? Ops.promptBlock() : ''
@@ -313,7 +316,18 @@
       inputRow.style.cssText = 'display:flex; align-items:flex-end; gap:8px;';
       var giftB = H.iconButton('gift', { size: 38, color: '#fff', bg: 'rgba(255,255,255,0.16)', border: 'rgba(255,255,255,0.22)', title: '送礼托盘' });
       inputRow.appendChild(giftB);
-      var input = H.el('textarea', { rows: 1, placeholder: '说点什么…' });
+
+      // 括号动描快捷键（v1.5.40）
+      // 用户：静室允许括号动描，输入框里放一个括号快捷键，**不要有背景**，
+      //       点击就自动输入括号并把光标置于两括号之间。
+      var bracketB = H.el('button', { type: 'button', title: '动描：插入（）' });
+      bracketB.style.cssText = 'flex:0 0 auto; width:34px; height:38px; padding:0; border:none; background:none;'
+        + 'box-shadow:none; cursor:pointer; color:rgba(255,255,255,0.78); font-size:17px; font-weight:700;'
+        + 'line-height:38px; text-align:center; -webkit-tap-highlight-color:transparent;';
+      bracketB.textContent = '（）';
+      inputRow.appendChild(bracketB);
+
+      var input = H.el('textarea', { rows: 1, placeholder: '说点什么…（想写动作就用括号）' });
       input.style.cssText = 'flex:1; box-sizing:border-box; max-height:96px; border-radius:16px; padding:10px 13px;'
         + 'font-size:12.6px; line-height:1.6; color:#5c4450; background:rgba(255,255,255,0.94); outline:none;'
         + 'border:1px solid rgba(255,255,255,0.5); font-family:inherit; resize:none;';
@@ -321,6 +335,31 @@
       var sendB = H.iconButton('send', { size: 38, color: '#fff', bg: 'linear-gradient(135deg,#D97FA8,#B79EDC)', border: 'none' });
       inputRow.appendChild(sendB);
       foot.appendChild(inputRow);
+
+      /** 在光标处插入一对括号，并把光标放到中间 */
+      function insertBrackets() {
+        var v = input.value || '';
+        var s = (typeof input.selectionStart === 'number') ? input.selectionStart : v.length;
+        var e = (typeof input.selectionEnd === 'number') ? input.selectionEnd : v.length;
+        var sel = v.slice(s, e);
+        input.value = v.slice(0, s) + '（' + sel + '）' + v.slice(e);
+        var caret = s + 1 + sel.length;
+        try { input.setSelectionRange(caret, caret); } catch (err) { }
+        input.focus();
+        if (typeof input.oninput === 'function') input.oninput();
+      }
+      bracketB.onclick = function (ev) {
+        ev.preventDefault();
+        insertBrackets();
+      };
+      // 顺手：Ctrl/Cmd + 9 也能插括号
+      input.onkeydown = function (ev) {
+        if ((ev.ctrlKey || ev.metaKey) && (ev.key === '9' || ev.key === '(')) {
+          ev.preventDefault();
+          insertBrackets();
+        }
+      };
+
       input.oninput = function () {
         input.style.height = 'auto';
         input.style.height = Math.min(96, input.scrollHeight) + 'px';

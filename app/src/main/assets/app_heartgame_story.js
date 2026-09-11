@@ -1111,6 +1111,11 @@
       if (!a) { UI.openArcList(); return; }
       UI._arc = a;
       var replay = !!(opts && opts.replay);
+      // 演出期间挂起看板重绘：看板一旦重绘就会 teardown 掉共用的 Portraits 单例，
+      // 主线立绘会当场消失（用户反馈的"主线里立绘时不时消失"）
+      if (window.heartGameApp && typeof window.heartGameApp.setSuspended === 'function') {
+        window.heartGameApp.setSuspended(true);
+      }
       // 回看：先把进度记下来，退出时还原（用户要的"可以多次回看播放"）
       var replayFrom = replay ? U.int(a.nodeIndex, 0) : null;
       if (replay) {
@@ -1202,6 +1207,10 @@
         setTimeout(function () {
           if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
           if (HG.Portraits) { try { HG.Portraits.teardown(); } catch (e) { } }
+          // 恢复看板重绘：挂起期间的请求会被合并成这一次
+          if (window.heartGameApp && typeof window.heartGameApp.setSuspended === 'function') {
+            window.heartGameApp.setSuspended(false);
+          }
           // 复挂主页立绘：不做这一步，"从主线返回后看板立绘消失"就会一直复现
           remountLobbyPortrait();
         }, 300);
@@ -1347,23 +1356,26 @@
           decideB.onclick = function () { UI.resolveReverseChoice(a, node, body, optsHost, winCard); };
           optsHost.appendChild(decideB);
         } else {
-          // 小手机剧情：先给「在手机里回一句」的界面（沉浸感）
-          if (Script.isPhoneKind(node.kind)) {
+          // 小手机剧情：**只出手机回复界面**，不再把同一批 options 又渲染成普通分支按钮
+          // （用户 2026-09-11：小手机分支会和原本的剧情分支重复，删掉一个）
+          var phoneNode = Script.isPhoneKind(node.kind);
+          if (phoneNode) {
             SubPhone.buildReplyOptions(node, optsHost, function (text) {
               SubPhone.pushUserReply(text, node, a);
               UI.resolveFreeAction(a, node, text, body, optsHost, winCard);
+            }, { hideCandidates: (node.options || []).length > 0 ? false : false });
+          } else {
+            (node.options || []).forEach(function (o) {
+              var b = H.button(o.text, {
+                kind: 'soft', block: true, color: '#8f6a80', soft: 'rgba(255,241,247,0.94)',
+                pad: '11px 13px', size: 12
+              });
+              b.style.textAlign = 'left';
+              b.style.justifyContent = 'flex-start';
+              b.onclick = function () { UI.resolveChoice(a, node, o, body, optsHost, winCard); };
+              optsHost.appendChild(b);
             });
           }
-          (node.options || []).forEach(function (o) {
-            var b = H.button(o.text, {
-              kind: 'soft', block: true, color: '#8f6a80', soft: 'rgba(255,241,247,0.94)',
-              pad: '11px 13px', size: 12
-            });
-            b.style.textAlign = 'left';
-            b.style.justifyContent = 'flex-start';
-            b.onclick = function () { UI.resolveChoice(a, node, o, body, optsHost, winCard); };
-            optsHost.appendChild(b);
-          });
 
           // 自由行动输入框：**总是出现**（用户要的"选项由自己输入"）
           var freeWrap = H.el('div');

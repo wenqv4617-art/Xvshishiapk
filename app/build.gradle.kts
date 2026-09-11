@@ -11,8 +11,8 @@ android {
         applicationId = "com.story.phone"
         minSdk = 26
         targetSdk = 34
-        versionCode = 70
-        versionName = "1.5.39"
+        versionCode = 71
+        versionName = "1.5.40"
     }
 
     signingConfigs {

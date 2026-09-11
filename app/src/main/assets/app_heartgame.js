@@ -411,6 +411,11 @@
     // ------------------------------------------------------------------
 
     render: async function () {
+      // 主线演出期间**挂起重绘**（v1.5.40）：
+      // 主线舞台与主页看板共用同一个 Portraits 单例，而 App.render() → mountPortrait()
+      // 的第一件事就是 Portraits.teardown()。只要演出期间看板重绘一次，
+      // 主线的立绘就被销毁了 —— 这就是"主线里立绘时不时消失"的真正原因。
+      if (App._suspended) { App._resumeRequested = true; return; }
       // 串行化重绘（v1.5.33）：render 是异步的（要读档案、等立绘挂载），
       // 皮肤探测与点击可能**并发**触发两次重绘，两次 DOM 重建交错就会表现为「剧烈闪烁」。
       // 这里保证同一时刻只有一次重绘在跑；期间来的请求合并为「跑完后再来一次」。
@@ -428,6 +433,18 @@
     },
 
     /**
+     * 演出期间挂起 / 恢复看板重绘（v1.5.40）
+     * 挂起期间的 render 请求会被合并成"恢复时再来一次"。
+     */
+    setSuspended: function (on) {
+      App._suspended = !!on;
+      if (!on && App._resumeRequested) {
+        App._resumeRequested = false;
+        App.render();
+      }
+    },
+
+    /**
      * 当前看板视图（v1.5.35）
      *   'lobby'                                  — 主界面看板（立绘 + 热区 + 入口）
      *   'tasks' / 'shop' / 'bond'                — 看板内的独立页面（不再是 body 级抽屉）
@@ -440,11 +457,19 @@
 
     /** 切换看板视图并重绘（幂等：重复点同一个入口只是重绘同一页） */
     setView: function (v, arg) {
+      var nv = v || 'lobby';
+      var na = (arg === undefined) ? null : arg;
+      // 点的是同一个入口、而且这一页已经在屏幕上 -> 什么都不做。
+      // 否则每次点击都整页重建，表现就是用户说的「点一下就闪烁一下」。
+      if (App.view === nv && App.viewArg === na
+        && App._dom && App._dom.root && App._dom.root.parentNode) {
+        return Promise.resolve();
+      }
       // 换页先收掉 body 级浮层：否则抽屉会压在页面上
       // （例如从「抽卡」抽屉里点到右侧入口，页面换了但抽屉还在）
       if (HG && HG.H && HG.H.closeAllLayers) { try { HG.H.closeAllLayers(); } catch (e) { } }
-      App.view = v || 'lobby';
-      App.viewArg = (arg === undefined) ? null : arg;
+      App.view = nv;
+      App.viewArg = na;
       return App.render();
     },
 
@@ -461,7 +486,8 @@
       var H = HG.H, K = HG.K, U = HG.U;
       var spec = HG.Panels.pages[App.view](App.viewArg) || {};
       body.innerHTML = '';
-      var root = H.el('div', { id: 'heartgame-mount', class: 'hg-page hg-rise' });
+      var root = H.el('div', { id: 'heartgame-mount', class: 'hg-page' + (App._painted ? '' : ' hg-rise') });
+      App._painted = true;
       root.style.cssText = 'position:relative; width:100%; height:100%; min-height:560px;'
         + 'display:flex; flex-direction:column; box-sizing:border-box; overflow:hidden;'
         + 'background:linear-gradient(170deg,#FFF7FB 0%,#FBF4FA 52%,#F4F2FB 100%);';
@@ -557,7 +583,10 @@
       var st = K.state;
 
       body.innerHTML = '';
-      var root = H.el('div', { id: 'heartgame-mount', class: 'hg-lobby hg-rise' });
+      // 入场动画只在**首次**绘制时放（v1.5.40）：每次重绘都放一遍，
+      // 观感就是"点一下就闪一下"。
+      var root = H.el('div', { id: 'heartgame-mount', class: 'hg-lobby' + (App._painted ? '' : ' hg-rise') });
+      App._painted = true;
       // 高度写成「100% 撑满 + 不低于 560px」：只看板容器本身撑不住，
       // 祖先链任何一环没有确定高度时 100% 会塌成 0，用户看到的就只是「打开了但一片空白」。
       root.style.cssText = 'position:relative; width:100%; height:100%; min-height:560px;'
@@ -1339,14 +1368,8 @@
             }
           },
           {
-            text: '管理场景', icon: 'portrait', kind: 'soft', soft: '#EDF2FB', color: '#5f7aa8',
-            onClick: function () {
-              H.closeAllLayers();
-              HG.Portraits.openBackgroundManager(function () { App.render(); });
-            }
-          },
-          {
-            text: '上传新背景', icon: 'upload', kind: 'soft', soft: '#FFEBF3', color: '#B0728F',
+            // 「上传新背景」原本和管理场景里的上传是同一个入口，冗余（用户 2026-09-11 指出）
+            text: '管理 / 上传场景', icon: 'portrait', kind: 'soft', soft: '#EDF2FB', color: '#5f7aa8',
             onClick: function () {
               H.closeAllLayers();
               HG.Portraits.openBackgroundManager(function () { App.render(); });

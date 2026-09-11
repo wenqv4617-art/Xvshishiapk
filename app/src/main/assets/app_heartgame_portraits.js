@@ -1916,27 +1916,57 @@
       wrapper.appendChild(cv);
       var ctx = cv.getContext('2d');
 
+      // 现有椭圆版式叠加显示（对照用）：位置与画布完全重合，所以百分比直接就是"立绘坐标"
+      var spotLayer = H.el('div');
+      spotLayer.style.cssText = 'position:absolute; pointer-events:none;';
+      wrapper.appendChild(spotLayer);
+
+      function drawSpots() {
+        spotLayer.innerHTML = '';
+        var saved = K.hotspotsOf(pid);
+        C.HOTSPOTS.forEach(function (s) {
+          if (masks[s.key]) return;              // 涂过的部位不再显示椭圆
+          var g = saved[s.key];
+          if (!g) return;
+          var d = H.el('div');
+          d.style.cssText = 'position:absolute; left:' + (g.x * 100) + '%; top:' + (g.y * 100) + '%;'
+            + 'width:' + (g.rx * 200) + '%; height:' + (g.ry * 200) + '%; transform:translate(-50%,-50%);'
+            + 'border:1px dashed ' + (C.HOTSPOT_COLORS[s.key] || '#D97FA8') + '99; border-radius:50%;'
+            + 'display:flex; align-items:center; justify-content:center;';
+          d.innerHTML = '<span style="font-size:8px; color:#7d7484; background:rgba(255,255,255,0.8);'
+            + 'padding:0 3px; border-radius:6px; white-space:nowrap;">' + U.esc(s.name) + '</span>';
+          spotLayer.appendChild(d);
+        });
+      }
+
       function applyTransform() {
         wrapper.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + zoom + ')';
         zoomLabel.textContent = U.round(zoom * 100, 0) + '%';
       }
 
-      /** 把立绘与 canvas 一起对齐到「图片实际画出来的区域」 */
+      /**
+       * 把立绘与 canvas 一起对齐到「图片实际画出来的区域」。
+       * v1.5.40：改用**这套立绘自己的 fit**（和主界面同一套参数），
+       * 所以掩码是**绑定在立绘上**的 —— 立绘挪到哪、放多大，热区都跟着走。
+       */
       function layoutCanvas() {
         var bw = stage.clientWidth, bh = stage.clientHeight;
         var hasImg = !!(portrait && portrait.src) && !!img.naturalWidth;
         noImg.style.display = hasImg ? 'none' : 'flex';
-        var r = fitRect(bw, bh, hasImg ? img.naturalWidth : 2, hasImg ? img.naturalHeight : 3, null);
+        var r = fitRect(bw, bh, hasImg ? img.naturalWidth : 2, hasImg ? img.naturalHeight : 3,
+          K.portraitFit(pid));
         if (hasImg) {
           img.style.left = r.dx + 'px';
           img.style.top = r.dy + 'px';
           img.style.width = r.dw + 'px';
           img.style.height = r.dh + 'px';
         }
-        cv.style.left = r.dx + 'px';
-        cv.style.top = r.dy + 'px';
-        cv.style.width = r.dw + 'px';
-        cv.style.height = r.dh + 'px';
+        [cv, spotLayer].forEach(function (el) {
+          el.style.left = r.dx + 'px';
+          el.style.top = r.dy + 'px';
+          el.style.width = r.dw + 'px';
+          el.style.height = r.dh + 'px';
+        });
       }
 
       function drawMask() {
@@ -1954,6 +1984,7 @@
           }
         });
         ctx.globalAlpha = 1;
+        drawSpots();
       }
 
       function paintAt(gx, gy) {
@@ -1975,7 +2006,7 @@
       }
 
       // ---------- 指针交互：画笔 / 橡皮擦 / 平移 ----------
-      var painting = false, panning = false, moved = false;
+      var painting = false, panning = false, pinching = false, moved = false;
       var lastPan = null;
 
       cv.onpointerdown = function (ev) {
@@ -2015,14 +2046,15 @@
         drawMask();
       }
 
-      // 空白处拖动 = 平移
+      // 空白处拖动 = 平移（指针事件覆盖鼠标与触屏）
       stage.onpointerdown = function (ev) {
         if (ev.target === cv) return;
         panning = true; lastPan = { x: ev.clientX, y: ev.clientY };
         try { stage.setPointerCapture && stage.setPointerCapture(ev.pointerId); } catch (e) { }
       };
       stage.onpointermove = function (ev) {
-        if (!panning) return;
+        if (!panning || pinch) return;
+        ev.preventDefault();
         panX += ev.clientX - lastPan.x;
         panY += ev.clientY - lastPan.y;
         lastPan = { x: ev.clientX, y: ev.clientY };
@@ -2031,6 +2063,34 @@
       var stopPan = function () { panning = false; };
       stage.onpointerup = stopPan;
       stage.onpointercancel = stopPan;
+      stage.onpointerleave = stopPan;
+
+      // 双指缩放（v1.5.40：用户反馈"双指缩放与空白区域移动没做出来"）
+      var pinch = null;
+      var touchDist = function (t) {
+        var dx = t[0].clientX - t[1].clientX, dy = t[0].clientY - t[1].clientY;
+        return Math.hypot(dx, dy) || 1;
+      };
+      stage.addEventListener('touchstart', function (ev) {
+        if (ev.touches.length === 2) {
+          ev.preventDefault();
+          pinching = true;
+          pinch = { d: touchDist(ev.touches), zoom: zoom, px: panX, py: panY };
+        }
+      }, { passive: false });
+      stage.addEventListener('touchmove', function (ev) {
+        if (ev.touches.length === 2 && pinch) {
+          ev.preventDefault();
+          // 双指既是缩放也是平移（中点位移），和相册的手感一致
+          var d = touchDist(ev.touches);
+          var k = d / pinch.d;
+          zoom = U.clamp(pinch.zoom * k, 0.5, 6);
+          applyTransform();
+        }
+      }, { passive: false });
+      var endPinch = function () { pinch = null; pinching = false; };
+      stage.addEventListener('touchend', endPinch);
+      stage.addEventListener('touchcancel', endPinch);
 
       // 滚轮缩放（桌面端）
       stage.onwheel = function (ev) {
@@ -2155,6 +2215,12 @@
       else img.onload = function () { layoutCanvas(); };
       setTimeout(layoutCanvas, 60);
       window.addEventListener('resize', layoutCanvas);
+      try {
+        if (typeof ResizeObserver === 'function') {
+          var roM = new ResizeObserver(layoutCanvas);
+          roM.observe(stage);
+        }
+      } catch (e) { }
     },
 
     /**
@@ -2358,22 +2424,74 @@
         + 'border:1.2px dashed rgba(217,127,168,0.55); border-radius:10px; pointer-events:none;';
       stage.appendChild(frame);
 
+      // 手机屏幕外框（按主界面真实比例映射，方便判断"到底能不能放到这里"）
+      var phoneFrame = H.el('div');
+      phoneFrame.style.cssText = 'position:absolute; display:none; pointer-events:none;'
+        + 'border:1px solid rgba(140,120,150,0.30); border-radius:12px;';
+      stage.appendChild(phoneFrame);
+
       var badge = H.el('div');
       badge.style.cssText = 'position:absolute; left:8px; bottom:6px; font-size:10px; color:#8b8292;'
         + 'background:rgba(255,255,255,0.86); border-radius:8px; padding:3px 7px; pointer-events:none;';
       stage.appendChild(badge);
 
+      /**
+       * 读主界面**真实**的立绘区几何（v1.5.40）
+       * 用户反馈「调整立绘和背景里面的视图跟主界面显示的视图不一致，主界面下面的空白区域立绘放不上去」——
+       * 原因是这里原来用一个固定的 360px 舞台预览，和主界面的立绘区（top:6%; bottom:104px）
+       * 比例完全不同。现在改成按主界面的真实矩形等比映射，所见即所得。
+       */
+      function lobbyMetrics() {
+        try {
+          var m = document.getElementById('heartgame-mount');
+          var h = document.getElementById('hg-portrait-host');
+          if (!m || !h) return null;
+          var mr = m.getBoundingClientRect(), hr = h.getBoundingClientRect();
+          if (!mr.width || !mr.height) return null;
+          return { w: mr.width, h: mr.height, top: hr.top - mr.top, height: hr.height };
+        } catch (e) { return null; }
+      }
+
       function applyAll() {
         var bf = fits.background;
         bgLayer.style.transform = 'translate(' + (bf.x * 100) + '%,' + (bf.y * 100) + '%) scale(' + bf.scale + ')';
-        var r = fitRect(stage.clientWidth, stage.clientHeight,
-          img.naturalWidth || 1024, img.naturalHeight || 1536, fits.portrait);
-        img.style.left = r.dx + 'px';
-        img.style.top = r.dy + 'px';
+
+        var bw = stage.clientWidth, bh = stage.clientHeight;
+        var met = lobbyMetrics();
+        var k, boxW, boxH, boxX, boxY, hostTop, hostH;
+        if (met) {
+          k = Math.min(bw / met.w, bh / met.h);
+          boxW = met.w * k; boxH = met.h * k;
+          boxX = (bw - boxW) / 2; boxY = (bh - boxH) / 2;
+          hostTop = boxY + met.top * k;
+          hostH = met.height * k;
+        } else {
+          k = 1; boxW = bw; boxH = bh; boxX = 0; boxY = 0;
+          hostTop = bh * 0.06; hostH = bh - hostTop - 60;
+        }
+
+        // 立绘按"主界面立绘区"的尺寸做 contain + 用户的 scale/偏移，位置再平移到那个框里
+        var r = fitRect(boxW, hostH, img.naturalWidth || 1024, img.naturalHeight || 1536, fits.portrait);
+        img.style.left = (boxX + r.dx) + 'px';
+        img.style.top = (hostTop + r.dy) + 'px';
         img.style.width = r.dw + 'px';
         img.style.height = r.dh + 'px';
+
+        // 虚线框 = 主界面立绘区；外面的细框 = 手机屏幕
+        frame.style.left = (boxX + 8) + 'px';
+        frame.style.right = 'auto';
+        frame.style.width = (boxW - 16) + 'px';
+        frame.style.top = hostTop + 'px';
+        frame.style.height = hostH + 'px';
+        phoneFrame.style.left = boxX + 'px';
+        phoneFrame.style.top = boxY + 'px';
+        phoneFrame.style.width = boxW + 'px';
+        phoneFrame.style.height = boxH + 'px';
+        phoneFrame.style.display = met ? 'block' : 'none';
+
         badge.textContent = '立绘 ' + U.round(fits.portrait.scale * 100, 0) + '% · 背景 '
-          + U.round(fits.background.scale * 100, 0) + '%';
+          + U.round(fits.background.scale * 100, 0) + '%'
+          + (met ? '' : '（未能读到主界面尺寸，按默认框预览）');
       }
 
       // 拖动当前选中的那一层
