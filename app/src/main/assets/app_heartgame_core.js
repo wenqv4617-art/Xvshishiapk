@@ -1101,6 +1101,28 @@
 
       overlay.appendChild(panel);
 
+      // 全屏页背景（v1.5.42）：用户要求「抽卡、主线剧情也应该做成单独的全屏页面，
+      // 并且每一个页面都应该有和谐漂亮的生图背景」。
+      // 做法：底部铺一张插画 + 一层**浅色蒙版**（保证原有的浅色内容依然可读），
+      // 既能看到氛围，也不会把文字压在花哨的画面上。
+      if (o.bg) {
+        var bgEl = H.el('div');
+        bgEl.style.cssText = 'position:absolute; inset:0; z-index:0; pointer-events:none;'
+          + 'background-image:url(' + o.bg + '); background-size:cover; background-position:center;';
+        panel.insertBefore(bgEl, panel.firstChild);
+        var scrim = H.el('div');
+        scrim.style.cssText = 'position:absolute; inset:0; z-index:0; pointer-events:none;'
+          + 'background:' + (o.bgScrim || 'linear-gradient(180deg, rgba(255,250,252,0.80) 0%,'
+            + ' rgba(255,247,251,0.90) 46%, rgba(248,246,255,0.94) 100%)') + ';';
+        panel.insertBefore(scrim, bgEl.nextSibling);
+        // 内容浮在背景之上
+        Array.prototype.forEach.call(panel.children, function (ch) {
+          if (ch === bgEl || ch === scrim) return;
+          if (!ch.style.position || ch.style.position === 'static') ch.style.position = 'relative';
+          ch.style.zIndex = '1';
+        });
+      }
+
       function finish(val) {
         if (done) return;
         done = true;

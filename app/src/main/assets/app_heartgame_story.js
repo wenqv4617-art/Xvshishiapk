@@ -1131,8 +1131,11 @@
         title: '主线剧情',
         subtitle: '多篇章并行 · 存档点 · 分支回溯',
         icon: 'book',
-        height: '90%',
+        height: '100%',
         slot: 'story',
+        // 全屏页 + 生图背景（v1.5.42）
+        full: true,
+        bg: 'images/heartgame/stage/bg-dusk.png',
         content: body,
         buttons: [{
           text: 'AI 写一个新篇章', icon: 'sparkle', kind: 'primary', keepOpen: true,

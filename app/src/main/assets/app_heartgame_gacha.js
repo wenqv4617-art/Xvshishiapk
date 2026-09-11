@@ -899,7 +899,8 @@
 
       if (!pool) {
         body.appendChild(H.empty('还没有卡池。点「新卡池」让 AI 按角色设定为你与TA生成一个主题池。', { icon: 'cards' }));
-        return H.sheet({ title: '抽卡工坊', subtitle: '心动卡池', icon: 'cards', height: '88%', slot: 'gacha', content: body });
+        return H.sheet({ title: '抽卡工坊', subtitle: '心动卡池', icon: 'cards', height: '100%', slot: 'gacha',
+          full: true, bg: 'images/heartgame/stage/bg-rain.png', content: body });
       }
 
       // 主卡面（当期 UP 立绘切片）
@@ -1002,6 +1003,9 @@
         icon: 'cards',
         height: '90%',
         slot: 'gacha',
+        // 全屏页 + 生图背景（v1.5.42）
+        full: true,
+        bg: 'images/heartgame/stage/bg-rain.png',
         content: body,
         buttons: [
           {
