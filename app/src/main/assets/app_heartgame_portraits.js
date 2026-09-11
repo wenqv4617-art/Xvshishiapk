@@ -108,112 +108,289 @@
   var Live2DLoader = {
     RUNTIME_KEY: 'hg-live2d-runtime-url',
     SCRIPT_KEY: 'hg-live2d-script-url',
+    SCRIPTS_KEY: 'hg-live2d-scripts',
     _loading: null,
     _ready: false,
+    _lastError: '',
+
+    /**
+     * 官方推荐运行时（**已实测跑通 Cubism 4/5 的 .moc3 模型**，顺序不能变）：
+     *   ① Cubism 4 Core —— 解析 .moc3
+     *   ② PIXI v6       —— 渲染底座
+     *   ③ pixi-live2d-display(cubism4) —— 把模型接进 PIXI
+     *
+     * 重要：网上广为流传的 live2d-widget 的 `live2d.min.js` 是 **Cubism 2 内核**，
+     * 只能读 .moc（Cubism 2.1），**读不了现在绝大多数模型用的 .moc3**。
+     * 用户填了它会看到"检测成功"，但模型永远出不来 —— 这正是之前的坑。
+     */
+    PRESET: [
+      'https://cubism.live2d.com/sdk-web/cubismcore/live2dcubismcore.min.js',
+      'https://cdn.jsdelivr.net/npm/pixi.js@6.5.10/dist/browser/pixi.min.js',
+      'https://cdn.jsdelivr.net/npm/pixi-live2d-display@0.4.0/dist/cubism4.min.js'
+    ],
 
     runtimeUrl: function () {
       try { return localStorage.getItem(Live2DLoader.RUNTIME_KEY) || ''; } catch (e) { return ''; }
     },
     setRuntimeUrl: function (url) {
-      try { localStorage.setItem(Live2DLoader.RUNTIME_KEY, String(url || '')); } catch (e) {}
-      Live2DLoader._ready = false;
-      Live2DLoader._loading = null;
-    },
-    scriptUrl: function () {
-      try { return localStorage.getItem(Live2DLoader.SCRIPT_KEY) || ''; } catch (e) { return ''; }
-    },
-    setScriptUrl: function (url) {
-      try { localStorage.setItem(Live2DLoader.SCRIPT_KEY, String(url || '')); } catch (e) {}
+      try { localStorage.setItem(Live2DLoader.RUNTIME_KEY, String(url || '')); } catch (e) { }
     },
 
-    /** 是否已具备可用运行时 */
-    available: function () {
-      if (typeof window.Live2D === 'undefined' && typeof window.PIXI === 'undefined') return false;
-      if (typeof window.Live2D !== 'undefined' && window.Live2D) return true;
-      return false;
+    /** 运行时脚本地址列表（有序） */
+    scripts: function () {
+      try {
+        var raw = localStorage.getItem(Live2DLoader.SCRIPTS_KEY);
+        if (raw) {
+          var arr = JSON.parse(raw);
+          if (Array.isArray(arr)) {
+            return arr.map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+          }
+        }
+      } catch (e) { }
+      try {
+        var one = localStorage.getItem(Live2DLoader.SCRIPT_KEY) || '';
+        return one.trim() ? [one.trim()] : [];
+      } catch (e) { return []; }
+    },
+    setScripts: function (list) {
+      var arr = (list || []).map(function (s) { return String(s || '').trim(); }).filter(Boolean);
+      try { localStorage.setItem(Live2DLoader.SCRIPTS_KEY, JSON.stringify(arr)); } catch (e) { }
+      Live2DLoader._ready = false;
+      Live2DLoader._loading = null;
+      Live2DLoader._lastError = '';
+    },
+    // —— 兼容旧接口（单地址）——
+    scriptUrl: function () { return Live2DLoader.scripts()[0] || ''; },
+    setScriptUrl: function (u) { Live2DLoader.setScripts(u ? [u] : []); },
+    /** 一键填入推荐运行时 */
+    usePreset: function () { Live2DLoader.setScripts(Live2DLoader.PRESET); return Live2DLoader.PRESET.slice(); },
+
+    /**
+     * 当前实际可用的运行时形态
+     *   'cubism4' = PIXI + pixi-live2d-display（能读 .moc3，现代模型走这条）
+     *   'cubism2' = 老式 Live2D.loadModel + Live2DModelWebGL（只能读 .moc）
+     *   'none'
+     */
+    runtime: function () {
+      if (window.PIXI && window.PIXI.live2d && window.PIXI.live2d.Live2DModel) return 'cubism4';
+      if (window.Live2D && typeof window.Live2D.loadModel === 'function'
+        && typeof window.Live2DModelWebGL === 'function') return 'cubism2';
+      return 'none';
+    },
+
+    available: function () { return Live2DLoader.runtime() !== 'none'; },
+
+    /** 诊断快照：面板直接显示，避免再出现"提示成功但没立绘" */
+    diagnose: function () {
+      var gl = false;
+      try {
+        var c = document.createElement('canvas');
+        gl = !!(c.getContext('webgl') || c.getContext('experimental-webgl'));
+      } catch (e) { }
+      return {
+        runtime: Live2DLoader.runtime(),
+        scripts: Live2DLoader.scripts(),
+        hasCubismCore: typeof window.Live2DCubismCore !== 'undefined',
+        hasPixi: typeof window.PIXI !== 'undefined',
+        hasPixiLive2d: !!(window.PIXI && window.PIXI.live2d && window.PIXI.live2d.Live2DModel),
+        hasCubism2: typeof window.Live2D !== 'undefined',
+        webgl: gl,
+        error: Live2DLoader._lastError
+      };
     },
 
     /**
-     * 按需加载运行时脚本（可选）。失败只返回 false，绝不抛错。
-     * @returns {Promise<boolean>}
+     * 同一个文件的多路镜像。国内网络下 jsdelivr 经常抽风，
+     * 主地址失败就依次换 fastly / unpkg（三个都是同一份 npm 包）。
      */
+    mirrorsOf: function (url) {
+      var out = [url];
+      if (/^https:\/\/cdn\.jsdelivr\.net\//.test(url)) {
+        out.push(url.replace('https://cdn.jsdelivr.net/', 'https://fastly.jsdelivr.net/'));
+        out.push(url.replace('https://cdn.jsdelivr.net/npm/', 'https://unpkg.com/'));
+      }
+      return out;
+    },
+
+    /** 逐个按顺序加载脚本；任何一步失败都只记录原因，不抛错 */
     ensure: function () {
       if (Live2DLoader.available()) { Live2DLoader._ready = true; return Promise.resolve(true); }
       if (Live2DLoader._loading) return Live2DLoader._loading;
-      var scriptUrl = Live2DLoader.scriptUrl();
-      if (!scriptUrl) return Promise.resolve(false);
-      Live2DLoader._loading = new Promise(function (resolve) {
-        var s = document.createElement('script');
-        var done = false;
-        var finish = function (ok) {
-          if (done) return; done = true;
-          Live2DLoader._ready = !!ok;
-          resolve(!!ok);
+      var list = Live2DLoader.scripts();
+      if (!list.length) {
+        Live2DLoader._lastError = '还没有填运行时地址';
+        return Promise.resolve(false);
+      }
+      var loadAt = function (url) {
+        var cands = Live2DLoader.mirrorsOf(url);
+        var tryOne = function (i) {
+          if (i >= cands.length) return Promise.resolve(false);
+          return new Promise(function (resolve) {
+            var s = document.createElement('script');
+            var done = false;
+            var fin = function (ok) { if (done) return; done = true; resolve(ok); };
+            s.src = cands[i];
+            s.async = false;
+            s.onload = function () { fin(true); };
+            s.onerror = function () { fin(false); };
+            setTimeout(function () { fin(true); }, 15000);   // 超时也放行，交给最终 available() 判定
+            document.head.appendChild(s);
+          }).then(function (ok) { return ok ? true : tryOne(i + 1); });
         };
-        s.src = scriptUrl;
-        s.async = true;
-        s.onload = function () { finish(Live2DLoader.available()); };
-        s.onerror = function () { console.warn('[心动游戏] Live2D 运行时加载失败：' + scriptUrl); finish(false); };
-        setTimeout(function () { finish(Live2DLoader.available()); }, 12000);
-        document.head.appendChild(s);
+        return tryOne(0).then(function (ok) {
+          if (!ok) Live2DLoader._lastError = '脚本加载失败（主地址与镜像都试过）-> ' + url;
+          return ok;
+        });
+      };
+      var chain = Promise.resolve();
+      list.forEach(function (u) { chain = chain.then(function () { return loadAt(u); }); });
+      Live2DLoader._loading = chain.then(function () {
+        Live2DLoader._ready = Live2DLoader.available();
+        if (!Live2DLoader._ready) {
+          Live2DLoader._lastError = Live2DLoader._lastError
+            || '脚本加载完了，但没有检测到 Live2D 全局对象（地址可能不是 Live2D 运行时）';
+        } else {
+          Live2DLoader._lastError = '';
+        }
+        return Live2DLoader._ready;
       });
       return Live2DLoader._loading;
     },
 
     /**
-     * 尝试在容器里创建 Live2D 实例。
-     * 兼容两种常见形态：
-     *   · Cubism 2 风格：window.Live2D.loadModel + Live2DModelWebGL（pixi-live2d-display 的旧 API）
-     *   · 自定义工厂：window.HeartGameLive2DFactory(canvas, modelUrl) 返回 {update, destroy}
+     * 在容器里创建 Live2D 实例。
+     * @param {HTMLCanvasElement} canvas
+     * @param {string} modelUrl 模型入口（model3.json / model.json 的地址）
+     * @param {HTMLElement} host 容器（用于自适应尺寸）
      * @returns {Promise<object|null>} 实例或 null（null 表示回落静态立绘）
      */
-    mount: function (canvas, modelUrl) {
+    mount: function (canvas, modelUrl, host) {
       return Live2DLoader.ensure().then(function (ok) {
-        if (!ok || !modelUrl) return null;
-        // ① 用户自带工厂优先
-        if (typeof window.HeartGameLive2DFactory === 'function') {
-          try {
-            var inst = window.HeartGameLive2DFactory(canvas, modelUrl);
-            if (inst && typeof inst.update === 'function') return inst;
-          } catch (e) { console.warn('[心动游戏] 自定义 Live2D 工厂失败:', e); }
+        if (!ok || !modelUrl) {
+          if (!modelUrl) Live2DLoader._lastError = '这个立绘没有模型地址';
+          return null;
         }
-        // ② Cubism 2 官方 API
-        try {
-          if (window.Live2D && typeof window.Live2D.loadModel === 'function') {
-            var model = window.Live2D.loadModel(modelUrl);
-            if (!model) return null;
-            var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
-            if (!gl) return null;
-            var glModel = new window.Live2DModelWebGL(canvas);
-            glModel.loadModel(model);
-            var raf = null, alive = true;
-            var start = Date.now();
-            var tick = function () {
-              if (!alive) return;
-              var t = (Date.now() - start) / 1000;
-              try {
-                glModel.setParamFloat('PARAM_ANGLE_X', 12 * Math.sin(t * 0.5));
-                glModel.setParamFloat('PARAM_ANGLE_Y', 6 * Math.sin(t * 0.42));
-                glModel.setParamFloat('PARAM_BREATH', 0.5 + 0.5 * Math.sin(t * 1.1));
-              } catch (e) {}
-              try { glModel.updateParam(); glModel.update(); } catch (e) {}
-              raf = requestAnimationFrame(tick);
-            };
-            tick();
-            return {
-              kind: 'live2d',
-              update: function () { },
-              setExpression: function () { },
-              destroy: function () {
-                alive = false;
-                if (raf) cancelAnimationFrame(raf);
-                try { glModel.releaseModel && glModel.releaseModel(); } catch (e) {}
-              }
-            };
-          }
-        } catch (e) { console.warn('[心动游戏] Cubism 实例创建失败:', e); }
+        var rt = Live2DLoader.runtime();
+        if (rt === 'cubism4') return Live2DLoader._mountCubism4(canvas, modelUrl, host);
+        if (rt === 'cubism2') return Live2DLoader._mountCubism2(canvas, modelUrl);
+        Live2DLoader._lastError = '没有可用的 Live2D 运行时';
+        return null;
+      }).catch(function (e) {
+        Live2DLoader._lastError = (e && e.message) ? e.message : String(e);
+        console.warn('[心动游戏] Live2D 挂载失败:', e);
         return null;
       });
+    },
+
+    /**
+     * Cubism 4/5：PIXI + pixi-live2d-display
+     * 定位用 anchor(0.5, 1)（底部中心对齐），正是看板要的"站在底边、水平居中"。
+     * 注意 anchor 必须在 scale 之前设 —— 模型加载后 width/height 是**未缩放**的，
+     * 设完 scale 再读就会拿到缩放后的值，位置会算错（我实测踩过：模型被放到画布外面）。
+     */
+    _mountCubism4: async function (canvas, modelUrl, host) {
+      var PIXI = window.PIXI;
+      var w = (host && host.clientWidth) || canvas.clientWidth || 390;
+      var h = (host && host.clientHeight) || canvas.clientHeight || 700;
+      var app = new PIXI.Application({
+        view: canvas,
+        width: Math.max(1, w),
+        height: Math.max(1, h),
+        backgroundAlpha: 0,
+        antialias: true,
+        autoStart: true,
+        autoDensity: true,
+        resolution: Math.min(window.devicePixelRatio || 1, 2)
+      });
+      var model = await PIXI.live2d.Live2DModel.from(modelUrl, { autoInteract: false });
+      var natW = model.width, natH = model.height;   // 未缩放尺寸，先存下来
+      model.anchor.set(0.5, 1);
+      app.stage.addChild(model);
+
+      var fit = function () {
+        var cw = (host && host.clientWidth) || w;
+        var ch = (host && host.clientHeight) || h;
+        if (!cw || !ch) return;
+        try { app.renderer.resize(cw, ch); } catch (e) { }
+        var s = (ch / natH) * 0.99;
+        model.scale.set(s);
+        model.position.set(cw / 2, ch);
+      };
+      fit();
+
+      // 容器尺寸变化（横竖屏 / 工具栏高度变化）时重新贴合
+      var onResize = function () { fit(); };
+      window.addEventListener('resize', onResize);
+      try {
+        if (typeof ResizeObserver === 'function' && host) {
+          var ro = new ResizeObserver(function () { fit(); });
+          ro.observe(host);
+          onResize._ro = ro;
+        }
+      } catch (e) { }
+
+      Live2DLoader._lastError = '';
+      return {
+        kind: 'live2d',
+        engine: 'cubism4',
+        app: app,
+        model: model,
+        update: function () { },
+        refit: fit,
+        /** 表情名与模型里的 exp3 文件名一致（导入时已自动识别） */
+        setExpression: function (name) {
+          try { if (name) model.expression(name); } catch (e) { }
+        },
+        motion: function (group, index) {
+          try { model.motion(group || 'Idle', index || 0); } catch (e) { }
+        },
+        destroy: function () {
+          try { window.removeEventListener('resize', onResize); } catch (e) { }
+          try { if (onResize._ro) onResize._ro.disconnect(); } catch (e) { }
+          try { model.destroy(); } catch (e) { }
+          try { app.destroy(false, { children: true, texture: false }); } catch (e) { }
+        }
+      };
+    },
+
+    /** Cubism 2（老式 .moc 模型）：保留原有实现 */
+    _mountCubism2: function (canvas, modelUrl) {
+      try {
+        var model = window.Live2D.loadModel(modelUrl);
+        if (!model) { Live2DLoader._lastError = 'Cubism2 无法解析这个模型（.moc3 模型需要 Cubism4 运行时）'; return null; }
+        var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        if (!gl) { Live2DLoader._lastError = '没有 WebGL 上下文'; return null; }
+        var glModel = new window.Live2DModelWebGL(canvas);
+        glModel.loadModel(model);
+        var raf = null, alive = true;
+        var start = Date.now();
+        var tick = function () {
+          if (!alive) return;
+          var t = (Date.now() - start) / 1000;
+          try {
+            glModel.setParamFloat('PARAM_ANGLE_X', 12 * Math.sin(t * 0.5));
+            glModel.setParamFloat('PARAM_ANGLE_Y', 6 * Math.sin(t * 0.42));
+            glModel.setParamFloat('PARAM_BREATH', 0.5 + 0.5 * Math.sin(t * 1.1));
+          } catch (e) { }
+          try { glModel.updateParam(); glModel.update(); } catch (e) { }
+          raf = requestAnimationFrame(tick);
+        };
+        tick();
+        return {
+          kind: 'live2d',
+          engine: 'cubism2',
+          update: function () { },
+          setExpression: function () { },
+          destroy: function () {
+            alive = false;
+            if (raf) cancelAnimationFrame(raf);
+            try { glModel.releaseModel && glModel.releaseModel(); } catch (e) { }
+          }
+        };
+      } catch (e) {
+        Live2DLoader._lastError = (e && e.message) ? e.message : String(e);
+        return null;
+      }
     }
   };
 
@@ -298,6 +475,80 @@
     },
 
     /**
+     * 包里没有 model3.json 时，按实际文件合成一份。
+     * （VTube Studio 导出的模型包经常只有 moc3 + 贴图 + physics3/exp3/cdi3）
+     * 合成不出来就返回 null —— 由调用方回落到「用包里最大的一张图当静态立绘」。
+     * @returns {Promise<{path:string, json:object}|null>}
+     */
+    _synthModel3: async function (entries, mocPath) {
+      var dir = ZipModel._dirOf(mocPath);
+      var inDir = entries.filter(function (e) { return ZipModel._dirOf(e.path) === dir; });
+      var base = function (p) { return String(p).split('/').pop(); };
+      var mocName = base(mocPath);
+      var stem = mocName.replace(/\.moc3$/i, '');
+
+      var imgs = inDir.filter(function (e) { return /\.(png|jpe?g|webp)$/i.test(e.path); });
+      var texNamed = imgs.filter(function (e) { return /^texture[_\-]?\d*\.(png|jpe?g|webp)$/i.test(base(e.path)); })
+        .sort(function (a, b) { return base(a.path).localeCompare(base(b.path)); });
+      // 与模型同名的 png 通常是 VTube Studio 的预览图而不是贴图，优先排除
+      var textures = texNamed.length ? texNamed
+        : imgs.filter(function (e) { return base(e.path).replace(/\.[^.]+$/, '') !== stem; });
+      if (!textures.length) textures = imgs;
+      if (!textures.length) return null;
+
+      var one = function (re) {
+        var f = inDir.filter(function (e) { return re.test(e.path); })[0];
+        return f ? base(f.path) : null;
+      };
+
+      var fr = { Moc: mocName, Textures: textures.map(function (e) { return base(e.path); }) };
+      var phys = one(/\.physics3\.json$/i); if (phys) fr.Physics = phys;
+      var pose = one(/\.pose3\.json$/i); if (pose) fr.Pose = pose;
+      var cdiName = one(/\.cdi3\.json$/i); if (cdiName) fr.DisplayInfo = cdiName;
+
+      var exps = inDir.filter(function (e) { return /\.exp3\.json$/i.test(e.path); })
+        .sort(function (a, b) { return base(a.path).localeCompare(base(b.path)); });
+      if (exps.length) {
+        fr.Expressions = exps.map(function (e) {
+          return { Name: base(e.path).replace(/\.exp3\.json$/i, ''), File: base(e.path) };
+        });
+      }
+
+      var motions = inDir.filter(function (e) { return /\.motion3\.json$/i.test(e.path); });
+      if (motions.length) {
+        var groups = {};
+        motions.forEach(function (e) {
+          var n = base(e.path).replace(/\.motion3\.json$/i, '');
+          var g = n.replace(/[_-]?\d+$/, '') || 'Idle';
+          (groups[g] = groups[g] || []).push({ File: base(e.path) });
+        });
+        fr.Motions = Object.keys(groups).map(function (g) { return { File: groups[g] }; });
+      }
+
+      // 从 cdi3.json 读出 EyeBlink / LipSync 的参数名，眨眼与口型才正常
+      var groupsCfg = [];
+      var cdiEntry = inDir.filter(function (e) { return /\.cdi3\.json$/i.test(e.path); })[0];
+      if (cdiEntry && cdiEntry.entry && cdiEntry.entry.async) {
+        try {
+          var cdi = JSON.parse(await cdiEntry.entry.async('string'));
+          var gp = {};
+          (cdi.Parameters || []).forEach(function (p) {
+            if (!p || !p.GroupId || !p.Id) return;
+            (gp[p.GroupId] = gp[p.GroupId] || []).push(p.Id);
+          });
+          ['EyeBlink', 'LipSync'].forEach(function (g) {
+            if (gp[g] && gp[g].length) groupsCfg.push({ Target: 'Parameter', Name: g, Ids: gp[g] });
+          });
+        } catch (e) { }
+      }
+
+      return {
+        path: dir + stem + '.model3.json',
+        json: { Version: 3, FileReferences: fr, Groups: groupsCfg, HitAreas: [] }
+      };
+    },
+
+    /**
      * 解析一个 zip 模型包
      * @param {File|Blob} file
      * @param {Function} onProgress (stage, detail)
@@ -334,11 +585,33 @@
         files.push({ path: e.path, url: u, size: typed.size });
       }
 
-      // 找模型入口：优先 model3.json，其次任何 .json
-      var jsonCandidates = entries.filter(function (e) { return /\.model3\.json$/i.test(e.path); });
-      if (!jsonCandidates.length) jsonCandidates = entries.filter(function (e) { return /\.json$/i.test(e.path); });
-      // 优先选「同目录下存在 .moc3」的那个 json
+      // 找模型入口：优先 model3.json
       var mocPaths = entries.filter(function (e) { return /\.moc3$/i.test(e.path); }).map(function (e) { return e.path; });
+      var jsonCandidates = entries.filter(function (e) { return /\.model3\.json$/i.test(e.path); });
+
+      // ★ 没有 model3.json 时自动合成一份。
+      //   VTube Studio 导出的模型包经常只有 moc3 + 贴图 + physics3/exp3/cdi3，
+      //   用户导入后只会看到「没有立绘」——之前就是掉进这里（还会误选 xyplugin.json 之类的杂项 json）。
+      var synthesized = false;
+      if (!jsonCandidates.length && mocPaths.length) {
+        report('synthesizing', '没有 model3.json，正在按包内文件自动生成模型描述…');
+        var synth = await ZipModel._synthModel3(entries, mocPaths[0]);
+        if (synth) {
+          var synthEntry = { path: synth.path, _json: synth.json, synthesized: true };
+          entries.push(synthEntry);
+          jsonCandidates = [synthEntry];
+          synthesized = true;
+        }
+      }
+      // 兜底：仍然没有就退回到「任何 .json」，但**排除** VTube Studio 的附属文件，
+      // 否则会把 items_pinned_to_model.json 当成模型入口（点了没反应，也没有任何报错）
+      if (!jsonCandidates.length) {
+        jsonCandidates = entries.filter(function (e) {
+          if (!/\.json$/i.test(e.path)) return false;
+          return !/(^|\/)(items_pinned_to_model|.*\.xyplugin|.*\.vtube)\.json$/i.test(e.path);
+        });
+      }
+      // 优先选「同目录下存在 .moc3」的那个 json
       var jsonEntry = null;
       for (var j = 0; j < jsonCandidates.length; j++) {
         var dir = ZipModel._dirOf(jsonCandidates[j].path);
@@ -347,12 +620,12 @@
       if (!jsonEntry) jsonEntry = jsonCandidates[0];
       if (!jsonEntry) {
         throw new Error(mocPaths.length
-          ? '找到了 moc3 模型文件，但缺少配套的 model3.json（Live2D 需要它来描述模型结构）'
+          ? '找到了 moc3 模型文件，但没能生成模型描述（请确认包里有贴图 png）'
           : '这个压缩包里没有 .moc3 模型文件，可能不是 Live2D 模型包');
       }
 
       report('rewriting', '正在改写模型内的资源引用…');
-      var jsonText = await jsonEntry.entry.async('string');
+      var jsonText = jsonEntry._json ? JSON.stringify(jsonEntry._json) : await jsonEntry.entry.async('string');
       var model = null;
       try { model = JSON.parse(jsonText); } catch (e) { model = null; }
       if (!model) throw new Error('model3.json 解析失败（文件可能已损坏）');
@@ -405,6 +678,12 @@
         entryUrl: entryUrl,
         fileCount: files.length,
         mocFound: mocPaths.length > 0,
+        synthesized: synthesized,
+        textureCount: (model && model.FileReferences && Array.isArray(model.FileReferences.Textures))
+          ? model.FileReferences.Textures.length : 0,
+        // 包里所有图片（按体积从大到小）：模型跑不起来时用它兜底成静态立绘
+        images: files.filter(function (f) { return /\.(png|jpe?g|webp)$/i.test(f.path); })
+          .sort(function (a, b) { return b.size - a.size; }),
         mapped: mapped,
         missing: missing,
         files: files,
@@ -420,6 +699,149 @@
         try { URL.revokeObjectURL(record.urls[k]); n++; } catch (e) { }
       });
       return n;
+    },
+
+    /**
+     * 把 blob URL 的图片压缩成 data URL（复用桌面模块的编码器）。
+     * 用于「压缩包不能用 -> 拿包里的一张图当静态立绘」的兜底。
+     */
+    _blobUrlToDataUrl: async function (url, name, maxPx) {
+      try {
+        var blob = await (await fetch(url)).blob();
+        var enc = window.tileEncodeImage;
+        if (typeof enc !== 'function') return '';
+        var input = blob;
+        try { input = new File([blob], name || 'fallback.png', { type: blob.type || 'image/png' }); } catch (e) { }
+        var out = await enc(input, maxPx || 1400);
+        return out || '';
+      } catch (e) {
+        console.warn('[心动游戏] 兜底图片编码失败:', e);
+        return '';
+      }
+    },
+
+    /**
+     * 模型没能驱动起来时，说清**到底缺什么**（而不是笼统的"已导入"）。
+     * 顺带给出包内图片兜底成静态立绘的选项。
+     */
+    _reportLive2DFailure: function (parsed, created) {
+      var d = Live2DLoader.diagnose();
+      var lines = [];
+      if (!d.webgl) lines.push('· 这台设备的 WebView 没有可用的 WebGL（Live2D 必须要 WebGL）');
+      if (d.runtime === 'none') {
+        if (!d.scripts.length) {
+          lines.push('· 还没有配置 Live2D 运行时代码（本页下方「Live2D 运行时」，点一下"使用推荐运行时"即可）');
+        } else if (d.hasCubism2 && !d.hasPixiLive2d) {
+          lines.push('· 你填的是 **Cubism 2 内核**（例如 live2d-widget 的 live2d.min.js）——');
+          lines.push('  它只能读老式 .moc 模型，**读不了 .moc3**，所以会"检测成功"但永远没有立绘');
+          lines.push('· 换成"使用推荐运行时"（Cubism4 Core + PIXI + pixi-live2d-display）就能驱动 .moc3');
+        } else {
+          lines.push('· 运行时代码没加载成功，请检查地址是否可访问');
+        }
+      }
+      if (d.error) lines.push('· 具体错误：' + d.error);
+      if (parsed && parsed.missing && parsed.missing.length) {
+        lines.push('· 包内缺少这些被引用的文件：' + parsed.missing.slice(0, 5).join('、'));
+      }
+
+      var hasImg = !!(parsed && parsed.images && parsed.images.length);
+      H.modal({
+        title: '模型已存好，但没能驱动',
+        icon: 'info', accent: '#9FB3D9',
+        message: '这个模型包已经收下了（' + (parsed ? parsed.fileCount : 0) + ' 个文件'
+          + (parsed && parsed.synthesized ? '，model3.json 是自动生成的' : '') + '），\n'
+          + '但现在还画不出来，原因：\n\n' + (lines.length ? lines.join('\n') : '· 未知原因（可把这条提示反馈给开发者）')
+          + (hasImg ? '\n\n要不要先用包里最大的一张图当静态立绘？之后修好运行时随时可以换回模型。' : ''),
+        okText: hasImg ? '用图片兜底' : '知道了',
+        cancelText: hasImg ? '先不用' : null
+      }).then(function (useImg) {
+        if (!useImg || !hasImg) return;
+        Portraits._applyImageFallback(parsed.images[0], parsed.name, created);
+      });
+    },
+
+    /** 把包内的一张图变成一张静态立绘（并且它是新的当前立绘） */
+    _applyImageFallback: async function (imgFile, baseName, createdPortrait) {
+      if (!imgFile || !imgFile.url) { H.toast('包里没有可用的图片'); return; }
+      H.toast('正在把图片转成立绘…');
+      var dataUrl = await Portraits._blobUrlToDataUrl(imgFile.url, imgFile.path.split('/').pop(), 1400);
+      if (!dataUrl) { H.toast('这张图无法解码，换一张试试'); return; }
+      var p = K.addPortrait({
+        name: (baseName || '模型包') + ' · 图片',
+        kind: 'image',
+        src: dataUrl,
+        tags: ['zip 兜底']
+      });
+      // 兜底立绘要立刻用上，否则用户看不到任何变化
+      if (p && p.id) K.setCurrentPortrait(p.id);
+      H.toast('已用包内图片生成静态立绘');
+      if (window.heartGameApp && typeof window.heartGameApp.render === 'function') {
+        try { window.heartGameApp.render(); } catch (e) { }
+      }
+    },
+
+    /** 压缩包整个读不了时的兜底：先告诉用户哪里不对，再问要不要拿图 */
+    _offerImageFallback: function (file, reason, onChanged) {
+      H.modal({
+        title: '这个压缩包用不了',
+        icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
+        message: reason + '\n\n可以先用包里的一张图当静态立绘（需要你自己再选一次那个 zip）。',
+        okText: '选图兜底',
+        cancelText: '算了'
+      }).then(function (go) {
+        if (!go) return;
+        Portraits._pickImageFromZip(onChanged);
+      });
+    },
+
+    /** 让用户重新选一个 zip，并把里面最大的一张图取出来当静态立绘 */
+    _pickImageFromZip: function (onChanged) {
+      Portraits.pickZip(async function (file) {
+        try {
+          var haveLib = await ZipModel.ensure();
+          if (!haveLib) { H.toast('解压组件不可用（网络问题）'); return; }
+          var zip = await window.JSZip.loadAsync(file);
+          var best = null;
+          var list = [];
+          zip.forEach(function (path, entry) {
+            if (entry.dir) return;
+            var p = ZipModel._norm(path);
+            if (!/\.(png|jpe?g|webp)$/i.test(p)) return;
+            list.push({ path: p, entry: entry });
+          });
+          if (!list.length) { H.toast('这个包里一张图片都没有'); return; }
+          // 逐张读体积，取最大的一张（通常是贴图，分辨率最高）
+          for (var i = 0; i < list.length; i++) {
+            var blob = await list[i].entry.async('blob');
+            if (!best || blob.size > best.size) best = { path: list[i].path, blob: blob, size: blob.size };
+            if (list.length > 24 && i > 24) break;   // 超大包只扫前 25 张，够用了
+          }
+          if (!best) { H.toast('没找到可用的图片'); return; }
+          var enc = window.tileEncodeImage;
+          if (typeof enc !== 'function') { H.toast('图片编码器不可用'); return; }
+          var input = best.blob;
+          try { input = new File([best.blob], best.path.split('/').pop(), { type: best.blob.type || 'image/png' }); } catch (e) { }
+          var dataUrl = await enc(input, 1400);
+          if (!dataUrl) { H.toast('这张图无法解码'); return; }
+          var p = K.addPortrait({
+            name: file.name.replace(/\.zip$/i, '') + ' · 图片',
+            kind: 'image',
+            src: dataUrl,
+            tags: ['zip 兜底']
+          });
+          if (p && p.id) K.setCurrentPortrait(p.id);
+          H.toast('已用包里最大的那张图生成立绘');
+          if (typeof onChanged === 'function') onChanged();
+          if (window.heartGameApp && typeof window.heartGameApp.render === 'function') {
+            try { window.heartGameApp.render(); } catch (e) { }
+          }
+        } catch (e) {
+          H.modal({
+            title: '读不出来', icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
+            message: (e && e.message) ? e.message : String(e)
+          });
+        }
+      });
     }
   };
 
@@ -775,9 +1197,11 @@
         var canvas = H.el('canvas');
         canvas.style.cssText = 'position:absolute; inset:0; width:100%; height:100%;';
         host.appendChild(canvas);
-        var inst = await Live2DLoader.mount(canvas, portrait.modelUrl);
+        var inst = await Live2DLoader.mount(canvas, portrait.modelUrl, host);
         if (inst) {
           Portraits.live2d = inst;
+          // Live2D 的画面尺寸由引擎自己算，容器尺寸变化时让它重新贴合
+          if (typeof inst.refit === 'function') { try { inst.refit(); } catch (e) { } }
           Portraits.pool.acquire('live2d:' + portrait.id, { kind: 'live2d', url: portrait.modelUrl, instance: inst });
           // Live2D 也要能戳：叠一层热区
           var rl = new SpriteRenderer(o);
@@ -1011,42 +1435,109 @@
           var r = H.el('div');
           r.style.cssText = 'background:rgba(255,255,255,0.7); border:1px solid rgba(183,158,220,0.25);'
             + 'border-radius:14px; padding:11px 12px; margin-bottom:10px;';
-          r.innerHTML = '<div style="font-size:11px; line-height:1.7; color:#8b8292;">'
-            + '项目不内置 Cubism 运行时（体积与授权原因）。填入运行时脚本地址后，'
-            + 'Live2D 模型包即可直接驱动；留空则自动使用静态立绘 + CSS 物理动效，功能不受影响。'
-            + '</div>';
-          var input = H.el('input', { type: 'text', placeholder: '例如 https://your-host/live2d.min.js' });
-          input.value = Live2DLoader.scriptUrl();
-          input.style.cssText = 'width:100%; box-sizing:border-box; margin-top:9px; border-radius:11px;'
-            + 'border:1px solid rgba(183,158,220,0.35); padding:8px 10px; font-size:11.5px; color:#5c4450;'
-            + 'background:#fff; outline:none; font-family:inherit;';
-          r.appendChild(input);
+
+          var intro = H.el('div');
+          intro.style.cssText = 'font-size:11px; line-height:1.72; color:#8b8292;';
+          intro.innerHTML = '项目不内置 Cubism 运行时（体积与授权原因），但可以一键配上。<br>'
+            + '需要 <b>3 个</b>脚本、顺序不能换：<b>Cubism4 Core</b> → <b>PIXI</b> → <b>pixi-live2d-display</b>。<br>'
+            + '<span style="color:#c2607c;">注意：网上常见的 live2d-widget 的 live2d.min.js 是 Cubism&nbsp;2 内核，'
+            + '只能读老式 .moc，读不了 .moc3，会导致"检测成功但永远没有立绘"。</span>';
+          r.appendChild(intro);
+
+          var ta = H.el('textarea', { rows: 4, placeholder: '每行一个地址（按顺序加载）' });
+          ta.value = Live2DLoader.scripts().join('\n');
+          ta.style.cssText = 'width:100%; box-sizing:border-box; margin-top:9px; border-radius:11px;'
+            + 'border:1px solid rgba(183,158,220,0.35); padding:8px 10px; font-size:11px; color:#5c4450;'
+            + 'background:#fff; outline:none; font-family:ui-monospace,Menlo,Consolas,monospace; line-height:1.6;'
+            + 'resize:vertical;';
+          r.appendChild(ta);
+
+          // 当前状态：到底能不能用、缺什么，直接写在面板上
+          var status = H.el('div');
+          status.style.cssText = 'margin-top:9px; font-size:10.6px; line-height:1.7; color:#7d7484;'
+            + 'background:rgba(243,238,255,0.7); border-radius:11px; padding:8px 10px;';
+          var renderStatus = function () {
+            var d = Live2DLoader.diagnose();
+            var label = d.runtime === 'cubism4' ? 'Cubism4 运行时已就绪（可驱动 .moc3）'
+              : d.runtime === 'cubism2' ? '只检测到 Cubism2 内核（只能读 .moc，读不了 .moc3）'
+                : '运行时未就绪';
+            status.innerHTML = '<b>当前状态：</b>' + label + '<br>'
+              + 'WebGL：' + (d.webgl ? '可用' : '不可用') + ' · '
+              + 'Cubism4 Core：' + (d.hasCubismCore ? '已加载' : '无') + ' · '
+              + 'PIXI：' + (d.hasPixi ? '已加载' : '无') + ' · '
+              + 'pixi-live2d：' + (d.hasPixiLive2d ? '已加载' : '无');
+            if (d.error) {
+              var errEl = H.el('div');
+              errEl.style.cssText = 'color:#c2607c; margin-top:4px; word-break:break-all;';
+              errEl.textContent = '最近错误：' + d.error;
+              status.appendChild(errEl);
+            }
+          };
+          renderStatus();
+          r.appendChild(status);
+
           var bar = H.el('div');
-          bar.style.cssText = 'display:flex; gap:8px; margin-top:9px;';
-          var saveB = H.button('保存运行时地址', { kind: 'soft', block: true, soft: '#F3EEFF', color: '#7d63a8' });
+          bar.style.cssText = 'display:flex; gap:8px; margin-top:9px; flex-wrap:wrap;';
+          var presetB = H.button('使用推荐运行时', { kind: 'primary', block: true, icon: 'sparkle' });
+          presetB.onclick = function () {
+            Live2DLoader.usePreset();
+            ta.value = Live2DLoader.scripts().join('\n');
+            H.toast('已填入推荐运行时，正在加载…');
+            Live2DLoader.ensure().then(function (ok) {
+              renderStatus();
+              H.toast(ok ? '运行时已就绪，回到看板即可看到模型' : '运行时没加载成功，请检查网络');
+              refresh();
+            });
+          };
+          var saveB = H.button('保存地址', { kind: 'soft', block: true, soft: '#F3EEFF', color: '#7d63a8' });
           saveB.onclick = function () {
-            Live2DLoader.setScriptUrl(input.value.trim());
-            H.toast(input.value.trim() ? '已保存，重新进入看板生效' : '已清空，将使用静态立绘');
+            Live2DLoader.setScripts(ta.value.split('\n'));
+            H.toast(Live2DLoader.scripts().length ? '已保存 ' + Live2DLoader.scripts().length + ' 个地址' : '已清空');
+            renderStatus();
           };
           var testB = H.button('检测', { kind: 'outline', color: '#7d63a8', border: 'rgba(183,158,220,0.5)', pad: '9px 14px' });
           testB.onclick = async function () {
             testB.textContent = '检测中…';
-            var ok = await Live2DLoader.ensure();
+            if (ta.value.trim() !== Live2DLoader.scripts().join('\n')) Live2DLoader.setScripts(ta.value.split('\n'));
+            await Live2DLoader.ensure();
             testB.textContent = '检测';
+            renderStatus();
+            var d = Live2DLoader.diagnose();
             H.modal({
-              title: ok ? '运行时可用' : '运行时不可用',
-              icon: ok ? 'check' : 'info',
-              accent: ok ? '#7d63a8' : '#9FB3D9',
-              message: ok
-                ? '检测到 Live2D 全局对象，Live2D 模型包现在可以驱动。'
-                : '未检测到 Live2D 全局对象。请确认地址正确、脚本已加载；在此之前使用静态立绘。'
+              title: d.runtime === 'cubism4' ? '运行时可用' : '运行时还不可用',
+              icon: d.runtime === 'cubism4' ? 'check' : 'info',
+              accent: d.runtime === 'cubism4' ? '#7d63a8' : '#9FB3D9',
+              message: d.runtime === 'cubism4'
+                ? '已检测到 Cubism4 运行时，.moc3 模型现在可以驱动了。回到看板即可看到。'
+                : (d.runtime === 'cubism2'
+                  ? '只检测到 Cubism2 内核。它读不了 .moc3 模型 —— 请点「使用推荐运行时」换成 Cubism4。'
+                  : '还没检测到可用运行时。\nWebGL：' + (d.webgl ? '可用' : '不可用')
+                  + '\nCubism4 Core：' + (d.hasCubismCore ? '已加载' : '无')
+                  + '\nPIXI：' + (d.hasPixi ? '已加载' : '无')
+                  + '\npixi-live2d：' + (d.hasPixiLive2d ? '已加载' : '无')
+                  + (d.error ? '\n\n错误：' + d.error : ''))
             });
           };
+          bar.appendChild(presetB);
           bar.appendChild(saveB);
           bar.appendChild(testB);
           r.appendChild(bar);
           return r;
         })());
+
+        // 当前立绘没驱动起来的原因，也直接写在这里，省得用户去猜
+        (function () {
+          var cur = K.currentPortrait();
+          if (!cur || cur.kind !== 'live2d') return;
+          var d = Live2DLoader.diagnose();
+          if (d.runtime === 'cubism4') return;
+          var warn = H.el('div');
+          warn.style.cssText = 'font-size:10.8px; line-height:1.72; color:#B0728F; background:rgba(255,241,247,0.9);'
+            + 'border:1px solid rgba(217,127,168,0.3); border-radius:13px; padding:10px 12px; margin-bottom:10px;';
+          warn.innerHTML = '当前立绘「' + cur.name + '」是 Live2D 模型，但运行时还没配好，'
+            + '所以看板上看不到它。点上面的「使用推荐运行时」，然后回到看板即可。';
+          body.insertBefore(warn, body.firstChild);
+        })();
 
         if (typeof onChanged === 'function') { /* 由调用方决定何时重绘 */ }
       }
@@ -1113,39 +1604,26 @@
                   });
                   H.closeAllLayers();
                   H.toast('模型包已导入（' + parsed.fileCount + ' 个文件）');
-                  if (!parsed.mocFound) {
-                    H.modal({
-                      title: '导入完成，但没找到 moc3',
-                      icon: 'info', accent: '#9FB3D9',
-                      message: '包里没有 .moc3 模型文件，可能只包含贴图。已按静态立绘处理。'
-                    });
+                  if (parsed.synthesized) {
+                    H.toast('包里没有 model3.json，已按包内文件自动生成');
                   }
                   refresh();
                   if (typeof onChanged === 'function') onChanged();
-                  // 导入即尝试驱动一次，能跑起来就直接看到效果
+                  // 导入即尝试驱动一次，能跑起来就直接看到效果；跑不起来要说**具体原因**，
+                  // 并在包里有图时兜底成一张静态立绘（用户要求：包不对就提示 + 拿一张图兜底）
                   if (parsed.entryUrl) {
                     setTimeout(function () {
                       var cv = document.createElement('canvas');
-                      Live2DLoader.mount(cv, parsed.entryUrl).then(function (inst) {
-                        if (!inst) {
-                          H.modal({
-                            title: '模型已导入，但未能驱动',
-                            icon: 'info', accent: '#9FB3D9',
-                            message: '模型包已存好（' + parsed.fileCount + ' 个文件）。\n'
-                              + '要真正跑起来还需要 Live2D 运行时：在本页下方的「Live2D 运行时」里填入运行时脚本地址即可。'
-                              + '\n在此之前会以静态立绘 + 物理动效展示。'
-                          });
-                        }
+                      Live2DLoader.mount(cv, parsed.entryUrl, null).then(function (inst) {
+                        if (inst) return;
+                        Portraits._reportLive2DFailure(parsed, created);
                       });
                     }, 300);
                   }
                 } catch (err) {
                   H.closeAllLayers();
-                  H.modal({
-                    title: '导入失败',
-                    icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
-                    message: (err && err.message) ? err.message : String(err)
-                  });
+                  Portraits._offerImageFallback(file, (err && err.message) ? err.message : String(err),
+                    typeof onChanged === 'function' ? onChanged : null);
                 }
               });
             }

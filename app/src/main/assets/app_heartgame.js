@@ -92,6 +92,11 @@
           if (typeof closeApp === 'function') closeApp('heartgame');
         };
       }
+
+      // 全屏沉浸（v1.5.36）：心动游戏自己每一页都有返回/退出，顶部再留一条
+      // 「心动游戏 · v4.44」的页头就是纯占地方。这里把它隐藏，让内容铺满整个
+      // 应用窗口（.win-body 是 flex:1，页头一没就自然撑满）—— 和静室页面的观感一致。
+      App.setImmersive(true);
       var body = document.getElementById('heartgame-body');
       if (!body) return;
 
@@ -259,6 +264,24 @@
       if (typeof closeApp === 'function') closeApp('heartgame');
     },
 
+    /**
+     * 全屏沉浸开关（v1.5.36）
+     * 隐藏应用自带的标题栏，让内容铺满整扇窗口。样式只注入一次。
+     */
+    setImmersive: function (on) {
+      var win = document.getElementById('win-heartgame');
+      if (!win) return;
+      if (!document.getElementById('hg-immersive-style')) {
+        var s = document.createElement('style');
+        s.id = 'hg-immersive-style';
+        s.textContent = '#win-heartgame.hg-immersive .win-header{display:none !important;}'
+          + '#win-heartgame.hg-immersive .win-body{height:100% !important;}';
+        (document.head || document.documentElement).appendChild(s);
+      }
+      if (on) win.classList.add('hg-immersive');
+      else win.classList.remove('hg-immersive');
+    },
+
     // ------------------------------------------------------------------
     //  1.1b 动作委托：主页所有可点元素统一由 document 捕获阶段派发
     // ------------------------------------------------------------------
@@ -356,6 +379,7 @@
       App.stopOnlineTracking();
       App.view = 'lobby';
       App.viewArg = null;
+      App.setImmersive(false);   // 把标题栏还给别的应用
       if (HG && HG.Portraits) { try { HG.Portraits.teardown(); } catch (e) { } }
       if (HG && HG.H) { try { HG.H.closeAllLayers(); } catch (e) { } }
       if (HG && HG.U) { try { HG.U.clearTimers(); } catch (e) { } }

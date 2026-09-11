@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v113'; // v113: 入口改看板内独立页面(tasks/shop/bond 不再开抽屉) + 浮层同名单例防叠层 + 内置场景图接入主页/静室/VN + 触碰气泡改纯文字; v1.5.35
+const CACHE_NAME = 'story-phone-v114'; // v114: Live2D 真正能跑（Cubism4 运行时一键配置 + 自动补 model3.json + 坏包提示与图片兜底）+ 心动游戏去掉页头改全屏沉浸; v1.5.36
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
