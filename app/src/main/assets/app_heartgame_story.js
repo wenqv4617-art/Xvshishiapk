@@ -355,10 +355,18 @@
         + '· 整个篇章至少包含 1 个 sms 或 call 节点。\n'
         + '· 文风要求（若上面给了）必须体现在每一个节点的用词与节奏里，不能只在开头体现。'
       );
-      var rawArc = await K.ask(prompt, { temperature: 0.95, maxTokens: 8000 });
+      var rawArc = await K.ask(prompt, { temperature: 0.95 });
       if (rawArc === null) {
-        K.logGen('arc', false, '', 'no-raw');
-        HG.H.toast(await K.hasApi() ? '模型没有返回内容，稍后再试' : '还没有配置 API 模型（去设置里配一下）');
+        var why = K._lastAskError || '未知原因';
+        K.logGen('arc', false, '', 'no-raw:' + why);
+        // 把**真实原因**显示出来（以前只 console.warn，用户永远看不到为什么没生成）
+        HG.H.modal({
+          title: '没能调用到模型', icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
+          message: '这次没有拿到模型的返回，原因：\n\n' + why
+            + '\n\n（这一步不会设 max_tokens、也不会截断模型输出。'
+            + '如果是 401/403，去「设置 → API 连接协议 → 专用」检查心动游戏这一项；'
+            + '如果是 400，多半是模型名或参数不被中转站接受。）'
+        });
       }
       var obj = K.parseArc(rawArc);
       // 节点太少（多半是输出被截断）：用更短的要求再试一次
@@ -368,7 +376,7 @@
         var retryPrompt = prompt.replace('共 8 个节点', '共 4 个节点')
           .replace('· 正好 8 个节点，且**每个节点的正文都要写满**，不要用一句话敷衍。',
             '· 正好 4 个节点，每个节点的正文 120 字以上。');
-        var raw2 = await K.ask(retryPrompt, { temperature: 0.95, maxTokens: 8000 });
+        var raw2 = await K.ask(retryPrompt, { temperature: 0.95 });
         var obj2 = K.parseArc(raw2);
         if (obj2 && Array.isArray(obj2.nodes) && obj2.nodes.length > obj.nodes.length) {
           obj = obj2; rawArc = raw2;
@@ -376,9 +384,15 @@
       }
       if (!obj || !Array.isArray(obj.nodes) || !obj.nodes.length) {
         K.logGen('arc', false, rawArc, 'parse-failed');
-        HG.H.toast(K.outputMode() === 'tag'
-          ? '这次没写出来（已记录原始返回），可以回后台切到 JSON 方案再试'
-          : '这次没写出来（已记录原始返回），可以回后台切到文字标签方案再试');
+        var head = String(rawArc || '').slice(0, 700);
+        HG.H.modal({
+          title: '这次没能解析成章节',
+          icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
+          message: '模型是**有返回**的（共 ' + String(rawArc || '').length + ' 字），但我没解析出章节结构。\n'
+            + '当前输出方案：' + (K.outputMode() === 'tag' ? '文字标签' : 'JSON 数组')
+            + '（可在「后台管理 → 生成输出方案」切换后重试）\n\n'
+            + '—— 模型返回的开头 ——\n' + head
+        });
         obj = Gen.offlineArc(t, profile.name);
       } else {
         K.logGen('arc', true, rawArc, 'ok:' + obj.nodes.length);

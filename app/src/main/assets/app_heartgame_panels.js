@@ -596,9 +596,9 @@
         + K.goodsFormatSpec()
         + 'category 取值含义：wear=服饰 accessory=饰品 consumable=消耗品 letter=手写信物 privilege=亲密特权。\n'
         + 'icon 取 gift / heart / cards / book / clock / wallet / star 之一。';
-      var raw = await K.ask(prompt, { temperature: 0.95, maxTokens: 1200 });
+      var raw = await K.ask(prompt, { temperature: 0.95 });
       if (raw === null) {
-        H.toast(await K.hasApi() ? '模型没有返回内容，稍后再试' : '还没有配置 API 模型（去设置里配一下）');
+        H.toast('没能调用到模型：' + (K._lastAskError || '未知原因'));
         return;
       }
       var arr = K.parseGoods(raw);

@@ -3721,24 +3721,36 @@
     /**
      * 统一的模型调用：失败/未配置都返回 null，绝不抛到 UI 层
      * @param {string} prompt
-     * @param {object} opts { temperature, system, maxTokens }
+     * @param {object} opts { temperature, system }
      * @returns {Promise<string|null>}
+     *
+     * ★ 原则（用户 2026-09-12 明确要求）：**绝对不设置 max_tokens**。
+     *   一旦传了 max_tokens，很多中转站会直接拒掉（HTTP 400），或者把输出截断在半截，
+     *   结果就是「看起来调了模型，其实每次都走本地兜底」。
+     *   宁可让模型自己决定何时停，也绝不允许截断它的输出。
      */
+    _lastAskError: '',
     ask: async function (prompt, opts) {
       var o = opts || {};
+      K._lastAskError = '';
       var api = await K.resolveApi();
-      if (!api) return null;
-      if (typeof window.fwCallLLM !== 'function') return null;
+      if (!api) { K._lastAskError = '没有可用的 API 配置'; return null; }
+      if (typeof window.fwCallLLM !== 'function') { K._lastAskError = 'fwCallLLM 不可用'; return null; }
       var messages = [];
       if (o.system) messages.push({ role: 'system', content: o.system });
       messages.push({ role: 'user', content: String(prompt || '') });
       try {
         var out = await window.fwCallLLM(api, messages, {
-          temperature: o.temperature === undefined ? 0.85 : o.temperature,
-          maxTokens: o.maxTokens
+          temperature: o.temperature === undefined ? 0.85 : o.temperature
+          // 刻意不传 maxTokens：见上面的原则说明
         });
-        return (out === undefined || out === null) ? null : String(out);
+        if (out === undefined || out === null) {
+          K._lastAskError = '模型返回了空内容';
+          return null;
+        }
+        return String(out);
       } catch (e) {
+        K._lastAskError = (e && e.message) ? e.message : String(e);
         console.warn('[心动游戏] 模型调用失败:', e);
         return null;
       }
