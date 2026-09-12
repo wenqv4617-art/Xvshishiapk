@@ -689,8 +689,8 @@
       // 气泡（戳戳反馈）
       // 位置从 16%（压在脸上）挪到 56%：立绘是 2:3 竖构图，中下部才是"说话的位置"。
       var bubbleHost = H.el('div', { id: 'hg-touch-bubble' });
-      // 右边留出 84px 给竖向入口区，文字永远不会伸到那些按钮下面
-      bubbleHost.style.cssText = 'position:absolute; left:16px; right:84px; top:56%; z-index:8;'
+      // v1.5.48：入口已经改成无底板的悬浮图标，不再遮住文字，所以宽度还原成以前的 88%
+      bubbleHost.style.cssText = 'position:absolute; left:16px; right:16px; top:56%; z-index:8;'
         + 'display:flex; justify-content:center; pointer-events:none; opacity:0; transition:opacity .3s ease;';
       root.appendChild(bubbleHost);
       App._dom.bubbleHost = bubbleHost;
@@ -1240,9 +1240,8 @@
       if (!host) return;
       host.innerHTML = '';
       var bubble = H.el('div');
-      // v1.5.45：最大宽度从 88% 收到 62%，并整体左移一点 ——
-      // 88% 时文字会伸到右边的竖向入口区下面，被那些按钮压住（用户反馈）
-      bubble.style.cssText = 'position:relative; max-width:62%; text-align:center;'
+      // v1.5.48：宽度还原 88%（入口已无底板，不会再遮住文字）
+      bubble.style.cssText = 'position:relative; max-width:88%; text-align:center;'
         + 'background:none; border:none; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none;'
         + 'font-size:13.4px; line-height:1.86; font-weight:600; color:#4a4050;'
         // 可读性靠文字投影而不是底板：先在字外围铺一圈近白柔光（暗背景上不糊），
