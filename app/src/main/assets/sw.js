@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v128'; // v128: 应用内小助手知识库对照更新日志同步（补心动游戏完整玩法、仪轨、追查手机、上下文管理、群管家、桌面 M3、图片管理等）；更新日志 v4.11→v4.59 合并为一条并按三类重排；v1.5.50
+const CACHE_NAME = 'story-phone-v129'; // v129: 新增桌面自检守卫（旧档遗留的桌面缩放/偏移把 Dock 推出屏幕时，自动检测并一键恢复默认界面「薄秋」，同时把现场写进 localStorage 便于排查）；v1.5.51
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -49,6 +49,7 @@ const ASSETS = [
   './app_world_book_engine.js', // 世界书激活引擎（对标酒馆 World Info）
   './app_chat_share_log.js', // 多选分享聊天记录（打包 → 转发到同面具其它会话）
   './app_desktop.js',
+  './app_desktop_guard.js',  // 桌面自检守卫（旧档缩放把 Dock 推出屏幕时一键恢复默认界面）
   './app_settings.js',
   './app_archive.js',
   './app_world_book.js',
