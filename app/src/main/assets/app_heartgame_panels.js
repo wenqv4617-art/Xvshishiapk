@@ -1013,7 +1013,7 @@
       grid.style.cssText = 'display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px;';
       [['足迹', rows.length], ['赠礼', U.int(st.bond.giftsGiven, 0)],
        ['戳戳', U.int(st.stats.touches, 0)], ['抽卡', (st.gacha.history || []).length],
-       ['记忆', (st.bond.memories || []).length], ['篇章', (st.story.arcs || []).length]].forEach(function (g) {
+       ['记忆', (st.bond.memories || []).length], ['章节', K.storyChapterCount()]].forEach(function (g) {
         var cell = H.el('div');
         cell.style.cssText = 'text-align:center; background:rgba(255,255,255,0.72); border-radius:12px; padding:9px 4px;';
         cell.innerHTML = '<div style="font-size:15px; font-weight:900; color:#4A7DBF;">' + g[1] + '</div>'

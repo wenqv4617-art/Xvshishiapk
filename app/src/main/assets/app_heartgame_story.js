@@ -121,102 +121,397 @@
   var K = HG.K, H = HG.H, U = HG.U, C = HG.C;
 
   // ==========================================================================
-  //  1. 数据层：篇章 / 节点 / 分支树 / 存档点
+  //  1. 数据层：作品（书）/ 章节 / 节点 / 分支树 / 存档点
+  //
+  //  v1.5.49 小说化重做。用户原话：「一个主线应该是像小说一样，一个主线名，
+  //  然后分章节体验，章节都可以继续生成……整部作品一条线，书架式构图，多个作品。」
+  //
+  //  心智模型（和旧版最大的区别）：
+  //    Book（作品）  = 一部作品 = 一条线 = 小手机里的一整段关系
+  //    Chapter（章节）= 一次生成的一批节点，**读完不算完**，可以一直「继续写下一章」
+  //  旧版把「篇章」当成一次性消耗品，所以永远读不完也接不上。
   // ==========================================================================
 
-  var Arc = {
+  /** 一个值像不像「作品」：有 chapters 数组 */
+  function looksLikeBook(x) {
+    return !!x && typeof x === 'object' && Array.isArray(x.chapters);
+  }
+
+  /** 一个值像不像「章节」：没有 chapters，但有节点数组 */
+  function looksLikeChapter(x) {
+    return !!x && typeof x === 'object' && !Array.isArray(x.chapters) && Array.isArray(x.nodes);
+  }
+
+  var Book = {
+
+    all: function () {
+      var st = K.state;
+      if (!st || !st.story || !Array.isArray(st.story.books)) return [];
+      return st.story.books;
+    },
 
     byId: function (id) {
-      var list = (K.state && K.state.story.arcs) || [];
+      if (!id) return null;
+      var list = Book.all();
       for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+      // 兼容：传进来的可能是「章节 id」（旧调用点只知道 arcId）
+      for (var j = 0; j < list.length; j++) {
+        var chs = list[j].chapters || [];
+        for (var k = 0; k < chs.length; k++) if (chs[k].id === id) return list[j];
+      }
       return null;
     },
 
-    /** 当前篇章 */
+    /** 书名（找不到时给一个体面的兜底，UI 不需要再判空） */
+    titleOf: function (book) {
+      var b = Book.resolve(book);
+      return (b && b.title) || '未命名作品';
+    },
+
+    /** 接受 作品对象 / 作品 id / 章节 / 章节 id，统一解析成作品 */
+    resolve: function (x) {
+      if (!x) return null;
+      if (looksLikeBook(x)) return x;
+      if (typeof x === 'string') return Book.byId(x);
+      if (looksLikeChapter(x)) {
+        var owner = Book.byId(x.bookId);
+        if (owner) return owner;
+        var all = Book.all();
+        for (var i = 0; i < all.length; i++) {
+          if ((all[i].chapters || []).some(function (c) { return c === x; })) return all[i];
+        }
+      }
+      return null;
+    },
+
+    /** 当前作品；没有任何作品时返回 null */
     active: function () {
-      return Arc.byId(K.state && K.state.story.activeArcId) || ((K.state.story.arcs || [])[0] || null);
+      var st = K.state;
+      if (!st) return null;
+      return Book.byId(st.story.activeBookId) || Book.all()[0] || null;
     },
 
     setActive: function (id) {
       var st = K.state;
-      if (!st || !Arc.byId(id)) return false;
-      st.story.activeArcId = id;
-      K.save();
-      return true;
-    },
-
-    remove: function (id) {
-      var st = K.state;
       if (!st) return false;
-      st.story.arcs = st.story.arcs.filter(function (a) { return a.id !== id; });
-      if (st.story.activeArcId === id) st.story.activeArcId = st.story.arcs.length ? st.story.arcs[0].id : null;
-      // 章节没了，它留在小手机里的记录也一起清掉（小手机是依托主线的）
-      try { SubPhone.purgeArc(id); } catch (e) { }
+      var b = Book.byId(id);
+      if (!b) return false;
+      st.story.activeBookId = b.id;
+      var chs = b.chapters || [];
+      if (!st.story.activeChapterId || !chs.some(function (c) { return c.id === st.story.activeChapterId; })) {
+        st.story.activeChapterId = chs.length ? chs[chs.length - 1].id : null;
+      }
       K.save();
       return true;
     },
 
-    /** 建一个空篇章（骨架，节点由生成器填充） */
+    /**
+     * 新建一部作品
+     * @param {object} cfg {title, synopsis, cover, theme, styleId, chapters}
+     */
     create: function (cfg) {
       var st = K.state;
       if (!st) return null;
-      var arc = {
-        id: U.uid('arc'),
-        title: cfg.title || '未命名篇章',
-        synopsis: cfg.synopsis || '',
-        theme: cfg.theme || '',
-        sceneId: cfg.sceneId || null,
-        nodes: cfg.nodes || [],
-        nodeIndex: 0,
-        status: 'playing',              // playing | finished
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        saves: [],                      // 存档点
-        tier: st.tierKey,
-        mode: st.mode
+      var c = cfg || {};
+      var now = Date.now();
+      var book = {
+        id: U.uid('book'),
+        title: String(c.title || '未命名作品').slice(0, 40),
+        synopsis: String(c.synopsis || ''),
+        cover: c.cover || '',
+        theme: c.theme || '',
+        styleId: (c.styleId === undefined ? null : c.styleId),
+        migrated: !!c.migrated,
+        chapters: Array.isArray(c.chapters) ? c.chapters : [],
+        createdAt: now,
+        updatedAt: now
       };
-      st.story.arcs.unshift(arc);
-      if (!st.story.activeArcId) st.story.activeArcId = arc.id;
+      st.story.books.unshift(book);
+      st.story.activeBookId = book.id;
+      st.story.activeChapterId = book.chapters.length ? book.chapters[0].id : null;
+      K.pushTimeline({ type: 'story', title: '新作品上架', text: '「' + book.title + '」开始了。' });
+      K.save(true);
+      K.emit('story', { book: book });
+      return book;
+    },
+
+    /** 删除一部作品：连带它的章节与小手机记录一起清掉 */
+    remove: function (id) {
+      var st = K.state;
+      var b = Book.byId(id);
+      if (!st || !b) return false;
+      st.story.books = Book.all().filter(function (x) { return x.id !== b.id; });
+      try { SubPhone.purgeBook(b.id); } catch (e) { }
+      if (st.story.activeBookId === b.id) {
+        var rest = Book.all();
+        st.story.activeBookId = rest.length ? rest[0].id : null;
+        var chs = (rest[0] && rest[0].chapters) || [];
+        st.story.activeChapterId = chs.length ? chs[chs.length - 1].id : null;
+      }
+      K.save(true);
+      return true;
+    },
+
+    touch: function (book) {
+      var b = Book.resolve(book);
+      if (!b) return false;
+      b.updatedAt = Date.now();
+      K.save();
+      return true;
+    },
+
+    /** 已读完的章节数 */
+    finishedCount: function (book) {
+      var b = Book.resolve(book);
+      if (!b) return 0;
+      return (b.chapters || []).filter(function (c) { return c.status === 'finished'; }).length;
+    },
+
+    /** 整部作品的阅读进度（所有章节的节点进度按节点总数加权） */
+    progress: function (book) {
+      var b = Book.resolve(book);
+      if (!b) return 0;
+      var total = 0, done = 0;
+      (b.chapters || []).forEach(function (c) {
+        var n = (c.nodes || []).length;
+        total += n;
+        done += (c.status === 'finished') ? n : Math.min(n, U.int(c.nodeIndex, 0));
+      });
+      return total ? U.pct(done, total) : 0;
+    },
+
+    /** 「继续写下一章」要用的信息：下一章是第几章 / 上一章的标题与梗概 */
+    continueInfo: function (book) {
+      var b = Book.resolve(book);
+      if (!b) return null;
+      var list = b.chapters || [];
+      var last = list.length ? list[list.length - 1] : null;
+      return {
+        index: list.length,
+        lastTitle: last ? last.title : '',
+        lastSynopsis: last ? (last.synopsis || '') : '',
+        count: list.length
+      };
+    }
+  };
+
+  var Chapter = {
+
+    list: function (book) {
+      var b = Book.resolve(book);
+      return (b && b.chapters) || [];
+    },
+
+    byId: function (id) {
+      if (!id) return null;
+      var list = Book.all();
+      for (var i = 0; i < list.length; i++) {
+        var chs = list[i].chapters || [];
+        for (var j = 0; j < chs.length; j++) if (chs[j].id === id) return chs[j];
+      }
+      return null;
+    },
+
+    /** 兼容旧签名的解析：Chapter.resolve(chapterLike, bookLike) */
+    resolve: function (x, bookLike) {
+      if (!x) return null;
+      if (typeof x === 'string') return Chapter.byId(x);
+      if (looksLikeBook(x)) {
+        var b = x;
+        var list = b.chapters || [];
+        var picked = null;
+        if (looksLikeChapter(bookLike)) picked = bookLike;
+        else if (typeof bookLike === 'string') picked = Chapter.byId(bookLike);
+        if (picked && list.some(function (c) { return c === picked; })) return picked;
+        var st = K.state;
+        if (st && list.some(function (c) { return c.id === st.story.activeChapterId; })) {
+          for (var i = 0; i < list.length; i++) if (list[i].id === st.story.activeChapterId) return list[i];
+        }
+        return list.length ? list[list.length - 1] : null;
+      }
+      if (looksLikeChapter(x)) return x;
+      return null;
+    },
+
+    /** 当前章节（跟着 activeChapterId 走；activeChapterId 不在这本书里就取最后一章） */
+    active: function (bookLike) {
+      var st = K.state;
+      var b = Book.resolve(bookLike) || Book.active();
+      if (!b) return null;
+      var list = b.chapters || [];
+      if (!list.length) return null;
+      if (bookLike === undefined && st) {
+        for (var i = 0; i < list.length; i++) if (list[i].id === st.story.activeChapterId) return list[i];
+        // activeChapterId 指向别的作品时不能返回 null —— 目录与演出都需要一个确定的章节
+        return list[list.length - 1];
+      }
+      return list[list.length - 1];
+    },
+
+    /**
+     * 往一部作品里追加一章（新生成 / 续写都走这里）
+     * @param {object} bookLike 作品（或作品 id）
+     * @param {object} cfg {title, synopsis, nodes, theme, id}
+     */
+    create: function (bookLike, cfg) {
+      var st = K.state;
+      var b = Book.resolve(bookLike);
+      if (!st || !b) return null;
+      var c = cfg || {};
+      var now = Date.now();
+      var list = b.chapters || (b.chapters = []);
+      var ch = {
+        id: c.id || U.uid('ch'),
+        bookId: b.id,                      // 反向引用：章节自己知道属于哪部作品
+        index: list.length,
+        title: String(c.title || ('第 ' + (list.length + 1) + ' 章')),
+        synopsis: String(c.synopsis || ''),
+        nodes: Array.isArray(c.nodes) ? c.nodes : [],
+        nodeIndex: 0,
+        status: 'playing',                 // playing | finished
+        saves: [],                         // 存档点（章节级）
+        theme: c.theme || b.theme || '',
+        sceneId: c.sceneId || null,
+        tier: st.tierKey,
+        mode: st.mode,
+        createdAt: now,
+        updatedAt: now
+      };
+      list.push(ch);
+      b.updatedAt = now;
+      st.story.activeBookId = b.id;
+      st.story.activeChapterId = ch.id;
       K.pushTimeline({
-        type: 'story', title: '篇章开启',
-        text: '「' + arc.title + '」开始了。'
+        type: 'story',
+        title: list.length > 1 ? '新章开写' : '作品开篇',
+        text: '「' + b.title + '」第 ' + (ch.index + 1) + ' 章 · ' + ch.title
       });
       K.save(true);
-      K.emit('story', { arc: arc });
-      return arc;
+      K.emit('story', { book: b, chapter: ch });
+      return ch;
+    },
+
+    /** 删掉一章并把后面的章号重排（章号是阅读顺序，不能留空号） */
+    remove: function (bookLike, chapterLike) {
+      var st = K.state;
+      var b = Book.resolve(bookLike);
+      if (!st || !b) return false;
+      var ch = (chapterLike === undefined) ? Chapter.active(b) : Chapter.resolve(chapterLike, b);
+      if (!ch) return false;
+      b.chapters = (b.chapters || []).filter(function (c) { return c !== ch && c.id !== ch.id; });
+      b.chapters.forEach(function (c, i) { c.index = i; });
+      try { SubPhone.purgeChapter(b.id, ch.id); } catch (e) { }
+      if (st.story.activeChapterId === ch.id) {
+        var list = b.chapters;
+        st.story.activeChapterId = list.length ? list[list.length - 1].id : null;
+      }
+      b.updatedAt = Date.now();
+      K.save(true);
+      return true;
     },
 
     /** 当前节点 */
-    node: function (arc) {
-      var a = arc || Arc.active();
-      if (!a || !a.nodes.length) return null;
-      return a.nodes[U.clamp(U.int(a.nodeIndex, 0), 0, a.nodes.length - 1)] || null;
+    node: function (chapterLike, bookLike) {
+      var c = Chapter.resolve(chapterLike, bookLike);
+      if (!c || !(c.nodes || []).length) return null;
+      return c.nodes[U.clamp(U.int(c.nodeIndex, 0), 0, c.nodes.length - 1)] || null;
     },
 
-    /** 推进到下一节点 */
-    advance: function (arc) {
-      var a = arc || Arc.active();
-      if (!a) return null;
-      if (a.nodeIndex >= a.nodes.length - 1) {
-        a.status = 'finished';
-        K.pushTimeline({ type: 'story', title: '篇章完结', text: '「' + a.title + '」走到了它的结尾。' });
+    /**
+     * 推进到下一节点。走完最后一个节点 = 本章读完（status 置 finished），
+     * 但**作品没完** —— 用户可以「继续写下一章」。
+     */
+    advance: function (chapterLike, bookLike) {
+      var c = Chapter.resolve(chapterLike, bookLike);
+      if (!c) return null;
+      var b = Book.byId(c.bookId) || Book.resolve(chapterLike);
+      var list = (c.nodes || []).length;
+      if (U.int(c.nodeIndex, 0) >= list - 1) {
+        c.status = 'finished';
+        c.updatedAt = Date.now();
+        K.pushTimeline({
+          type: 'story', title: '本章完',
+          text: '「' + ((b && b.title) || '主线') + '」' + (c.title || '这一章') + ' 读完了。'
+        });
         K.save(true);
         return null;
       }
-      a.nodeIndex = U.int(a.nodeIndex, 0) + 1;
-      a.updatedAt = Date.now();
+      c.nodeIndex = U.int(c.nodeIndex, 0) + 1;
+      c.updatedAt = Date.now();
+      if (b) b.updatedAt = Date.now();
       K.save();
-      return Arc.node(a);
+      return Chapter.node(c);
     },
 
-    /** 记录一次选择（用于分支树回溯） */
-    recordChoice: function (arc, node, choice) {
+    /** 本章读完了吗（读完才能续写下一章） */
+    isFinished: function (chapterLike) {
+      var c = Chapter.resolve(chapterLike);
+      return !!c && c.status === 'finished';
+    }
+  };
+
+  var Arc = {
+
+    byId: function (id) { return Chapter.byId(id); },
+    active: function (book) { return Chapter.active(book); },   // 不带参就取当前作品的当前章节
+
+    setActive: function (id) {
       var st = K.state;
-      if (!st || !arc) return null;
+      if (!st) return false;
+      var c = Chapter.byId(id);
+      if (!c) return false;
+      var b = Book.byId(id);
+      if (b) st.story.activeBookId = b.id;
+      st.story.activeChapterId = c.id;
+      K.save();
+      return true;
+    },
+
+    /**
+     * 兼容入口：建「一部只有一章的作品」并返回那一章。
+     * 旧的扁平「篇章」语义 = 新模型里的一章，所以老调用点不用改。
+     */
+    create: function (cfg) {
+      var c = cfg || {};
+      var book = Book.create({
+        title: c.title || '未命名作品',
+        synopsis: c.synopsis || '',
+        theme: c.theme || '',
+        styleId: (c.styleId === undefined ? null : c.styleId)
+      });
+      if (!book) return null;
+      var ch = Chapter.create(book, {
+        title: c.title || '第 1 章',
+        synopsis: c.synopsis || '',
+        nodes: c.nodes || [],
+        theme: c.theme || ''
+      });
+      return ch;
+    },
+
+    remove: function (id) {
+      var b = Book.byId(id);
+      if (!b) return false;
+      return Book.remove(b.id);
+    },
+
+    node: function (chapter, book) { return Chapter.node(chapter, book); },
+    advance: function (chapter, book) { return Chapter.advance(chapter, book); },
+
+    /** 记录一次选择（分支树 / 回溯用）；同时记下作品与章节 */
+    recordChoice: function (chapterLike, node, choice) {
+      var st = K.state;
+      var c = Chapter.resolve(chapterLike);
+      if (!st || !c) return null;
+      var b = Book.byId(c.bookId) || Book.resolve(chapterLike);
       var row = {
         id: U.uid('br'),
-        arcId: arc.id,
-        arcTitle: arc.title,
+        arcId: c.id,                       // 兼容旧字段（旧档的分支记录只有 arcId）
+        chapterId: c.id,
+        bookId: b ? b.id : null,
+        arcTitle: (b && b.title) || '',
+        bookTitle: (b && b.title) || '',
+        chapterTitle: c.title || '',
         nodeId: node ? node.id : null,
         nodeTitle: node ? (node.title || '') : '',
         choiceId: choice ? choice.id : null,
@@ -224,7 +519,7 @@
         verdictDelta: choice ? U.int(choice.verdictDelta, 0) : 0,
         affinityDelta: choice ? U.int(choice.affinityDelta, 0) : 0,
         at: Date.now(),
-        index: U.int(arc.nodeIndex, 0)
+        index: U.int(c.nodeIndex, 0)
       };
       st.story.branches.push(row);
       if (st.story.branches.length > 300) st.story.branches = st.story.branches.slice(-300);
@@ -233,46 +528,53 @@
       return row;
     },
 
-    /** 存档点：完整快照当前篇章 + 关键数值 */
-    save: function (arc, label) {
-      var a = arc || Arc.active();
+    /** 存档点：完整快照当前章节 + 关键数值 */
+    save: function (chapterLike, label) {
+      var c = Chapter.resolve(chapterLike);
       var st = K.state;
-      if (!a || !st) return null;
+      if (!c || !st) return null;
+      var b = Book.byId(c.bookId);
       var snap = {
         id: U.uid('save'),
-        label: label || ('存档 · ' + (a.nodes[U.int(a.nodeIndex, 0)] || {}).title || ('进度 ' + a.nodeIndex)),
+        label: label || ('存档 · ' + ((c.nodes[U.int(c.nodeIndex, 0)] || {}).title || ('进度 ' + c.nodeIndex))),
         at: Date.now(),
-        nodeIndex: U.int(a.nodeIndex, 0),
-        arcTitle: a.title,
+        nodeIndex: U.int(c.nodeIndex, 0),
+        arcTitle: c.title,
+        chapterTitle: c.title,
+        bookTitle: b ? b.title : '',
         tierKey: st.tierKey,
         affinity: st.affinity,
         verdict: U.plain(st.verdict),
         wallet: U.plain(st.wallet),
-        nodes: U.plain(a.nodes) || [],
-        status: a.status
+        nodes: U.plain(c.nodes) || [],
+        status: c.status
       };
-      a.saves.unshift(snap);
-      if (a.saves.length > 12) a.saves.length = 12;
-      K.pushTimeline({ type: 'save', title: '存档点', text: '在「' + a.title + '」的第 ' + (snap.nodeIndex + 1) + ' 个节点留下存档。' });
+      c.saves = c.saves || [];
+      c.saves.unshift(snap);
+      if (c.saves.length > 12) c.saves.length = 12;
+      K.pushTimeline({
+        type: 'save', title: '存档点',
+        text: '在「' + ((b && b.title) || '主线') + ' · ' + (c.title || '') + '」的第 ' + (snap.nodeIndex + 1) + ' 个节点留下存档。'
+      });
       K.save(true);
       return snap;
     },
 
     /** 读档：回到存档点 */
-    load: function (arc, saveId) {
-      var a = arc || Arc.active();
+    load: function (chapterLike, saveId) {
+      var c = Chapter.resolve(chapterLike);
       var st = K.state;
-      if (!a || !st) return false;
-      var snap = (a.saves || []).filter(function (x) { return x.id === saveId; })[0];
+      if (!c || !st) return false;
+      var snap = (c.saves || []).filter(function (x) { return x.id === saveId; })[0];
       if (!snap) return false;
-      a.nodes = snap.nodes || a.nodes;
-      a.nodeIndex = U.int(snap.nodeIndex, 0);
-      a.status = snap.status || 'playing';
+      c.nodes = snap.nodes || c.nodes;
+      c.nodeIndex = U.int(snap.nodeIndex, 0);
+      c.status = snap.status || 'playing';
       st.tierKey = snap.tierKey || st.tierKey;
       st.affinity = U.int(snap.affinity, st.affinity);
       if (snap.verdict) st.verdict = snap.verdict;
       if (snap.wallet) st.wallet = snap.wallet;
-      K.pushTimeline({ type: 'load', title: '读档', text: '回到「' + a.title + '」的存档点：' + snap.label });
+      K.pushTimeline({ type: 'load', title: '读档', text: '回到存档点：' + snap.label });
       K.save(true);
       return true;
     },
@@ -283,15 +585,17 @@
       if (!st) return false;
       var row = (st.story.branches || []).filter(function (b) { return b.id === branchId; })[0];
       if (!row) return false;
-      var a = Arc.byId(row.arcId);
-      if (!a) return false;
-      a.nodeIndex = U.clamp(U.int(row.index, 0), 0, Math.max(0, a.nodes.length - 1));
-      a.status = 'playing';
-      st.story.activeArcId = a.id;
+      var c = Chapter.byId(row.chapterId || row.arcId);
+      if (!c) return false;
+      c.nodeIndex = U.clamp(U.int(row.index, 0), 0, Math.max(0, (c.nodes || []).length - 1));
+      c.status = 'playing';
+      var b2 = Book.byId(c.bookId);
+      if (b2) st.story.activeBookId = b2.id;
+      st.story.activeChapterId = c.id;
       // 分支树中该点之后的记录作废（保留一次提示）
       K.pushTimeline({
         type: 'rewind', title: '分支回溯',
-        text: '回到「' + a.title + '」的选择点：' + U.cut(row.choiceText, 30)
+        text: '回到「' + ((b2 && b2.title) || '') + ' · ' + (c.title || '') + '」的选择点：' + U.cut(row.choiceText, 30)
       });
       K.save(true);
       return true;
@@ -329,17 +633,74 @@
       return lines.join('\n');
     },
 
-    /** 生成一个新篇章（含 5~8 个节点） */
-    generateArc: async function (theme, styleId) {
+    /**
+     * 续写提示词里的「前情提要」（纯函数，可单测）
+     * 用户要求：续写下一章要**带上前面章节的梗概**，保证连贯。
+     * 只喂「章名 + 梗概」而不是全文 —— 全文会把上下文挤爆，反而更容易写崩。
+     * @param {object} book
+     * @param {number} nextIndex 下一章的序号（从 0 开始）
+     */
+    chapterPlan: function (book, nextIndex) {
+      var b = Book.resolve(book);
+      var list = (b && b.chapters) || [];
+      var n = U.int(nextIndex, list.length);
+      var head = '这是这部作品的第 ' + (n + 1) + ' 章。';
+      if (!list.length) return head + '（第一章，请把世界观与两人的关系起点立起来。）';
+      var lines = list.map(function (c, i) {
+        return '第 ' + (i + 1) + ' 章《' + (c.title || '') + '》：' + U.cut(c.synopsis || '（无梗概）', 90);
+      });
+      return head + '\n前情提要（只给梗概，正文不要重复）：\n' + lines.join('\n');
+    },
+
+    /** 生成失败时把**真实原因**摆给用户看（v1.5.47 的诊断路径，必须保留） */
+    failModal: function (rawArc) {
+      var why = K._lastAskError || '未知原因';
+      K.logGen('arc', false, rawArc, 'no-raw:' + why);
+      HG.H.modal({
+        title: '没能调用到模型', icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
+        message: '这次没有拿到模型的返回，原因：\n\n' + why
+          + '\n\n（这一步不会设 max_tokens、也不会截断模型输出。'
+          + '如果是 401/403，去「设置 → API 连接协议 → 专用」检查心动游戏这一项；'
+          + '如果是 400，多半是模型名或参数不被中转站接受。）'
+      });
+    },
+
+    /**
+     * ★ 生成一章（新建作品的第一章 / 继续写下一章，都走这里）
+     *
+     * @param {object} cfg {
+     *   book      —— 作品（续写时传；新建时传 null/undefined）
+     *   theme     —— 题材（新建时的主题句，或续写时用户补的一句走向）
+     *   styleId   —— 文风
+     *   chapterNo —— 续写的是第几章（从 0 开始；不传则取该书当前章节数）
+     *   bookTitle  —— 新建作品时希望的书名（模型也允许自己起）
+     *   isNew     —— true 表示这是新作品的第一章
+     * }
+     * @returns {Promise<{title, synopsis, nodes, raw}|null>}
+     */
+    generateChapter: async function (cfg) {
       // 生成一整章很贵，双击会生成两章（v1.5.41）
       if (HG.H.blocked('story-genarc', 2500)) { HG.H.toast('正在写，稍等一下'); return null; }
-      var profile = await K.charProfile();
-      var t = theme || '一场没有预告的重逢';
-      // 文风：表单里选的那套优先，其次全局当前文风；都没有就不注入
+      var c = cfg || {};
+      var book = c.book ? Book.resolve(c.book) : null;
+      var theme = c.theme || (book && book.theme) || '一场没有预告的重逢';
+      var styleId = (c.styleId === undefined ? (book ? book.styleId : null) : c.styleId);
       var styleBlock = K.styleBlock(styleId || null);
+      var nextIndex = (c.chapterNo === undefined)
+        ? ((book && (book.chapters || []).length) || 0)
+        : U.int(c.chapterNo, 0);
+      var isNew = !!c.isNew || !book;
+      var plan = Gen.chapterPlan(book, nextIndex);
+      var profile = await K.charProfile();
+
+      var opening = isNew
+        ? ('请为下面的主题**开一部新作品**，并直接写出它的第 1 章，共 8 个节点。\n'
+          + '作品主题：' + theme + '\n'
+          + (c.bookTitle ? '作品名（沿用这个，不要改）：' + c.bookTitle + '\n' : ''))
+        : ('请接着这部作品**继续写下一章**，共 8 个节点。\n' + plan + '\n');
+
       var prompt = await Gen.baseSystem(
-        '请为下面的主题生成一个可玩的主线篇章，共 8 个节点。\n'
-        + '主题：' + t + '\n\n'
+        opening + '\n'
         + (styleBlock ? styleBlock + '\n\n' : '')
         + K.arcFormatSpec()
         + '\n规则：\n'
@@ -347,27 +708,18 @@
         + '· 前 2 个节点铺陈氛围（可含 narration / dialogue）。\n'
         + '· 中间节点必须给出 2~3 个 options（"options" 至少 2 个），且不同选项的 affinityDelta 要有差异（可为负），'
         + '三个选项要导向真正不同的走向。\n'
-        + '· 最后一个节点收束情绪，options 可以为空数组。\n'
+        + '· 最后一个节点收束这一章的情绪，options 可以为空数组。\n'
         + '· sms / call / moment 三种节点是「剧情中途小手机」内容：\n'
         + '  sms = 一条短讯（text 写成短讯内容，speaker 写 char）；\n'
         + '  call = 一通电话（text 写来电时说的话）；\n'
         + '  moment = 一条朋友圈（text 写发的内容）。\n'
-        + '· 整个篇章至少包含 1 个 sms 或 call 节点。\n'
+        + '· 这一章至少包含 1 个 sms 或 call 节点。\n'
+        + (isNew ? '' : '· 不要重复前情提要里已经发生过的场景，要往前推进；这一章要有自己的小高潮。\n')
         + '· 文风要求（若上面给了）必须体现在每一个节点的用词与节奏里，不能只在开头体现。'
       );
+
       var rawArc = await K.ask(prompt, { temperature: 0.95 });
-      if (rawArc === null) {
-        var why = K._lastAskError || '未知原因';
-        K.logGen('arc', false, '', 'no-raw:' + why);
-        // 把**真实原因**显示出来（以前只 console.warn，用户永远看不到为什么没生成）
-        HG.H.modal({
-          title: '没能调用到模型', icon: 'info', accent: '#c2607c', soft: '#FFEFF3',
-          message: '这次没有拿到模型的返回，原因：\n\n' + why
-            + '\n\n（这一步不会设 max_tokens、也不会截断模型输出。'
-            + '如果是 401/403，去「设置 → API 连接协议 → 专用」检查心动游戏这一项；'
-            + '如果是 400，多半是模型名或参数不被中转站接受。）'
-        });
-      }
+      if (rawArc === null) Gen.failModal(rawArc);
       var obj = K.parseArc(rawArc);
       // 节点太少（多半是输出被截断）：用更短的要求再试一次
       if (obj && Array.isArray(obj.nodes) && obj.nodes.length > 0 && obj.nodes.length < 4) {
@@ -393,16 +745,38 @@
             + '（可在「后台管理 → 生成输出方案」切换后重试）\n\n'
             + '—— 模型返回的开头 ——\n' + head
         });
-        obj = Gen.offlineArc(t, profile.name);
+        obj = Gen.offlineChapter(theme, profile.name);
       } else {
         K.logGen('arc', true, rawArc, 'ok:' + obj.nodes.length);
       }
-      return Arc.create({
-        title: obj.title || t,
+      return {
+        title: obj.title || (theme + ' · 第 ' + (nextIndex + 1) + ' 章'),
         synopsis: obj.synopsis || '',
-        theme: t,
         nodes: Gen.normalizeNodes(obj.nodes),
-        sceneId: null
+        raw: rawArc
+      };
+    },
+
+    /**
+     * 兼容入口（旧签名）：生成「一部只有一章的作品」，返回那一章。
+     * 老调用点（含历史测试）继续可用；新代码请直接用 Book.create + Gen.generateChapter。
+     */
+    generateArc: async function (theme, styleId) {
+      var t = theme || '一场没有预告的重逢';
+      var out = await Gen.generateChapter({ theme: t, styleId: styleId, isNew: true, chapterNo: 0 });
+      if (!out) return null;
+      var book = Book.create({
+        title: out.title || t,
+        synopsis: out.synopsis || '',
+        theme: t,
+        styleId: (styleId === undefined ? null : styleId)
+      });
+      if (!book) return null;
+      return Chapter.create(book, {
+        title: out.title || t,
+        synopsis: out.synopsis || '',
+        nodes: out.nodes,
+        theme: t
       });
     },
 
@@ -490,6 +864,11 @@
       return { title: theme + ' · 初见篇', synopsis: '一场没有预告的雨，和一把一直偏向你的伞。', nodes: nodes };
     },
 
+    /** 离线兜底的「一章」（generateChapter 的回落形态，与 offlineArc 同一份内容） */
+    offlineChapter: function (theme, charName) {
+      return Gen.offlineArc(theme, charName);
+    },
+
     /**
      * 自由行动推演（攻略模式的底层自定义输入框）
      * @param {object} node
@@ -557,14 +936,17 @@
     },
 
     /** 把一段剧情摘要写进主记忆（让主聊天能召回） */
-    persistMemory: async function (arc, node) {
+    persistMemory: async function (bookLike, node) {
       var sessId = await K.resolveSessionId();
-      if (!sessId || !arc) return false;
-      var content = '【心动游戏·' + arc.title + '】'
+      var book = Book.resolve(bookLike);
+      var ch = Chapter.resolve(bookLike, book);
+      if (!sessId || !book) return false;
+      var content = '【心动游戏·' + book.title + '】'
+        + (ch ? '（' + (ch.title || '') + '）' : '')
         + (node ? '（' + (node.title || '') + '）' : '')
         + (K.isReverse() ? '［被攻略模式］' : '［攻略模式］')
-        + '：' + U.cut(node ? (node.text || node.scene || '') : (arc.synopsis || ''), 180);
-      return K.writeMainMemory(sessId, content, ['心动游戏', '主线', arc.title]);
+        + '：' + U.cut(node ? (node.text || node.scene || '') : (ch ? (ch.synopsis || '') : (book.synopsis || '')), 180);
+      return K.writeMainMemory(sessId, content, ['心动游戏', '主线', book.title]);
     }
   };
 
@@ -575,27 +957,50 @@
   var SubPhone = {
 
     /**
-     * 把节点里的 sms / moment / call 落库
-     * v1.5.46：**按 arcId + nodeId 去重** —— 以前「从头回看」会把同一批消息再灌一遍，
-     * 小手机里就出现两条一模一样的记录。现在同一个章节的同一个节点只记一次。
+     * 解析一条记录该挂在谁名下。
+     * 兼容两种调用：SubPhone.capture(node, chapter [, book]) 与老的 (node, arc)。
      */
-    capture: function (node, arc) {
+    scope: function (x, y) {
+      var ch = Chapter.resolve(x);
+      var book = null;
+      if (looksLikeBook(y)) book = y;
+      else if (ch) book = Book.byId(ch.bookId) || Book.resolve(x);
+      else book = Book.resolve(x);
+      if (!ch && looksLikeBook(x)) ch = Chapter.active(x);
+      if (ch && !book) book = Book.byId(ch.bookId);
+      return { chapter: ch, book: book, bookId: book ? book.id : null, chapterId: ch ? ch.id : null };
+    },
+
+    /**
+     * 把节点里的 sms / moment / call 落库
+     * v1.5.46：按 arcId + nodeId 去重 —— 以前「从头回看」会把同一批消息再灌一遍，
+     * 小手机里就出现两条一模一样的记录。现在同一个章节的同一个节点只记一次。
+     * v1.5.49：去重键换成 **bookId + chapterId + nodeId**（一部作品一条线，按章分段）。
+     */
+    capture: function (node, chapterLike, bookLike) {
       var st = K.state;
       if (!st || !node) return null;
       var phone = st.story.phone;
       var at = Date.now();
-      var arcId = arc ? arc.id : null;
+      var sc = SubPhone.scope(chapterLike, bookLike);
+      var bookId = sc.bookId, chapterId = sc.chapterId;
       var nodeId = node.id || null;
       var already = function (bucket) {
         for (var i = 0; i < bucket.length; i++) {
-          if (bucket[i].arcId === arcId && nodeId && bucket[i].nodeId === nodeId) return bucket[i];
+          var r = bucket[i];
+          if (!r || !nodeId || r.nodeId !== nodeId) continue;
+          // 旧记录只有 arcId：等价于 chapterId，所以两种都认
+          if ((r.chapterId || r.arcId) === chapterId) return r;
         }
         return null;
       };
       if (node.kind === 'sms') {
         var dup = already(phone.sms);
         if (dup) return { kind: 'sms', row: dup, duplicate: true };
-        var row = { id: U.uid('sms'), text: node.text || '', from: 'char', at: at, arcId: arcId, nodeId: nodeId, read: false };
+        var row = {
+          id: U.uid('sms'), text: node.text || '', from: 'char', at: at,
+          bookId: bookId, chapterId: chapterId, arcId: chapterId, nodeId: nodeId, read: false
+        };
         phone.sms.unshift(row);
         if (phone.sms.length > 120) phone.sms.length = 120;
         K.save();
@@ -605,7 +1010,8 @@
         var dupM = already(phone.moments);
         if (dupM) return { kind: 'moment', row: dupM, duplicate: true };
         var m = {
-          id: U.uid('mom'), text: node.text || '', at: at, arcId: arcId, nodeId: nodeId,
+          id: U.uid('mom'), text: node.text || '', at: at,
+          bookId: bookId, chapterId: chapterId, arcId: chapterId, nodeId: nodeId,
           likes: [], comments: []
         };
         phone.moments.unshift(m);
@@ -616,7 +1022,10 @@
       if (node.kind === 'call') {
         var dupC = already(phone.calls);
         if (dupC) return { kind: 'call', row: dupC, duplicate: true };
-        var c = { id: U.uid('call'), text: node.text || '', at: at, arcId: arcId, nodeId: nodeId, duration: 0 };
+        var c = {
+          id: U.uid('call'), text: node.text || '', at: at,
+          bookId: bookId, chapterId: chapterId, arcId: chapterId, nodeId: nodeId, duration: 0
+        };
         phone.calls.unshift(c);
         if (phone.calls.length > 60) phone.calls.length = 60;
         K.save();
@@ -625,19 +1034,62 @@
       return null;
     },
 
-    /** 章节被删掉时，把它在小手机里留下的记录一起清掉（用户要求：小手机依托主线剧情） */
-    purgeArc: function (arcId) {
+    /** 清掉某个筛选条件命中的记录，返回清掉的条数 */
+    _purge: function (match) {
       var st = K.state;
-      if (!st || !arcId) return 0;
+      if (!st) return 0;
       var phone = st.story.phone;
       var n = 0;
       ['sms', 'moments', 'calls'].forEach(function (k) {
         var before = (phone[k] || []).length;
-        phone[k] = (phone[k] || []).filter(function (r) { return r.arcId !== arcId; });
+        phone[k] = (phone[k] || []).filter(function (r) { return !(r && match(r)); });
         n += before - phone[k].length;
       });
       if (n) K.save();
       return n;
+    },
+
+    /** 一章被删掉时，把它在小手机里留下的记录一起清掉（用户要求：小手机依托主线剧情） */
+    purgeChapter: function (bookId, chapterId) {
+      if (!chapterId) return 0;
+      return SubPhone._purge(function (r) {
+        return (r.chapterId || r.arcId) === chapterId && (!bookId || !r.bookId || r.bookId === bookId);
+      });
+    },
+
+    /** 整部作品被删掉时，把它的全部记录清掉 */
+    purgeBook: function (bookId) {
+      if (!bookId) return 0;
+      var chapters = (Chapter.list(bookId) || []).map(function (c) { return c.id; });
+      return SubPhone._purge(function (r) {
+        return r.bookId === bookId || chapters.indexOf(r.chapterId || r.arcId) >= 0;
+      });
+    },
+
+    /** 兼容旧的调用名（旧代码只知道 arcId） */
+    purgeArc: function (arcId) { return SubPhone.purgeChapter(null, arcId); },
+
+    /** 这部作品里的全部手机记录（按时间倒序），带章节归属，供 UI 分段 */
+    rowsOf: function (bookLike) {
+      var st = K.state;
+      if (!st) return { sms: [], moments: [], calls: [] };
+      var book = Book.resolve(bookLike);
+      var bookId = book ? book.id : null;
+      var chapterIds = book ? (book.chapters || []).map(function (c) { return c.id; }) : [];
+      var pick = function (list) {
+        return (list || []).filter(function (r) {
+          if (!r) return false;
+          if (r.bookId) return r.bookId === bookId;
+          // 旧记录没有 bookId：用 arcId/chapterId 反查
+          var cid = r.chapterId || r.arcId;
+          return !!cid && chapterIds.indexOf(cid) >= 0;
+        });
+      };
+      return {
+        sms: pick(st.story.phone.sms),
+        moments: pick(st.story.phone.moments),
+        calls: pick(st.story.phone.calls)
+      };
     },
 
     /**
@@ -730,10 +1182,26 @@
       return row;
     },
 
-    /** 小手机界面 */
-    open: async function (arc) {      var st = K.state;
+    /**
+     * 小手机界面
+     *
+     * 用户明确指定：「整部作品一条线」—— 翻手机看到的是跟这个人**从头到现在的全部消息**，
+     * 按章节分段。所以这里不再按当前篇章取记录，而是取整部作品的全部记录，
+     * 每一段前面插一个「第 N 章 · 章名」的分隔条。
+     *
+     * @param {object} bookLike 作品（不传则取当前作品）
+     */
+    open: async function (bookLike) {
+      var st = K.state;
+      var book = Book.resolve(bookLike) || Book.active();
       var profile = await K.charProfile();
       var user = await K.userProfile();
+      var mine = SubPhone.rowsOf(book);
+      var chapterIndex = {};
+      ((book && book.chapters) || []).forEach(function (c, i) { chapterIndex[c.id] = i; });
+      var chapterTitle = {};
+      ((book && book.chapters) || []).forEach(function (c) { chapterTitle[c.id] = c.title || ''; });
+
       var body = H.el('div');
       var tab = 'sms';
 
@@ -756,7 +1224,8 @@
       head.style.cssText = 'padding:11px 13px 9px; background:linear-gradient(180deg,rgba(255,241,247,0.95),rgba(255,255,255,0.6));'
         + 'border-bottom:1px solid rgba(216,160,190,0.18);';
       head.innerHTML = '<div style="font-size:12.5px; font-weight:800; color:#5c4450;">' + U.esc(profile.name) + ' 的手机</div>'
-        + '<div style="font-size:9.6px; color:#a99fae; margin-top:2px;">剧情进程中的即时通讯</div>';
+        + '<div style="font-size:9.6px; color:#a99fae; margin-top:2px;">'
+        + U.esc(book ? (book.title + ' · 从头到现在') : '剧情进程中的即时通讯') + '</div>';
       screen.appendChild(head);
 
       var tabs = H.el('div');
@@ -770,21 +1239,44 @@
       function renderTabs() {
         tabs.innerHTML = '';
         tabs.appendChild(H.tabs([
-          { key: 'sms', label: '短讯', icon: 'msg', badge: st.story.phone.sms.length || '' },
-          { key: 'moment', label: '朋友圈', icon: 'camera', badge: st.story.phone.moments.length || '' },
-          { key: 'call', label: '通话', icon: 'call', badge: st.story.phone.calls.length || '' }
+          { key: 'sms', label: '短讯', icon: 'msg', badge: mine.sms.length || '' },
+          { key: 'moment', label: '朋友圈', icon: 'camera', badge: mine.moments.length || '' },
+          { key: 'call', label: '通话', icon: 'call', badge: mine.calls.length || '' }
         ], tab, function (k) { tab = k; renderTabs(); renderList(); }));
+      }
+
+      /** 一段记录属于第几章：插一条章节分隔条 */
+      function chapterDivider(row) {
+        var cid = row.chapterId || row.arcId;
+        if (cid === undefined || cid === null || !(cid in chapterIndex)) return null;
+        var i = chapterIndex[cid];
+        var bar = H.el('div');
+        bar.style.cssText = 'display:flex; align-items:center; gap:8px; margin:14px 2px 10px;';
+        bar.innerHTML = '<span style="flex:1; height:1px; background:linear-gradient(90deg, rgba(216,160,190,0),'
+          + ' rgba(216,160,190,0.46));"></span>'
+          + '<span style="font-size:9.6px; font-weight:800; letter-spacing:.1em; color:#b08aa0; white-space:nowrap;">'
+          + '第 ' + (i + 1) + ' 章 · ' + U.esc(U.cut(chapterTitle[cid] || '', 12)) + '</span>'
+          + '<span style="flex:1; height:1px; background:linear-gradient(90deg, rgba(216,160,190,0.46),'
+          + ' rgba(216,160,190,0));"></span>';
+        return bar;
       }
 
       function renderList() {
         list.innerHTML = '';
-        var rows = st.story.phone[tab === 'sms' ? 'sms' : (tab === 'moment' ? 'moments' : 'calls')] || [];
+        var rows = mine[tab === 'sms' ? 'sms' : (tab === 'moment' ? 'moments' : 'calls')] || [];
         if (!rows.length) {
-          list.appendChild(H.empty(tab === 'sms' ? '还没有剧情短讯。' : (tab === 'moment' ? '还没有剧情朋友圈。' : '还没有剧情来电。'),
+          list.appendChild(H.empty(tab === 'sms' ? '这部作品还没有剧情短讯。' : (tab === 'moment' ? '这部作品还没有剧情朋友圈。' : '这部作品还没有剧情来电。'),
             { icon: tab === 'call' ? 'call' : 'phone' }));
           return;
         }
+        var lastChapter = null;
         rows.forEach(function (r) {
+          var cid = r.chapterId || r.arcId;
+          if (cid !== lastChapter) {
+            lastChapter = cid;
+            var bar = chapterDivider(r);
+            if (bar) list.appendChild(bar);
+          }
           if (tab === 'sms') {
             list.appendChild(H.bubble({
               side: 'char',
@@ -865,7 +1357,7 @@
 
       H.sheet({
         title: '剧情小手机',
-        subtitle: arc ? arc.title : '当前篇章',
+        subtitle: book ? (book.title + ' · 整条线') : '当前作品',
         icon: 'phone',
         height: '92%',
         // v1.5.46：要盖在主线演出（100600）之上，否则会被压在下面看不见（用户反馈重叠）
@@ -1056,170 +1548,596 @@
   }
 
   var UI = {
-    _arc: null,
+    _arc: null,        // 兼容旧字段名：当前正在演出的章节
     _busy: false,
 
-    /** 篇章列表 */
-    openArcList: async function () {
-      var st = K.state;
+    // ------------------------------------------------------------------
+    //  5.0 小工具
+    // ------------------------------------------------------------------
+
+    /** 长一点的提示：用模态，用户不会错过（用户要求"失败不再静默"） */
+    tip: function (title, message) {
+      H.modal({ title: title, icon: 'info', accent: '#c2607c', soft: '#FFEFF3', message: message });
+    },
+
+    /** 作品卡片上的封面：有生图就用图，没有就一块玻璃底 + 首字 */
+    coverNode: function (book, w, h) {
+      var box = H.el('div');
+      box.style.cssText = 'position:relative; width:' + w + 'px; height:' + h + 'px; flex-shrink:0;'
+        + 'border-radius:14px; overflow:hidden;'
+        + 'background:linear-gradient(150deg,#4a3344,#2c2130 62%,#3b2b3c);'
+        + 'box-shadow:0 8px 20px rgba(70,44,66,0.28), inset 0 1px 0 rgba(255,255,255,0.14);'
+        + (book && book.cover ? 'background-image:url(' + book.cover + '); background-size:cover;'
+          + ' background-position:center;' : '');
+      if (!book || !book.cover) {
+        var ch = H.el('div');
+        ch.style.cssText = 'position:absolute; inset:0; display:flex; align-items:center; justify-content:center;'
+          + 'font-size:' + Math.round(h * 0.38) + 'px; font-weight:900; color:rgba(255,255,255,0.88);'
+          + 'text-shadow:0 2px 10px rgba(0,0,0,0.4);';
+        ch.textContent = (book && book.title ? book.title.slice(0, 1) : '书');
+        box.appendChild(ch);
+        var bar = H.el('div');
+        bar.style.cssText = 'position:absolute; left:0; top:0; bottom:0; width:4px;'
+          + 'background:linear-gradient(180deg,rgba(255,255,255,0.34),rgba(255,255,255,0.06));';
+        box.appendChild(bar);
+      }
+      return box;
+    },
+
+    /** 进度条（自绘，避免依赖具体组件签名） */
+    progressNode: function (pct, color) {
+      var track = H.el('div');
+      track.style.cssText = 'height:5px; border-radius:3px; background:rgba(190,180,195,0.28); overflow:hidden;';
+      var fill = H.el('div');
+      fill.style.cssText = 'height:100%; width:' + U.clamp(U.round(pct, 0), 0, 100) + '%; border-radius:3px;'
+        + 'background:linear-gradient(90deg,' + (color || '#D97FA8') + ',#B79EDC);';
+      track.appendChild(fill);
+      return track;
+    },
+
+    /** 空书架的空态卡片（比 H.empty 更有引导性） */
+    emptyShelf: function () {
+      var card = H.card({ accent: '#D97FA8', soft: '#FFEBF3', pad: 16 });
+      card.appendChild(H.sectionTitle('书架还是空的', { color: '#D97FA8', margin: '2px 0 8px' }));
+      var p = H.el('div');
+      p.style.cssText = 'font-size:11.4px; line-height:1.86; color:#8b8292;';
+      p.textContent = '一部作品就是一条完整的关系线：给它一个名字，AI 写出第一章，'
+        + '之后想接着看就「继续写下一章」。作品可以有很多部，小手机里翻到的是整部作品从头到现在的全部消息。';
+      card.appendChild(p);
+      return card;
+    },
+
+    // ------------------------------------------------------------------
+    //  5.1 书架（多作品）
+    // ------------------------------------------------------------------
+
+    /**
+     * 书架：一格格作品卡片。
+     * 用户原话：「整部作品一条线，书架式构图，多个作品」。
+     */
+    openShelf: async function () {
       var body = H.el('div');
-      var arcs = st.story.arcs || [];
+      var books = Book.all();
 
       var intro = H.el('div');
-      intro.style.cssText = 'font-size:10.8px; line-height:1.72; color:#8b8292; background:rgba(255,241,247,0.8);'
-        + 'border:1px solid rgba(217,127,168,0.22); border-radius:13px; padding:11px 12px; margin-bottom:12px;';
+      intro.style.cssText = 'font-size:10.8px; line-height:1.74; color:#8b8292;'
+        + 'background:rgba(255,255,255,0.76); border:1px solid rgba(217,127,168,0.22);'
+        + 'border-radius:14px; padding:11px 12px; margin-bottom:12px;';
       intro.innerHTML = K.isReverse()
-        ? '当前是<b>被攻略模式</b>：主线节点停顿时由你设定 2~3 个抉择项并附带属性奖惩，'
-          + '<b>TA 会基于自己的性格模型自主选择</b>，把故事推向 TA 想要的方向。'
-        : '当前是<b>攻略模式</b>：系统与 TA 出题，你选分支；也可以直接在输入框里写任何你想做的动作，由模型即时推演 TA 的反应。';
+        ? '当前是<b>被攻略模式</b>：你给作品定方向，节点停顿时由你设定 2~3 个抉择并附带奖惩，'
+          + '<b>TA 会依自己的性格做出选择</b>。'
+        : '当前是<b>攻略模式</b>：一部作品一条线，按章节读下去；每一章都可以让 AI 接着上一章的梗概继续写。';
       body.appendChild(intro);
 
-      if (!arcs.length) {
-        body.appendChild(H.empty('还没有开启任何篇章。让 AI 按你们的角色设定写一个开局。', { icon: 'book' }));
+      if (!books.length) body.appendChild(UI.emptyShelf());
+
+      books.forEach(function (b) {
+        var chapters = b.chapters || [];
+        var pct = Book.progress(b);
+        var finished = Book.finishedCount(b);
+        var card = H.card({ accent: '#D97FA8', soft: '#FFEBF3', pad: 12 });
+        card.style.marginBottom = '10px';
+        card.style.cursor = 'pointer';
+
+        var row = H.el('div');
+        row.style.cssText = 'display:flex; gap:12px; align-items:flex-start;';
+        row.appendChild(UI.coverNode(b, 58, 78));
+
+        var main = H.el('div');
+        main.style.cssText = 'flex:1; min-width:0;';
+        var title = H.el('div');
+        title.style.cssText = 'font-size:13px; font-weight:800; color:#553f4c;'
+          + 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis;';
+        title.textContent = b.title || '未命名作品';
+        main.appendChild(title);
+
+        var meta = H.el('div');
+        meta.style.cssText = 'font-size:9.8px; color:#a99fae; margin-top:4px;';
+        meta.textContent = chapters.length + ' 章 · 已读 ' + finished + ' 章 · ' + U.round(pct, 0) + '% · '
+          + U.timeAgo(b.updatedAt || b.createdAt);
+        main.appendChild(meta);
+
+        var syn = H.el('div');
+        syn.style.cssText = 'font-size:10.6px; line-height:1.7; color:#8b8292; margin-top:7px;';
+        syn.textContent = U.cut(b.synopsis || b.theme || '（还没有梗概）', 48);
+        main.appendChild(syn);
+
+        var pb = H.el('div');
+        pb.style.marginTop = '8px';
+        pb.appendChild(UI.progressNode(pct, '#D97FA8'));
+        main.appendChild(pb);
+        row.appendChild(main);
+
+        var tools = H.el('div');
+        tools.style.cssText = 'display:flex; flex-direction:column; gap:6px; flex-shrink:0;';
+        var del = H.iconButton('trash', { size: 26, color: '#c2607c', title: '删除作品' });
+        del.onclick = function (ev) {
+          ev.stopPropagation();
+          H.confirm({
+            title: '删除作品', icon: 'trash', accent: '#c2607c', soft: '#FFEFF3',
+            message: '删除「' + b.title + '」？这部作品的 ' + chapters.length
+              + ' 个章节、存档点，以及它留在小手机里的全部消息都会一起消失。',
+            okText: '删除'
+          }).then(function (ok) {
+            if (!ok) return;
+            Book.remove(b.id);
+            H.closeAllLayers();
+            setTimeout(function () { UI.openShelf(); }, 320);
+          });
+        };
+        tools.appendChild(del);
+        row.appendChild(tools);
+
+        card.appendChild(row);
+        card.onclick = function () { UI.openBook(b.id); };
+        body.appendChild(card);
+      });
+
+      H.sheet({
+        title: '书架 · 我的作品',
+        subtitle: '一部作品一条线 · 章节可以一直续写',
+        icon: 'book',
+        height: '100%',
+        slot: 'story',
+        // 全屏页 + 生图背景（v1.5.42 的规矩：full 必须给 height，否则底部露空挡）
+        full: true,
+        bg: 'images/heartgame/page/shelf.jpg',
+        bgScrim: 'linear-gradient(180deg, rgba(255,250,252,0.30) 0%, rgba(255,247,251,0.44) 46%,'
+          + ' rgba(248,246,255,0.60) 100%)',
+        content: body,
+        buttons: [{
+          text: '新建作品', icon: 'sparkle', kind: 'primary',
+          onClick: function () { UI.openBookForm(); }
+        }]
+      });
+    },
+
+    /** 兼容旧入口名（core 的 _purgeCaches、外部调用点都还可能在用） */
+    openArcList: async function () { return UI.openShelf(); },
+
+    // ------------------------------------------------------------------
+    //  5.2 作品页（设定 + 目录）
+    // ------------------------------------------------------------------
+
+    /**
+     * 作品页：作品设定 + 章节目录。
+     * 用户要的「作品 → 目录 → 章节阅读 → 续写下一章」里的"目录"就是这一页。
+     */
+    openBook: async function (bookId) {
+      var book = Book.resolve(bookId) || Book.active();
+      if (!book) { UI.openShelf(); return; }
+      Book.setActive(book.id);
+      var boardSlot = 'story-book-' + book.id;
+
+      function render() {
+        var chapters = book.chapters || [];
+        var body = H.el('div');
+
+        // ---- 作品设定卡 ----
+        var head = H.card({ accent: '#D97FA8', soft: '#FFEBF3', pad: 12 });
+        head.style.marginBottom = '12px';
+        var hrow = H.el('div');
+        hrow.style.cssText = 'display:flex; gap:12px; align-items:flex-start;';
+        hrow.appendChild(UI.coverNode(book, 62, 84));
+        var hm = H.el('div');
+        hm.style.cssText = 'flex:1; min-width:0;';
+        var st = book.styleId ? H.styleById(book.styleId) : null;
+        hm.innerHTML = '<div style="font-size:13.6px; font-weight:900; color:#553f4c;">' + U.esc(book.title) + '</div>'
+          + '<div style="font-size:9.8px; color:#a99fae; margin-top:4px;">'
+          + chapters.length + ' 章 · 已读 ' + Book.finishedCount(book) + ' 章 · 进度 '
+          + U.round(Book.progress(book), 0) + '%</div>'
+          + '<div style="font-size:10.6px; line-height:1.72; color:#8b8292; margin-top:7px;">'
+          + U.esc(U.cut(book.synopsis || '（还没有梗概）', 90)) + '</div>'
+          + '<div style="font-size:9.6px; color:#b08aa0; margin-top:6px;">'
+          + '题材：' + U.esc(U.cut(book.theme || '未填', 24))
+          + ' · 文风：' + U.esc(st ? st.name : '模型默认') + '</div>';
+        hrow.appendChild(hm);
+        head.appendChild(hrow);
+
+        var editRow = H.el('div');
+        editRow.style.cssText = 'display:flex; gap:7px; margin-top:10px;';
+        var renameB = H.button('改设定', { kind: 'soft', pad: '6px 11px', size: 10.4, icon: 'edit', soft: '#F3EEFF', color: '#7d63a8' });
+        renameB.onclick = function () {
+          // H.prompt 是单字段输入卡，所以分两步问：先改名，再改梗概
+          H.prompt({
+            title: '作品名', icon: 'edit', accent: '#7d63a8', soft: '#F3EEFF',
+            message: '改一个你一眼就认得出来的名字。',
+            value: book.title, placeholder: '例如：雨夜重逢'
+          }).then(function (v) {
+            if (v === null) return;
+            if (String(v).trim()) book.title = String(v).trim().slice(0, 40);
+            return H.prompt({
+              title: '梗概', icon: 'edit', accent: '#7d63a8', soft: '#F3EEFF',
+              message: '一句话讲这部作品在讲什么（会作为后续续写的题材参考）。',
+              value: book.synopsis || '', placeholder: '例如：分开三年后，他成了你的房东。'
+            });
+          }).then(function (v2) {
+            if (v2 === undefined) return;          // 第一步取消了
+            if (v2 !== null) book.synopsis = String(v2).trim().slice(0, 200);
+            book.updatedAt = Date.now();
+            K.save(true);
+            H.closeAllLayers();
+            setTimeout(function () { UI.openBook(book.id); }, 320);
+          });
+        };
+        editRow.appendChild(renameB);
+
+        if (book.migrated) {
+          var mig = H.el('div');
+          mig.style.cssText = 'display:flex; align-items:center; font-size:9.4px; color:#9a8f9e;';
+          mig.textContent = '（由旧版篇章自动迁移）';
+          editRow.appendChild(mig);
+        }
+        head.appendChild(editRow);
+        body.appendChild(head);
+
+        // ---- 目录 ----
+        body.appendChild(H.sectionTitle('目录', { color: '#D97FA8', margin: '4px 0 9px' }));
+        if (!chapters.length) {
+          body.appendChild(H.empty('这部作品还没有章节。让 AI 写第一章。', { icon: 'book' }));
+        }
+
+        chapters.forEach(function (c, i) {
+          var nodes = c.nodes || [];
+          var finished = c.status === 'finished';
+          var read = finished ? nodes.length : U.clamp(U.int(c.nodeIndex, 0) + (nodes.length ? 1 : 0), 0, nodes.length);
+          var badge = finished
+            ? '已完成'
+            : (U.int(c.nodeIndex, 0) > 0 ? '读到 ' + (U.int(c.nodeIndex, 0) + 1) + '/' + nodes.length : '未读');
+
+          var row = H.listRow({
+            icon: 'book',
+            color: finished ? '#9FB3D9' : '#D97FA8',
+            soft: finished ? '#EDF2FB' : '#FFEBF3',
+            title: '第 ' + (i + 1) + ' 章 · ' + (c.title || '未命名'),
+            subtitle: badge + ' · ' + nodes.length + ' 个节点 · '
+              + (c.synopsis ? U.cut(c.synopsis, 34) : '（还没有梗概）'),
+            subtitleWrap: true,
+            rightNode: (function () {
+              var box = H.el('div');
+              box.style.cssText = 'display:flex; gap:6px; align-items:center; flex-shrink:0;';
+              var go = H.button(finished ? '重看' : (U.int(c.nodeIndex, 0) > 0 ? '继续' : '开始读'), {
+                kind: 'soft', pad: '5px 11px', size: 10.6, soft: '#FFEBF3', color: '#B0728F'
+              });
+              go.onclick = function (ev) {
+                ev.stopPropagation();
+                Book.setActive(book.id);
+                K.state.story.activeChapterId = c.id;
+                UI.play(book, c);
+              };
+              box.appendChild(go);
+              if (U.int(c.nodeIndex, 0) > 0) {
+                var replay = H.button('从头回看', {
+                  kind: 'soft', pad: '5px 10px', size: 10.6, soft: '#EDF2FB', color: '#5f7aa8'
+                });
+                replay.onclick = function (ev) {
+                  ev.stopPropagation();
+                  Book.setActive(book.id);
+                  K.state.story.activeChapterId = c.id;
+                  UI.play(book, c, { replay: true });
+                };
+                box.appendChild(replay);
+              }
+              var tree = H.iconButton('branch', { size: 26, color: '#B79EDC', title: '分支树与存档' });
+              tree.onclick = function (ev) { ev.stopPropagation(); UI.openBranchTree(book, c); };
+              box.appendChild(tree);
+              var del = H.iconButton('trash', { size: 26, color: '#c2607c', title: '删除本章' });
+              del.onclick = function (ev) {
+                ev.stopPropagation();
+                H.confirm({
+                  title: '删除章节', icon: 'trash', accent: '#c2607c', soft: '#FFEFF3',
+                  message: '删除「第 ' + (i + 1) + ' 章 · ' + (c.title || '') + '」？'
+                    + '这一章的节点、存档点，以及它留在小手机里的消息都会一起消失。',
+                  okText: '删除'
+                }).then(function (ok) {
+                  if (!ok) return;
+                  Chapter.remove(book, c);
+                  H.closeAllLayers();
+                  setTimeout(function () { UI.openBook(book.id); }, 320);
+                });
+              };
+              box.appendChild(del);
+              return box;
+            })()
+          });
+          row.onclick = function () {
+            Book.setActive(book.id);
+            K.state.story.activeChapterId = c.id;
+            UI.play(book, c);
+          };
+          body.appendChild(row);
+        });
+
+        H.sheet({
+          title: book.title,
+          subtitle: '作品 · ' + chapters.length + ' 章',
+          icon: 'book',
+          height: '100%',
+          slot: boardSlot,
+          full: true,
+          bg: 'images/heartgame/page/story.jpg',
+          content: body,
+          buttons: [{
+            text: chapters.length ? '继续写下一章' : '写第一章',
+            icon: 'sparkle', kind: 'primary', keepOpen: true,
+            onClick: function (api, node) { UI.writeNext(book, api, node); }
+          }, {
+            text: '返回书架', icon: 'back', kind: 'soft',
+            onClick: function () { UI.openShelf(); }
+          }]
+        });
       }
 
-      arcs.forEach(function (a) {
-        var node = a.nodes[U.clamp(U.int(a.nodeIndex, 0), 0, Math.max(0, a.nodes.length - 1))] || null;
-        var pct = a.nodes.length ? U.pct(U.int(a.nodeIndex, 0) + 1, a.nodes.length) : 0;
-        var row = H.listRow({
-          icon: 'book',
-          color: a.status === 'finished' ? '#9FB3D9' : '#D97FA8',
-          soft: a.status === 'finished' ? '#EDF2FB' : '#FFEBF3',
-          title: a.title,
-          subtitle: (a.status === 'finished' ? '已完结 · ' : '进行中 · ')
-            + (a.nodes.length + ' 个节点') + (node ? ' · ' + node.title : '')
-            + ' · ' + U.round(pct, 0) + '%',
-          subtitleWrap: true,
-          rightNode: (function () {
-            var box = H.el('div');
-            box.style.cssText = 'display:flex; gap:6px; align-items:center; flex-shrink:0;';
-            var go = H.button(a.status === 'finished' ? '重看' : '继续', {
-              kind: 'soft', pad: '5px 11px', size: 10.6, soft: '#FFEBF3', color: '#B0728F'
-            });
-            go.onclick = function (ev) {
-              ev.stopPropagation();
-              Arc.setActive(a.id);
-              UI.play(a);
-            };
-            box.appendChild(go);
-            // 从头回看：不动进度地重看一遍（用户要的"可以多次回看播放"）
-            if (U.int(a.nodeIndex, 0) > 0) {
-              var replay = H.button('从头回看', {
-                kind: 'soft', pad: '5px 10px', size: 10.6, soft: '#EDF2FB', color: '#5f7aa8'
-              });
-              replay.onclick = function (ev) {
-                ev.stopPropagation();
-                Arc.setActive(a.id);
-                UI.play(a, { replay: true });
-              };
-              box.appendChild(replay);
-            }
-            var tree = H.iconButton('branch', { size: 26, color: '#B79EDC', title: '分支树' });
-            tree.onclick = function (ev) { ev.stopPropagation(); UI.openBranchTree(a); };
-            box.appendChild(tree);
-            var del = H.iconButton('trash', { size: 26, color: '#c2607c' });
-            del.onclick = function (ev) {
-              ev.stopPropagation();
-              H.confirm({
-                title: '删除篇章', icon: 'trash', accent: '#c2607c', soft: '#FFEFF3',
-                message: '删除「' + a.title + '」？该篇章的所有节点与存档点都会消失。',
-                okText: '删除'
-              }).then(function (ok) {
-                if (!ok) return;
-                Arc.remove(a.id);
-                UI.openArcList();
-              });
-            };
-            box.appendChild(del);
-            return box;
-          })()
-        });
-        body.appendChild(row);
-      });
+      render();
+    },
 
-      var themeBox = H.el('div');
-      themeBox.style.cssText = 'margin-top:12px;';
-      var input = H.el('input', { type: 'text', placeholder: '新篇章主题，例如：分开三年后他突然出现在你楼下' });
-      input.style.cssText = 'width:100%; box-sizing:border-box; border-radius:12px; border:1px solid rgba(216,160,190,0.32);'
-        + 'padding:9px 11px; font-size:12px; color:#5c4450; background:#fff; outline:none; font-family:inherit;';
-      themeBox.appendChild(input);
+    // ------------------------------------------------------------------
+    //  5.3 生成表单卡片（新建作品 / 续写走向）
+    // ------------------------------------------------------------------
+
+    /**
+     * 新建作品的生成表单。**卡片式**，不是行内输入框（用户明确要求），
+     * 背景走生图（form.jpg），卡片本体是毛玻璃，保证文字压得住画面。
+     * @param {string} [theme] 续写时的预填走向
+     * @param {object} [book]  传了就是「续写这一章」而不是新建作品
+     */
+    openBookForm: async function (theme, book) {
+      var b = book ? Book.resolve(book) : null;
+      var isNew = !b;
+      var info = b ? Book.continueInfo(b) : null;
+      var body = H.el('div');
+
+      // ---- 卡片本体 ----
+      var card = H.el('div');
+      card.style.cssText = 'position:relative; box-sizing:border-box; border-radius:20px; padding:16px 15px 15px;'
+        + 'background:linear-gradient(165deg, rgba(255,253,254,0.90) 0%, rgba(255,247,251,0.86) 55%,'
+        + ' rgba(248,245,255,0.88) 100%);'
+        + 'border:1px solid rgba(216,160,190,0.34);'
+        + 'box-shadow:0 16px 40px rgba(120,80,110,0.20), inset 0 1px 0 rgba(255,255,255,0.9);'
+        + 'backdrop-filter:blur(9px); -webkit-backdrop-filter:blur(9px);';
+      body.appendChild(card);
+
+      var cap = H.el('div');
+      cap.style.cssText = 'font-size:9.6px; letter-spacing:.2em; font-weight:800; color:#b08aa0;';
+      cap.textContent = isNew ? 'NEW WORK' : ('CHAPTER ' + ((info ? info.index : 0) + 1));
+      card.appendChild(cap);
+
+      var title = H.el('div');
+      title.style.cssText = 'font-size:14.5px; font-weight:900; color:#553f4c; margin-top:5px;';
+      title.textContent = isNew ? '新建一部作品' : '继续写下一章';
+      card.appendChild(title);
+
+      var sub = H.el('div');
+      sub.style.cssText = 'font-size:10.4px; line-height:1.72; color:#8b8292; margin-top:6px;';
+      sub.textContent = isNew
+        ? '给作品定一个题材，AI 会写出它的第一章（8 个节点）。之后每一章都能接着上一章的梗概继续写，'
+          + '读到哪一章都不会断。'
+        : ('「' + b.title + '」现在有 ' + (info ? info.count : 0) + ' 章。'
+          + (info && info.lastSynopsis ? '上一章：' + U.cut(info.lastSynopsis, 46) : '')
+          + ' 续写时会自动把前面所有章节的梗概喂给模型，保证接得上。');
+      card.appendChild(sub);
+
+      // ---- 题材 / 走向 ----
+      var label = function (text, gap) {
+        var l = H.el('div');
+        l.style.cssText = 'font-size:10.6px; font-weight:800; color:#8b8292; margin:' + (gap || '12px') + ' 2px 6px;';
+        l.textContent = text;
+        return l;
+      };
+
+      card.appendChild(label(isNew ? '题材 / 主题' : '这一章的走向（可留空，交给 AI 自己接）'));
+      var input = H.el('input', {
+        type: 'text',
+        placeholder: isNew ? '例如：分开三年后他突然出现在你楼下' : '例如：让两人在雨夜被迫独处'
+      });
+      input.style.cssText = 'width:100%; box-sizing:border-box; border-radius:12px;'
+        + 'border:1px solid rgba(216,160,190,0.36); padding:10px 12px; font-size:12px; color:#5c4450;'
+        + 'background:rgba(255,255,255,0.94); outline:none; font-family:inherit;';
+      if (theme) input.value = theme;
+      card.appendChild(input);
+
       var quick = H.el('div');
       quick.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;';
-      ['一场没有预告的重逢', '被困在同一间民宿', '他替你挡了一次酒', '身份暴露的那一夜'].forEach(function (t) {
-        var b = H.button(t, { kind: 'soft', pad: '5px 10px', size: 10.4, soft: '#FFEBF3', color: '#B0728F' });
-        b.onclick = function () { input.value = t; };
-        quick.appendChild(b);
+      var QUICK = isNew
+        ? ['一场没有预告的重逢', '被困在同一间民宿', '他替你挡了一次酒', '身份暴露的那一夜', '久别之后的第一次通话']
+        : ['把两人的关系往前推一步', '让他不得不坦白一件事', '一次谁都没准备好的道别', '把上一章的伏笔收回来'];
+      QUICK.forEach(function (t) {
+        var qb = H.button(t, { kind: 'soft', pad: '5px 10px', size: 10.4, soft: '#FFEBF3', color: '#B0728F' });
+        qb.onclick = function () { input.value = t; };
+        quick.appendChild(qb);
       });
-      themeBox.appendChild(quick);
+      card.appendChild(quick);
 
-      // 文风选择器（v1.5.41）：用户要求"主线剧情生成表单里也要加上文风选择器"
-      var styleLabel = H.el('div');
-      styleLabel.style.cssText = 'font-size:10.6px; font-weight:800; color:#8b8292; margin:12px 2px 6px;';
-      styleLabel.textContent = '文风（决定这一章的写法与篇幅）';
-      themeBox.appendChild(styleLabel);
+      // ---- 文风选择器（复用 v1.5.41 的文风管理器） ----
+      card.appendChild(label('文风（决定这一章的写法与篇幅）'));
       var styleBar = H.el('div');
       styleBar.style.cssText = 'display:flex; flex-wrap:wrap; gap:6px;';
-      var pickedStyleId = K.state.activeStyleId || null;
+      var pickedStyleId = isNew
+        ? (K.state.activeStyleId || null)
+        : (b.styleId === undefined ? null : b.styleId);
       var paintStyles = function () {
         styleBar.innerHTML = '';
         var rows = [{ id: null, name: '不指定', desc: '用模型默认写法' }].concat(K.allStyles());
         rows.forEach(function (s) {
           var on = pickedStyleId === s.id;
-          var b = H.el('button', { type: 'button', title: s.desc || s.prompt || '' });
-          b.style.cssText = 'padding:6px 11px; border-radius:11px; font-size:10.8px; font-weight:700; cursor:pointer;'
+          var sb = H.el('button', { type: 'button', title: s.desc || s.prompt || '' });
+          sb.style.cssText = 'padding:6px 11px; border-radius:11px; font-size:10.8px; font-weight:700; cursor:pointer;'
             + 'transition:all .18s ease;'
             + (on ? 'background:linear-gradient(135deg,#D97FA8,#B79EDC); color:#fff; border:none;'
               : 'background:rgba(255,255,255,0.86); color:#8b8292; border:1px solid rgba(190,180,195,0.28);');
-          b.textContent = s.name + (s.builtin === false ? ' ·自定义' : '');
-          b.onclick = function () {
+          sb.textContent = s.name + (s.builtin === false ? ' ·自定义' : '');
+          sb.onclick = function () {
             pickedStyleId = s.id;
-            K.setActiveStyle(s.id);      // 顺手记成当前文风，下次进来还是它
+            K.setActiveStyle(s.id);         // 顺手记成当前文风，下次进来还是它
             paintStyles();
           };
-          styleBar.appendChild(b);
+          styleBar.appendChild(sb);
         });
       };
       paintStyles();
-      themeBox.appendChild(styleBar);
-      var styleHint = H.el('div');
-      styleHint.style.cssText = 'font-size:10px; color:#a99fae; margin-top:6px; line-height:1.6;';
-      styleHint.textContent = '想自己写一套？去「后台管理 → 文风管理器」新增。';
-      themeBox.appendChild(styleHint);
+      card.appendChild(styleBar);
 
-      body.appendChild(themeBox);
+      var hint = H.el('div');
+      hint.style.cssText = 'font-size:9.8px; color:#a99fae; margin-top:7px; line-height:1.66;';
+      hint.textContent = isNew
+        ? '想自己写一套文风？去「后台管理 → 文风管理器」新增。'
+        : '续写默认沿用这部作品的文风，也可以在这里临时换一套。';
+      card.appendChild(hint);
 
       H.sheet({
-        title: '主线剧情',
-        subtitle: '多篇章并行 · 存档点 · 分支回溯',
-        icon: 'book',
+        title: isNew ? '新建作品' : '续写下一章',
+        subtitle: isNew ? 'AI 写出第一章' : ('第 ' + ((info ? info.index : 0) + 1) + ' 章'),
+        icon: 'sparkle',
         height: '100%',
-        slot: 'story',
-        // 全屏页 + 生图背景（v1.5.42）
+        slot: 'story-form',
         full: true,
-        bg: 'images/heartgame/page/story.jpg',
+        bg: 'images/heartgame/page/bookform.jpg',
+        bgScrim: 'linear-gradient(180deg, rgba(255,252,250,0.26) 0%, rgba(255,248,246,0.40) 46%,'
+          + ' rgba(250,246,255,0.56) 100%)',
         content: body,
         buttons: [{
-          text: 'AI 写一个新篇章', icon: 'sparkle', kind: 'primary', keepOpen: true,
+          text: isNew ? '让 AI 写出这部作品' : '继续写下一章',
+          icon: 'sparkle', kind: 'primary', keepOpen: true,
           onClick: async function (api, node) {
-            var theme = input.value.trim() || '一场没有预告的重逢';
-            var restore = H.busy(node, '正在写…');
-            H.toast('正在为你们写一个开局…');
-            var arc = await Gen.generateArc(theme, pickedStyleId);
-            restore();
-            if (!arc) { H.toast('篇章生成失败'); return; }
-            H.closeAllLayers();
-            UI.play(arc);
+            var t = input.value.trim();
+            if (isNew) {
+              if (!t) { H.toast('先给作品写一个题材'); return; }
+              await UI.createBook(t, pickedStyleId, api, node);
+              return;
+            }
+            await UI.continueChapter(b, t, pickedStyleId, api, node);
           }
         }]
       });
     },
 
-    /** 播放一个篇章（opts.replay = true 表示"从头回看"，结束时回到原来的进度） */
-    play: async function (arc, opts) {
-      var a = arc || Arc.active();
-      if (!a) { UI.openArcList(); return; }
+    /** 新建作品：生成第一章 → 建书 → 进目录 */
+    createBook: async function (theme, styleId, api, node) {
+      var restore = H.busy(node, '正在写…');
+      H.toast('正在为你们写第一章…');
+      var out = await Gen.generateChapter({ theme: theme, styleId: styleId, isNew: true, chapterNo: 0 });
+      restore();
+      if (!out) { UI.tip('没能写出这一章', '模型这次没有给出可用的章节。可以再点一次，或换一个题材描述。'); return; }
+      var book = Book.create({
+        title: out.title || theme,
+        synopsis: out.synopsis || '',
+        theme: theme,
+        styleId: (styleId === undefined ? null : styleId)
+      });
+      if (!book) { H.toast('作品创建失败'); return; }
+      var ch = Chapter.create(book, {
+        title: out.title || ('第 1 章'),
+        synopsis: out.synopsis || '',
+        nodes: out.nodes,
+        theme: theme
+      });
+      H.closeAllLayers();
+      setTimeout(function () { UI.play(book, ch); }, 260);
+    },
+
+    /**
+     * 续写下一章 → 直接进入阅读。
+     * **带上前面所有章节的梗概**（在 Gen.chapterPlan 里拼），保证连贯。
+     */
+    continueChapter: async function (bookLike, direction, styleId, api, node) {
+      var b = Book.resolve(bookLike);
+      if (!b) { H.toast('找不到这部作品'); return; }
+      var info = Book.continueInfo(b);
+      var restore = H.busy(node, '正在写…');
+      H.toast('正在接着写第 ' + (info.index + 1) + ' 章…');
+      var out = await Gen.generateChapter({
+        book: b,
+        theme: direction || b.theme,
+        styleId: styleId,
+        chapterNo: info.index,
+        isNew: false
+      });
+      restore();
+      if (!out) { UI.tip('没能写出这一章', '模型这次没有给出可用的章节，作品进度没有变化。可以再点一次。'); return; }
+      var ch = Chapter.create(b, {
+        title: out.title || ('第 ' + (info.index + 1) + ' 章'),
+        synopsis: out.synopsis || '',
+        nodes: out.nodes,
+        theme: b.theme
+      });
+      if (!ch) { H.toast('章节保存失败'); return; }
+      H.closeAllLayers();
+      setTimeout(function () { UI.play(b, ch); }, 260);
+    },
+
+    /** 从作品页底部按钮续写（带缓冲态） */
+    writeNext: async function (bookLike, api, node) {
+      var b = Book.resolve(bookLike);
+      if (!b) return;
+      var info = Book.continueInfo(b);
+      var restore = H.busy(node, '正在写…');
+      H.toast('正在接着写第 ' + (info.index + 1) + ' 章…');
+      var out = await Gen.generateChapter({
+        book: b, theme: b.theme, styleId: b.styleId, chapterNo: info.index, isNew: false
+      });
+      restore();
+      if (!out) { UI.tip('没能写出这一章', '模型这次没有给出可用的章节，作品进度没有变化。可以再点一次，或换个文风。'); return; }
+      var ch = Chapter.create(b, {
+        title: out.title || ('第 ' + (info.index + 1) + ' 章'),
+        synopsis: out.synopsis || '',
+        nodes: out.nodes,
+        theme: b.theme
+      });
+      if (!ch) { H.toast('章节保存失败'); return; }
+      H.closeAllLayers();
+      setTimeout(function () { UI.play(b, ch); }, 260);
+    },
+
+    /**
+     * 播放一章。
+     *   UI.play(book, chapter [, opts])  —— 新签名（推荐）
+     *   UI.play(chapter [, opts])        —— 旧签名，作品由章节自己反查
+     * opts.replay = true 表示"从头回看"，结束时回到原来的进度。
+     */
+    play: async function (bookLike, chapterLike, opts) {
+      // ---- 参数归一（新旧两种调法都要能用） ----
+      var book = null, chapter = null, o = {};
+      if (looksLikeBook(bookLike)) {
+        book = bookLike;
+        if (looksLikeChapter(chapterLike)) chapter = chapterLike;
+        else if (typeof chapterLike === 'string') chapter = Chapter.byId(chapterLike);
+        if (!chapter) chapter = Chapter.active(book);
+        o = opts || {};
+      } else {
+        chapter = Chapter.resolve(bookLike, chapterLike && !looksLikeChapter(chapterLike) ? chapterLike : undefined);
+        o = (chapterLike && typeof chapterLike === 'object' && !looksLikeChapter(chapterLike)) ? chapterLike : (opts || {});
+        book = (chapter && Book.byId(chapter.bookId)) || Book.resolve(bookLike) || Book.active();
+      }
+      var a = chapter;
+      if (!a) { UI.openShelf(); return; }
+      if (book) {
+        Book.setActive(book.id);
+        K.state.story.activeChapterId = a.id;
+      }
+      book = book || Book.resolve(a);
       UI._arc = a;
-      var replay = !!(opts && opts.replay);
+      UI._book = book;
+      var replay = !!(o && o.replay);
       // 演出期间挂起看板重绘：看板一旦重绘就会 teardown 掉共用的 Portraits 单例，
       // 主线立绘会当场消失（用户反馈的"主线里立绘时不时消失"）
       if (window.heartGameApp && typeof window.heartGameApp.setSuspended === 'function') {
@@ -1261,14 +2179,15 @@
       var topTitle = H.el('div');
       topTitle.style.cssText = 'flex:1; min-width:0;';
       topTitle.innerHTML = '<div style="font-size:12.5px; font-weight:800; color:#fff; white-space:nowrap;'
-        + 'overflow:hidden; text-overflow:ellipsis;">' + U.esc(a.title) + '</div>'
+        + 'overflow:hidden; text-overflow:ellipsis;">' + U.esc((book ? book.title + ' · ' : '') + (a.title || '')) + '</div>'
         + '<div id="hg-vn-progress" style="font-size:9.6px; color:rgba(255,255,255,0.66); margin-top:2px;"></div>';
       topbar.appendChild(topTitle);
+      // 小手机按**整部作品**打开（用户明确要求：整部作品一条线）
       var phoneB = H.iconButton('phone', { size: 32, color: '#fff', bg: 'rgba(255,255,255,0.16)', border: 'rgba(255,255,255,0.22)', title: '剧情小手机' });
-      phoneB.onclick = function () { SubPhone.open(a); };
+      phoneB.onclick = function () { SubPhone.open(book); };
       topbar.appendChild(phoneB);
       var treeB = H.iconButton('branch', { size: 32, color: '#fff', bg: 'rgba(255,255,255,0.16)', border: 'rgba(255,255,255,0.22)', title: '分支树' });
-      treeB.onclick = function () { UI.openBranchTree(a); };
+      treeB.onclick = function () { UI.openBranchTree(book, a); };
       topbar.appendChild(treeB);
       var saveB = H.iconButton('save', { size: 32, color: '#fff', bg: 'rgba(255,255,255,0.16)', border: 'rgba(255,255,255,0.22)', title: '存档点' });
       saveB.onclick = function () {
@@ -1276,6 +2195,13 @@
         H.toast(snap ? '已保存：' + snap.label : '保存失败');
       };
       topbar.appendChild(saveB);
+      // 回到目录（用户要的"退出时回到目录而不是书架"）
+      var tocB = H.iconButton('book', { size: 32, color: '#fff', bg: 'rgba(255,255,255,0.16)', border: 'rgba(255,255,255,0.22)', title: '返回目录' });
+      tocB.onclick = function () {
+        exit();
+        setTimeout(function () { UI.openBook(book ? book.id : null); }, 320);
+      };
+      topbar.appendChild(tocB);
       inner.appendChild(topbar);
 
       // 叙事窗（v1.5.39 重做：**透明化**、字更小，只显示当前这一个分镜）
@@ -1401,7 +2327,11 @@
         await K.userProfile();
 
         var prog = document.getElementById('hg-vn-progress');
-        if (prog) prog.textContent = (node.title || '') + ' · ' + (U.int(a.nodeIndex, 0) + 1) + ' / ' + a.nodes.length;
+        if (prog) {
+          var chNo = book ? (U.int(a.index, 0) + 1) : 0;
+          prog.textContent = (chNo ? ('第 ' + chNo + ' 章 · ') : '')
+            + (node.title || '') + ' · ' + (U.int(a.nodeIndex, 0) + 1) + ' / ' + a.nodes.length;
+        }
 
         Stage.setBackground(node.bg);
         Stage.setEmotion(node.emotion);
@@ -1711,28 +2641,46 @@
       body.appendChild(banner);
     },
 
-    /** 篇章收束 */
+    /**
+     * 本章读完的收束屏。
+     * 小说化的关键就在这一屏：**读完一章不是结束**，主按钮是「继续写下一章」，
+     * 写完直接接着演。用户原话：「章节都可以继续生成，这样才是连贯的」。
+     */
     finishArc: function (arc, inner, body, optsHost, winCard, exitFn) {
       winCard._hasOptions = false;
       body.innerHTML = '';
       optsHost.innerHTML = '';
       var tier = K.tier();
+      var bk = Book.byId(arc.bookId) || UI._book || Book.resolve(arc);
+      var chNo = bk ? (U.int(arc.index, 0) + 1) : 0;
+
       var box = H.el('div');
       box.style.cssText = 'text-align:center; padding:8px 4px 2px;';
       box.innerHTML = '<div style="font-size:13px; font-weight:900; color:#B0728F; margin-bottom:8px;">'
-        + '「' + U.esc(arc.title) + '」完结</div>'
+        + (chNo ? '第 ' + chNo + ' 章完' : '本章完') + '</div>'
+        + '<div style="font-size:11.4px; font-weight:800; color:#553f4c; margin-bottom:6px;">'
+        + U.esc(arc.title || '') + '</div>'
         + '<div style="font-size:10.8px; color:#9a8f9e; line-height:1.76;">'
         + (arc.synopsis ? U.esc(arc.synopsis) + '<br>' : '')
         + '当前阶段：' + tier.name + ' · 好感 ' + U.comma(K.state.affinity) + '</div>';
       body.appendChild(box);
 
-      var b1 = H.button('把这段写进记忆回廊', { kind: 'primary', block: true, icon: 'heart' });
-      b1.style.marginTop = '12px';
+      var bNext = H.button('继续写下一章', { kind: 'primary', block: true, icon: 'sparkle' });
+      bNext.style.marginTop = '12px';
+      bNext.onclick = function () {
+        if (!bk) { H.toast('找不到这部作品'); return; }
+        exitFn();
+        setTimeout(function () { UI.writeNext(bk, null, null); }, 340);
+      };
+      body.appendChild(bNext);
+
+      var b1 = H.button('把这一章写进记忆回廊', { kind: 'soft', block: true, icon: 'heart', soft: '#FFEBF3', color: '#B0728F' });
+      b1.style.marginTop = '8px';
       b1.onclick = function () {
         var quotes = (arc.nodes || []).slice(-3).map(function (n) { return U.cut(n.text, 60); });
         K.addMemory({
-          title: arc.title,
-          summary: arc.synopsis || ('一段走到了结尾的剧情 · ' + arc.nodes.length + ' 个节点'),
+          title: (bk ? bk.title + ' · ' : '') + (arc.title || ''),
+          summary: arc.synopsis || ('一段走到了结尾的剧情 · ' + (arc.nodes || []).length + ' 个节点'),
           quotes: quotes,
           source: 'story',
           tags: ['主线', tier.name]
@@ -1742,24 +2690,35 @@
       };
       body.appendChild(b1);
 
-      var b2 = H.button('返回篇章列表', { kind: 'soft', block: true, icon: 'book', soft: '#F3EEFF', color: '#7d63a8' });
+      var b2 = H.button('返回目录', { kind: 'soft', block: true, icon: 'book', soft: '#F3EEFF', color: '#7d63a8' });
       b2.style.marginTop = '8px';
-      b2.onclick = function () { exitFn(); setTimeout(function () { UI.openArcList(); }, 320); };
+      b2.onclick = function () {
+        exitFn();
+        setTimeout(function () { UI.openBook(bk ? bk.id : null); }, 320);
+      };
       body.appendChild(b2);
     },
 
-    /** 分支树可视化 + 回溯 */
-    openBranchTree: function (arc) {
-      var a = arc || Arc.active();
+    /** 分支树可视化 + 回溯（按章节；z 100700 才能盖在演出之上） */
+    openBranchTree: function (bookLike, chapterLike) {
+      var bk = looksLikeBook(bookLike) ? bookLike : (Book.resolve(bookLike) || UI._book || Book.active());
+      var a = null;
+      if (looksLikeChapter(chapterLike)) a = chapterLike;
+      else if (chapterLike !== undefined) a = Chapter.byId(chapterLike);
+      if (!a) a = (looksLikeBook(bookLike) ? Chapter.active(bookLike) : Chapter.resolve(bookLike)) || UI._arc || Chapter.active(bk);
       var st = K.state;
       var body = H.el('div');
-      if (!a) { body.appendChild(H.empty('先开启一个篇章', { icon: 'branch' })); return H.sheet({ title: '分支树', content: body }); }
+      if (!a) { body.appendChild(H.empty('先开启一部作品', { icon: 'branch' })); return H.sheet({ title: '分支树', content: body }); }
+      if (!bk) bk = Book.byId(a.bookId);
 
-      var mine = (st.story.branches || []).filter(function (b) { return b.arcId === a.id; });
+      var mine = (st.story.branches || []).filter(function (b) {
+        return (b.chapterId || b.arcId) === a.id;
+      });
       var info = H.el('div');
       info.style.cssText = 'font-size:10.8px; color:#8b8292; line-height:1.72; margin-bottom:12px;'
         + 'background:rgba(255,255,255,0.72); border-radius:13px; padding:11px 12px;';
-      info.innerHTML = '「' + U.esc(a.title) + '」共 ' + a.nodes.length + ' 个节点，'
+      info.innerHTML = (bk ? U.esc(bk.title) + ' · ' : '') + '第 ' + (U.int(a.index, 0) + 1) + ' 章「'
+        + U.esc(a.title || '') + '」共 ' + (a.nodes || []).length + ' 个节点，'
         + '当前停在第 ' + (U.int(a.nodeIndex, 0) + 1) + ' 个。<br>'
         + '已记录 ' + mine.length + ' 次选择，' + (a.saves || []).length + ' 个存档点。';
       body.appendChild(info);
@@ -1817,7 +2776,7 @@
           if (!Arc.rewindTo(b.id)) { H.toast('回溯失败'); return; }
           H.toast('已回溯到该选择点');
           H.closeAllLayers();
-          UI.play(Arc.byId(b.arcId));
+          UI.play(bk, Chapter.byId(b.chapterId || b.arcId));
         };
         body.appendChild(row);
       });
@@ -1829,7 +2788,7 @@
         var snap = Arc.save(a);
         H.toast(snap ? '已存档：' + snap.label : '存档失败');
         H.closeAllLayers();
-        UI.openBranchTree(a);
+        UI.openBranchTree(bk, a);
       };
       body.appendChild(saveNow);
       (a.saves || []).forEach(function (s) {
@@ -1844,14 +2803,14 @@
           if (!Arc.load(a, s.id)) { H.toast('读档失败'); return; }
           H.toast('已回到存档点');
           H.closeAllLayers();
-          UI.play(a);
+          UI.play(bk, a);
         };
         body.appendChild(row);
       });
 
       H.sheet({
         title: '分支树与存档',
-        subtitle: a.title,
+        subtitle: (bk ? bk.title + ' · ' : '') + (a.title || ''),
         icon: 'branch',
         height: '92%',
         // 同样要盖在主线演出之上
@@ -1860,19 +2819,21 @@
         content: body,
         buttons: [{
           text: '回到这一章', icon: 'play', kind: 'primary',
-          onClick: function () { H.closeAllLayers(); UI.play(a); }
+          onClick: function () { H.closeAllLayers(); UI.play(bk, a); }
         }]
       });
     }
   };
 
   HG.Story = {
-    Arc: Arc,
+    Book: Book,
+    Chapter: Chapter,
+    Arc: Arc,          // 兼容层：旧的「篇章」= 新模型的一章
     Gen: Gen,
     SubPhone: SubPhone,
     Stage: Stage,
     UI: UI,
     Script: Script,
-    open: function () { UI.openArcList(); }
+    open: function () { UI.openShelf(); }
   };
 })();

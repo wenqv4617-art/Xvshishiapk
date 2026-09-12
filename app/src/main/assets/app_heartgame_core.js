@@ -1820,12 +1820,15 @@
         lastActiveAt: 0
       },
 
-      // —— 主线 / 剧情 ——
+      // —— 主线 / 剧情（v1.5.49 小说化重做：书架式多作品） ——
+      // 结构：一本书 = 一部作品（整部作品一条线），书下面才是可以一直续写的章节。
+      // 旧存档里的扁平 arcs 由 K.migrateStory() 自动搬进 books，进度一个都不丢。
       story: {
-        arcs: [],             // [{id, title, chapters:[...], currentNodeId, status}]
-        activeArcId: null,
+        books: [],            // [{id, title, synopsis, cover, theme, styleId, chapters:[...], createdAt, updatedAt}]
+        activeBookId: null,   // 当前作品
+        activeChapterId: null,// 当前章节
         branches: [],         // 分支回溯树
-        phone: {              // 剧情中途小手机
+        phone: {              // 剧情中途小手机（记录挂 bookId + chapterId）
           sms: [],
           moments: [],
           calls: []
@@ -2086,6 +2089,145 @@
     },
 
     /** 补齐缺失字段（旧存档升级路径） */
+    /**
+     * ★ 旧存档迁移（v1.5.49 主线「小说化」重做）
+     * ------------------------------------------------------------------
+     * 旧结构：st.story.arcs = [{id, title, synopsis, theme, nodes, nodeIndex, status, saves}]
+     *         一个 arc 就是「一次生成的 8 个节点」，读完就完了，不能再续写。
+     * 新结构：st.story.books = [{id, title, chapters:[{id, index, title, synopsis, nodes,
+     *         nodeIndex, status, saves}]}]，一本书 = 一部作品，章节可以一直续写。
+     *
+     * 迁移原则：**一个字段都不丢**。
+     *   · 每本旧 arc 变成新作品里的一章；节点、nodeIndex、status、存档点原样搬过去。
+     *   · 所有旧 arc 合成**同一部作品**（旧模型的"篇章"本来就是同一段关系的连续剧情），
+     *     书里的顺序按 createdAt 从早到晚，阅读顺序才不会倒。
+     *   · 章节与作品共用旧 arc 的 id —— 小手机里记的 arcId 因此仍然指得回正确的章节。
+     *   · 小手机的旧记录补上 bookId + chapterId（去重键换了，不补会重复灌消息）。
+     *   · 已经迁过的档（有 books）直接跳过，绝不二次迁移。
+     */
+    migrateStory: function (s) {
+      if (!s || typeof s !== 'object') return s;
+      var st = s.story;
+      if (!st || typeof st !== 'object') return s;
+      if (!st.phone || typeof st.phone !== 'object') st.phone = { sms: [], moments: [], calls: [] };
+      ['sms', 'moments', 'calls'].forEach(function (k) {
+        if (!Array.isArray(st.phone[k])) st.phone[k] = [];
+      });
+      if (!Array.isArray(st.branches)) st.branches = [];
+
+      var legacy = Array.isArray(st.arcs) ? st.arcs : [];
+      // 注意：blankState() 会给出 books: []，所以不能只判 `!Array.isArray(st.books)`，
+      // 否则「新结构默认值 + 旧数据 arcs」的档会被判成已迁移，用户的进度就整批消失了。
+      var hasBooks = Array.isArray(st.books) && st.books.length > 0;
+      if (!hasBooks && legacy.length) st.books = K._booksFromArcs(legacy, st, st.activeArcId);
+      else if (!Array.isArray(st.books)) st.books = [];
+      delete st.arcs;
+
+      // 小手机旧记录补键：能对上 chapterId 的直接补 bookId，对不上的按 arcId 查
+      var owner = {};
+      st.books.forEach(function (b) {
+        (b.chapters || []).forEach(function (c) { owner[c.id] = b.id; });
+      });
+      ['sms', 'moments', 'calls'].forEach(function (k) {
+        st.phone[k].forEach(function (r) {
+          if (!r || typeof r !== 'object') return;
+          if (r.chapterId) { if (!r.bookId) r.bookId = owner[r.chapterId] || null; return; }
+          if (r.arcId) { r.chapterId = r.arcId; r.bookId = owner[r.arcId] || null; }
+        });
+      });
+
+      if (!st.activeBookId || !K._bookIn(st, st.activeBookId)) {
+        var seeded = K._bookIn(st, st.activeArcId);
+        st.activeBookId = seeded ? seeded.id : (st.books[0] ? st.books[0].id : null);
+      }
+      delete st.activeArcId;
+
+      var ab = K._bookIn(st, st.activeBookId);
+      if (ab) {
+        var list = ab.chapters || (ab.chapters = []);
+        if (!st.activeChapterId || !list.some(function (c) { return c.id === st.activeChapterId; })) {
+          st.activeChapterId = ab.activeChapterId || (list.length ? list[list.length - 1].id : null);
+        }
+      } else {
+        st.activeChapterId = null;
+      }
+      return s;
+    },
+
+    /** 迁移用：把旧的扁平 arcs 装成一部作品（导出给 story 层与单测复用） */
+    _booksFromArcs: function (arcs, st, activeArcId) {
+      var now = Date.now();
+      var sorted = (arcs || []).slice().sort(function (x, y) {
+        return U.int(x && x.createdAt, now) - U.int(y && y.createdAt, now);
+      });
+      var chapters = sorted.map(function (a, i) {
+        a = a || {};
+        return {
+          id: a.id || U.uid('ch'),
+          bookId: null,                     // 下面统一回填（章节要能自己找到所属作品）
+          index: i,
+          title: String(a.title || ('第 ' + (i + 1) + ' 章')),
+          synopsis: String(a.synopsis || ''),
+          nodes: Array.isArray(a.nodes) ? a.nodes : [],
+          nodeIndex: U.clamp(U.int(a.nodeIndex, 0), 0, Math.max(0, (a.nodes || []).length - 1)),
+          status: a.status === 'finished' ? 'finished' : 'playing',
+          saves: Array.isArray(a.saves) ? a.saves : [],
+          theme: a.theme || '',
+          sceneId: a.sceneId || null,
+          tier: a.tier || (st && st.tierKey) || null,
+          mode: a.mode || (st && st.mode) || null,
+          createdAt: U.int(a.createdAt, now),
+          updatedAt: U.int(a.updatedAt, now)
+        };
+      });
+      // 双保险：万一旧档里孤立的 script/title 字段还在，留一个可读的书名
+      var bookTitle = (chapters.length === 1 && chapters[0].title)
+        ? chapters[0].title
+        : ('旧篇章合集 · ' + chapters.length + ' 章');
+      var book = {
+        id: U.uid('book'),
+        title: bookTitle,
+        synopsis: chapters.map(function (c) { return c.title; }).join(' / ').slice(0, 120),
+        cover: '',
+        theme: chapters[0] ? chapters[0].theme : '',
+        styleId: null,
+        migrated: true,                 // 标记：这是从旧扁平篇章搬过来的作品
+        chapters: chapters,
+        createdAt: chapters.length ? chapters[0].createdAt : now,
+        updatedAt: now
+      };
+      chapters.forEach(function (c) { c.bookId = book.id; });
+      // 旧档里正在读的是哪一篇，迁移后就停在那一章（否则续写会跳到最后生成的那一章）
+      var act = null;
+      for (var i = 0; i < chapters.length; i++) if (chapters[i].id === activeArcId) act = chapters[i];
+      book.activeChapterId = act ? act.id : (chapters.length ? chapters[chapters.length - 1].id : null);
+      return [book];
+    },
+
+    /** 迁移用：按 id 找作品（含兼容旧的 arcId -> chapterId 情形） */
+    _bookIn: function (st, id) {
+      if (!st || !st.books || !id) return null;
+      for (var i = 0; i < st.books.length; i++) {
+        var b = st.books[i];
+        if (b.id === id) return b;
+        if ((b.chapters || []).some(function (c) { return c.id === id; })) return b;
+      }
+      return null;
+    },
+
+    /** 全部作品（面板统计等处用；不要在 UI 里直接摸 st.story.books） */
+    storyBooks: function () {
+      var st = K.state;
+      return (st && st.story && Array.isArray(st.story.books)) ? st.story.books : [];
+    },
+
+    /** 章节总数（含所有作品） */
+    storyChapterCount: function () {
+      var n = 0;
+      K.storyBooks().forEach(function (b) { n += (b.chapters || []).length; });
+      return n;
+    },
+
     normalize: function (raw, charId, meId) {
       var base = blankState(charId, meId);
       if (!raw || typeof raw !== 'object') return base;
@@ -2112,6 +2254,9 @@
       out.peakAffinity = Math.max(out.affinity, U.int(out.peakAffinity, 0));
       if (!MODE[out.mode]) out.mode = MODE.STRATEGY;
       if (!AFFINITY_TIERS.some(function (t) { return t.key === out.tierKey; })) out.tierKey = 'acquaint';
+      // ★ 旧存档迁移必须在这里做：所有读档路径都经过 normalize，
+      //   放在 UI 里做的话，用户「先看一眼主页再进主线」就会看到空书架。
+      K.migrateStory(out);
       out.version = VERSION;
       return out;
     },
@@ -3316,7 +3461,8 @@
         st.affinity = 0; st.tierKey = 'acquaint'; st.gateDone = {}; st.peakAffinity = 0;
         st.bond.affinityLog = [];
       } else if (scope === 'story') {
-        st.story.arcs = []; st.story.activeArcId = null; st.story.branches = [];
+        st.story.books = []; st.story.activeBookId = null; st.story.activeChapterId = null;
+        st.story.branches = [];
         st.story.phone = { sms: [], moments: [], calls: [] };
       } else if (scope === 'quiet') {
         st.quiet.thread = [];

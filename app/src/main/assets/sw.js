@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v126'; // v125: 全项目彻底移除 max_tokens（用户原则：绝不允许截断模型输出，也不再因此被中转站拒掉）；调用失败把真实原因显示给用户、解析失败贴出模型原始返回；v1.5.47
+const CACHE_NAME = 'story-phone-v127'; // v127: 主线"小说化"重做——书架式多作品 / 一部作品一条线 / 章节可续写 / 旧存档自动迁移；新增书架与生成表单卡片两张底图；v1.5.49
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -29,6 +29,8 @@ const ASSETS = [
   './images/heartgame/page/tasks.jpg',
   './images/heartgame/page/shop.jpg',
   './images/heartgame/page/bond.jpg',
+  './images/heartgame/page/shelf.jpg',     // 书架（作品库）底图（v1.5.49）
+  './images/heartgame/page/bookform.jpg',  // 新建作品 / 续写生成表单底图（v1.5.49）
   // 八个系统入口的透明底图标（v1.5.46，白底生图后抠成透明）
   './images/heartgame/icon/task.png',
   './images/heartgame/icon/shop.png',
