@@ -3046,6 +3046,41 @@
       }
 
       // ------------------------------------------------------------------
+      //  结构化输出方案切换（v1.5.45）
+      //  用户："跟聊天加号展开栏的查手机一样做两套方案，json数组和文字标签。在后台管理里切换。"
+      // ------------------------------------------------------------------
+      var modeSection = H.el('div');
+      modeSection.appendChild(H.sectionTitle('生成输出方案', { color: '#7E97C9' }));
+      var modeTip = H.el('div');
+      modeTip.style.cssText = 'font-size:10.6px; line-height:1.7; color:#8b8292; background:rgba(237,242,251,0.8);'
+        + 'border:1px solid rgba(159,179,217,0.22); border-radius:13px; padding:10px 12px; margin-bottom:10px;';
+      modeTip.textContent = '主线剧情、商店上新、卡池生成这些地方要让模型按固定格式回话。'
+        + 'JSON 方案更省 token，但有些模型爱加 ``` 围栏或前后废话导致失败；'
+        + '文字标签方案用「键：值」的写法，对中文模型宽容得多。哪个能用就用哪个。';
+      modeSection.appendChild(modeTip);
+      var modeBar = H.el('div');
+      modeBar.style.cssText = 'display:flex; gap:8px; margin-bottom:10px;';
+      var paintMode = function () {
+        modeBar.innerHTML = '';
+        [['json', 'JSON 数组'], ['tag', '文字标签']].forEach(function (m) {
+          var on = K.outputMode() === m[0];
+          var b = H.button(m[1], {
+            kind: on ? 'primary' : 'soft', block: true,
+            soft: '#EDF2FB', color: '#5f7aa8', pad: '8px 0', size: 11
+          });
+          b.onclick = function () {
+            K.setOutputMode(m[0]);
+            H.toast('已切换到「' + m[1] + '」方案');
+            paintMode();
+          };
+          modeBar.appendChild(b);
+        });
+      };
+      paintMode();
+      modeSection.appendChild(modeBar);
+      body.appendChild(modeSection);
+
+      // ------------------------------------------------------------------
       //  文风管理器（v1.5.41，用户标了高优先级）
       //  「主线剧情有时候生成的很短小很不好看。我们后台管理里要加一个文风管理器，
       //    可以新增文风管理，优先级别要高。」

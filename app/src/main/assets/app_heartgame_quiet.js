@@ -215,7 +215,7 @@
       if (!document.body) { H.toast('页面还没准备好，稍后再试'); return; }
 
       var overlay = H.el('div', { class: 'hg-overlay hg-quiet' });
-      overlay.style.cssText = 'position:fixed; inset:0; z-index:100100; display:flex; flex-direction:column;'
+      overlay.style.cssText = 'position:fixed; inset:0; z-index:100600; display:flex; flex-direction:column;'
         + 'background:linear-gradient(170deg,#241a22 0%,#3a2a35 46%,#1b141a 100%);'
         + 'opacity:0; transition:opacity .3s ease; max-width:520px; margin:0 auto;';
       document.body.appendChild(overlay);
@@ -752,14 +752,22 @@
       var ops = [];
       var out = '';
       var i = 0;
-      var re = /\[(HG_[A-Z_]+)\]/g;
+      // v1.5.45：模型不老实，会把指令写成各种各样的形状 —— 半角/全角方括号、书名号、
+      // 圆括号、小写、甚至后面跟冒号。以前只认 [HG_XXX]，认不出来就**原样上屏**，
+      // 于是用户看到「[HG_GIFT]{"item":"..."}」直接挂在对话里。
+      // 现在括号类型与大小写都放宽，并且最后再做一遍残留清扫。
+      var re = /[\[【［(（]?\s*([Hh][Gg]_[A-Za-z_]+)\s*[:：]?\s*[\]】］)）]?/g;
       var m;
       while ((m = re.exec(src)) !== null) {
+        // 裸词（前后都没有括号）要额外确认：必须整个词就是 HG_XXX，避免误吃正文
+        var matched = m[0];
+        var hasBracket = /[\[【［(（]/.test(matched);
+        if (!hasBracket && matched.trim().toUpperCase() !== m[1].toUpperCase()) continue;
         out += src.slice(i, m.index);          // 标签之前的正常文本
-        var cursor = m.index + m[0].length;
-        // 跳过标签后的空格，看有没有 JSON 参数
+        var cursor = m.index + matched.length;
+        // 跳过标签后的空格 / 冒号，看有没有 JSON 参数
         var sp = cursor;
-        while (sp < src.length && (src.charAt(sp) === ' ' || src.charAt(sp) === '\t')) sp++;
+        while (sp < src.length && /[ \t:：]/.test(src.charAt(sp))) sp++;
         if (src.charAt(sp) === '{') {
           var depth = 0, inStr = false, esc = false, end = -1;
           for (var k = sp; k < src.length; k++) {
@@ -770,7 +778,8 @@
               else if (ch === '"') inStr = false;
               continue;
             }
-            if (ch === '"') { inStr = true; continue; }
+            if (ch === '（' || ch === '）' || ch === '【' || ch === '】') continue;
+            if (ch === '"' || ch === '“' || ch === '”') { inStr = !inStr; continue; }
             if (ch === '{') depth++;
             else if (ch === '}') {
               depth--;
@@ -779,24 +788,33 @@
           }
           var args = {};
           if (end > sp) {
-            try { args = JSON.parse(src.slice(sp, end + 1)) || {}; } catch (e) { args = {}; }
-            ops.push({ tag: m[1], args: args });
+            var rawJson = src.slice(sp, end + 1);
+            // 常见坏味道先修一修再用：全角引号、中文冒号、尾逗号、单引号
+            var fixed = rawJson
+              .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+              .replace(/：/g, ':').replace(/,\s*([}\]])/g, '$1')
+              .replace(/'/g, '"');
+            try { args = JSON.parse(rawJson) || {}; }
+            catch (e1) { try { args = JSON.parse(fixed) || {}; } catch (e2) { args = {}; } }
+            ops.push({ tag: m[1].toUpperCase(), args: args });
             cursor = end + 1;
           } else {
             // 花括号没配平（模型写坏了）：整条吃掉，不留裸 JSON
-            ops.push({ tag: m[1], args: {} });
+            ops.push({ tag: m[1].toUpperCase(), args: {} });
             cursor = src.length;
           }
         } else {
-          ops.push({ tag: m[1], args: {} });
+          ops.push({ tag: m[1].toUpperCase(), args: {} });
         }
         i = cursor;
         re.lastIndex = cursor;
       }
       out += src.slice(i);
 
-      // 收拾残留：空行折叠、行尾空格、连续空格
-      out = out.replace(/[ \t]+$/gm, '')
+      // 残留清扫：上面漏掉的（比如写在句子里、括号不配对）也一律抹掉，绝不带上屏幕
+      out = out
+        .replace(/[\[【［(（]?\s*[Hh][Gg]_[A-Za-z_]+\s*[:：]?\s*(\{[\s\S]*?\})?\s*[\]】］)）]?/g, '')
+        .replace(/[ \t]+$/gm, '')
         .replace(/\n{3,}/g, '\n\n')
         .replace(/[ \t]{2,}/g, ' ')
         .trim();

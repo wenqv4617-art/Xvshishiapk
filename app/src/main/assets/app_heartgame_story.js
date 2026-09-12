@@ -339,27 +339,8 @@
         '请为下面的主题生成一个可玩的主线篇章，共 8 个节点。\n'
         + '主题：' + t + '\n\n'
         + (styleBlock ? styleBlock + '\n\n' : '')
-        + '严格只返回 JSON，结构如下：\n'
-        + '{\n'
-        + '  "title": "篇章名（6~10 字）",\n'
-        + '  "synopsis": "一句话梗概",\n'
-        + '  "nodes": [\n'
-        + '    {\n'
-        + '      "kind": "narration" | "dialogue" | "sms" | "call" | "moment",\n'
-        + '      "title": "节点小标题（4~8 字）",\n'
-        + '      "scene": "场景描述，一句话（用于背景与氛围）",\n'
-        + '      "bg": "场景关键词，例如 雨天 / 卧室 / 校园 / 黄昏",\n'
-        + '      "speaker": "char" | "narration" | "user",\n'
-        + '      "text": "正文。dialogue 节点写 char 的对白（120~220 字，可含一到两句直接引语）；narration 写旁白（120~200 字）",\n'
-        + '      "emotion": "calm" | "blush" | "surprise" | "away" | "shy",\n'
-        + '      "options": [\n'
-        + '        { "text": "选项文字（12~24 字）", "affinityDelta": 5, "verdictDelta": 0,\n'
-        + '          "result": "选择后 Char 的反应，80~160 字" }\n'
-        + '      ]\n'
-        + '    }\n'
-        + '  ]\n'
-        + '}\n\n'
-        + '规则：\n'
+        + K.arcFormatSpec()
+        + '\n规则：\n'
         + '· 正好 8 个节点，且**每个节点的正文都要写满**，不要用一句话敷衍。\n'
         + '· 前 2 个节点铺陈氛围（可含 narration / dialogue）。\n'
         + '· 中间节点必须给出 2~3 个 options（"options" 至少 2 个），且不同选项的 affinityDelta 要有差异（可为负），'
@@ -372,8 +353,16 @@
         + '· 整个篇章至少包含 1 个 sms 或 call 节点。\n'
         + '· 文风要求（若上面给了）必须体现在每一个节点的用词与节奏里，不能只在开头体现。'
       );
-      var obj = await K.askJSON(prompt, null, { temperature: 0.95, maxTokens: 2400 });
+      var rawArc = await K.ask(prompt, { temperature: 0.95, maxTokens: 2600 });
+      if (rawArc === null) {
+        HG.H.toast(await K.hasApi() ? '模型没有返回内容，稍后再试' : '还没有配置 API 模型（去设置里配一下）');
+      }
+      var obj = K.parseArc(rawArc);
       if (!obj || !Array.isArray(obj.nodes) || !obj.nodes.length) {
+        // 真的生成不出来：告诉用户当前方案，并提示可以切换（而不是静默给一个保底故事）
+        HG.H.toast(K.outputMode() === 'tag'
+          ? '这次没写出来，可以回后台切到 JSON 方案再试'
+          : '这次没写出来，可以回后台切到文字标签方案再试');
         obj = Gen.offlineArc(t, profile.name);
       }
       return Arc.create({
@@ -887,8 +876,10 @@
       stage.appendChild(veil);
 
       // 立绘层
+      // v1.5.45：和主页看板用**完全相同的几何**（主页是 top:6%; bottom:0），
+      // 之前这里是 top:8%; bottom:118px，所以主线里的立绘整体偏上、也比主页小一截。
       var portraitHost = H.el('div');
-      portraitHost.style.cssText = 'position:absolute; left:0; right:0; bottom:118px; top:8%;';
+      portraitHost.style.cssText = 'position:absolute; left:0; right:0; top:6%; bottom:0;';
       stage.appendChild(portraitHost);
       Stage._portraitHost = portraitHost;
 
@@ -1177,7 +1168,7 @@
 
       // 浮层：自定义行为输入（挂 body，避免被裁）
       var overlay = H.el('div');
-      overlay.style.cssText = 'position:fixed; inset:0; z-index:100100; padding:0; box-sizing:border-box;'
+      overlay.style.cssText = 'position:fixed; inset:0; z-index:100600; padding:0; box-sizing:border-box;'
         + 'background:#1b1319; opacity:0; transition:opacity .3s ease;';
       document.body.appendChild(overlay);
       requestAnimationFrame(function () { overlay.style.opacity = '1'; });

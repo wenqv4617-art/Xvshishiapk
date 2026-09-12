@@ -83,6 +83,22 @@
       bond: 'images/heartgame/page/bond.jpg'
     },
 
+    /**
+     * 八个系统入口的「全息」底图（v1.5.45，gameui-art 生成的极简发光线稿图标）
+     * 右侧四个 + 底部四个共用一套视觉：暗色磨砂底 + 极细发光线条。
+     * 缺图也不会塌 —— 会自动回落到原来的浅色玻璃 + 内联 SVG。
+     */
+    ENTRY_BG: {
+      task: 'images/heartgame/entry/task.jpg',
+      shop: 'images/heartgame/entry/shop.jpg',
+      bond: 'images/heartgame/entry/bond.jpg',
+      story: 'images/heartgame/entry/story.jpg',
+      exit: 'images/heartgame/entry/exit.jpg',
+      admin: 'images/heartgame/entry/admin.jpg',
+      portrait: 'images/heartgame/entry/portrait.jpg',
+      quiet: 'images/heartgame/entry/quiet.jpg'
+    },
+
     // ------------------------------------------------------------------
     //  1.1 启动
     // ------------------------------------------------------------------
@@ -673,7 +689,8 @@
       // 气泡（戳戳反馈）
       // 位置从 16%（压在脸上）挪到 56%：立绘是 2:3 竖构图，中下部才是"说话的位置"。
       var bubbleHost = H.el('div', { id: 'hg-touch-bubble' });
-      bubbleHost.style.cssText = 'position:absolute; left:16px; right:16px; top:56%; z-index:8;'
+      // 右边留出 84px 给竖向入口区，文字永远不会伸到那些按钮下面
+      bubbleHost.style.cssText = 'position:absolute; left:16px; right:84px; top:56%; z-index:8;'
         + 'display:flex; justify-content:center; pointer-events:none; opacity:0; transition:opacity .3s ease;';
       root.appendChild(bubbleHost);
       App._dom.bubbleHost = bubbleHost;
@@ -825,13 +842,29 @@
       ];
       TOOLS.forEach(function (t) {
         var b = H.el('button', { class: 'hg-tool-btn', type: 'button' });
-        // 同样刻意用纯 CSS：见 buildRailButton 的说明
-        b.style.cssText = 'display:inline-flex; align-items:center; gap:5px; padding:8px 12px; border-radius:13px;'
-          + 'font-size:11px; font-weight:700; cursor:pointer;'
-          + 'transition:transform .16s ease, box-shadow .2s ease;'
-          + 'border:1px solid rgba(190,180,195,0.24); background:' + t.soft + '; color:' + t.color + ';'
-          + 'backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);';
-        b.innerHTML = H.icon(t.icon, 14, { strokeWidth: 2 }) + '<span>' + t.label + '</span>';
+        var art = App.ENTRY_BG[t.key];
+        if (art) {
+          // 底部四个入口也用同一套「全息」底图：暗色磨砂胶囊 + 24px 图标
+          b.style.cssText = 'display:inline-flex; align-items:center; gap:5px; padding:4px 10px 4px 4px;'
+            + 'border-radius:13px; font-size:11px; font-weight:700; cursor:pointer;'
+            + 'transition:transform .16s ease, box-shadow .2s ease;'
+            + 'border:1px solid rgba(186,166,224,0.20); background:rgba(30,21,36,0.60);'
+            + 'color:rgba(238,230,248,0.94);'
+            + 'backdrop-filter:blur(12px); -webkit-backdrop-filter:blur(12px);'
+            + 'box-shadow:0 6px 16px rgba(60,40,80,0.26);';
+          b.innerHTML = '<span style="width:24px; height:24px; border-radius:8px; flex-shrink:0;'
+            + 'background-image:url(' + art + '); background-size:cover; background-position:center;'
+            + 'box-shadow:inset 0 0 0 1px rgba(255,255,255,0.06);"></span>'
+            + '<span>' + t.label + '</span>';
+        } else {
+          // 没有底图时回落原来的浅色玻璃（纯 CSS，见 buildRailButton 的说明）
+          b.style.cssText = 'display:inline-flex; align-items:center; gap:5px; padding:8px 12px; border-radius:13px;'
+            + 'font-size:11px; font-weight:700; cursor:pointer;'
+            + 'transition:transform .16s ease, box-shadow .2s ease;'
+            + 'border:1px solid rgba(190,180,195,0.24); background:' + t.soft + '; color:' + t.color + ';'
+            + 'backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);';
+          b.innerHTML = H.icon(t.icon, 14, { strokeWidth: 2 }) + '<span>' + t.label + '</span>';
+        }
         b.onpointerdown = function () { b.style.transform = 'scale(0.95)'; };
         b.onpointerup = function () { b.style.transform = ''; };
         b.onpointerleave = function () { b.style.transform = ''; };
@@ -870,20 +903,44 @@
      *  而纯 CSS 在浅色底上无色差、无白边、不占体积，观感更干净。 */
     buildRailButton: function (item) {
       var H = HG.H;
+      var art = App.ENTRY_BG[item.key];
       var btn = H.el('div', { class: 'hg-rail-btn' });
-      btn.style.cssText = 'position:relative; width:52px; height:52px; border-radius:18px; cursor:pointer;'
-        + 'display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;'
-        + 'background:linear-gradient(150deg, rgba(255,255,255,0.86), rgba(255,255,255,0.62));'
-        + 'border:1px solid ' + item.color + '33;'
-        + 'backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
-        + 'box-shadow:0 8px 22px rgba(150,120,150,0.14), inset 0 1px 0 rgba(255,255,255,0.9);'
-        + 'transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .22s ease;';
-      var ic = H.el('span');
-      ic.style.cssText = 'color:' + item.color + '; display:flex;';
-      ic.innerHTML = H.icon(item.icon, 19, { strokeWidth: 1.7 });
-      btn.appendChild(ic);
+      if (art) {
+        // 有生成的「全息」底图就用它做按钮本体：暗色磨砂 + 极细发光线稿
+        btn.style.cssText = 'position:relative; width:52px; height:52px; border-radius:16px; cursor:pointer;'
+          + 'background-image:url(' + art + '); background-size:cover; background-position:center;'
+          + 'border:1px solid rgba(186,166,224,0.20);'
+          + 'box-shadow:0 8px 22px rgba(60,40,80,0.32), inset 0 1px 0 rgba(255,255,255,0.10);'
+          + 'transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .22s ease;';
+      } else {
+        btn.style.cssText = 'position:relative; width:52px; height:52px; border-radius:18px; cursor:pointer;'
+          + 'display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;'
+          + 'background:linear-gradient(150deg, rgba(255,255,255,0.86), rgba(255,255,255,0.62));'
+          + 'border:1px solid ' + item.color + '33;'
+          + 'backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);'
+          + 'box-shadow:0 8px 22px rgba(150,120,150,0.14), inset 0 1px 0 rgba(255,255,255,0.9);'
+          + 'transition:transform .18s cubic-bezier(.22,1,.36,1), box-shadow .22s ease;';
+      }
+      if (!art) {
+        var ic = H.el('span');
+        ic.style.cssText = 'color:' + item.color + '; display:flex;';
+        ic.innerHTML = H.icon(item.icon, 19, { strokeWidth: 1.7 });
+        btn.appendChild(ic);
+      } else {
+        // 有底图时再加一层极淡的暗角，让底部的小字看得清
+        var shade = H.el('div');
+        shade.style.cssText = 'position:absolute; left:0; right:0; bottom:0; height:20px; border-radius:0 0 15px 15px;'
+          + 'background:linear-gradient(180deg, rgba(10,6,16,0) 0%, rgba(10,6,16,0.72) 100%); pointer-events:none;';
+        btn.appendChild(shade);
+      }
       var lb = H.el('span');
-      lb.style.cssText = 'font-size:8.2px; font-weight:800; color:#8b8292; letter-spacing:.01em; line-height:1;';
+      if (art) {
+        lb.style.cssText = 'position:absolute; left:0; right:0; bottom:3px; text-align:center;'
+          + 'font-size:8px; font-weight:800; line-height:1; letter-spacing:.02em;'
+          + 'color:rgba(238,230,248,0.94); text-shadow:0 1px 4px rgba(0,0,0,0.9); pointer-events:none;';
+      } else {
+        lb.style.cssText = 'font-size:8.2px; font-weight:800; color:#8b8292; letter-spacing:.01em; line-height:1;';
+      }
       lb.textContent = item.label.length > 4 ? item.label.slice(0, 4) : item.label;
       btn.appendChild(lb);
       // 角标（待领取数量）
@@ -1185,7 +1242,9 @@
       if (!host) return;
       host.innerHTML = '';
       var bubble = H.el('div');
-      bubble.style.cssText = 'position:relative; max-width:88%; text-align:center;'
+      // v1.5.45：最大宽度从 88% 收到 62%，并整体左移一点 ——
+      // 88% 时文字会伸到右边的竖向入口区下面，被那些按钮压住（用户反馈）
+      bubble.style.cssText = 'position:relative; max-width:62%; text-align:center;'
         + 'background:none; border:none; box-shadow:none; backdrop-filter:none; -webkit-backdrop-filter:none;'
         + 'font-size:13.4px; line-height:1.86; font-weight:600; color:#4a4050;'
         // 可读性靠文字投影而不是底板：先在字外围铺一圈近白柔光（暗背景上不糊），

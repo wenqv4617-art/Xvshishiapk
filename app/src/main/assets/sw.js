@@ -1,4 +1,4 @@
-const CACHE_NAME = 'story-phone-v122'; // v122: 立绘铺到画面底部(不再被抽卡按钮中线卡住)；底图蒙版大幅调淡+列表卡片与页头改毛玻璃(背景真的看得见)；商店可生成/管理商品且静室TA能上架；char×user 数据隔离硬校验；内置文风改成整段写作提示词; v1.5.44
+const CACHE_NAME = 'story-phone-v123'; // v122: 立绘铺到画面底部(不再被抽卡按钮中线卡住)；底图蒙版大幅调淡+列表卡片与页头改毛玻璃(背景真的看得见)；商店可生成/管理商品且静室TA能上架；char×user 数据隔离硬校验；内置文风改成整段写作提示词; v1.5.44
 
 // 包含所有平铺引用的功能文件和图标（强制更新 Cache-Key 迫使浏览器重新拉取并应用）
 const ASSETS = [
@@ -29,6 +29,15 @@ const ASSETS = [
   './images/heartgame/page/tasks.jpg',
   './images/heartgame/page/shop.jpg',
   './images/heartgame/page/bond.jpg',
+  // 八个系统入口的「全息」图标底图（v1.5.45）
+  './images/heartgame/entry/task.jpg',
+  './images/heartgame/entry/shop.jpg',
+  './images/heartgame/entry/bond.jpg',
+  './images/heartgame/entry/story.jpg',
+  './images/heartgame/entry/exit.jpg',
+  './images/heartgame/entry/admin.jpg',
+  './images/heartgame/entry/portrait.jpg',
+  './images/heartgame/entry/quiet.jpg',
   './app_workbench.js',   // 工作台 Agent（多对话 + 本地工作区 + GitHub）
   './app_workbench_agent.js', // 工作台 Agent 引擎（Skill/Agent 配置 + MCP http+sse + @引用 + 成熟模式渲染）
   './workbench.css',      // 工作台样式

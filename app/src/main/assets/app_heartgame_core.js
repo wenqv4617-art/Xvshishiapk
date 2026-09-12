@@ -1064,17 +1064,25 @@
       // z-index 必须高于 #app-window-container（项目里是 9999）——
       // 否则抽屉会被**不透明的应用窗口整个盖住**：动作明明执行成功、DOM 里也有面板，
       // 但用户什么都看不见，表现就是「点了没反应」。这是本轮真正的主因。
-      var overlay = H._layer({ z: o.z || 100200, slot: o.slot, align: o.full ? 'align-items:stretch;' : 'align-items:flex-end;' });
+      var overlay = H._layer({
+        z: o.z || 100200, slot: o.slot,
+        // 全屏页：撑满 + 不要那层暗色遮罩（否则面板没铺满时下面会露出一条空挡）
+        align: o.full ? 'align-items:stretch;' : 'align-items:flex-end;',
+        dim: o.full ? 'rgba(0,0,0,0)' : undefined
+      });
       var panel = H.el('div', { class: 'hg-sheet' });
       var maxH = o.height || (o.full ? '100%' : '86%');
       panel.style.cssText = 'position:relative; width:100%; max-width:' + (o.maxWidth || '520px') + ';'
         + 'max-height:' + maxH + '; display:flex; flex-direction:column; box-sizing:border-box;'
+        // v1.5.45：全屏页给**明确高度**（原来只有 max-height，某些情况下面板没被撑满，
+        // 底部就会露出一条空挡 —— 用户反馈"弹窗放在上面，下面有空挡"）
+        + (o.full ? ('height:' + maxH + ';') : '')
         + 'border-radius:' + (o.full ? '0' : '24px 24px 0 0') + ';'
         + 'background:linear-gradient(170deg, rgba(255,255,255,0.985) 0%, rgba(255,248,252,0.96) 55%, rgba(248,246,255,0.97) 100%);'
         + 'box-shadow:0 -14px 44px rgba(120,90,120,0.20);'
         + 'transform:translateY(28px); opacity:.6;'
         + 'transition:transform .34s cubic-bezier(.22,1,.36,1), opacity .3s ease;'
-        + 'padding-top:6px;';
+        + 'padding-top:' + (o.full ? '0' : '6px') + ';';
       // 说明：抽屉面板刻意不使用生成式「面板底图」——
       // 玻璃元件是白的，白底图非抠即留边，而纯 CSS 渐变+毛玻璃在浅色底上完全干净。
 
@@ -3340,6 +3348,295 @@
       return true;
     },
     // ------------------------------------------------------------------
+    //  3.11b 结构化输出的两套方案（v1.5.45）
+    //  用户："主线，商店上新都会生成失败，好好找找原因，提高兼容性，并且跟聊天加号展开栏的
+    //        查手机一样做两套方案，json数组和文字标签。在后台管理里切换。"
+    //
+    //  失败原因：模型经常把 JSON 包在 ```json 围栏里、或在前后加一句"好的，这是……"，
+    //  或者中文引号 / 尾逗号 —— 直接 JSON.parse 必然抛错，于是每次都走兜底。
+    //  方案：
+    //    json —— 宽松解析（剥围栏 / 截取首尾括号 / 修全角引号与尾逗号）
+    //    tag  —— 让模型输出「键：值」的文本块，对中文模型友好得多，几乎不会失败
+    // ------------------------------------------------------------------
+
+    OUTPUT_MODE_KEY: 'hg-output-mode',
+
+    outputMode: function () {
+      try { return localStorage.getItem(K.OUTPUT_MODE_KEY) === 'tag' ? 'tag' : 'json'; }
+      catch (e) { return 'json'; }
+    },
+
+    setOutputMode: function (m) {
+      var v = (m === 'tag') ? 'tag' : 'json';
+      try { localStorage.setItem(K.OUTPUT_MODE_KEY, v); } catch (e) { }
+      return v;
+    },
+
+    /** 宽松 JSON 解析：容忍 ``` 围栏、前后废话、全角引号、中文冒号、尾逗号 */
+    parseJsonLoose: function (text, wantArray) {
+      var s = String(text || '').trim();
+      if (!s) return null;
+      s = s.replace(/```[a-zA-Z]*/g, '').trim();
+      var tryParse = function (t) {
+        try { return JSON.parse(t); } catch (e) { return undefined; }
+      };
+      var fixed = function (t) {
+        return t
+          .replace(/[“”]/g, '"').replace(/[‘’]/g, "'")
+          .replace(/：/g, ':').replace(/,\s*([}\]])/g, '$1');
+      };
+      var r = tryParse(s);
+      if (r !== undefined) return r;
+      r = tryParse(fixed(s));
+      if (r !== undefined) return r;
+      // 截取首尾括号之间的内容
+      var open = wantArray ? '[' : null;
+      var starts = wantArray ? [s.indexOf('[')] : [s.indexOf('{'), s.indexOf('[')];
+      var endCh = wantArray ? ']' : null;
+      var candidates = wantArray
+        ? [[s.indexOf('['), s.lastIndexOf(']')]]
+        : [[s.indexOf('{'), s.lastIndexOf('}')], [s.indexOf('['), s.lastIndexOf(']')]];
+      for (var i = 0; i < candidates.length; i++) {
+        var a = candidates[i][0], b = candidates[i][1];
+        if (a < 0 || b <= a) continue;
+        var seg = s.slice(a, b + 1);
+        var p = tryParse(seg);
+        if (p === undefined) p = tryParse(fixed(seg));
+        if (p !== undefined && p !== null) return p;
+      }
+      return null;
+    },
+
+    /** 把 `[可选标题]` / `---` / 连续空行分隔的文本切成块 */
+    splitTagBlocks: function (text) {
+      var s = String(text || '').replace(/\r/g, '').trim();
+      if (!s) return [];
+      s = s.replace(/```[a-zA-Z]*/g, '').trim();
+      // 统一分隔：行首的「数字」「第n条」、【标题】、---、=== 都当分隔
+      var parts = s.split(/\n\s*(?:[-=]{3,}|#{1,4}\s*|[\[【（(]?\s*(?:第\s*)?\d+\s*[\]】）)]?\s*[.、]?\s*$)\s*\n/m);
+      var blocks = [];
+      parts.forEach(function (p) {
+        var t = String(p || '').trim();
+        if (!t) return;
+        // 块内的 [键] 行也视作新块的开头
+        var segs = t.split(/\n(?=[\[【][^\n\]】]{1,12}[\]】]\s*$)|\n(?=\S[^\n:：]{0,10}[:：])/);
+        segs.forEach(function (q) {
+          var u = q.trim();
+          if (u) blocks.push(u);
+        });
+      });
+      // 把「有键值对」的行合并成块：优先按"空行"和"以键开头"聚合
+      return blocks.length ? blocks : [s];
+    },
+
+    /** 解析「键：值」文本块 -> [{字段: 值}]，别名表把中文键映射成英文字段 */
+    parseTagged: function (text, aliases) {
+      var out = [];
+      var cur = null;
+      var lines = String(text || '').replace(/\r/g, '').replace(/```[a-zA-Z]*/g, '').split('\n');
+      var map = aliases || {};
+      lines.forEach(function (line) {
+        var t = String(line).trim();
+        // 空行 = 块分隔（"每段之间空一行"是给模型约定好的格式）
+        if (!t) {
+          if (cur && Object.keys(cur).length) { out.push(cur); cur = null; }
+          return;
+        }
+        // 分隔行 / 序号行 / 标题行 -> 开一个新块
+        if (/^([-=*#]{3,}|[\[【].{0,12}[\]】]\s*$)$/.test(t) && !/[:：]/.test(t)) {
+          if (cur && Object.keys(cur).length) out.push(cur);
+          cur = {};
+          return;
+        }
+        var m = t.match(/^([^:：]{1,12})\s*[:：]\s*(.*)$/);
+        if (!m) return;
+        var key = m[1].replace(/[\s"'「」【】\[\]]/g, '');
+        var field = map[key] || (map['*'] ? null : null) || key;
+        if (!field) return;
+        if (!cur) cur = {};
+        var val = m[2].trim().replace(/^["'「『]|["'」』]$/g, '');
+        // 同一个键重复出现（例如一节点多个「选项」）-> 收成数组
+        if (cur[field] !== undefined) {
+          if (!Array.isArray(cur[field])) cur[field] = [cur[field]];
+          cur[field].push(val);
+        } else {
+          cur[field] = val;
+        }
+      });
+      if (cur && Object.keys(cur).length) out.push(cur);
+      return out;
+    },
+
+    /** 商店上新用的字段别名 */
+    GOODS_ALIASES: {
+      '名称': 'name', '商品名': 'name', '商品名称': 'name', '名字': 'name', 'name': 'name',
+      '说明': 'desc', '描述': 'desc', '一句话说明': 'desc', '简介': 'desc', 'desc': 'desc',
+      '价格': 'price', '售价': 'price', '价钱': 'price', 'price': 'price',
+      '分类': 'category', '类别': 'category', 'category': 'category',
+      '图标': 'icon', 'icon': 'icon'
+    },
+
+    /** 主线篇章用的字段别名 */
+    ARC_ALIASES: {
+      '标题': 'title', '篇章名': 'title', '篇章': 'title', 'title': 'title',
+      '梗概': 'synopsis', '简介': 'synopsis', '一句话梗概': 'synopsis', 'synopsis': 'synopsis',
+      '节点标题': 'nodeTitle', '小标题': 'nodeTitle', '节点名': 'nodeTitle',
+      '类型': 'kind', '节点类型': 'kind', 'kind': 'kind',
+      '场景': 'scene', 'scene': 'scene',
+      '背景': 'bg', 'bg': 'bg',
+      '说话人': 'speaker', 'speaker': 'speaker',
+      '正文': 'text', '内容': 'text', '台词': 'text', 'text': 'text',
+      '情绪': 'emotion', '表情': 'emotion', 'emotion': 'emotion',
+      '选项': 'options', '分支': 'options', 'options': 'options',
+      '结果': 'result', '反应': 'result', 'result': 'result',
+      '好感': 'affinityDelta', '好感变化': 'affinityDelta',
+      '裁定': 'verdictDelta', '裁定变化': 'verdictDelta'
+    },
+
+    // ---- 商品（商店上新）----
+
+    goodsFormatSpec: function () {
+      if (K.outputMode() === 'tag') {
+        return '输出格式：**不要写 JSON**，就按下面这个样子写，每件商品一段，段与段之间空一行；'
+          + '除了这些「键：值」不要写任何多余的话。\n'
+          + '名称：旧外套\n说明：你说过喜欢那件，我一直留着。\n价格：180\n分类：wear\n图标：gift\n';
+      }
+      return '严格只返回 JSON 数组，不要加任何解释、不要用代码围栏：\n'
+        + '[{"name":"商品名（4~10 字）","desc":"一句话说明（15~30 字）",'
+        + '"price":120,"category":"wear|accessory|consumable|letter|privilege","icon":"gift"}]\n';
+    },
+
+    parseGoods: function (raw) {
+      if (K.outputMode() === 'tag') {
+        return K.parseTagged(raw, K.GOODS_ALIASES)
+          .filter(function (b) { return b.name; })
+          .map(function (b) {
+            return { name: b.name, desc: b.desc, price: b.price, category: b.category, icon: b.icon };
+          });
+      }
+      var arr = K.parseJsonLoose(raw, true);
+      if (Array.isArray(arr)) return arr;
+      if (arr && Array.isArray(arr.items)) return arr.items;
+      if (arr && arr.name) return [arr];
+      // JSON 彻底失败也兜一层：当成标签文本再试一次（兼容性优先）
+      return K.parseTagged(raw, K.GOODS_ALIASES).filter(function (b) { return b.name; });
+    },
+
+    // ---- 主线篇章 ----
+
+    arcFormatSpec: function () {
+      if (K.outputMode() === 'tag') {
+        return '输出格式：**不要写 JSON**，按下面的样子写。先写篇章信息，然后每个节点一段，'
+          + '用一行 [节点] 开头；选项写在同一段里，一行一个「选项：」，'
+          + '用竖线 ｜ 分隔「选项文字｜好感增减｜选择后的反应」。\n'
+          + '[篇章]\n标题：雨夜重逢\n梗概：一句话概括这一章\n\n'
+          + '[节点]\n节点标题：门口的那把伞\n类型：narration\n场景：雨夜的公寓楼下\n背景：雨天\n'
+          + '情绪：calm\n正文：这里写 120~200 字的正文……\n\n'
+          + '[节点]\n节点标题：他把伞递过来\n类型：dialogue\n场景：雨夜的公寓楼下\n背景：雨天\n'
+          + '说话人：char\n情绪：blush\n正文：这里写 120~220 字的对白……\n'
+          + '选项：接过伞并道谢｜好感+5｜他愣了一下，把伞往你那边偏了偏。\n'
+          + '选项：把伞推回去｜好感-2｜他没接，只是把伞柄塞进你手里。\n';
+      }
+      return '严格只返回 JSON，不要加任何解释、不要用代码围栏：\n'
+        + '{\n'
+        + '  "title": "篇章名（6~10 字）",\n'
+        + '  "synopsis": "一句话梗概",\n'
+        + '  "nodes": [\n'
+        + '    {\n'
+        + '      "kind": "narration" | "dialogue" | "sms" | "call" | "moment",\n'
+        + '      "title": "节点小标题（4~8 字）",\n'
+        + '      "scene": "场景描述，一句话",\n'
+        + '      "bg": "场景关键词，例如 雨天 / 卧室 / 校园 / 黄昏",\n'
+        + '      "speaker": "char" | "narration" | "user",\n'
+        + '      "text": "正文（120~220 字）",\n'
+        + '      "emotion": "calm" | "blush" | "surprise" | "away" | "shy",\n'
+        + '      "options": [\n'
+        + '        { "text": "选项文字（12~24 字）", "affinityDelta": 5, "verdictDelta": 0,\n'
+        + '          "result": "选择后 Char 的反应，80~160 字" }\n'
+        + '      ]\n'
+        + '    }\n'
+        + '  ]\n'
+        + '}\n';
+    },
+
+    /** 把「选项：文字｜好感+5｜反应」拆成选项对象 */
+    parseOptionLine: function (line) {
+      var parts = String(line || '').split(/[｜|]/);
+      var text = String(parts[0] || '').trim();
+      if (!text) return null;
+      var aff = 0, ver = 0;
+      var deltaTxt = String(parts[1] || '');
+      var am = deltaTxt.match(/[-+]?\d+/);
+      if (am) aff = U.int(am[0], 0);
+      if (/裁定/.test(deltaTxt)) { ver = aff; aff = 0; }
+      var vm = deltaTxt.match(/裁定\s*([-+]?\d+)/);
+      if (vm) ver = U.int(vm[1], 0);
+      return {
+        text: text, affinityDelta: aff, verdictDelta: ver,
+        result: String(parts[2] || '').trim()
+      };
+    },
+
+    parseArc: function (raw) {
+      if (K.outputMode() === 'tag') {
+        var blocks = K.parseTagged(raw, K.ARC_ALIASES);
+        var head = null, nodes = [];
+        blocks.forEach(function (b) {
+          if (!head && (b.title || b.synopsis) && !b.text && !b.nodeTitle) { head = b; return; }
+          if (b.text || b.nodeTitle) nodes.push(b);
+        });
+        if (!head && blocks.length && !nodes.length) head = blocks[0];
+        return {
+          title: (head && head.title) || '',
+          synopsis: (head && head.synopsis) || '',
+          nodes: nodes.map(function (b) {
+            var opts = b.options;
+            if (!opts) opts = [];
+            if (!Array.isArray(opts)) opts = [opts];
+            return {
+              kind: b.kind || 'narration',
+              title: b.nodeTitle || '',
+              scene: b.scene || '',
+              bg: b.bg || b.scene || '',
+              speaker: b.speaker || '',
+              emotion: b.emotion || 'calm',
+              text: b.text || '',
+              options: opts.map(K.parseOptionLine).filter(Boolean)
+            };
+          })
+        };
+      }
+      var obj = K.parseJsonLoose(raw, false);
+      if (obj && Array.isArray(obj.nodes)) return obj;
+      if (Array.isArray(obj) && obj.length) return { title: '', synopsis: '', nodes: obj };
+      // JSON 失败兜一层：当标签文本再试
+      var fallback = K.parseTagged(raw, K.ARC_ALIASES);
+      if (fallback.length) {
+        var head2 = fallback[0], ns = [];
+        fallback.forEach(function (b, i) {
+          if (i === 0 && !b.text && !b.nodeTitle) return;
+          if (b.text || b.nodeTitle) ns.push(b);
+        });
+        if (ns.length) {
+          return {
+            title: head2.title || '', synopsis: head2.synopsis || '',
+            nodes: ns.map(function (b) {
+              var o2 = b.options; if (!o2) o2 = [];
+              if (!Array.isArray(o2)) o2 = [o2];
+              return {
+                kind: b.kind || 'narration', title: b.nodeTitle || '',
+                scene: b.scene || '', bg: b.bg || b.scene || '',
+                speaker: b.speaker || '', emotion: b.emotion || 'calm',
+                text: b.text || '', options: o2.map(K.parseOptionLine).filter(Boolean)
+              };
+            })
+          };
+        }
+      }
+      return null;
+    },
+
+    // ------------------------------------------------------------------
     //  3.11 LLM 适配（统一走 apiRoutes + fwCallLLM）
     // ------------------------------------------------------------------
 
@@ -3396,8 +3693,21 @@
     askJSON: async function (prompt, fallback, opts) {
       var out = await K.ask(prompt, opts);
       if (!out) return fallback;
-      var obj = U.parseJSON(out, null);
-      return obj || fallback;
+      // v1.5.45：这是"生成失败"的主因 —— 以前只用 U.parseJSON 严格解析，
+      // 模型只要把 JSON 包进 ```围栏、或前面加一句"好的，这是……"，就会解析失败。
+      // 现在先用最宽松的解析（剥围栏 / 截首尾括号 / 修全角引号与尾逗号），再退到老的解析器。
+      var obj = K.parseJsonLoose(out, false);
+      if (obj === null || obj === undefined) obj = U.parseJSON(out, null);
+      if (obj === null || obj === undefined) obj = K.parseJsonLoose(out, true);
+      return (obj === null || obj === undefined) ? fallback : obj;
+    },
+
+    /** 让调用方能区分"没配 API"和"模型没生成出东西" */
+    hasApi: async function () {
+      try {
+        var api = await K.resolveApi();
+        return !!(api && typeof window.fwCallLLM === 'function');
+      } catch (e) { return false; }
     },
 
     // ------------------------------------------------------------------

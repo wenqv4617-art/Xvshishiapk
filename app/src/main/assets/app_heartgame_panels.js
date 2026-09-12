@@ -593,14 +593,19 @@
         }).filter(Boolean).join('、') || '（还没有）' + '\n\n'
         + '请设计 3 件**只属于你们两人**的商品：它应该像 TA 会准备给你的东西，'
         + '或者你会想买来送给 TA 的东西。要具体、有画面感、价格合理。\n'
-        + '严格只返回 JSON 数组：\n'
-        + '[{"name":"商品名（4~10 字）","desc":"一句话说明（15~30 字）",'
-        + '"price":120,"category":"wear|accessory|consumable|letter|privilege","icon":"gift"}]\n'
+        + K.goodsFormatSpec()
         + 'category 取值含义：wear=服饰 accessory=饰品 consumable=消耗品 letter=手写信物 privilege=亲密特权。\n'
         + 'icon 取 gift / heart / cards / book / clock / wallet / star 之一。';
-      var arr = await K.askJSON(prompt, null, { temperature: 0.95, maxTokens: 1200 });
-      if (!Array.isArray(arr) || !arr.length) {
-        H.toast('这次没生成出来，再试一次');
+      var raw = await K.ask(prompt, { temperature: 0.95, maxTokens: 1200 });
+      if (raw === null) {
+        H.toast(await K.hasApi() ? '模型没有返回内容，稍后再试' : '还没有配置 API 模型（去设置里配一下）');
+        return;
+      }
+      var arr = K.parseGoods(raw);
+      if (!arr.length) {
+        H.toast(K.outputMode() === 'tag'
+          ? '这次没生成出来，再试一次（或在后台切回 JSON 方案）'
+          : '这次没生成出来，再试一次（或在后台切到文字标签方案）');
         return;
       }
       var n = 0;
