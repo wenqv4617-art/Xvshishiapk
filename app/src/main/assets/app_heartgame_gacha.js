@@ -1001,7 +1001,8 @@
         title: '抽卡工坊',
         subtitle: pool.name + ' · 已抽 ' + rs.total + ' 次',
         icon: 'cards',
-        height: '90%',
+        // v1.5.46：全屏页必须是 100% —— 之前这里是 90%，底部就留出 10% 的空挡
+        height: '100%',
         slot: 'gacha',
         // 全屏页 + 生图背景（v1.5.42）
         full: true,

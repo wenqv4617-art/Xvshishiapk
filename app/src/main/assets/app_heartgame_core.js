@@ -3390,9 +3390,6 @@
       r = tryParse(fixed(s));
       if (r !== undefined) return r;
       // 截取首尾括号之间的内容
-      var open = wantArray ? '[' : null;
-      var starts = wantArray ? [s.indexOf('[')] : [s.indexOf('{'), s.indexOf('[')];
-      var endCh = wantArray ? ']' : null;
       var candidates = wantArray
         ? [[s.indexOf('['), s.lastIndexOf(']')]]
         : [[s.indexOf('{'), s.lastIndexOf('}')], [s.indexOf('['), s.lastIndexOf(']')]];
@@ -3404,7 +3401,65 @@
         if (p === undefined) p = tryParse(fixed(seg));
         if (p !== undefined && p !== null) return p;
       }
+      // ★ 被截断的抢救（v1.5.46）：模型经常因为 max_tokens 用尽而把 JSON 砍在半截，
+      // 这时 lastIndexOf 找不到收尾括号，上面全部失败。
+      // 这里把**已经写完的完整对象**一个个捡出来，能救回几个节点是几个。
+      var salvaged = K.salvageObjects(s);
+      if (salvaged.length) {
+        if (wantArray) return salvaged;
+        // 对象形态：把捡到的第一个当主体，若里面有 nodes 数组就用它
+        var first = salvaged[0];
+        if (first && first.nodes && Array.isArray(first.nodes) && first.nodes.length) return first;
+        var head = {};
+        Object.keys(first || {}).forEach(function (k) { if (k !== 'nodes') head[k] = first[k]; });
+        var nodes = salvaged.filter(function (o) { return o && (o.text || o.title) && o !== first; });
+        if (nodes.length) return { title: head.title || '', synopsis: head.synopsis || '', nodes: nodes };
+        return salvaged[0];
+      }
       return null;
+    },
+
+    /** 从可能被截断的文本里，把**完整且配平**的 JSON 对象一个个捡出来 */
+    salvageObjects: function (text) {
+      var s = String(text || '').replace(/```[a-zA-Z]*/g, '');
+      var out = [];
+      var depth = 0, start = -1, inStr = false, esc = false;
+      for (var i = 0; i < s.length; i++) {
+        var ch = s.charAt(i);
+        if (inStr) {
+          if (esc) esc = false;
+          else if (ch === '\\') esc = true;
+          else if (ch === '"' || ch === '“' || ch === '”') inStr = false;
+          continue;
+        }
+        if (ch === '"' || ch === '“') { inStr = true; continue; }
+        if (ch === '{') { if (depth === 0) start = i; depth++; }
+        else if (ch === '}') {
+          depth--;
+          if (depth === 0 && start >= 0) {
+            var seg = s.slice(start, i + 1);
+            try { out.push(JSON.parse(seg)); }
+            catch (e) {
+              try { out.push(JSON.parse(seg.replace(/[“”]/g, '"').replace(/：/g, ':').replace(/,\s*([}\]])/g, '$1'))); }
+              catch (e2) { }
+            }
+            start = -1;
+          }
+        }
+      }
+      return out;
+    },
+
+    /** 记一条生成诊断（后台管理里能看到，方便把原始返回发我排查） */
+    _genLog: [],
+    logGen: function (kind, ok, raw, note) {
+      K._genLog.unshift({
+        at: Date.now(), kind: kind, ok: !!ok,
+        len: String(raw || '').length,
+        head: String(raw || '').slice(0, 600),
+        note: note || ''
+      });
+      if (K._genLog.length > 5) K._genLog.length = 5;
     },
 
     /** 把 `[可选标题]` / `---` / 连续空行分隔的文本切成块 */

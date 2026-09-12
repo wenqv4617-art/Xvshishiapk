@@ -150,6 +150,8 @@
       if (!st) return false;
       st.story.arcs = st.story.arcs.filter(function (a) { return a.id !== id; });
       if (st.story.activeArcId === id) st.story.activeArcId = st.story.arcs.length ? st.story.arcs[0].id : null;
+      // 章节没了，它留在小手机里的记录也一起清掉（小手机是依托主线的）
+      try { SubPhone.purgeArc(id); } catch (e) { }
       K.save();
       return true;
     },
@@ -353,17 +355,33 @@
         + '· 整个篇章至少包含 1 个 sms 或 call 节点。\n'
         + '· 文风要求（若上面给了）必须体现在每一个节点的用词与节奏里，不能只在开头体现。'
       );
-      var rawArc = await K.ask(prompt, { temperature: 0.95, maxTokens: 2600 });
+      var rawArc = await K.ask(prompt, { temperature: 0.95, maxTokens: 8000 });
       if (rawArc === null) {
+        K.logGen('arc', false, '', 'no-raw');
         HG.H.toast(await K.hasApi() ? '模型没有返回内容，稍后再试' : '还没有配置 API 模型（去设置里配一下）');
       }
       var obj = K.parseArc(rawArc);
+      // 节点太少（多半是输出被截断）：用更短的要求再试一次
+      if (obj && Array.isArray(obj.nodes) && obj.nodes.length > 0 && obj.nodes.length < 4) {
+        K.logGen('arc', true, rawArc, 'too-few-nodes:' + obj.nodes.length);
+        HG.H.toast('这次只写出来 ' + obj.nodes.length + ' 段，正在补一次…');
+        var retryPrompt = prompt.replace('共 8 个节点', '共 4 个节点')
+          .replace('· 正好 8 个节点，且**每个节点的正文都要写满**，不要用一句话敷衍。',
+            '· 正好 4 个节点，每个节点的正文 120 字以上。');
+        var raw2 = await K.ask(retryPrompt, { temperature: 0.95, maxTokens: 8000 });
+        var obj2 = K.parseArc(raw2);
+        if (obj2 && Array.isArray(obj2.nodes) && obj2.nodes.length > obj.nodes.length) {
+          obj = obj2; rawArc = raw2;
+        }
+      }
       if (!obj || !Array.isArray(obj.nodes) || !obj.nodes.length) {
-        // 真的生成不出来：告诉用户当前方案，并提示可以切换（而不是静默给一个保底故事）
+        K.logGen('arc', false, rawArc, 'parse-failed');
         HG.H.toast(K.outputMode() === 'tag'
-          ? '这次没写出来，可以回后台切到 JSON 方案再试'
-          : '这次没写出来，可以回后台切到文字标签方案再试');
+          ? '这次没写出来（已记录原始返回），可以回后台切到 JSON 方案再试'
+          : '这次没写出来（已记录原始返回），可以回后台切到文字标签方案再试');
         obj = Gen.offlineArc(t, profile.name);
+      } else {
+        K.logGen('arc', true, rawArc, 'ok:' + obj.nodes.length);
       }
       return Arc.create({
         title: obj.title || t,
@@ -542,22 +560,38 @@
 
   var SubPhone = {
 
-    /** 把节点里的 sms / moment / call 落库 */
+    /**
+     * 把节点里的 sms / moment / call 落库
+     * v1.5.46：**按 arcId + nodeId 去重** —— 以前「从头回看」会把同一批消息再灌一遍，
+     * 小手机里就出现两条一模一样的记录。现在同一个章节的同一个节点只记一次。
+     */
     capture: function (node, arc) {
       var st = K.state;
       if (!st || !node) return null;
       var phone = st.story.phone;
       var at = Date.now();
+      var arcId = arc ? arc.id : null;
+      var nodeId = node.id || null;
+      var already = function (bucket) {
+        for (var i = 0; i < bucket.length; i++) {
+          if (bucket[i].arcId === arcId && nodeId && bucket[i].nodeId === nodeId) return bucket[i];
+        }
+        return null;
+      };
       if (node.kind === 'sms') {
-        var row = { id: U.uid('sms'), text: node.text || '', from: 'char', at: at, arcId: arc ? arc.id : null, read: false };
+        var dup = already(phone.sms);
+        if (dup) return { kind: 'sms', row: dup, duplicate: true };
+        var row = { id: U.uid('sms'), text: node.text || '', from: 'char', at: at, arcId: arcId, nodeId: nodeId, read: false };
         phone.sms.unshift(row);
         if (phone.sms.length > 120) phone.sms.length = 120;
         K.save();
         return { kind: 'sms', row: row };
       }
       if (node.kind === 'moment') {
+        var dupM = already(phone.moments);
+        if (dupM) return { kind: 'moment', row: dupM, duplicate: true };
         var m = {
-          id: U.uid('mom'), text: node.text || '', at: at, arcId: arc ? arc.id : null,
+          id: U.uid('mom'), text: node.text || '', at: at, arcId: arcId, nodeId: nodeId,
           likes: [], comments: []
         };
         phone.moments.unshift(m);
@@ -566,13 +600,30 @@
         return { kind: 'moment', row: m };
       }
       if (node.kind === 'call') {
-        var c = { id: U.uid('call'), text: node.text || '', at: at, arcId: arc ? arc.id : null, duration: 0 };
+        var dupC = already(phone.calls);
+        if (dupC) return { kind: 'call', row: dupC, duplicate: true };
+        var c = { id: U.uid('call'), text: node.text || '', at: at, arcId: arcId, nodeId: nodeId, duration: 0 };
         phone.calls.unshift(c);
         if (phone.calls.length > 60) phone.calls.length = 60;
         K.save();
         return { kind: 'call', row: c };
       }
       return null;
+    },
+
+    /** 章节被删掉时，把它在小手机里留下的记录一起清掉（用户要求：小手机依托主线剧情） */
+    purgeArc: function (arcId) {
+      var st = K.state;
+      if (!st || !arcId) return 0;
+      var phone = st.story.phone;
+      var n = 0;
+      ['sms', 'moments', 'calls'].forEach(function (k) {
+        var before = (phone[k] || []).length;
+        phone[k] = (phone[k] || []).filter(function (r) { return r.arcId !== arcId; });
+        n += before - phone[k].length;
+      });
+      if (n) K.save();
+      return n;
     },
 
     /**
@@ -803,6 +854,9 @@
         subtitle: arc ? arc.title : '当前篇章',
         icon: 'phone',
         height: '92%',
+        // v1.5.46：要盖在主线演出（100600）之上，否则会被压在下面看不见（用户反馈重叠）
+        z: 100700,
+        slot: 'subphone',
         content: body
       });
     },
@@ -933,7 +987,9 @@
       if (!host) return;
       if (!host._renderer) {
         if (HG.Portraits) {
-          var res = await HG.Portraits.mount(host, { onTouch: null });
+          // 主线里**不挂热区层**（用户要求「主线里不要触发触碰反应」）：
+          // showOverlay:false 让渲染器根本不建可点区域，连点击反馈都不会有
+          var res = await HG.Portraits.mount(host, { onTouch: null, showOverlay: false });
           host._renderer = res;
         }
       }
@@ -1784,6 +1840,8 @@
         subtitle: a.title,
         icon: 'branch',
         height: '92%',
+        // 同样要盖在主线演出之上
+        z: 100700,
         slot: 'story-tree',
         content: body,
         buttons: [{
