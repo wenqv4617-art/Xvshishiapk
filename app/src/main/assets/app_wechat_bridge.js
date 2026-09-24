@@ -532,6 +532,22 @@
       '><span class="il-track"><span class="il-thumb"></span></span></label>';
   }
 
+  /**
+   * 网络桥自检：异步桥（ilinkHttpSubmit/Poll）不会阻塞界面；
+   * 只有同步桥的旧版 APK 会让长轮询把整个界面按住几十秒。
+   * 这一行让用户在面板上直接看出卡顿修复是否生效。
+   */
+  function asyncBridgeLabel() {
+    if (typeof window === "undefined" || !window.AndroidMCP) return "网页环境（走 fetch）";
+    var n = window.AndroidMCP;
+    var asyncOk = (typeof n.ilinkHttpSubmit === "function" && typeof n.ilinkHttpPoll === "function");
+    if (asyncOk) return "异步（界面不会卡）";
+    if (typeof n.sendNativeHttpRequest === "function") {
+      return "同步（旧版：长轮询会卡界面，请更新 APK）";
+    }
+    return "不可用";
+  }
+
   function pill(label, value) {
     return '<div style="flex:1;min-width:70px;background:#fff;border:1.5px solid ' + PASTEL.border +
       ';border-radius:11px;padding:8px 10px;text-align:center;">' +
@@ -677,6 +693,7 @@
       pill("已发出", state.stats.sent) + pill("已拦截", state.stats.blocked) + '</div>' +
       '<div style="margin-top:10px;font-size:11.5px;color:' + PASTEL.sub + ';line-height:1.8;">' +
       '账号：' + (logged ? "已登录" : "未登录") + ' · 收消息循环：' + (running ? "运行中" : "未运行") + '<br>' +
+      '网络桥：' + asyncBridgeLabel() + '<br>' +
       '消息游标：' + ((IL && IL.getCursor()) ? "已保存（断线可续）" : "尚未建立") + '<br>' +
       '通道上下文：' + ctx.users + ' 个微信用户 / ' + ctx.turns + ' 条（每用户最多 ' + CTX_MAX_TURNS +
       ' 条，超过 2 小时无动静自动清理）' +

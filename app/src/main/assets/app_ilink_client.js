@@ -185,10 +185,32 @@
   // HTTP 封装
   // =========================================================================
 
+  /** 把原生返回的 JSON 统一成内部结构 */
+  function normalizeNative(parsed) {
+    var status = (parsed && parsed.status) || 0;
+    var isTimeout = (parsed && parsed.timeout === true) || status === 408;
+    var text = (parsed && parsed.body) || "";
+    var json = null;
+    try { json = JSON.parse(text); } catch (e) { json = null; }
+    return {
+      ok: !isTimeout && status >= 200 && status < 300,
+      httpStatus: status,
+      timeout: isTimeout,
+      json: json,
+      raw: text
+    };
+  }
+
+  function sleepLocal(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+
   /**
-   * 统一请求。优先走 App 原生桥（绕开 WebView 跨域限制且能设长超时），
-   * 否则退回 fetch（PWA/浏览器环境）。
+   * 统一请求。优先走 App 原生桥，否则退回 fetch（PWA/浏览器环境）。
    * 返回 { ok, httpStatus, timeout, json, raw }
+   *
+   * ⚠️ 关键：原生桥的方法是在 WebView 的 JS 线程上**同步执行**的。
+   * 如果直接调同步版，一次 35~40 秒的长轮询会把 JS 线程按住 40 秒，
+   * 界面会整体卡死（按钮点下去一分多钟才反应、切页面也卡）。
+   * 所以这里一律走「异步提交 + 轮询取结果」：提交毫秒级返回，主线程始终让出。
    */
   async function request(url, method, headers, bodyObj, timeoutMs) {
     var headersJson = JSON.stringify(headers || {});
@@ -196,7 +218,53 @@
     var t = timeoutMs || NORMAL_TIMEOUT_MS;
 
     var native = (typeof window !== "undefined" && window.AndroidMCP) ? window.AndroidMCP : null;
+
+    // 首选：异步接口（不阻塞 JS 线程）
+    if (native && typeof native.ilinkHttpSubmit === "function" &&
+        typeof native.ilinkHttpPoll === "function") {
+      var taskId = "";
+      try {
+        var sub = JSON.parse(native.ilinkHttpSubmit(url, method, headersJson, bodyStr, t) || "{}");
+        if (!sub.ok || !sub.taskId) {
+          return { ok: false, error: sub.error || "提交异步请求失败", raw: "" };
+        }
+        taskId = sub.taskId;
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e), raw: "" };
+      }
+
+      // 轮询取结果。给足余量：原生读超时 t 之后还会做收尾，多等 10 秒再放弃。
+      // 间隔自适应：短请求要快（否则每次请求都被轮询间隔拖慢），
+      // 长轮询则逐步放慢（40 秒 × 80ms = 500 次原生调用，没必要）。
+      var deadline = Date.now() + t + 10000;
+      var startedAt = Date.now();
+      while (Date.now() < deadline) {
+        var elapsed = Date.now() - startedAt;
+        var gap = elapsed < 1500 ? 60 : (elapsed < 8000 ? 200 : 450);
+        await sleepLocal(gap);
+        var pr;
+        try { pr = JSON.parse(native.ilinkHttpPoll(taskId) || "{}"); }
+        catch (e) { pr = null; }
+        if (!pr) continue;
+        if (pr.done) {
+          if (pr.result) return normalizeNative(pr.result);
+          return { ok: false, error: pr.error || "异步请求无结果", raw: "" };
+        }
+        // done=false：还在跑，继续等
+      }
+      return { ok: false, timeout: true, httpStatus: 408, error: "等待原生响应超时", raw: "" };
+    }
+
+    // 次选：同步原生接口。这条会阻塞 JS 线程整整一个请求周期，所以：
+    //   · 长轮询（>20s）绝不走它 —— 否则就是「界面卡死一分多钟」那个老问题；
+    //   · 只有在拿不到异步接口时（旧版 APK）才用，并且只用于短请求。
     if (native && typeof native.sendNativeHttpRequest === "function") {
+      if (t > 20000) {
+        return {
+          ok: false, httpStatus: 0, timeout: true,
+          error: "当前 APK 的原生桥不支持异步请求，长轮询被跳过（请更新到最新版 APK）", raw: ""
+        };
+      }
       var fn = (typeof native.sendNativeHttpRequestWithTimeout === "function")
         ? "sendNativeHttpRequestWithTimeout" : "sendNativeHttpRequest";
       var out;
@@ -210,18 +278,7 @@
       var parsed;
       try { parsed = JSON.parse(out || "{}"); }
       catch (e) { return { ok: false, error: "原生响应无法解析", raw: String(out).slice(0, 300) }; }
-      var status = parsed.status || 0;
-      var isTimeout = parsed.timeout === true || status === 408;
-      var text = parsed.body || "";
-      var json = null;
-      try { json = JSON.parse(text); } catch (e) { json = null; }
-      return {
-        ok: !isTimeout && status >= 200 && status < 300,
-        httpStatus: status,
-        timeout: isTimeout,
-        json: json,
-        raw: text
-      };
+      return normalizeNative(parsed);
     }
 
     // fetch 兜底（可能受浏览器 CORS 限制；iLink 接口是否放开取决于官方）
@@ -316,10 +373,11 @@
    * status 取值见协议：wait / scaned / need_verifycode / verify_code_blocked /
    *   scaned_but_redirect / binded_redirect / expired / confirmed
    */
-  async function pollQrcodeOnce() {
-    if (!state.qrcode) return { status: "expired", error: "没有可用二维码" };
+  async function pollQrcodeOnce(qrcodeOverride) {
+    var qr = qrcodeOverride || state.qrcode;
+    if (!qr) return { status: "expired", error: "没有可用二维码" };
     var host = state.qrRedirectHost ? ("https://" + state.qrRedirectHost) : FIXED_HOST;
-    var url = host + "/ilink/bot/get_qrcode_status?qrcode=" + encodeURIComponent(state.qrcode);
+    var url = host + "/ilink/bot/get_qrcode_status?qrcode=" + encodeURIComponent(qr);
     if (state.verifyCode) url += "&verify_code=" + encodeURIComponent(state.verifyCode);
 
     var r = await request(url, "GET", qrHeaders(), null, QR_POLL_TIMEOUT_MS);

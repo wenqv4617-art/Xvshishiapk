@@ -325,6 +325,151 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    // ============================================================
+    //  异步原生 HTTP（给长轮询用）
+    // ------------------------------------------------------------
+    //  背景坑：@JavascriptInterface 暴露的方法是在 WebView 的 JS 线程上**同步执行**的。
+    //  因此在 JS 里 await 一个「同步的原生 HTTP 调用」并不会让出主线程 ——
+    //  网络请求不返回，JS 线程就一直被按住，界面会整体卡死。
+    //  微信 iLink 的长轮询要 hold 最多 35 秒（二维码轮询同理），用同步接口必然卡界面。
+    //
+    //  这里改成：调用方拿到一个 taskId 立刻返回，请求在后台线程跑，
+    //  结果写进队列由 JS 轮询取走。这样 JS 线程只做「提交 + 轮询」，全程不阻塞。
+    // ============================================================
+
+    private val ilinkHttpExecutor: java.util.concurrent.ExecutorService =
+        java.util.concurrent.Executors.newCachedThreadPool()
+
+    /** 已完成、等待 JS 取走的结果：taskId -> JSON 字符串 */
+    private val ilinkHttpResults =
+        java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    /** 进行中的任务，用于把同一个 taskId 的重复提交挡掉 */
+    private val ilinkHttpRunning =
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    private val ilinkHttpSeq = java.util.concurrent.atomic.AtomicLong(0)
+
+    /**
+     * 提交一个异步 HTTP 请求，立刻返回 taskId（不阻塞 JS 线程）。
+     * 返回 JSON: { ok, taskId } 或 { ok:false, error }
+     */
+    @JavascriptInterface
+    fun ilinkHttpSubmit(
+        urlStr: String,
+        method: String,
+        headersJson: String,
+        bodyStr: String,
+        timeoutMs: Int
+    ): String {
+        return try {
+            val taskId = "t" + ilinkHttpSeq.incrementAndGet()
+            ilinkHttpRunning[taskId] = true
+            val readTimeout = if (timeoutMs > 0) timeoutMs else 15000
+            ilinkHttpExecutor.execute {
+                val result = try {
+                    doHttpRequest(urlStr, method, headersJson, bodyStr, readTimeout)
+                } catch (e: Exception) {
+                    Log.e(TAG, "ilinkHttpSubmit 执行失败: ${e.message}", e)
+                    JSONObject().apply {
+                        put("status", 500)
+                        put("body", e.message ?: "Native HTTP Error")
+                        put("headers", JSONObject())
+                        put("error", e.message ?: "Native HTTP Error")
+                    }.toString()
+                }
+                ilinkHttpResults[taskId] = result
+                ilinkHttpRunning.remove(taskId)
+            }
+            JSONObject().apply {
+                put("ok", true)
+                put("taskId", taskId)
+            }.toString()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"" + (e.message ?: "提交失败") + "\"}"
+        }
+    }
+
+    /**
+     * 查询异步任务结果。
+     * 返回 JSON: { ok, done:false } 或 { ok, done:true, result:{status,body,headers} }
+     * result 的格式与同步方法一致，前端不用分两套解析。
+     */
+    @JavascriptInterface
+    fun ilinkHttpPoll(taskId: String): String {
+        return try {
+            val done = ilinkHttpResults.remove(taskId)
+            if (done == null) {
+                JSONObject().apply {
+                    put("ok", true)
+                    put("done", false)
+                    put("running", ilinkHttpRunning.containsKey(taskId))
+                }.toString()
+            } else {
+                JSONObject().apply {
+                    put("ok", true)
+                    put("done", true)
+                    put("result", JSONObject(done))
+                }.toString()
+            }
+        } catch (e: Exception) {
+            "{\"ok\":false,\"done\":true,\"error\":\"" + (e.message ?: "查询失败") + "\"}"
+        }
+    }
+
+    /** 把同步 HTTP 的真正实现抽出来，供同步/异步两条路共用 */
+    private fun doHttpRequest(
+        urlStr: String,
+        method: String,
+        headersJson: String,
+        bodyStr: String,
+        readTimeoutMs: Int
+    ): String {
+        val url = java.net.URL(urlStr)
+        val conn = url.openConnection() as java.net.HttpURLConnection
+        conn.requestMethod = if (method.isEmpty()) "POST" else method.uppercase()
+        conn.connectTimeout = 15000
+        conn.readTimeout = readTimeoutMs
+        conn.instanceFollowRedirects = true
+
+        if (headersJson.isNotEmpty()) {
+            val jsonObj = JSONObject(headersJson)
+            val keys = jsonObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                conn.setRequestProperty(key, jsonObj.getString(key))
+            }
+        }
+
+        if (bodyStr.isNotEmpty() && (conn.requestMethod == "POST" || conn.requestMethod == "PUT" || conn.requestMethod == "PATCH")) {
+            conn.doOutput = true
+            conn.outputStream.use { os ->
+                os.write(bodyStr.toByteArray(Charsets.UTF_8))
+            }
+        }
+
+        val status = conn.responseCode
+        val inputStream = if (status in 200..299) conn.inputStream else conn.errorStream
+        val responseBody = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
+
+        val resHeaders = JSONObject()
+        conn.headerFields?.forEach { (k, v) ->
+            if (k != null && v.isNotEmpty()) {
+                if (k.equals("Set-Cookie", ignoreCase = true)) {
+                    resHeaders.put("Set-Cookie", v.joinToString("; "))
+                } else {
+                    resHeaders.put(k, v[0])
+                }
+            }
+        }
+
+        return JSONObject().apply {
+            put("status", status)
+            put("body", responseBody)
+            put("headers", resHeaders)
+        }.toString()
+    }
+
     // 1.5 原生 HTTP 网络请求接口：彻底击穿 WebView 浏览器 CORS 跨域与 Header 拦截限制
     @JavascriptInterface
     fun sendNativeHttpRequest(urlStr: String, method: String, headersJson: String, bodyStr: String): String {
@@ -351,51 +496,8 @@ class AndroidMcp private constructor(private val context: Context) {
         timeoutMs: Int
     ): String {
         val readTimeout = if (timeoutMs > 0) timeoutMs else 15000
-        Log.d(TAG, "sendNativeHttpRequestWithTimeout() url=$urlStr, method=$method, readTimeout=$readTimeout")
         return try {
-            val url = java.net.URL(urlStr)
-            val conn = url.openConnection() as java.net.HttpURLConnection
-            conn.requestMethod = if (method.isEmpty()) "POST" else method.uppercase()
-            conn.connectTimeout = 15000
-            conn.readTimeout = readTimeout
-            conn.instanceFollowRedirects = true
-
-            if (headersJson.isNotEmpty()) {
-                val jsonObj = JSONObject(headersJson)
-                val keys = jsonObj.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    conn.setRequestProperty(key, jsonObj.getString(key))
-                }
-            }
-
-            if (bodyStr.isNotEmpty() && (conn.requestMethod == "POST" || conn.requestMethod == "PUT" || conn.requestMethod == "PATCH")) {
-                conn.doOutput = true
-                conn.outputStream.use { os ->
-                    os.write(bodyStr.toByteArray(Charsets.UTF_8))
-                }
-            }
-
-            val status = conn.responseCode
-            val inputStream = if (status in 200..299) conn.inputStream else conn.errorStream
-            val responseBody = inputStream?.bufferedReader()?.use { it.readText() } ?: ""
-
-            val resHeaders = JSONObject()
-            conn.headerFields?.forEach { (k, v) ->
-                if (k != null && v.isNotEmpty()) {
-                    if (k.equals("Set-Cookie", ignoreCase = true)) {
-                        resHeaders.put("Set-Cookie", v.joinToString("; "))
-                    } else {
-                        resHeaders.put(k, v[0])
-                    }
-                }
-            }
-
-            JSONObject().apply {
-                put("status", status)
-                put("body", responseBody)
-                put("headers", resHeaders)
-            }.toString()
+            doHttpRequest(urlStr, method, headersJson, bodyStr, readTimeout)
         } catch (e: Exception) {
             Log.e(TAG, "sendNativeHttpRequestWithTimeout failed: ${e.message}", e)
             // 超时/网络错误明确标记 timeout=true：长轮询超时属于正常控制流，前端要能区分它和真失败
