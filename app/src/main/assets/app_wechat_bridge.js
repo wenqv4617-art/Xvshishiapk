@@ -39,6 +39,16 @@
     sub: "#7A8A9C"
   };
 
+  // ---------- 出站清洗：已知的卡片指令标记 ----------
+  // 这些标记代表 App 内部的多媒体/交易卡片，微信里没有对应物，必须剥掉。
+  // 只列「明确是指令」的标记，避免把角色正在说的话（例如 [点头]）误删。
+  var CARD_CMD_TAGS = {
+    TRANSFER: 1, RED_ENVELOPE: 1, RECEIVE_TRANSFER: 1, OPEN_RED_ENVELOPE: 1,
+    VOICE: 1, IMAGE: 1, LOCATION: 1, PAY_FOR_ME: 1, GIFT: 1, AGREE_PAY: 1,
+    MP_INVITE: 1, AUTO_CALL: 1, CHECK_PHONE: 1, SPLIT: 1, QUOTE: 1,
+    STATUS: 1, TRANSLATE: 1
+  };
+
   // ---------- 存储键 ----------
   var K = {
     bindSession: "wx-bridge-bind-session",
@@ -159,6 +169,81 @@
   // =========================================================================
 
   /**
+   * 从 s[0]（必须是 { 或 [）开始找配平的结尾，返回「结尾之后」的下标；找不到返回 -1。
+   * 会跳过字符串字面量内部的括号与转义，所以多层嵌套也能正确截断。
+   * 用循环而不是正则，是因为「剥掉卡片指令但不吞后面的对白」必须精确知道 JSON 到哪结束。
+   */
+  function balancedJsonEnd(s) {
+    if (!s || (s.charAt(0) !== "{" && s.charAt(0) !== "[")) return -1;
+    var open = s.charAt(0);
+    var close = open === "{" ? "}" : "]";
+    var depth = 0;
+    var inStr = false;
+    var quote = "";
+    for (var i = 0; i < s.length; i++) {
+      var c = s.charAt(i);
+      if (inStr) {
+        if (c === "\\") { i++; continue; }
+        if (c === quote) inStr = false;
+        continue;
+      }
+      if (c === '"' || c === "'") { inStr = true; quote = c; continue; }
+      if (c === "{" || c === "[") depth++;
+      else if (c === "}" || c === "]") {
+        depth--;
+        if (depth === 0) return i + 1;
+      }
+    }
+    return -1;
+  }
+
+  var CARD_CMD_ZH = {
+    "转账": 1, "红包": 1, "收钱": 1, "收转账": 1, "拆红包": 1, "领红包": 1,
+    "语音": 1, "图片": 1, "位置": 1, "代付": 1, "送礼": 1, "同意代付": 1
+  };
+
+  /**
+   * 扫描全文，把所有已知卡片指令剥掉（连同紧跟其后的 JSON 负载）。
+   * 未知的方括号内容（例如角色说的「[点头] 好呀」）原样保留 —— 宁可不删，也不能误删对白。
+   */
+  function stripCardCommands(text) {
+    var out = "";
+    var i = 0;
+    var n = text.length;
+    while (i < n) {
+      var c = text.charAt(i);
+      var openLen = (c === "[" || c === "【") ? 1 : 0;
+      if (!openLen) { out += c; i++; continue; }
+      // 找到配对的右括号
+      var closeIdx = -1;
+      for (var j = i + 1; j < n && j < i + 40; j++) {
+        var cj = text.charAt(j);
+        if (cj === "]" || cj === "】") { closeIdx = j; break; }
+        if (cj === "\n") break;
+      }
+      if (closeIdx < 0) { out += c; i++; continue; }
+      var raw = text.substring(i + 1, closeIdx);
+      var tag = raw.split(/[:：\s]/)[0];
+      var known = CARD_CMD_TAGS[tag] !== undefined || CARD_CMD_ZH[tag] !== undefined;
+      if (!known) { out += text.substring(i, closeIdx + 1); i = closeIdx + 1; continue; }
+
+      // 是指令：连同后面的 JSON 负载一起吃
+      var after = closeIdx + 1;
+      var k = after;
+      while (k < n && /\s/.test(text.charAt(k))) k++;
+      var payload = text.charAt(k);
+      if (payload === "{" || payload === "[") {
+        var end = balancedJsonEnd(text.substring(k));
+        if (end >= 0) after = k + end;
+      }
+      i = after;
+      // 指令被剥掉的位置补一个空格，避免把前后两句话粘成一个词
+      if (out.length && !/\s$/.test(out)) out += " ";
+    }
+    return out;
+  }
+
+  /**
    * 出站清洗：把要发到微信的文本里的所有 App 内部标记剥掉。
    * 微信那边只应该收到「人话」，不能出现 CoT、心声、卡片指令、HTML 等。
    */
@@ -172,12 +257,22 @@
     t = t.replace(/[\[【]TRANSLATE[\]】[\s\S]*$/gi, "");
     // 引用指令 [QUOTE:12] —— 微信里没有对应的消息 ID，直接去掉前缀
     t = t.replace(/[\[【](QUOTE|引用)\s*[:：]\s*\d+[\]】]\s*/gi, "");
-    // 多媒体 / 交易 / 分享等卡片指令：它们靠后续指令块携带 JSON，这里连块一起剥
-    t = t.replace(/[\[【](TRANSFER|RED_ENVELOPE|RECEIVE_TRANSFER|OPEN_RED_ENVELOPE|VOICE|IMAGE|LOCATION|PAY_FOR_ME|GIFT|AGREE_PAY|转账|红包|收钱|收转账|拆红包|领红包|语音|图片|位置|代付|送礼|同意代付|MP_INVITE|AUTO_CALL|CHECK_PHONE)[\]】][\s\S]*?(?=(?:[\[【])(?:TRANSFER|RED_ENVELOPE|RECEIVE_TRANSFER|OPEN_RED_ENVELOPE|VOICE|IMAGE|LOCATION|PAY_FOR_ME|GIFT|AGREE_PAY|转账|红包|收钱|收转账|拆红包|领红包|语音|图片|位置|代付|送礼|同意代付|MP_INVITE|AUTO_CALL|CHECK_PHONE)[\]】]|$)/gi, "");
+    // 多媒体 / 交易 / 分享等卡片指令：指令块后面跟着一段 JSON 负载，连块一起剥。
+    // 关键：只吃到 JSON 真正结束（配平大括号/方括号），不能一路吃到字符串结尾 —— 否则会把
+    // 指令后面真正的对白一起吞掉（例如「[IMAGE]{...} 结束」里的「结束」）。
+    // 用一次全文扫描处理所有指令，避免「只替换第一个」的陷阱。
+    t = stripCardCommands(t);
     // 表情包与分句标记
     t = t.replace(/[\[【]表情包[:：][^\]】]*[\]】]/g, "");
     t = t.replace(/[\[【]SPLIT[\]】]/gi, "");
     t = t.replace(/__TR\d+__/g, "");
+    // 残留兜底：上面按标记剥过之后，可能还剩孤立的 JSON 负载片段（嵌套大括号、写坏的指令等）。
+    // 只删「明显是 JSON 结构」的行内片段：必须以 { 或 [ 开头且紧跟 "键": 形式。
+    // 不满足这个形状的一律保留，宁可留一点脏，也不能误删角色真正说的话。
+    t = t.replace(/\[\s*"[^"\n]{1,40}"\s*:[^\]\n]{0,400}\]/g, "");
+    t = t.replace(/\{\s*"[^"\n]{1,40}"\s*:[^}\n]{0,600}\}/g, "");
+    // 反过来：只剩下一个孤立右大括号的残渣（前面被剥掉时留下的尾巴）
+    t = t.replace(/(^|\n)\s*[\}\]]\s*(\n|$)/g, "$1$2");
     // HTML 标签与 Markdown 常见痕迹
     t = t.replace(/<[^>\n]{1,80}>/g, "");
     t = t.replace(/```[\s\S]*?```/g, "");
