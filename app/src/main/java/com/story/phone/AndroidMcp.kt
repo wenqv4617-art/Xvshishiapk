@@ -328,13 +328,36 @@ class AndroidMcp private constructor(private val context: Context) {
     // 1.5 原生 HTTP 网络请求接口：彻底击穿 WebView 浏览器 CORS 跨域与 Header 拦截限制
     @JavascriptInterface
     fun sendNativeHttpRequest(urlStr: String, method: String, headersJson: String, bodyStr: String): String {
-        Log.d(TAG, "sendNativeHttpRequest() called, url=$urlStr, method=$method")
+        return sendNativeHttpRequestWithTimeout(urlStr, method, headersJson, bodyStr, 15000)
+    }
+
+    /**
+     * 带自定义读超时的原生 HTTP（文本响应）。
+     *
+     * 为什么需要单独一个方法：微信 iLink 的 getupdates / get_qrcode_status 是「长轮询」，
+     * 服务端会 hold 住连接最多 35 秒才返回。上面那个默认 15 秒读超时会让长轮询**每轮都超时**，
+     * 表现就是「登录上了但一条消息都收不到」。
+     *
+     * 单开一个方法而不是给原方法加参数：原方法已有 7 处 JS 调用，改签名有兼容风险。
+     *
+     * @param timeoutMs 读超时毫秒；<=0 时用默认 15000
+     */
+    @JavascriptInterface
+    fun sendNativeHttpRequestWithTimeout(
+        urlStr: String,
+        method: String,
+        headersJson: String,
+        bodyStr: String,
+        timeoutMs: Int
+    ): String {
+        val readTimeout = if (timeoutMs > 0) timeoutMs else 15000
+        Log.d(TAG, "sendNativeHttpRequestWithTimeout() url=$urlStr, method=$method, readTimeout=$readTimeout")
         return try {
             val url = java.net.URL(urlStr)
             val conn = url.openConnection() as java.net.HttpURLConnection
             conn.requestMethod = if (method.isEmpty()) "POST" else method.uppercase()
             conn.connectTimeout = 15000
-            conn.readTimeout = 15000
+            conn.readTimeout = readTimeout
             conn.instanceFollowRedirects = true
 
             if (headersJson.isNotEmpty()) {
@@ -368,18 +391,64 @@ class AndroidMcp private constructor(private val context: Context) {
                 }
             }
 
-            val resultJson = JSONObject()
-            resultJson.put("status", status)
-            resultJson.put("body", responseBody)
-            resultJson.put("headers", resHeaders)
-            resultJson.toString()
+            JSONObject().apply {
+                put("status", status)
+                put("body", responseBody)
+                put("headers", resHeaders)
+            }.toString()
         } catch (e: Exception) {
-            Log.e(TAG, "sendNativeHttpRequest failed: ${e.message}", e)
-            val errorJson = JSONObject()
-            errorJson.put("status", 500)
-            errorJson.put("body", e.message ?: "Native HTTP Error")
-            errorJson.put("headers", JSONObject())
-            errorJson.toString()
+            Log.e(TAG, "sendNativeHttpRequestWithTimeout failed: ${e.message}", e)
+            // 超时/网络错误明确标记 timeout=true：长轮询超时属于正常控制流，前端要能区分它和真失败
+            val isTimeout = e is java.net.SocketTimeoutException
+            JSONObject().apply {
+                put("status", if (isTimeout) 408 else 500)
+                put("body", e.message ?: "Native HTTP Error")
+                put("headers", JSONObject())
+                put("timeout", isTimeout)
+                put("error", e.message ?: "Native HTTP Error")
+            }.toString()
+        }
+    }
+
+    /**
+     * 原生 HTTP，返回 Base64 二进制（用于把二维码图片直接取回来在 App 内显示）。
+     * 返回 JSON: { status, contentType, bodyBase64, error }
+     */
+    @JavascriptInterface
+    fun ilinkFetchBinary(urlStr: String, headersJson: String): String {
+        Log.d(TAG, "ilinkFetchBinary() url=$urlStr")
+        return try {
+            val url = java.net.URL(urlStr)
+            val conn = url.openConnection() as java.net.HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 15000
+            conn.readTimeout = 20000
+            conn.instanceFollowRedirects = true
+            if (headersJson.isNotEmpty()) {
+                val jsonObj = JSONObject(headersJson)
+                val keys = jsonObj.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    conn.setRequestProperty(key, jsonObj.getString(key))
+                }
+            }
+            val status = conn.responseCode
+            val stream = if (status in 200..299) conn.inputStream else conn.errorStream
+            val bytes = stream?.use { it.readBytes() } ?: ByteArray(0)
+            val b64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+            JSONObject().apply {
+                put("status", status)
+                put("contentType", conn.contentType ?: "image/png")
+                put("bodyBase64", b64)
+            }.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "ilinkFetchBinary failed: ${e.message}", e)
+            JSONObject().apply {
+                put("status", 500)
+                put("contentType", "")
+                put("bodyBase64", "")
+                put("error", e.message ?: "Binary fetch error")
+            }.toString()
         }
     }
 
