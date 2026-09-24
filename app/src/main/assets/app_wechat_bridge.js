@@ -85,7 +85,8 @@
     stats: { received: 0, replied: 0, sent: 0, blocked: 0 },
     recentLog: [],
     sentTimestamps: [],
-    replyBusy: {}
+    replyBusy: {},
+    mode: ""            // "" 未启动 / "native" 原生长轮询 / "js" 网页轮询
   };
 
   // =========================================================================
@@ -526,11 +527,128 @@
   // 循环控制
   // =========================================================================
 
+  // =========================================================================
+  // 原生传输（首选）与网页轮询（回退）
+  //
+  // 为什么优先走原生：Blink 会对隐藏页面启用 intensive throttling —— 隐藏满 5 分钟后
+  // 把 setTimeout 的最小间隔强制放大到 60 秒。收消息的循环本来是 setTimeout 链，
+  // 一旦被放大，长轮询周期断崖式拉长，服务端就判定掉线（现象：常驻通知还在，
+  // 微信侧却显示「未连接」）。
+  //
+  // 搬到原生后：
+  //   · 长轮询在原生线程里严格串行跑，不受网页节流影响；
+  //   · 收到的消息先进原生队列，网页只是「消费端」，被冻结也不丢消息；
+  //   · 网页恢复后一次性把积压拉走。
+  // 旧 APK 上没有这套原生接口，会自动回退到原来的网页轮询，功能不受影响。
+  // =========================================================================
+
+  var NATIVE_PULL_MS = 4000;      // 网页拉取原生队列的兜底间隔
+  var nativePullTimer = null;
+  var nativePulling = false;
+
+  function nativeAvailable() {
+    if (typeof window === "undefined" || !window.AndroidMCP) return false;
+    var n = window.AndroidMCP;
+    return typeof n.ilinkNativeStart === "function" &&
+      typeof n.ilinkNativeFetchPending === "function" &&
+      typeof n.ilinkNativeAck === "function";
+  }
+
+  function nativeRunning() { return state.mode === "native"; }
+
+  /** 把原生队列里未确认的消息取出来处理，处理完逐条 ack（未 ack 会再次被拉到，保证不丢） */
+  function pullNativePending() {
+    if (nativePulling || !nativeAvailable()) return;
+    nativePulling = true;
+    (async function () {
+      try {
+        var raw = window.AndroidMCP.ilinkNativeFetchPending() || "[]";
+        var arr = JSON.parse(raw);
+        for (var i = 0; i < arr.length; i++) {
+          var item = arr[i] || {};
+          var p = item.payload || {};
+          try {
+            await handleIncoming({
+              fromUserId: p.fromUserId || "",
+              text: p.text || "",
+              contextToken: p.contextToken || "",
+              msgId: p.msgId || ""
+            });
+          } catch (e) {
+            console.warn("[ilink] 处理原生消息失败", e);
+          }
+          try { window.AndroidMCP.ilinkNativeAck(String(item.id || "")); } catch (e) { }
+        }
+        if (arr.length) refreshPanelIfOpen();
+      } catch (e) {
+        console.warn("[ilink] 拉取原生消息失败", e);
+      } finally {
+        nativePulling = false;
+      }
+    })();
+  }
+
+  function startNativePull() {
+    stopNativePull();
+    nativePullTimer = setInterval(pullNativePending, NATIVE_PULL_MS);
+    pullNativePending();
+  }
+
+  function stopNativePull() {
+    if (nativePullTimer) { clearInterval(nativePullTimer); nativePullTimer = null; }
+  }
+
+  /** 原生侧（收到消息/出错/掉线）推过来的提示：立刻拉一次 */
+  function onNativePending(what) {
+    if (what === "stale") {
+      state.lastError = "登录态已失效，请重新扫码登录";
+      state.mode = "";
+      stopNativePull();
+      logEvent(state.lastError, "danger");
+      refreshPanelIfOpen();
+      return;
+    }
+    if (what === "error") {
+      try {
+        var st = JSON.parse(window.AndroidMCP.ilinkNativeStatus() || "{}");
+        if (st.lastError) {
+          state.lastError = st.lastError;
+          logEvent("收消息异常：" + st.lastError, "warn");
+        }
+      } catch (e) { }
+      refreshPanelIfOpen();
+      return;
+    }
+    if (what === "stopped") { state.mode = ""; stopNativePull(); refreshPanelIfOpen(); return; }
+    pullNativePending();
+  }
+
   function startLoop() {
     var IL = ilink();
     if (!IL) { toast("iLink 客户端未加载"); return false; }
     if (!IL.isLoggedIn()) { toast("请先扫码登录"); return false; }
+    if (nativeRunning() && nativePullTimer) return true;
     if (IL.isLoopRunning()) return true;
+
+    // 1) 首选：原生长轮询
+    if (nativeAvailable()) {
+      try {
+        var r = JSON.parse(window.AndroidMCP.ilinkNativeStart(
+          IL.getToken() || "", IL.getBaseUrl() || "", IL.getCursor() || "") || "{}");
+        if (r && r.ok) {
+          state.mode = "native";
+          startNativePull();
+          logEvent("已启动原生长轮询（不依赖网页定时器）", "ok");
+          return true;
+        }
+        logEvent("原生轮询启动失败，回退网页轮询：" + ((r && r.error) || "未知原因"), "warn");
+      } catch (e) {
+        logEvent("原生轮询异常，回退网页轮询：" + (e && e.message || e), "warn");
+      }
+    }
+
+    // 2) 回退：旧 APK 或原生启动失败时，仍用网页 setInterval/setTimeout 轮询
+    state.mode = "js";
     state.loop = IL.startMessageLoop(
       function (m) { return handleIncoming(m); },
       {
@@ -555,7 +673,7 @@
         afterPoll: writeBeat
       }
     );
-    logEvent("已开始接收微信消息", "ok");
+    logEvent("已开始接收微信消息（网页轮询）", "ok");
     // 中枢一起循环就立刻打点，让前台在下一轮（≤35 秒内）尽快让出长轮询，
     // 把「两个实例同时轮询」的窗口压到最小。
     if (isCenterInstance()) writeBeat();
@@ -563,6 +681,13 @@
   }
 
   async function stopLoop() {
+    stopNativePull();
+    // 无条件停原生：原生轮询是进程级的，可能是另一个实例启动的；
+    // 用户点「停止接收」的意图是全局停止。
+    if (nativeAvailable()) {
+      try { window.AndroidMCP.ilinkNativeStop(); } catch (e) { }
+    }
+    state.mode = "";
     var IL = ilink();
     if (IL && state.loop) {
       try { await state.loop.stop(); } catch (e) { }
@@ -570,6 +695,13 @@
     state.loop = null;
     logEvent("已停止接收微信消息", "info");
     refreshPanelIfOpen();
+  }
+
+  /** 传输是否在跑（原生或网页，二者其一） */
+  function receiveRunning() {
+    if (nativeRunning()) return true;
+    var IL = ilink();
+    return !!(IL && IL.isLoopRunning());
   }
 
   // =========================================================================
@@ -682,6 +814,23 @@
     } catch (e) { return "未知"; }
   }
 
+  /** 当前用哪种方式收消息 */
+  function transportLabel() {
+    if (nativeRunning()) return "原生（不依赖网页定时器，后台不会掉）";
+    var IL = ilink();
+    if (IL && IL.isLoopRunning()) return "网页轮询（旧模式）";
+    if (nativeAvailable()) return "待启动";
+    return "旧版 APK（只有网页轮询）";
+  }
+
+  /** 原生侧是否已经持有游标 */
+  function nativeCursorHint() {
+    try {
+      var st = JSON.parse(window.AndroidMCP.ilinkNativeStatus() || "{}");
+      return !!st.hasCursor;
+    } catch (e) { return false; }
+  }
+
   function pill(label, value) {
     return '<div style="flex:1;min-width:70px;background:#fff;border:1.5px solid ' + PASTEL.border +
       ';border-radius:11px;padding:8px 10px;text-align:center;">' +
@@ -706,9 +855,9 @@
         esc(bid.slice(0, 18)) + (bid.length > 18 ? "…" : "") + '</span></div>' +
         '<div><span style="color:' + PASTEL.sub + ';">绑定时间：</span>' + (at ? timeStr(at) : "—") + '</div>' +
         '<div><span style="color:' + PASTEL.sub + ';">接收消息：</span>' +
-        (IL.isLoopRunning() ? "进行中" : "未启动") + '</div></div>' +
+        (receiveRunning() ? (nativeRunning() ? "进行中（原生）" : "进行中") : "未启动") + '</div></div>' +
         '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
-        (IL.isLoopRunning()
+        (receiveRunning()
           ? '<button class="il-btn il-btn-ghost" onclick="wechatBridge.stopReceive()">停止接收</button>'
           : '<button class="il-btn il-btn-primary" onclick="wechatBridge.startReceive()">开始接收</button>') +
         '<button class="il-btn il-btn-ghost" onclick="wechatBridge.relogin()">重新扫码登录</button>' +
@@ -821,15 +970,18 @@
     var IL = ilink();
     var ctx = ctxStats();
     var logged = !!(IL && IL.isLoggedIn());
-    var running = !!(IL && IL.isLoopRunning());
+    var running = receiveRunning();
     var body = '<div style="display:flex;flex-wrap:wrap;gap:8px;">' +
       pill("收到", state.stats.received) + pill("生成回复", state.stats.replied) +
       pill("已发出", state.stats.sent) + pill("已拦截", state.stats.blocked) + '</div>' +
       '<div style="margin-top:10px;font-size:11.5px;color:' + PASTEL.sub + ';line-height:1.8;">' +
       '账号：' + (logged ? "已登录" : "未登录") + ' · 收消息循环：' + (running ? "运行中" : "未运行") + '<br>' +
       '网络桥：' + asyncBridgeLabel() + '<br>' +
+      '收消息方式：' + transportLabel() + '<br>' +
       '后台防冻结：' + backgroundGuardLabel() + '<br>' +
-      '消息游标：' + ((IL && IL.getCursor()) ? "已保存（断线可续）" : "尚未建立") + '<br>' +
+      '消息游标：' + (nativeRunning() && nativeAvailable()
+        ? (nativeCursorHint() ? "已保存在原生（断线可续）" : "尚未建立")
+        : ((IL && IL.getCursor()) ? "已保存（断线可续）" : "尚未建立")) + '<br>' +
       '通道上下文：' + ctx.users + ' 个微信用户 / ' + ctx.turns + ' 条（每用户最多 ' + CTX_MAX_TURNS +
       ' 条，超过 2 小时无动静自动清理）' +
       (state.lastError ? '<br><span style="color:' + PASTEL.danger + ';">最近错误：' + esc(state.lastError) + '</span>' : '') +
@@ -1095,7 +1247,7 @@
       document.addEventListener("visibilitychange", function () {
         if (document.visibilityState !== "visible") return;
         var L = ilink();
-        if (L && L.isLoggedIn() && state.binding && state.binding.sessionId && !L.isLoopRunning()) {
+        if (L && L.isLoggedIn() && state.binding && state.binding.sessionId && !receiveRunning()) {
           startLoop();
         }
       });
@@ -1121,6 +1273,8 @@
     cleanInbound: cleanInbound,
     ctxStats: ctxStats,
     listCharSessions: listCharSessions,
+    onNativePending: onNativePending,
+    pullNativePending: pullNativePending,
     state: state
   };
 

@@ -225,6 +225,14 @@ class McpForegroundService : Service() {
 
         // ★ 启动 Headless 后台中枢：即使 Activity 被销毁，JS 中枢（主动发信/闹钟/桌宠）依然存活
         startHeadlessCenter()
+
+        // ★ 恢复原生长轮询：收消息已搬到原生线程，服务一活就接着收，
+        //   不依赖 Activity 或 WebView 是否存在
+        try {
+            IlinkPoller.resumeIfWanted(applicationContext)
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "恢复原生长轮询失败: ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {

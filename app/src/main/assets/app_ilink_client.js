@@ -784,6 +784,7 @@
     isLoggedIn: isLoggedIn,
     getBotId: getBotId,
     getUserId: getUserId,
+    getToken: getToken,
     getBaseUrl: getBaseUrl,
     boundAt: function () { try { return Number(localStorage.getItem(LS.boundAt) || 0); } catch (e) { return 0; } },
     clearLogin: clearLogin,

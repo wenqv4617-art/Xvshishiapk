@@ -1,4 +1,6 @@
-const CACHE_NAME = 'story-phone-v139';
+const CACHE_NAME = 'story-phone-v140';
+// v140: 收消息整条线搬到原生线程（IlinkPoller）：长轮询不再依赖 WebView 定时器，不受 Blink 节流影响；
+//       消息先进原生队列，网页只作消费端（拉取→处理→ack），网页被冻结也不丢消息；v1.5.61
 // v139: 修两个已被外部专家确认的底层机制 —— ①客户端超时(40s)早于服务端 hold 结束导致新旧长轮询重叠 → 500，
 //       改为 60s 超时 + 超时后 6 秒冷却；②detached WebView 在 Blink 里就是 Hidden，隐藏 5 分钟后定时器被
 //       强制放大到 60 秒，改为把后台中枢挂到 1×1 透明悬浮窗使其保持「可见」；v1.5.60

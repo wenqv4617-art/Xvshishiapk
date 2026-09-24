@@ -29,12 +29,36 @@ class AndroidMcp private constructor(private val context: Context) {
         @Volatile var centerWebView: android.webkit.WebView? = null
         /** 中枢 WebView 是否已挂到 1×1 悬浮窗：挂上 = Blink 视为可见，不受定时器节流 */
         @Volatile var centerOverlayAttached: Boolean = false
+        /** 应用级 Context：供原生长轮询线程取 SharedPreferences（脱离 Activity 生命周期） */
+        @Volatile var appContext: Context? = null
+
+        /**
+         * 原生收到微信消息 / 轮询出错时，轻推一下网页去拉取。
+         * 注意这只是「加速」：WebView 被节流时这个调用可能排队较久，
+         * 所以网页侧还有一个定时拉取兜底，消息本体也已经在原生队列里，不会丢。
+         */
+        fun notifyWebViewPending(what: String) {
+            val wv = getEffectiveWebView() ?: return
+            val safe = what.replace("'", "")
+            try {
+                wv.post {
+                    try {
+                        wv.evaluateJavascript(
+                            "javascript:try{if(window.wechatBridge&&window.wechatBridge.onNativePending)" +
+                                "{window.wechatBridge.onNativePending('" + safe + "');}}catch(e){}",
+                            null
+                        )
+                    } catch (e: Exception) { }
+                }
+            } catch (e: Exception) { }
+        }
         @Volatile private var instance: AndroidMcp? = null
 
         /** 获取进程级单例（使用 applicationContext，脱离 Activity 生命周期） */
         @Synchronized
         fun getInstance(context: Context): AndroidMcp {
             instance?.let { return it }
+            appContext = context.applicationContext
             return AndroidMcp(context.applicationContext).also { instance = it }
         }
 
@@ -376,6 +400,42 @@ class AndroidMcp private constructor(private val context: Context) {
      */
     @JavascriptInterface
     fun isCenterOverlayAttached(): Boolean = centerOverlayAttached
+
+    // =========================================================================
+    //  微信接入 · 原生长轮询（收消息不再依赖 WebView 定时器）
+    //
+    //  为什么搬到原生：Blink 会对隐藏页面启用 intensive throttling，把 setTimeout
+    //  的最小间隔强制放大到 60 秒，JS 驱动的长轮询因此断崖式退化并被服务端判为掉线。
+    //  原生线程不受此影响；收到的消息先进原生队列，网页有空时再拉走（离线消息中心）。
+    // =========================================================================
+
+    /** 启动原生长轮询；前端把当前登录凭据与游标交进来。返回状态 JSON。 */
+    @JavascriptInterface
+    fun ilinkNativeStart(token: String?, baseUrl: String?, cursor: String?): String =
+        IlinkPoller.start(context.applicationContext, token ?: "", baseUrl ?: "", cursor ?: "")
+
+    /** 停止原生长轮询（用户点「停止接收」）。 */
+    @JavascriptInterface
+    fun ilinkNativeStop(): String {
+        IlinkPoller.stop(context.applicationContext)
+        return IlinkPoller.status(context.applicationContext)
+    }
+
+    /** 取尚未确认的消息（JSON 数组，每项 {id, payload:{fromUserId,text,contextToken,msgId}}）。 */
+    @JavascriptInterface
+    fun ilinkNativeFetchPending(): String =
+        IlinkPoller.fetchPending(context.applicationContext)
+
+    /** 确认已处理到该 id（含）。未 ack 的消息会被反复拉到，保证不丢。 */
+    @JavascriptInterface
+    fun ilinkNativeAck(id: String?): String {
+        IlinkPoller.ack(context.applicationContext, (id ?: "").trim().toLongOrNull() ?: 0L)
+        return "ok"
+    }
+
+    /** 原生轮询状态：running / lastPollAt / lastError / pending / stale。 */
+    @JavascriptInterface
+    fun ilinkNativeStatus(): String = IlinkPoller.status(context.applicationContext)
 
     /**
      * 认领一条入站微信消息。true = 本实例负责处理；false = 已被另一实例处理，应跳过。
