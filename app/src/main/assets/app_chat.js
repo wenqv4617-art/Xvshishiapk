@@ -5262,6 +5262,79 @@ function bindChatAppEvents() {
     };
   }
 
+  // 3. 输入栏加号展开
+  const btnExpand = document.getElementById("btn-chat-expand-toggle");
+  if (btnExpand) {
+    btnExpand.onclick = () => {
+      document.getElementById("chat-expand-panel").classList.toggle("active");
+    };
+  }
+
+  // 4. 对话配置专属头像本地文件直接存储为原生 Blob 二进制
+  const fileChar = document.getElementById("file-details-char");
+  const btnChar = document.getElementById("btn-upload-details-char");
+  if (btnChar && fileChar) {
+    btnChar.onclick = (e) => {
+      e.preventDefault();
+      fileChar.click();
+    };
+    fileChar.onchange = (e) => {
+      if (e.target.files.length > 0) {
+        detailsCharAvatarBlob = e.target.files[0];
+        document.getElementById("details-char-avatar").value = "[本地上传图片]";
+      }
+    };
+  }
+
+  const fileUser = document.getElementById("file-details-user");
+  const btnUser = document.getElementById("btn-upload-details-user");
+  if (btnUser && fileUser) {
+    btnUser.onclick = (e) => {
+      e.preventDefault();
+      fileUser.click();
+    };
+    fileUser.onchange = (e) => {
+      if (e.target.files.length > 0) {
+        detailsUserAvatarBlob = e.target.files[0];
+        document.getElementById("details-user-avatar").value = "[本地上传图片]";
+      }
+    };
+  }
+
+  // 5. 表情包按钮：打开表情包选择栏
+  const btnSticker = document.getElementById("btn-chat-sticker");
+  if (btnSticker) {
+    btnSticker.onclick = () => {
+      document.getElementById("chat-expand-panel").classList.remove("active");
+      if (window.stickerSystem && window.stickerSystem.openStickerSelector) {
+        window.stickerSystem.openStickerSelector(activeSessionId);
+      } else {
+        alert("表情包系统尚未初始化，请先刷新页面。");
+      }
+    };
+  }
+
+  // 6. 线下功能唤起
+  const btnChatOffline = document.getElementById("btn-chat-offline");
+  if (btnChatOffline) {
+    btnChatOffline.onclick = () => {
+      document.getElementById("chat-expand-panel").classList.remove("active");
+      document.getElementById("offline-select-overlay").classList.add("active");
+    };
+  }
+
+  // 7. HTML 互动卡片唤起 (新增)
+  const btnChatHtmlWidget = document.getElementById("btn-chat-html-widget");
+  if (btnChatHtmlWidget) {
+    btnChatHtmlWidget.onclick = () => {
+      document.getElementById("chat-expand-panel").classList.remove("active");
+      if (window.chatHtmlWidgetSystem && window.chatHtmlWidgetSystem.openPanel) {
+        window.chatHtmlWidgetSystem.openPanel();
+      }
+    };
+  }
+}
+
 // ============================================================
 // 可复用的 AI 回复生成（线上单聊 / 群聊 / 微信接入通道共用）
 //   · 这段逻辑原来只写在「获取AI仿真回复」按钮的 onclick 里，现抽成函数，
@@ -5295,14 +5368,43 @@ async function generateReplyForSession(sid, opts) {
 
   const header = document.getElementById("dialog-header-title");
   const originalTitle = header ? header.innerText : "";
+  // 按钮可能不在当前页面（后台通道调用），取不到时跳过 UI 还原即可
+  const btnReply = document.getElementById("btn-dialog-reply");
+
+  // UI 还原：仅当用户正看着本会话时才动聊天界面。
+  // 后台通道（微信接入）调用时用户可能在看别的会话，绝不能覆盖它的标题栏。
+  const uiRestore = () => {
+    if (!uiLive()) return;
+    header.classList.remove("header-typing");
+    header.innerText = originalTitle;
+  };
 
   /* eslint-disable no-unused-vars */
-try {
+  try {
   onlineAbortController = new AbortController();
   window._visionUsedInRequest = false; // 每次请求重置视觉标记，避免上一次的带图状态污染降级判断
-  onlineAbortController._reqSessionId = reqSessionId; // 标记本次请求所属会话
+  onlineAbortController._reqSessionId = sid; // 标记本次请求所属会话
   const api = await getFeatureApiPreset("chat");
   if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
+
+  // 会话对象与角色/用户称谓：交易通知与转发摘要都要用，必须在交易引擎之前解析
+  const sessObj = await db.sessions.get(sid);
+
+  // 预解析当前会话的角色名与用户名，用于转发卡片在上下文中的明确摘要（标注谁转发给谁）
+  let _chatCharName = "对方";
+  let _chatMyName = "我";
+  if (sessObj) {
+    if (sessObj.customCharName) {
+      _chatCharName = sessObj.customCharName;
+    } else if (sessObj.charId) {
+      const _charArch = await db.archives.get(sessObj.charId);
+      if (_charArch && _charArch.name) _chatCharName = _charArch.name;
+    }
+    if (sessObj.userId) {
+      const _userArch = await db.archives.get(sessObj.userId);
+      if (_userArch && _userArch.name) _chatMyName = _userArch.name;
+    }
+  }
 
   // === 【微信交易引擎核心逻辑】：AI自动拦截并收取/拆开玩家发送的交易，并生成对应的灰色系统卡片 ===
   const rawList = await db.messages.where('sessionId').equals(sid).toArray();
@@ -5321,9 +5423,9 @@ try {
         // 物理向数据库追加一条系统通知灰字，确保上屏与存盘对齐
         let noticeText = "";
         if (ut.contentType === 'transfer') {
-          noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 确认收钱，收取了 你的转账` : `[系统通知] 对方已确认收钱`;
+          noticeText = sessObj.isGroup === 1 ? `[系统通知] ${_chatCharName} 确认收钱，收取了 你的转账` : `[系统通知] 对方已确认收钱`;
         } else {
-          noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 领取了 你的红包` : `[系统通知] 对方领取了你的红包`;
+          noticeText = sessObj.isGroup === 1 ? `[系统通知] ${_chatCharName} 领取了 你的红包` : `[系统通知] 对方领取了你的红包`;
         }
 
         const sysMsg = {
@@ -5339,7 +5441,7 @@ try {
 
         // 自动合成记账文本提示词喂给大模型
         const transactionName = ut.contentType === 'transfer' ? '微信转账' : '微信红包';
-        autoReclaimContext += `【系统通知：对方（${originalTitle}）已经确认领取并收下了你刚刚发送的${transactionName}，资金为 ￥ ${data.amount.toFixed(2)} 元${ut.contentType === 'red_envelope' ? `，红包备注为："${data.remark}"` : ''}】\n`;
+        autoReclaimContext += `【系统通知：对方（${_chatCharName}）已经确认领取并收下了你刚刚发送的${transactionName}，资金为 ￥ ${data.amount.toFixed(2)} 元${ut.contentType === 'red_envelope' ? `，红包备注为："${data.remark}"` : ''}】\n`;
       }
     } catch(e) { console.error(e); }
   }
@@ -5481,23 +5583,6 @@ try {
     });
   }
 
-  const sessObj = await db.sessions.get(sid);
-
-  // 预解析当前会话的角色名与用户名，用于转发卡片在上下文中的明确摘要（标注谁转发给谁）
-  let _chatCharName = "对方";
-  let _chatMyName = "我";
-  if (sessObj) {
-    if (sessObj.customCharName) {
-      _chatCharName = sessObj.customCharName;
-    } else if (sessObj.charId) {
-      const _charArch = await db.archives.get(sessObj.charId);
-      if (_charArch && _charArch.name) _chatCharName = _charArch.name;
-    }
-    if (sessObj.userId) {
-      const _userArch = await db.archives.get(sessObj.userId);
-      if (_userArch && _userArch.name) _chatMyName = _userArch.name;
-    }
-  }
 
   // 异步映射历史记录，智能计算设定/真实时间流逝，插入带精准场景虚拟时间的系统标块
   const simNow = getSimulatedNow(sessObj);
@@ -5788,7 +5873,7 @@ try {
   const handleStreamChunk = isGroupMode ? null : (delta, currentFullText) => {
     // 会话隔离：只有在用户仍在原请求会话时才渲染流式气泡
     if (!uiTouchable()) return;
-if (sid !== reqSessionId) return;
+    if (!uiLive()) return;
 
     const container = document.getElementById("dialog-messages-container");
     if (!container) return;
@@ -5826,7 +5911,7 @@ if (sid !== reqSessionId) return;
   // 世界书「聊天内注入」：按深度插入到最近消息之间（对标酒馆 @Depth）
   try {
     if (window.worldBookEngine && typeof window.worldBookEngine.getResult === "function") {
-      var _wbResOnline = window.worldBookEngine.getResult(reqSessionId, "online");
+      var _wbResOnline = window.worldBookEngine.getResult(sid, "online");
       if (_wbResOnline && _wbResOnline.atDepth && _wbResOnline.atDepth.length) {
         window.worldBookEngine.insertAtDepth(messagesToSend, _wbResOnline.atDepth);
       }
@@ -5835,7 +5920,7 @@ if (sid !== reqSessionId) return;
 
   // 上下文管理：捕获最近一轮完整请求（供「对话详情 → 上下文管理」查看全文）
   if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
-    window.contextManager.captureRequest(reqSessionId, "online", messagesToSend);
+    window.contextManager.captureRequest(sid, "online", messagesToSend);
   }
 
   let rawReply = await fetchStreamOrJson(activeApi.url, activeApi, messagesToSend, onlineAbortController.signal, handleStreamChunk);
@@ -5887,7 +5972,7 @@ if (sid !== reqSessionId) return;
   }
 
   // === 【群聊 AI 多人分流与指令决策器】 ===
-      const currentSess = await db.sessions.get(reqSessionId);
+      const currentSess = await db.sessions.get(sid);
       if (currentSess && currentSess.isGroup === 1) {
         // 打印大模型吐出的原始未加工对白，用以排查格式异形
         console.log("[Group Chat Debug] 1. 大模型返回的原始对白文本 rawReply:\n", rawReply);
@@ -6036,9 +6121,8 @@ if (sid !== reqSessionId) return;
     }
 
     if (hasGroupReplies) {
-      header.classList.remove("header-typing");
-      header.innerText = originalTitle;
-      btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
+      uiRestore();
+      if (btnReply) btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
       onlineAbortController = null;
       return; // 直接退出，阻止原有单聊上屏逻辑
     }
@@ -6056,7 +6140,7 @@ if (sid !== reqSessionId) return;
       blockByCharReason: reason
     });
     rawReply = rawReply.replace(charBlockRegex, "").trim();
-    showToast(`对方（${originalTitle}）拉黑了你。原因：${reason}`);
+    showToast(`对方（${_chatCharName}）拉黑了你。原因：${reason}`);
   }
 
   const unblockMatch = rawReply.match(charUnblockRegex);
@@ -6066,7 +6150,7 @@ if (sid !== reqSessionId) return;
       blockByCharReason: ""
     });
     rawReply = rawReply.replace(charUnblockRegex, "").trim();
-    showToast(`对方（${originalTitle}）已解除对你的拉黑`);
+    showToast(`对方（${_chatCharName}）已解除对你的拉黑`);
   }
 
   // === Char (AI) 撤回消息处理 ===
@@ -6088,7 +6172,7 @@ if (sid !== reqSessionId) return;
       await renderDialogMessages();
     } else {
       rawReply = rawReply.replace(recallRegex, "").trim();
-      alert(`系统提示：对方（${originalTitle}）试图撤回一则消息（ID: ${targetId || '最新'}），但由于消息ID无效，撤回失败！`);
+      alert(`系统提示：对方（${_chatCharName}）试图撤回一则消息（ID: ${targetId || '最新'}），但由于消息ID无效，撤回失败！`);
     }
   }
 
@@ -6207,7 +6291,7 @@ if (sid !== reqSessionId) return;
       }
 
       if (prefixText) {
-        await saveAndRenderMessage('char', prefixText, 'text', reqSessionId);
+        await saveAndRenderMessage('char', prefixText, 'text', sid);
       }
 
       const toolCallPayload = toolCallInfo.payload;
@@ -6585,11 +6669,11 @@ if (sid !== reqSessionId) return;
         // 检测 char 主动发起通话指令 [AUTO_CALL:voice|video]，触发后清洗指令文本
         let textToSave = item.content;
         if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
-          textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, reqSessionId);
+          textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, sid);
         }
         // 检测 char 突然发起查手机指令 [CHECK_PHONE]{...}，触发后清洗指令文本
         if (window.reverseCheckSystem && typeof window.reverseCheckSystem.detectAndTriggerCheckPhone === 'function') {
-          textToSave = window.reverseCheckSystem.detectAndTriggerCheckPhone(textToSave, reqSessionId);
+          textToSave = window.reverseCheckSystem.detectAndTriggerCheckPhone(textToSave, sid);
         }
         // 翻译随动：优先取上屏前预生成的逐气泡译文；兼容旧版 [TRANSLATE] 标签
         const transForThis = translationText || autoTranslationByIndex[currentItemIndex - 1] || null;
@@ -6598,14 +6682,16 @@ if (sid !== reqSessionId) return;
         const thoughtForThis = preservedThoughtText;
         preservedThoughtText = "";
         if (onText) { try { onText(textToSave); } catch (e) { console.warn('[reply] onText 回调异常:', e); } }
-        await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
+        await saveAndRenderMessage('char', textToSave, 'text', sid, transForThis, thoughtForThis);
       } else if (item.kind === 'special') {
-        await processAndRenderSpecialItem(item, userName, reqSessionId);
+        await processAndRenderSpecialItem(item, userName, sid);
       }
 
       if (currentItemIndex < responseItems.length) {
-        const delay = 1000;
-        setTimeout(processNextResponseItem, delay);
+        // 必须 await 整条链：原来用 setTimeout 递归，函数会在第一条气泡之后就返回，
+        // 后续气泡稍后才落库 —— 微信接入通道的 onText 就只能拿到第一段，回信残缺。
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        await processNextResponseItem();
       } else {
         // 所有气泡上屏完毕后，写入社交动作系统消息（朋友圈/论坛发帖/建立小号等）
         if (pendingSocialNotices.length > 0 && window.socialActions) {
@@ -6614,8 +6700,7 @@ if (sid !== reqSessionId) return;
           }
           pendingSocialNotices = [];
         }
-        header.classList.remove("header-typing");
-        header.innerText = originalTitle;
+        uiRestore();
         if (typeof checkAndTriggerAutoSummary !== 'undefined') {
           checkAndTriggerAutoSummary(sid);
         }
@@ -6628,8 +6713,7 @@ if (sid !== reqSessionId) return;
         }
         pendingSocialNotices = [];
       }
-      header.classList.remove("header-typing");
-      header.innerText = originalTitle;
+      uiRestore();
       if (typeof checkAndTriggerAutoSummary !== 'undefined') {
         checkAndTriggerAutoSummary(sid);
       }
@@ -6639,21 +6723,20 @@ if (sid !== reqSessionId) return;
   if (responseItems.length > 0) {
     await processNextResponseItem();
   } else {
-    header.classList.remove("header-typing");
-    header.innerText = originalTitle;
+    uiRestore();
     if (typeof checkAndTriggerAutoSummary !== 'undefined') {
       checkAndTriggerAutoSummary(sid);
     }
   }
 
-} catch (err) {
+  } catch (err) {
   if (err.name === 'AbortError') {
     // 被中止，默默忽略，不触发错误提示卡片
     return;
   }
   console.error(err);
   // 会话隔离：只在用户仍在原会话时才弹错误框，避免跨会话干扰
-  if (sid === reqSessionId && !silentError && uiTouchable()) {
+  if (uiLive() && !silentError) {
     // 视觉降级：本次带图且报错 → 自动关闭图片发送，下次仅发文字描述
     if (window._visionUsedInRequest) {
       window._visionUsedInRequest = false;
@@ -6664,90 +6747,22 @@ if (sid !== reqSessionId) return;
       showCustomAlert("API 发生错误", err.message);
     }
   }
-} finally {
+  } finally {
   // 会话隔离：只在用户仍在原请求会话时才恢复 header 和按钮 UI
   // 如果用户已切换到其他会话，openWeChatDialog 已经处理了新会话的 UI 状态
-  if (sid === reqSessionId && uiTouchable()) {
-    header.classList.remove("header-typing");
-    header.innerText = originalTitle;
-    btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
+  if (uiLive()) {
+    uiRestore();
+    if (btnReply) btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
   }
   onlineAbortController = null;
-}
-}
-
-  // 3. 输入栏加号展开
-  const btnExpand = document.getElementById("btn-chat-expand-toggle");
-  if (btnExpand) {
-    btnExpand.onclick = () => {
-      document.getElementById("chat-expand-panel").classList.toggle("active");
-    };
-  }
-
-  // 4. 对话配置专属头像本地文件直接存储为原生 Blob 二进制
-  const fileChar = document.getElementById("file-details-char");
-  const btnChar = document.getElementById("btn-upload-details-char");
-  if (btnChar && fileChar) {
-    btnChar.onclick = (e) => {
-      e.preventDefault();
-      fileChar.click();
-    };
-    fileChar.onchange = (e) => {
-      if (e.target.files.length > 0) {
-        detailsCharAvatarBlob = e.target.files[0];
-        document.getElementById("details-char-avatar").value = "[本地上传图片]";
-      }
-    };
-  }
-
-  const fileUser = document.getElementById("file-details-user");
-  const btnUser = document.getElementById("btn-upload-details-user");
-  if (btnUser && fileUser) {
-    btnUser.onclick = (e) => {
-      e.preventDefault();
-      fileUser.click();
-    };
-    fileUser.onchange = (e) => {
-      if (e.target.files.length > 0) {
-        detailsUserAvatarBlob = e.target.files[0];
-        document.getElementById("details-user-avatar").value = "[本地上传图片]";
-      }
-    };
-  }
-
-  // 5. 表情包按钮：打开表情包选择栏
-  const btnSticker = document.getElementById("btn-chat-sticker");
-  if (btnSticker) {
-    btnSticker.onclick = () => {
-      document.getElementById("chat-expand-panel").classList.remove("active");
-      if (window.stickerSystem && window.stickerSystem.openStickerSelector) {
-        window.stickerSystem.openStickerSelector(activeSessionId);
-      } else {
-        alert("表情包系统尚未初始化，请先刷新页面。");
-      }
-    };
-  }
-
-  // 6. 线下功能唤起
-  const btnChatOffline = document.getElementById("btn-chat-offline");
-  if (btnChatOffline) {
-    btnChatOffline.onclick = () => {
-      document.getElementById("chat-expand-panel").classList.remove("active");
-      document.getElementById("offline-select-overlay").classList.add("active");
-    };
-  }
-
-  // 7. HTML 互动卡片唤起 (新增)
-  const btnChatHtmlWidget = document.getElementById("btn-chat-html-widget");
-  if (btnChatHtmlWidget) {
-    btnChatHtmlWidget.onclick = () => {
-      document.getElementById("chat-expand-panel").classList.remove("active");
-      if (window.chatHtmlWidgetSystem && window.chatHtmlWidgetSystem.openPanel) {
-        window.chatHtmlWidgetSystem.openPanel();
-      }
-    };
   }
 }
+
+// 显式挂到 window：非聊天页模块（微信接入通道等）通过 window.* 调用这两个函数。
+// 注意：它们原先被误放在 bindChatAppEvents() 内部 —— 那样只是该函数的局部变量，
+// 外部读到的一直是 undefined，微信通道会永远报「回复引擎未加载」。
+window.isActiveDialogSession = isActiveDialogSession;
+window.generateReplyForSession = generateReplyForSession;
 
 async function startSingleChat(charId) {
   document.getElementById("new-chat-overlay").classList.remove("active");

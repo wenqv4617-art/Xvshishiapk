@@ -1,4 +1,5 @@
-const CACHE_NAME = 'story-phone-v134';
+const CACHE_NAME = 'story-phone-v135';
+// v135: 修「微信能收到消息但永远不回」—— 回复引擎被误放进另一函数内部（外部读不到）+ 内部残留未改名的 reqSessionId（一调用就 ReferenceError）；v1.5.56
 // v134: 修「微信接入连上后界面卡死」—— 原生 HTTP 改异步（提交+轮询），长轮询不再阻塞 JS 主线程；v1.5.55
 // v133: 微信接入改为 App 内直连 iLink（ClawBot）：面板内出二维码扫码即用，不再需要 Termux；无障碍方案下线；v1.5.54
 // v132: 本地部署新增「微信 Claw 接入」（官方 ClawBot 插件 + OpenClaw）；内嵌 Termux 脚本与仓库逐字节同步；v1.5.53
