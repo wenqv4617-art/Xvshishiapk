@@ -27,6 +27,8 @@ class AndroidMcp private constructor(private val context: Context) {
         var mainActivity: MainActivity? = null
         /** Service 托管的 Headless 中枢 WebView：Activity 销毁后 JS 中枢的存活载体 */
         @Volatile var centerWebView: android.webkit.WebView? = null
+        /** 中枢 WebView 是否已挂到 1×1 悬浮窗：挂上 = Blink 视为可见，不受定时器节流 */
+        @Volatile var centerOverlayAttached: Boolean = false
         @Volatile private var instance: AndroidMcp? = null
 
         /** 获取进程级单例（使用 applicationContext，脱离 Activity 生命周期） */
@@ -366,6 +368,14 @@ class AndroidMcp private constructor(private val context: Context) {
         java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     private val claimedMsgTtlMs = 10 * 60 * 1000L
+
+    /**
+     * 后台中枢 WebView 是否已挂到悬浮窗。挂上 = Blink 认为页面可见，不会启用
+     * intensive throttling（隐藏满 5 分钟把定时器放大到 60 秒）。
+     * 供前端「运行数据」自检显示；返回 false 说明后台循环会被节流。
+     */
+    @JavascriptInterface
+    fun isCenterOverlayAttached(): Boolean = centerOverlayAttached
 
     /**
      * 认领一条入站微信消息。true = 本实例负责处理；false = 已被另一实例处理，应跳过。

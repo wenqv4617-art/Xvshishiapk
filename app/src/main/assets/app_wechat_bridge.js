@@ -661,6 +661,27 @@
     return "不可用";
   }
 
+  /**
+   * 后台防冻结自检。
+   *
+   * 背景：Blink 用「View 是否 attach 到窗口」判断页面可见性。完全 detached 的 WebView
+   * 内部就是 Hidden；隐藏满 5 分钟后 Chromium 启用 intensive throttling，把定时器最小
+   * 间隔强制放大到 60 秒 —— 收消息的 setTimeout 链会因此退化，微信服务端判定掉线。
+   * 现在的做法是把后台中枢 WebView 挂到一个 1×1 透明悬浮窗上，让页面保持「可见」。
+   *
+   * 注意 setRendererPriorityPolicy 解决不了这个：那是进程优先级维度，与 Blink 定时器节流无关。
+   */
+  function backgroundGuardLabel() {
+    if (typeof window === "undefined" || !window.AndroidMCP) return "网页环境（不适用）";
+    var n = window.AndroidMCP;
+    if (typeof n.isCenterOverlayAttached !== "function") return "旧版 APK（后台会被节流）";
+    try {
+      if (n.isCenterOverlayAttached()) return "已挂悬浮窗（后台不被节流）";
+      // 没挂上：可能是「显示在其他应用上层」权限没给
+      return "未挂载（后台 5 分钟后会被节流，请给「显示在其他应用上层」权限）";
+    } catch (e) { return "未知"; }
+  }
+
   function pill(label, value) {
     return '<div style="flex:1;min-width:70px;background:#fff;border:1.5px solid ' + PASTEL.border +
       ';border-radius:11px;padding:8px 10px;text-align:center;">' +
@@ -807,6 +828,7 @@
       '<div style="margin-top:10px;font-size:11.5px;color:' + PASTEL.sub + ';line-height:1.8;">' +
       '账号：' + (logged ? "已登录" : "未登录") + ' · 收消息循环：' + (running ? "运行中" : "未运行") + '<br>' +
       '网络桥：' + asyncBridgeLabel() + '<br>' +
+      '后台防冻结：' + backgroundGuardLabel() + '<br>' +
       '消息游标：' + ((IL && IL.getCursor()) ? "已保存（断线可续）" : "尚未建立") + '<br>' +
       '通道上下文：' + ctx.users + ' 个微信用户 / ' + ctx.turns + ' 条（每用户最多 ' + CTX_MAX_TURNS +
       ' 条，超过 2 小时无动静自动清理）' +

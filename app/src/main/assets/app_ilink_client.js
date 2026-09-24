@@ -27,7 +27,9 @@
   var FIXED_HOST = "https://ilinkai.weixin.qq.com";  // 首次取二维码固定用这个入口
   var CHANNEL_VERSION = "2.4.6";
   var BOT_AGENT = "story-phone/1.0 (cordis)";
-  var LONGPOLL_TIMEOUT_MS = 40000;   // 服务端 hold 35s，客户端给到 40s
+  var LONGPOLL_TIMEOUT_MS = 60000;   // 服务端 hold 约 35s，客户端留足余量：
+                                     // 如果客户端超时早于服务端结束 hold，超时后重发会让
+                                     // 服务端同时持有两条长轮询 → 返回 HTTP 500 并踢连接。
   var NORMAL_TIMEOUT_MS = 15000;
   var QR_POLL_TIMEOUT_MS = 40000;
   var QR_TTL_MS = 5 * 60 * 1000;     // 二维码本地有效期（官方客户端策略）
@@ -36,6 +38,8 @@
   var BACKOFF_SHORT_MS = 2000;
   var BACKOFF_LONG_MS = 30000;
   var POLL_SKIP_MS = 3000;           // 把长轮询让给另一实例时的重试间隔
+  var POLL_TIMEOUT_COOLDOWN_MS = 6000; // 本客户端超时后，等这么久再发下一条。
+                                       // 服务端 hold 时长偶尔会超出我们的超时，立刻重发会重叠。
 
   var LS = {
     token: "ilink-bot-token",
@@ -718,6 +722,15 @@
           return;
         }
         state.consecutiveFail = 0;
+
+        // 客户端超时：绝不能立刻重发。服务端可能仍持有上一条长轮询（hold 时长偶尔超过
+        // 我们的超时），此时再发一条会让服务端看到同一 bot 的两条并发长轮询 →
+        // 返回 HTTP 500 并把连接踢掉（这也是「聊到一半掉线」的成因之一）。
+        if (r.timedOut) {
+          onIdle();
+          loopState.timer = setTimeout(tick, POLL_TIMEOUT_COOLDOWN_MS);
+          return;
+        }
 
         var msgs = r.messages || [];
         if (!msgs.length) onIdle();

@@ -210,6 +210,9 @@ class McpForegroundService : Service() {
     // 静默音频保活：播放无声音频保持 WebView JS 环境活跃，防止后台被冻结
     private var keepAliveAudioTrack: android.media.AudioTrack? = null
 
+    /** 承载后台中枢 WebView 的 1×1 透明悬浮窗（挂上后 Blink 才认为页面可见） */
+    private var centerOverlayView: android.view.View? = null
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
@@ -235,6 +238,15 @@ class McpForegroundService : Service() {
         stopKeepAliveAudio()
         // 销毁后台中枢 WebView，释放渲染进程
         try {
+            // 先摘掉承载它的悬浮窗，避免窗口泄漏
+            centerOverlayView?.let { v ->
+                try {
+                    (getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager).removeView(v)
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            centerOverlayView = null
+            AndroidMcp.centerOverlayAttached = false
+
             AndroidMcp.centerWebView?.stopLoading()
             AndroidMcp.centerWebView?.destroy()
         } catch (e: Exception) { e.printStackTrace() }
@@ -301,12 +313,68 @@ class McpForegroundService : Service() {
             // 关键：不 addView 到任何窗口 —— Headless 模式只执行 JS，不渲染 UI
             // 带 #sp_bg=1 标记：页面脚本据此在「加载前」就知道自己是后台中枢，
             // 从而立刻取得长轮询持有权（用 URL 片段而非加载后注入，避免竞态）。
+            // 但注意：完全 detached 的 WebView 在 Blink 里被判定为 Hidden，
+            // 隐藏满 5 分钟后定时器会被强制放大到 60 秒 —— 见 attachCenterToOverlay()。
+            attachCenterToOverlay(webView)
+
             webView.loadUrl("file:///android_asset/index.html#sp_bg=1")
             AndroidMcp.centerWebView = webView
             android.util.Log.d(TAG, "Headless 后台中枢 WebView 已启动")
         } catch (e: Exception) {
             android.util.Log.e(TAG, "启动后台中枢 WebView 失败: ${e.message}")
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * 把后台中枢 WebView 挂到一个 1×1 的透明悬浮窗上。
+     *
+     * 为什么必须这么做：Blink 的页面可见性来自 View 是否 attach 到窗口。一个从未
+     * addView 过的 WebView 内部状态就是 Hidden；隐藏满 5 分钟后 Chromium 会启用
+     * intensive throttling，把嵌套定时器的最小间隔强制放大到 60 秒。我们的收消息循环
+     * 是 setTimeout 链，一旦被放大到 60 秒，长轮询周期断崖式拉长，微信服务端就判定
+     * 客户端掉线（现象：常驻通知还在，但微信侧显示「未连接」）。
+     *
+     * 注意：setRendererPriorityPolicy 解决不了这个问题 —— 那是 Linux 进程优先级维度，
+     * 与 Blink 内部的定时器节流无关。只有让页面真的「可见」才行。
+     *
+     * 需要「显示在其他应用上层」权限；没有权限时静默回退为 detached（仍能跑，只是会被节流）。
+     */
+    private fun attachCenterToOverlay(webView: WebView) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                !android.provider.Settings.canDrawOverlays(this)
+            ) {
+                android.util.Log.w(TAG, "无悬浮窗权限，后台中枢保持 detached（会被 Blink 节流，仅保不死）")
+                return
+            }
+            val wm = getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+            val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                android.view.WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+            } else {
+                @Suppress("DEPRECATION")
+                android.view.WindowManager.LayoutParams.TYPE_PHONE
+            }
+            val params = android.view.WindowManager.LayoutParams(
+                1, 1, type,
+                android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                    or android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    or android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                android.graphics.PixelFormat.TRANSLUCENT
+            )
+            params.gravity = android.view.Gravity.TOP or android.view.Gravity.START
+            params.x = 0
+            params.y = 0
+            // 1×1 且完全透明：肉眼不可见，只为让 Blink 认为页面处于可见状态。
+            // 不设 params.alpha = 0 —— 那可能反过来让窗口被判定为不可见。
+            webView.setBackgroundColor(0x00000000)
+            wm.addView(webView, params)
+            centerOverlayView = webView
+            AndroidMcp.centerOverlayAttached = true
+            android.util.Log.d(TAG, "后台中枢已挂到 1×1 透明悬浮窗（Blink 视为可见，不节流）")
+        } catch (e: Exception) {
+            AndroidMcp.centerOverlayAttached = false
+            android.util.Log.e(TAG, "挂载悬浮窗失败（回退为 detached，会被节流）: ${e.message}")
         }
     }
 
