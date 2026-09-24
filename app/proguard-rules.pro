@@ -11,5 +11,5 @@
 # 正在播放监听服务（Manifest 声明的 NotificationListenerService，防混淆/裁剪）
 -keep class com.story.phone.NowPlayingListenerService { *; }
 
-# 微信接入无障碍服务（Manifest 声明的 AccessibilityService，系统按类名反射绑定，必须防混淆/裁剪）
--keep class com.story.phone.WeChatAccessibilityService { *; }
+# 注：原「微信接入无障碍服务」已弃置并删除，相关 keep 规则一并移除。
+#     现行微信接入走 App 内直连 iLink，不需要任何 Service 反射注册。

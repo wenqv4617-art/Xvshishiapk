@@ -42,10 +42,6 @@ SERVICES=(
   "cors-proxy|CORS 跨域中转|打破 PWA/网页版跨域限制|node \$HOME/.xvshishi/cors-proxy.js|http://localhost:3001/health|kill"
   "cmd-runner|AI 命令执行服务|工作台 Agent 执行 termux 命令/git 仓库操作（端口 3002）|node $HOME/.xvshishi/cmd-runner.js|http://localhost:3002/health|kill"
   "link-meta|分享链接解析服务|解析小红书/B站等分享链接的标题/封面/摘要（端口 3003）|node $HOME/.xvshishi/link-meta.js|http://localhost:3003/health|kill"
-  # 微信 Claw 接入：在手机上跑 OpenClaw + 腾讯官方「微信 ClawBot」插件，把 AI 接成微信联系人。
-  # 注意：它不是 HTTP 服务，没有健康检查地址；启动/停止都通过 wechat-claw.sh 的子命令。
-  # 第一次用请先 `xvshishi guide wechat-claw` 看步骤（要先在微信里确认灰度到 ClawBot 插件）。
-  "wechat-claw|微信 Claw 接入|用官方 ClawBot 插件把 OpenClaw 接成微信里的联系人（非 HTTP 服务，无端口）|bash \$HOME/.xvshishi/wechat-claw.sh start|\$HOME/.xvshishi/wechat-claw.sh status|kill"
 )
 
 # ---------- 用户自定义服务（追加到数组末尾） ----------
@@ -66,7 +62,6 @@ builtin_remote() {
   case "$1" in
     cors-proxy) echo "$GITHUB_RAW/cors-proxy.js" ;;
     cmd-runner) echo "$GITHUB_RAW/cmd-runner.js" ;;
-    wechat-claw) echo "$GITHUB_RAW/wechat-claw.sh" ;;
     *) echo "" ;;
   esac
 }
@@ -76,7 +71,6 @@ builtin_script_file() {
     cors-proxy) echo "$HOME/.xvshishi/cors-proxy.js" ;;
     cmd-runner) echo "$HOME/.xvshishi/cmd-runner.js" ;;
     link-meta) echo "$HOME/.xvshishi/link-meta.js" ;;
-    wechat-claw) echo "$HOME/.xvshishi/wechat-claw.sh" ;;
     *) echo "" ;;
   esac
 }
@@ -124,7 +118,7 @@ repair_all() {
   log ""
   log "${C_BOLD}修复/补齐内置脚本${C_END}"
   local ok=0 fail=0
-  for id in cors-proxy cmd-runner link-meta wechat-claw; do
+  for id in cors-proxy cmd-runner link-meta; do
     if ensure_script "$id"; then ok=$((ok+1)); else fail=$((fail+1)); fi
   done
   log "------------------------------------------"
@@ -255,12 +249,6 @@ start_service() {
     if tail -30 "$logf" 2>/dev/null | grep -q "Cannot find module"; then
       log "${C_Y}[!]${C_END} 检测到脚本文件缺失（Cannot find module）→ 执行 ${C_C}xvshishi repair${C_END} 可自动补齐"
     fi
-    # 微信 Claw 接入的失败原因几乎都是「还没绑定/还没装」，直接给对指引，别让人去猜日志
-    if [ "$id" = "wechat-claw" ]; then
-      log "${C_Y}[!]${C_END} 微信 Claw 接入没起来，通常是还没装插件或还没扫码绑定。先跑一次自检和引导："
-      log "      ${C_C}bash \$HOME/.xvshishi/wechat-claw.sh check${C_END}"
-      log "      ${C_C}xvshishi guide wechat-claw${C_END}"
-    fi
   fi
 }
 
@@ -333,13 +321,12 @@ tui_menu() {
     log "${C_BOLD}============================================${C_END}"
     list_all
     log "  请输入操作:"
-    log "  ${C_C}[1]${C_END} 启动全部服务（${C_DIM}不含微信 Claw，它要先扫码绑定${C_END}）"
+    log "  ${C_C}[1]${C_END} 启动全部服务"
     log "  ${C_C}[2]${C_END} 停止全部服务"
     log "  ${C_C}[3]${C_END} 查看服务日志"
     log "  ${C_C}[4]${C_END} 一键部署/修复依赖"
     log "  ${C_C}[5]${C_END} 查看持久化数据文件"
     log "  ${C_C}[6]${C_END} 修复/补齐内置脚本（cmd-runner 等）"
-    log "  ${C_C}[G]${C_END} 微信 Claw 接入的分步引导（第一次用先看这个）"
     log "  ${C_C}[0]${C_END} 退出"
     log ""
     log "  ${C_DIM}—— 单独启停（推荐分开启动，避免相互干扰）——${C_END}"
@@ -355,19 +342,12 @@ tui_menu() {
     printf "  选择: "
     read -r choice
     case "$choice" in
-      1) for entry in "${SERVICES[@]}"; do
-           # 微信 Claw 是交互式扫码通道，不在「启动全部」里硬拉，避免白跑一遍
-           [ "${entry%%|*}" = "wechat-claw" ] && continue
-           start_service "${entry%%|*}"
-         done
-         log "${C_DIM}（微信 Claw 接入未包含，需要时用 [S5] 或先看 [G] 引导）${C_END}"
-         sleep 1;;
+      1) for entry in "${SERVICES[@]}"; do start_service "${entry%%|*}"; done; sleep 1;;
       2) for entry in "${SERVICES[@]}"; do stop_service "${entry%%|*}"; done; sleep 1;;
       3) tui_logs;;
       4) tui_repair;;
       5) tui_data;;
       6) repair_all; sleep 1;;
-      G|g) claw_guide; printf "  回车继续..."; read -r _dummy;;
       0) log "再见！随时输入 ${C_C}xvshishi${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "${SERVICES[0]}" ] && start_service "${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "${SERVICES[1]}" ] && start_service "${SERVICES[1]%%|*}"; sleep 1;;
@@ -442,57 +422,7 @@ tui_data() {
   read -r _
 }
 
-# ---------- 微信 Claw 接入：分步引导 / 查看日志 ----------
-# 这服务不是 HTTP 服务，「启动」只是把网关挂到后台，真正的关键步骤（扫码绑定）
-# 必须在 Termux 里看得到输出，所以单独给一个 guide 和 logs 入口。
-claw_guide() {
-  log ""
-  log "${C_BOLD}============================================${C_END}"
-  log "${C_BOLD}  微信 Claw 接入 · 步骤${C_END}"
-  log "${C_BOLD}============================================${C_END}"
-  log ""
-  log "${C_BOLD}第 1 步 · 确认微信灰度到了 ClawBot 插件${C_END}"
-  log "  微信需 >= 8.0.70。打开： 我 → 设置 → 插件"
-  log "  看列表里有没有 ${C_BOLD}「微信 ClawBot」${C_END}"
-  log "  ${C_DIM}没有的话：把微信从后台彻底杀掉重开再看；仍没有就是还没灰度到你，只能等。${C_END}"
-  log ""
-  log "${C_BOLD}第 2 步 · 装依赖${C_END}"
-  log "  pkg install -y nodejs-lts"
-  log "  ${C_DIM}需要 Node >= 22，脚本会自己检测版本。${C_END}"
-  log ""
-  log "${C_BOLD}第 3 步 · 装微信 Channel 插件${C_END}"
-  log "  bash \$HOME/.xvshishi/wechat-claw.sh install"
-  log "  ${C_DIM}它会调用官方 CLI。若报错，请以微信插件详情页显示的安装命令为准。${C_END}"
-  log ""
-  log "${C_BOLD}第 4 步 · 扫码绑定${C_END}"
-  log "  安装/登录时会显示二维码 → 微信里进 ClawBot 插件详情页 → 扫一扫 → 点绿色「连接」"
-  log "  掉线或换号后重新出码： bash \$HOME/.xvshishi/wechat-claw.sh login"
-  log ""
-  log "${C_BOLD}第 5 步 · 挂到后台常驻${C_END}"
-  log "  xvshishi start wechat-claw"
-  log "  ${C_DIM}脚本会自动申请 Termux 唤醒锁，尽量避免被系统冻结。${C_END}"
-  log ""
-  log "${C_BOLD}常用命令${C_END}"
-  log "  xvshishi status wechat-claw      # 看有没有在跑"
-  log "  xvshishi logs wechat-claw        # 看日志（二维码/报错都在这里）"
-  log "  xvshishi stop wechat-claw        # 停掉"
-  log "  bash \$HOME/.xvshishi/wechat-claw.sh check   # 环境自检"
-  log ""
-  log "${C_Y}[!]${C_END} 这条通道是「你 ↔ 你自己的 AI」，它只能跟 ClawBot 这个联系人一对一聊，"
-  log "     ${C_Y}${C_END} 不能代替你给微信好友发消息（那需要另一种方案）。"
-  log ""
-}
 
-claw_logs() {
-  local f="$LOG_DIR/wechat-claw.log"
-  log ""
-  log "${C_BOLD}微信 Claw 接入 · 日志（末尾 40 行）${C_END}"
-  log "${C_DIM}$f${C_END}"
-  log "------------------------------------------"
-  if [ -f "$f" ]; then tail -40 "$f"; else log "（还没有日志，先跑一次 install 或 start）"; fi
-  log "------------------------------------------"
-  log ""
-}
 
 # ---------- 命令分发 ----------
 case "${1:-tui}" in
@@ -502,15 +432,8 @@ case "${1:-tui}" in
   status)  [ -n "$2" ] && show_status "$2" || list_all ;;
   list)    list_all ;;
   repair)  repair_all ;;
-  logs)    if [ "$2" = "wechat-claw" ] || [ -z "$2" ]; then
-             claw_logs
-           else
-             lf=$(log_file "$2")
-             if [ -f "$lf" ]; then tail -40 "$lf"; else log "没有日志: $lf"; fi
-           fi ;;
-  guide)   if [ "$2" = "wechat-claw" ]; then claw_guide; else
-             log "目前只有 wechat-claw 有分步引导： xvshishi guide wechat-claw"
-           fi ;;
+  logs)    lf=$(log_file "$2")
+           if [ -f "$lf" ]; then tail -40 "$lf"; else log "没有日志: $lf"; fi ;;
   tui)     tui_menu ;;
-  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]|logs [id]|guide wechat-claw|repair}";;
+  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]|logs <id>|repair}" ;;
 esac

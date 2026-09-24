@@ -1,5 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- 无障碍服务在系统「无障碍」列表里显示的说明文字（用户看到的授权依据） -->
-    <string name="wechat_accessibility_description">用于「微信接入」：读取微信聊天中的新消息并同步到叙事诗小手机，以及在挂接的会话中按你的设置代为回复。本服务只监听微信（com.tencent.mm），不读取其它任何应用的内容；不开启时该功能完全不可用。</string>
-</resources>

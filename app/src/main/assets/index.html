@@ -279,7 +279,15 @@
   <script src="./app_crypto.js"></script>
   <script src="./app_auth.js" defer></script>
   <script src="./app_local_deploy.js" defer></script>
-  <!-- 微信接入（无障碍通道）：只定义 window.wechatBridge，真正启动在 DOMContentLoaded 之后 -->
+  <!-- 微信接入（App 内直连 iLink / ClawBot）：
+       1) qrcode-generator.js —— MIT 许可的二维码库（本地引入，离线可用；不依赖 CDN）
+       2) qrcode-utf8.js      —— 启用其 UTF-8 预设，中文内容才不会编错
+       3) app_ilink_client.js —— iLink 协议（登录 / 收发 / 游标持久化）
+       4) app_wechat_bridge.js—— 面板 UI 与消息编排
+       顺序有依赖：库必须在包装之前，协议必须在 UI 之前。 -->
+  <script src="./qrcode-generator.js"></script>
+  <script src="./qrcode-utf8.js"></script>
+  <script src="./app_ilink_client.js" defer></script>
   <script src="./app_wechat_bridge.js" defer></script>
   <!-- 开屏启动动画样式（禁止 emoji：全部为通用路径 SVG + 进度条） -->
   <style id="boot-splash-style">
@@ -2024,7 +2032,7 @@
                 <span>应用小助手</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
-              <!-- 微信接入：把真实微信接到 char 单聊（无障碍通道），入口固定在小助手下方 -->
+              <!-- 微信接入：把微信官方 ClawBot 通道接到 char 单聊（App 内直连 iLink），入口固定在小助手下方 -->
               <div class="menu-item" onclick="openMeSub('wechat-bridge')">
                 <span>微信接入</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>

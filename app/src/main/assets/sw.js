@@ -1,4 +1,5 @@
-const CACHE_NAME = 'story-phone-v132';
+const CACHE_NAME = 'story-phone-v133';
+// v133: 微信接入改为 App 内直连 iLink（ClawBot）：面板内出二维码扫码即用，不再需要 Termux；无障碍方案下线；v1.5.54
 // v132: 本地部署新增「微信 Claw 接入」（官方 ClawBot 插件 + OpenClaw）；内嵌 Termux 脚本与仓库逐字节同步；v1.5.53
 // v131: 修复微信接入读到本应用自己窗口的误报（加活动窗口包名校验）；界面诊断改为显示「最近一次在微信里读到的内容」；v1.5.53
 // v130: 新增「微信接入」（无障碍通道）：读取真实微信新消息同步进 char 单聊、并按开关代为回复（v1.5.52）
