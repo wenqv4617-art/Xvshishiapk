@@ -53,7 +53,11 @@
     maxDelay: "wx-ilink-max-delay",
     hourlyLimit: "wx-ilink-hourly-limit",
     riskAccepted: "wx-ilink-risk-accepted",
-    ctxLog: "wx-ilink-ctx-log"
+    ctxLog: "wx-ilink-ctx-log",
+    // 事件流分实例持久化：前台页与后台中枢各写各的键，面板渲染时合并。
+    // 这样打开 App 时能同时看到两个实例各自做了什么，便于判断是否重复收消息。
+    eventsFront: "wx-ilink-events-front",
+    eventsCenter: "wx-ilink-events-center"
   };
 
   var DEFAULTS = { autoReply: false, minDelay: 3, maxDelay: 8, hourlyLimit: 20 };
@@ -62,6 +66,9 @@
   var CTX_MAX_USERS = 12;
   var CTX_MAX_TURNS = 40;
   var CTX_TTL_MS = 2 * 60 * 60 * 1000;
+
+  // 生成失败后的自动重试间隔（接口偶发 5xx / 限流时，重试一次即可成功）
+  var GEN_RETRY_DELAY_MS = 3000;
 
   var state = {
     binding: null,       // { sessionId, userName }
@@ -106,9 +113,37 @@
     };
   }
 
+  // 当前实例身份：前台页面 / 后台中枢（由前台服务托管的隐藏 WebView）。
+  // window.__isBackgroundCenter 由原生在页面加载完成后注入。
+  function instTag() { return window.__isBackgroundCenter ? "后台" : "前台"; }
+  function eventKey() { return window.__isBackgroundCenter ? K.eventsCenter : K.eventsFront; }
+
   function logEvent(text, tone) {
-    state.recentLog.unshift({ at: Date.now(), text: String(text), tone: tone || "info" });
+    var e = { at: Date.now(), text: String(text), tone: tone || "info", src: instTag() };
+    state.recentLog.unshift(e);
     if (state.recentLog.length > 40) state.recentLog.length = 40;
+    try {
+      var buf = JSON.parse(localStorage.getItem(eventKey()) || "[]");
+      if (!Array.isArray(buf)) buf = [];
+      buf.unshift(e);
+      if (buf.length > 60) buf.length = 60;
+      localStorage.setItem(eventKey(), JSON.stringify(buf));
+    } catch (err) { }
+  }
+
+  // 合并两个实例的事件（时间倒序）。两个实例都写同一个 localStorage，
+  // 所以在前台页也能看到后台中枢的日志 —— 重复收消息会表现成两条时间几乎相同的「收到」。
+  function allEvents() {
+    var out = [];
+    try {
+      [K.eventsFront, K.eventsCenter].forEach(function (k) {
+        var buf = JSON.parse(localStorage.getItem(k) || "[]");
+        if (Array.isArray(buf)) out = out.concat(buf);
+      });
+    } catch (e) { }
+    if (!out.length) return state.recentLog;
+    out.sort(function (a, b) { return b.at - a.at; });
+    return out;
   }
 
   function timeStr(ts) {
@@ -363,11 +398,29 @@
           if (ticket) await IL.sendTyping(msg.fromUserId, ticket, 1);
         } catch (e) { }
       }
-      await window.generateReplyForSession(sid, {
-        background: true,
-        silentError: false,
-        onText: function (t) { if (t) collected.push(t); }
-      });
+      // 生成失败自动重试一次：接口偶发 5xx（含并发/限流）时，隔几秒重试通常就能成功。
+      // 原来后台失败后就一直卡着，要等用户打开 App 触发下一轮才补上回复。
+      var lastGenErr = null;
+      for (var attempt = 1; attempt <= 2; attempt++) {
+        collected.length = 0;
+        try {
+          await window.generateReplyForSession(sid, {
+            background: true,
+            silentError: false,
+            onText: function (t) { if (t) collected.push(t); }
+          });
+          lastGenErr = null;
+          break;
+        } catch (e) {
+          lastGenErr = e;
+          if (attempt < 2) {
+            logEvent("生成失败，" + (GEN_RETRY_DELAY_MS / 1000) + " 秒后重试：" +
+              String(e && e.message || e).slice(0, 140), "warn");
+            await sleep(GEN_RETRY_DELAY_MS);
+          }
+        }
+      }
+      if (lastGenErr) throw lastGenErr;
     } catch (e) {
       state.lastError = String(e && e.message || e);
       logEvent("生成回复失败：" + state.lastError, "danger");
@@ -708,14 +761,15 @@
 
   function logCardHtml() {
     var h = '';
-    if (!state.recentLog.length) {
+    var evts = allEvents();
+    if (!evts.length) {
       h = '<div style="color:' + PASTEL.sub + ';font-size:11.5px;">还没有事件。</div>';
     } else {
-      state.recentLog.slice(0, 12).forEach(function (e) {
+      evts.slice(0, 16).forEach(function (e) {
         var c = e.tone === "danger" ? PASTEL.danger : e.tone === "warn" ? PASTEL.warn
           : e.tone === "out" ? PASTEL.accent : e.tone === "in" ? PASTEL.green : PASTEL.ink;
         h += '<div class="il-log"><span class="il-mono" style="color:' + PASTEL.sub + ';flex-shrink:0;">' +
-          timeStr(e.at) + '</span><span style="color:' + c + ';word-break:break-all;">' + esc(e.text) + '</span></div>';
+          timeStr(e.at) + ' ' + esc(e.src || "") + '</span><span style="color:' + c + ';word-break:break-all;">' + esc(e.text) + '</span></div>';
       });
     }
     return card("事件流", h, { accent: PASTEL.sub, border: "#E7EDF4" });
