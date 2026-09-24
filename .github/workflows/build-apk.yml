@@ -6,6 +6,10 @@ on:
       - main
   workflow_dispatch:
 
+# 发布 APK 到 Releases 需要写权限；不显式声明的话默认 GITHUB_TOKEN 可能只读，gh release create 会失败
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -64,3 +68,24 @@ jobs:
           name: StoryPhone-Android-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 1
+
+      # ★ 发布到 Releases：artifact 有全账号共享的存储配额，满了就传不上去（本次就撞到了）。
+      #   Release 资产不计入该配额，而且下载链接长期有效，更适合「打一个包自己装着用」。
+      #   失败不影响构建结论（artifact 那一步成不成都不影响你在这里拿到 APK）。
+      - name: Publish APK to Release
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VER=$(grep -oE 'versionName = "[^"]+"' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')
+          VER=${VER:-unknown}
+          RUN_NUM=${{ github.run_number }}
+          TAG="apk-v${VER}-${RUN_NUM}"
+          TITLE="叙事诗小手机 APK v${VER} (build ${RUN_NUM})"
+          NOTES=$(printf '自动构建的 debug APK（v%s）。\n\n提交：%s\n运行：%s/%s/actions/runs/%s\n\n下载下面 Assets 里的 app-debug.apk 安装即可。' \
+            "$VER" "${{ github.sha }}" "${{ github.server_url }}" "${{ github.repository }}" "${{ github.run_id }}")
+          gh release create "$TAG" \
+            app/build/outputs/apk/debug/app-debug.apk \
+            --title "$TITLE" \
+            --notes "$NOTES" \
+            --prerelease || echo "Release 发布失败，不影响构建"

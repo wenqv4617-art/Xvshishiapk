@@ -784,8 +784,10 @@
     html += card("界面诊断",
       probeHost +
       '<div style="margin-top:10px;">' +
-        '<button class="wx-btn wx-btn-primary" onclick="wechatBridge.probe()">诊断当前微信界面</button>' +
-        '<span style="font-size:11px;color:' + PASTEL.sub + ';margin-left:8px;">请先切到微信、打开某个聊天窗口，再回来点</span>' +
+        '<button class="wx-btn wx-btn-primary" onclick="wechatBridge.probe()">刷新诊断</button>' +
+        '<span style="font-size:11px;color:' + PASTEL.sub + ';margin-left:8px;">' +
+          '正确用法：先在微信里打开那个聊天窗口停几秒（让它读一次），再切回来看这里' +
+        '</span>' +
       '</div>',
       { accent: PASTEL.accent });
 
@@ -907,20 +909,41 @@
     };
     var h = '';
     h += line("服务已连接", p.running ? "是" : "否", p.running ? PASTEL.green : PASTEL.danger);
-    if (p.hint) h += '<div style="color:' + PASTEL.warn + ';margin-top:4px;">' + esc(p.hint) + '</div>';
-    h += line("当前前台应用", p.foregroundPackage || "（取不到）");
-    h += line("窗口属于微信", p.foregroundIsWechat ? "是" : "否", p.foregroundIsWechat ? PASTEL.green : PASTEL.warn);
+    if (p.hint) {
+      h += '<div style="margin-top:4px;color:' + PASTEL.warn + ';">' + esc(p.hint) + '</div>';
+      return h;
+    }
+
+    // ---- 第一段：此刻的活动窗口（面板开在小手机里，所以这里通常就是小手机自己，属正常）----
+    h += '<div style="margin-top:2px;font-weight:700;color:' + PASTEL.sub + ';">此刻的活动窗口</div>';
+    h += line("前台应用", p.foregroundPackage || p.windowPackage || "（取不到）");
+    h += line("是微信", p.foregroundIsWechat ? "是" : "否", p.foregroundIsWechat ? PASTEL.green : PASTEL.sub);
+    if (p.liveReason) {
+      h += '<div style="color:' + PASTEL.sub + ';line-height:1.6;">' + esc(p.liveReason) + '</div>';
+    }
+
+    // ---- 第二段：最近一次在微信里真正读到的内容 ----
+    h += '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed #E7EDF4;font-weight:700;color:' + PASTEL.accent + ';">' +
+      '最近一次在微信里读到的' +
+      (p.lastScanTs ? '（' + timeStr(p.lastScanTs) + '）' : '') + '</div>';
+
+    if (!p.lastScanTs) {
+      h += '<div style="margin-top:5px;padding:7px 9px;border-radius:9px;background:' + PASTEL.warnSoft +
+        ';color:' + PASTEL.warn + ';font-weight:600;line-height:1.6;">' + esc(p.reason || "还没在微信里读到过内容") + '</div>';
+      return h;
+    }
+
+    h += line("识别到的会话名", p.chatName || "（没识别出来）", p.chatName ? PASTEL.ink : PASTEL.warn);
     h += '<div><span style="color:' + PASTEL.sub + ';">找到输入框：</span>' + yn(p.inputFound) +
       ' <span style="color:' + PASTEL.sub + ';">可编辑：</span>' + yn(p.inputEditable) +
       ' <span style="color:' + PASTEL.sub + ';">找到发送按钮：</span>' + yn(p.sendButtonFound) + '</div>';
-    h += line("识别到的会话名", p.chatName || "（没识别出来）", p.chatName ? PASTEL.ink : PASTEL.warn);
     h += line("可见消息条数", (p.visibleMessageCount || 0) + "（其中对方发来 " + (p.incomingCount || 0) + " 条，系统行 " + (p.systemLineCount || 0) + " 条）");
 
-    var tone = (!p.foregroundIsWechat || !p.inputFound || !p.chatName) ? PASTEL.danger
-      : (p.visibleMessageCount ? PASTEL.green : PASTEL.warn);
+    var okAll = !!p.chatName && (p.visibleMessageCount || 0) > 0;
+    var tone = okAll ? PASTEL.green : PASTEL.warn;
     h += '<div style="margin-top:6px;padding:7px 9px;border-radius:9px;background:' +
-      (tone === PASTEL.green ? PASTEL.greenSoft : tone === PASTEL.warn ? PASTEL.warnSoft : PASTEL.dangerSoft) +
-      ';color:' + tone + ';font-weight:600;">' + esc(p.reason || "") + '</div>';
+      (tone === PASTEL.green ? PASTEL.greenSoft : PASTEL.warnSoft) +
+      ';color:' + tone + ';font-weight:600;line-height:1.6;">' + esc(p.lastScanReason || "") + '</div>';
 
     if (Array.isArray(p.preview) && p.preview.length) {
       h += '<div style="margin-top:8px;color:' + PASTEL.sub + ';">最近几条读到的内容：</div>';
@@ -1016,6 +1039,7 @@
       toast("已停止接收微信消息");
     }
     logEvent(on ? "接收开关：已打开" : "接收开关：已关闭", "info");
+    syncHeartbeat();
     renderPanel();
   }
 
@@ -1037,6 +1061,7 @@
       logEvent("自动回信：已关闭", "info");
       toast("自动回信已关闭");
     }
+    syncHeartbeat();
     renderPanel();
   }
 
@@ -1162,16 +1187,54 @@
   // 启动
   // =========================================================================
 
+  /**
+   * 保活：安卓会在应用退到后台一段时间后冻结 WebView，冻结期间轮询就停了，
+   * 微信来消息也不会有反应。这里复用已有的「后台心跳」机制（AlarmManager 定时唤醒，
+   * 能在 Doze 下唤醒），被唤醒时 WebView 恢复执行，轮询自然继续。
+   * 只在接收/自动回信开着的时候才挂心跳，关掉就撤掉，不白耗电。
+   */
+  function syncHeartbeat() {
+    if (!hasNative("startBackgroundPolling")) return;
+    var c = cfg();
+    var want = (c.listen || c.autoReply) && a11yEnabled();
+    try {
+      // ⚠️ 这两个原生接口与「后台主动发信」共用，关之前先确认对方没在用，
+      //    否则会把用户另一个功能的心跳一起撤掉。
+      var activeMsgOn = localStorage.getItem("settings-mcp-active-msg-enabled") === "true";
+      if (want) {
+        window.AndroidMCP.startBackgroundPolling(10);
+      } else if (!activeMsgOn) {
+        window.AndroidMCP.stopBackgroundPolling();
+      }
+    } catch (e) {
+      console.warn("[wechat] 心跳同步失败:", e);
+    }
+  }
+
+  /** 回到前台时立刻补一次：后台被冻结期间可能积压了消息 */
+  function onVisible() {
+    if (document.visibilityState !== "visible") return;
+    var c = cfg();
+    if (!a11yEnabled() || !c.listen) return;
+    if (!state.polling) startPolling();
+    // 不 await：这里只是补一次，失败了下一轮还会再来
+    pumpOnce().catch(function (e) { console.warn("[wechat] 回前台补拉失败:", e); });
+  }
+
   function boot() {
     // 面板渲染由 openMeSub 驱动；这里只做后台泵与配置下发
     try {
       pushConfig();
       var c = cfg();
-      if (a11yEnabled() && (c.listen || c.autoReply)) {
+      if (a11yEnabled() && c.listen) {
         startPolling();
       }
+      syncHeartbeat();
       // 每次启动都清一次过期上下文：用户可能上次退出后过了很久才打开
       saveCtxLog(pruneCtxLog(loadCtxLog()));
+      // 从后台回到前台时补一次，避免冻结期间漏掉消息
+      document.addEventListener("visibilitychange", onVisible);
+      window.addEventListener("focus", onVisible);
     } catch (e) {
       console.warn("[wechat] 启动失败:", e);
     }
@@ -1201,6 +1264,7 @@
     ctxStats: ctxStats,
     startPolling: startPolling,
     stopPolling: stopPolling,
+    syncHeartbeat: syncHeartbeat,
     state: state
   };
 

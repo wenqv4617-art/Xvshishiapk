@@ -90,6 +90,18 @@ class WeChatAccessibilityService : AccessibilityService() {
         @Volatile
         var lastEventTs: Long = 0L
 
+        /**
+         * 最近一次「在微信里真的读到了东西」的快照。
+         * 为什么需要它：设置面板是从小手机里打开的，而同一时刻活动窗口就是小手机自己 ——
+         * 现场再探一次只能得到「当前不是微信」。有了这个缓存，用户切回来看面板时
+         * 仍然能看到刚才在微信里到底读到了什么，不必在两个 App 之间来回切。
+         */
+        @Volatile
+        var lastScanTs: Long = 0L
+
+        @Volatile
+        var lastScanJson: String = ""
+
         /** 收件箱：前端按游标轮询取走 */
         private val inbox = ArrayDeque<JSONObject>()
 
@@ -230,6 +242,13 @@ class WeChatAccessibilityService : AccessibilityService() {
          * 返回：能否读到会话名 / 消息条数 / 输入框是否可见可编辑 / 发送按钮是否找得到 /
          *       当前前台包名，以及失败时最可能的原因。
          */
+        /**
+         * 界面诊断：先看「此刻活动窗口是不是微信」，再把「最近一次在微信里读到的快照」一并给出。
+         *
+         * 为什么必须两段一起给：设置面板本身开在小手机里，用户看面板时活动窗口就是小手机自己，
+         * 现场永远只能得到「当前不是微信」。真正有用的信息是刚才在微信里读到了什么 ——
+         * 那部分由 rememberScan() 在每次成功扫描时缓存下来。
+         */
         fun probeCurrentScreen(): String {
             val obj = JSONObject()
             try {
@@ -244,8 +263,9 @@ class WeChatAccessibilityService : AccessibilityService() {
                 obj.put("configuredListen", listenEnabled)
                 obj.put("configuredAutoReply", autoReplyEnabled)
                 obj.put("lastStatus", lastStatus)
+                obj.put("lastEventTs", lastEventTs)
 
-                // 当前前台的是什么应用：不是微信的话，一切都无从谈起
+                // ---- 第一段：此刻的活动窗口 ----
                 var fgPkg = ""
                 try {
                     val w = svc.windows
@@ -257,54 +277,55 @@ class WeChatAccessibilityService : AccessibilityService() {
                 obj.put("foregroundPackage", fgPkg)
 
                 val root = svc.rootInActiveWindow
+                var livePkg = ""
                 if (root == null) {
-                    obj.put("reason", "取不到活动窗口（微信不在前台，或被系统拦住）")
-                    obj.put("foregroundIsWechat", fgPkg == WECHAT_PKG)
-                    return obj.toString()
-                }
-                try {
-                    val pkg = root.packageName?.toString() ?: ""
-                    obj.put("windowPackage", pkg)
-                    obj.put("foregroundIsWechat", pkg == WECHAT_PKG)
-
-                    val input = svc.findChatInput(root)
-                    obj.put("inputFound", input != null)
-                    obj.put("inputEditable", input?.isEditable ?: false)
-
-                    val sendBtn = svc.findSendButton(root)
-                    obj.put("sendButtonFound", sendBtn != null)
-
-                    val chatName = svc.resolveChatName(root)
-                    obj.put("chatName", chatName ?: "")
-                    obj.put("chatNameResolved", chatName != null)
-
-                    val msgs = svc.collectMessages(root, chatName)
-                    obj.put("visibleMessageCount", msgs.size)
-                    obj.put("incomingCount", msgs.count { it.optString("direction") == "in" })
-                    obj.put("systemLineCount", msgs.count { it.optBoolean("systemLine") })
-
-                    val preview = JSONArray()
-                    for (m in msgs.takeLast(6)) {
-                        preview.put(JSONObject().apply {
-                            put("dir", m.optString("direction"))
-                            put("sys", m.optBoolean("systemLine"))
-                            put("sender", m.optString("sender"))
-                            put("text", m.optString("text").take(60))
-                        })
+                    obj.put("liveReason", "取不到活动窗口")
+                    obj.put("foregroundIsWechat", false)
+                } else {
+                    try {
+                        livePkg = root.packageName?.toString() ?: ""
+                    } finally {
+                        try { root.recycle() } catch (e: Exception) {}
                     }
-                    obj.put("preview", preview)
-
-                    if (input == null) {
-                        obj.put("reason", "当前界面看起来不是微信会话页（没找到底部输入框）")
-                    } else if (chatName == null) {
-                        obj.put("reason", "找不到会话名，为防串台会跳过读取")
-                    } else if (msgs.isEmpty()) {
-                        obj.put("reason", "会话名读到了，但没读到任何消息气泡（可能是微信屏蔽了无障碍读取）")
+                    obj.put("windowPackage", livePkg)
+                    if (livePkg != WECHAT_PKG) {
+                        obj.put("foregroundIsWechat", false)
+                        obj.put("liveReason", "此刻的活动窗口不是微信（是 " +
+                            (if (livePkg.isEmpty()) "未知应用" else livePkg) +
+                            "）。这是正常的 —— 设置面板开在微信里，活动窗口只会是小手机。" +
+                            "下面显示的是最近一次在微信前台时真正读到的内容。")
                     } else {
-                        obj.put("reason", "正常：可以读取这个会话的消息")
+                        obj.put("foregroundIsWechat", true)
+                        obj.put("liveReason", "此刻活动窗口就是微信")
                     }
-                } finally {
-                    try { root.recycle() } catch (e: Exception) {}
+                }
+
+                // ---- 第二段：最近一次成功快照 ----
+                var snap: JSONObject? = null
+                if (lastScanJson.isNotEmpty()) {
+                    try { snap = JSONObject(lastScanJson) } catch (e: Exception) { snap = null }
+                }
+                if (lastScanJson.isEmpty()) {
+                    obj.put("reason", "还没有在微信里读到过任何东西。请打开微信、进入一个聊天窗口停一会儿，" +
+                        "再回来看这里（或在微信里直接看通知/事件流）。")
+                } else {
+                    obj.put("reason", "最近一次在微信里读到的内容如下（" +
+                        (if (lastScanTs > 0) "含时间戳" else "") + "）")
+                }
+                obj.put("lastScanTs", lastScanTs)
+                if (snap != null) {
+                    obj.put("chatName", snap.optString("chatName"))
+                    obj.put("inputFound", snap.optBoolean("inputFound"))
+                    obj.put("inputEditable", snap.optBoolean("inputEditable"))
+                    obj.put("sendButtonFound", snap.optBoolean("sendButtonFound"))
+                    obj.put("visibleMessageCount", snap.optInt("visibleMessageCount"))
+                    obj.put("incomingCount", snap.optInt("incomingCount"))
+                    obj.put("systemLineCount", snap.optInt("systemLineCount"))
+                    obj.put("preview", snap.optJSONArray("preview") ?: JSONArray())
+                    obj.put("lastScanReason", snap.optString("reason"))
+                } else {
+                    obj.put("visibleMessageCount", 0)
+                    obj.put("preview", JSONArray())
                 }
             } catch (e: Exception) {
                 return "{\"ok\":false,\"error\":\"" + (e.message ?: "诊断异常") + "\"}"
@@ -384,6 +405,50 @@ class WeChatAccessibilityService : AccessibilityService() {
     // 读：抓取当前界面上的新消息
     // =========================================================================
 
+    /**
+     * 缓存「刚才在微信里读到了什么」。
+     * 设置面板只能在小手机里打开，那时活动窗口已经不是微信了，
+     * 所以现场重探没有意义 —— 有用的信息必须在这里、在微信真的在前台时存下来。
+     */
+    private fun rememberScan(root: AccessibilityNodeInfo, chatName: String?, msgs: List<JSONObject>) {
+        try {
+            val preview = JSONArray()
+            for (m in msgs.takeLast(6)) {
+                preview.put(JSONObject().apply {
+                    put("dir", m.optString("direction"))
+                    put("sys", m.optBoolean("systemLine"))
+                    put("sender", m.optString("sender"))
+                    put("text", m.optString("text").take(60))
+                })
+            }
+            var incoming = 0
+            var sysLines = 0
+            for (m in msgs) {
+                if (m.optString("direction") == "in") incoming++
+                if (m.optBoolean("systemLine")) sysLines++
+            }
+            val input = findChatInput(root)
+            lastScanJson = JSONObject().apply {
+                put("chatName", chatName ?: "")
+                put("inputFound", input != null)
+                put("inputEditable", input?.isEditable ?: false)
+                put("sendButtonFound", findSendButton(root) != null)
+                put("visibleMessageCount", msgs.size)
+                put("incomingCount", incoming)
+                put("systemLineCount", sysLines)
+                put("preview", preview)
+                put("reason", when {
+                    chatName == null -> "微信在前台，但会话名没识别出来（为防串台会跳过读取）"
+                    msgs.isEmpty() -> "微信在前台、会话名读到了，但没读到任何消息气泡（可能是微信屏蔽了无障碍读取）"
+                    else -> "正常：能读到这个会话的消息"
+                })
+            }.toString()
+            lastScanTs = System.currentTimeMillis()
+        } catch (e: Exception) {
+            Log.w(TAG, "缓存扫描快照失败: " + e.message)
+        }
+    }
+
     private fun scanCurrentScreen(force: Boolean) {
         val root = rootInActiveWindow
         if (root == null) {
@@ -391,11 +456,25 @@ class WeChatAccessibilityService : AccessibilityService() {
             return
         }
         try {
-            // 1) 会话页才继续（会话页一定有输入框）
+            // 0) 【硬校验】活动窗口必须是微信。
+            //    rootInActiveWindow 返回的是「系统当前认为的活动窗口」：用户切回小手机时它就是小手机自己。
+            //    不校验的话会把本应用自己的界面文字当成微信消息读进来 —— 这就是之前误报的根因。
+            val pkg = root.packageName?.toString() ?: ""
+            if (pkg != WECHAT_PKG) {
+                currentChatName = null
+                if (force) {
+                    lastStatus = "当前活动窗口不是微信（是 " + (if (pkg.isEmpty()) "未知应用" else pkg) + "），已跳过读取"
+                }
+                // 不在微信前台也可能有回信任务等着（用户切走后回来），尝试推进但内部会再校验会话名
+                if (autoReplyEnabled) tryDispatchReplies()
+                return
+            }
+
+            // 1) 会话页才继续（会话页一定有底部输入框）
             val input = findChatInput(root)
             if (input == null) {
                 currentChatName = null
-                if (force) lastStatus = "当前不在微信会话页"
+                if (force) lastStatus = "微信在前台，但当前不在会话页（没找到底部输入框）"
                 if (autoReplyEnabled) tryDispatchReplies()
                 return
             }
@@ -405,8 +484,9 @@ class WeChatAccessibilityService : AccessibilityService() {
             currentChatName = name
 
             val msgs = collectMessages(root, name)
+            rememberScan(root, name, msgs)
             if (msgs.isEmpty()) {
-                if (force) lastStatus = if (name != null) "会话「$name」暂无可读消息" else "未识别到会话名与消息"
+                if (force) lastStatus = if (name != null) "会话「$name」暂无可读消息（可能是微信屏蔽了无障碍读取）" else "未识别到会话名与消息"
                 if (autoReplyEnabled) tryDispatchReplies()
                 return
             }
