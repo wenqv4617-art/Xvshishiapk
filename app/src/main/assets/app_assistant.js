@@ -401,6 +401,16 @@ const AppAssistant = {
 - 内置脚本:
   - 网易云音乐 API: 网易云登录代理/歌单同步/歌词搜索（端口 3000），健康检查 http://localhost:3000
   - CORS 跨域中转: 为 PWA/网页版打破跨域限制，代理任意 HTTP/HTTPS 请求（端口 3001），健康检查 http://localhost:3001/health
+  - AI 命令执行服务（cmd-runner）: 工作台 Agent 执行 termux 命令 / git 仓库操作（端口 3002）
+  - 分享链接解析服务（link-meta）: 解析小红书/B站等分享链接的标题/封面/摘要（端口 3003）
+  - **微信 Claw 接入**: 用腾讯官方「微信 ClawBot」插件，把你自己的 OpenClaw 接成微信里的一个联系人。**它不是 HTTP 服务、没有端口**，由 wechat-claw.sh 自己管启停
+- 微信 Claw 接入（本地部署里的那张卡）:
+  - 能做什么: 在微信里给「微信 ClawBot」发消息，就是跟你的 OpenClaw 对话；官方插件体系，不自动化你的微信账号，基本没有封号风险
+  - **不能做什么（重要）**: 它只是「你 ↔ 你自己的 AI」这一条通道，**不能让 char 代替你给微信好友发消息**。想要后者要用「聊天 → 我的 → 微信接入」那条无障碍通道
+  - 前提: 微信 ≥ 8.0.70 且已灰度到 ClawBot 插件（微信 → 我 → 设置 → 插件 里能看到）；Termux 里 Node ≥ 22
+  - 怎么做: 面板上「查看接入步骤」有分步引导且每步命令可点一下复制。顺序是：确认插件已灰度 → 「pkg install -y nodejs-lts」 → 装脚本 → 在微信插件详情页复制官方安装命令到 Termux 执行 → 扫码绑定 → 挂后台常驻
+  - 命令入口: 「xvshishi guide wechat-claw」（分步引导）、「xvshishi start|stop|status|logs wechat-claw」；TUI 菜单里是 [S5]/[T5]，[G] 看引导
+  - 掉线/换号: 「bash ~/.xvshishi/wechat-claw.sh login」 重新出二维码
 - 部署方式: 设置 → 本地部署 → 「部署引导」按钮可一键复制部署命令（命令已内置全部脚本内容，直接在 Termux 里创建脚本文件，无需联网下载），复制到 Termux 执行即可
 - 随时唤出: 部署完成后，退出 Termux 再进入时直接输入 xvshishi 即可唤出脚本交互页面
 - 部署完成后: 网易云登录弹窗的 API 地址填 http://localhost:3000；网页版可用 CORS 中转 http://localhost:3001
@@ -1452,10 +1462,18 @@ ${this.cssLibraryText}`;
       };
     }
 
+    // 微信 Claw 接入（本地部署里的那张卡）
+    if (ql.includes('clawbot') || ql.includes('claw') || (ql.includes('openclaw')) || (ql.includes('微信') && (ql.includes('插件') || ql.includes('官方')))) {
+      return {
+        answer: '## 微信 Claw 接入\n\n**位置**：设置 → **本地部署** → 「微信 Claw 接入」那张卡 → 查看接入步骤\n\n用腾讯官方的**「微信 ClawBot」插件**，把你自己的 OpenClaw 接成微信里的一个联系人。走官方插件体系、不自动化你的微信账号，**基本没有封号风险**。\n\n**要说清楚它能做什么**：只能「你 ↔ 你自己的 AI」一对一聊，**不能让 char 代替你给微信好友发消息** —— 想要后者要用「聊天 → 我的 → 微信接入」那条无障碍通道。\n\n**前提**：微信 ≥ 8.0.70 且已灰度到 ClawBot 插件（我 → 设置 → 插件 里能看到）；Termux 里 Node ≥ 22。\n\n**顺序**：确认插件已灰度 → 装 Node → 装脚本 → 在微信插件详情页复制官方安装命令到 Termux 执行 → 扫码绑定 → 挂后台常驻。\n\n也可以用命令：`xvshishi guide wechat-claw` 看分步引导。',
+        actions: [{ label: '前往本地部署', target: 'settings-local-deploy' }]
+      };
+    }
+
     // 本地部署 / Termux
     if (ql.includes('本地部署') || ql.includes('termux') || ql.includes('跨域') || ql.includes('cors') || (ql.includes('部署') && (ql.includes('网易云') || ql.includes('脚本')))) {
       return {
-        answer: '## 本地部署（Termux）\n\n**位置**：设置 → **本地部署**\n\n通过 Termux 在手机上运行本地脚本服务：\n\n- **网易云音乐 API**（端口 3000）：网易云登录代理 / 歌单同步 / 歌词搜索\n- **CORS 跨域中转**（端口 3001）：为 PWA/网页版打破跨域限制\n\n「部署引导」按钮里的命令已内置全部脚本内容，复制到 Termux 执行即可直接创建脚本文件，无需联网下载。部署后网易云登录弹窗的 API 地址填 `http://localhost:3000`。',
+        answer: '## 本地部署（Termux）\n\n**位置**：设置 → **本地部署**\n\n通过 Termux 在手机上运行本地脚本服务：\n\n- **网易云音乐 API**（端口 3000）：网易云登录代理 / 歌单同步 / 歌词搜索\n- **CORS 跨域中转**（端口 3001）：为 PWA/网页版打破跨域限制\n- **AI 命令执行服务**（端口 3002）：工作台 Agent 执行 termux 命令 / git 操作\n- **分享链接解析服务**（端口 3003）：解析小红书/B站等分享链接\n- **微信 Claw 接入**：用官方 ClawBot 插件把 OpenClaw 接成微信里的联系人（不是 HTTP 服务，没有端口）\n\n「部署引导」按钮里的命令已内置全部脚本内容，复制到 Termux 执行即可直接创建脚本文件，无需联网下载。部署后网易云登录弹窗的 API 地址填 `http://localhost:3000`。',
         actions: [{ label: '前往本地部署', target: 'settings-local-deploy' }]
       };
     }

@@ -173,8 +173,12 @@ C_DIM="\\033[2m"; C_BOLD="\\033[1m"; C_END="\\033[0m"
 SERVICES=(
   "ncm-api|网易云音乐 API|网易云登录代理/歌单同步/歌词搜索|NeteaseCloudMusicApi -p 3000|http://localhost:3000|kill"
   "cors-proxy|CORS 跨域中转|打破 PWA/网页版跨域限制|node \\$HOME/.xvshishi/cors-proxy.js|http://localhost:3001/health|kill"
-  "cmd-runner|AI 命令执行服务|工作台 Agent 执行 termux 命令/git 仓库操作（端口 3002）|node \\$HOME/.xvshishi/cmd-runner.js|http://localhost:3002/health|kill"
-  "link-meta|分享链接解析服务|解析小红书/B站等分享链接的标题/封面/摘要（端口 3003）|node \\$HOME/.xvshishi/link-meta.js|http://localhost:3003/health|kill"
+  "cmd-runner|AI 命令执行服务|工作台 Agent 执行 termux 命令/git 仓库操作（端口 3002）|node $HOME/.xvshishi/cmd-runner.js|http://localhost:3002/health|kill"
+  "link-meta|分享链接解析服务|解析小红书/B站等分享链接的标题/封面/摘要（端口 3003）|node $HOME/.xvshishi/link-meta.js|http://localhost:3003/health|kill"
+  # 微信 Claw 接入：在手机上跑 OpenClaw + 腾讯官方「微信 ClawBot」插件，把 AI 接成微信联系人。
+  # 注意：它不是 HTTP 服务，没有健康检查地址；启动/停止都通过 wechat-claw.sh 的子命令。
+  # 第一次用请先 \`xvshishi guide wechat-claw\` 看步骤（要先在微信里确认灰度到 ClawBot 插件）。
+  "wechat-claw|微信 Claw 接入|用官方 ClawBot 插件把 OpenClaw 接成微信里的联系人（非 HTTP 服务，无端口）|bash \\$HOME/.xvshishi/wechat-claw.sh start|\\$HOME/.xvshishi/wechat-claw.sh status|kill"
 )
 
 # ---------- 用户自定义服务（追加到数组末尾） ----------
@@ -190,10 +194,12 @@ fi
 # ---------- 内置脚本自愈（缺失时从仓库 raw 自动补齐） ----------
 GITHUB_RAW="https://raw.githubusercontent.com/wenqv4617-art/Xvshishiapk/main/termux"
 
+# 内置服务 id → 远程文件名（非内置/无需下载则输出空）
 builtin_remote() {
   case "$1" in
     cors-proxy) echo "$GITHUB_RAW/cors-proxy.js" ;;
     cmd-runner) echo "$GITHUB_RAW/cmd-runner.js" ;;
+    wechat-claw) echo "$GITHUB_RAW/wechat-claw.sh" ;;
     *) echo "" ;;
   esac
 }
@@ -203,10 +209,12 @@ builtin_script_file() {
     cors-proxy) echo "$HOME/.xvshishi/cors-proxy.js" ;;
     cmd-runner) echo "$HOME/.xvshishi/cmd-runner.js" ;;
     link-meta) echo "$HOME/.xvshishi/link-meta.js" ;;
+    wechat-claw) echo "$HOME/.xvshishi/wechat-claw.sh" ;;
     *) echo "" ;;
   esac
 }
 
+# 确保脚本存在；缺失则尝试用 curl/wget 从 GitHub 下载
 ensure_script() {
   local id="$1" file base dl url
   file=$(builtin_script_file "$id")
@@ -244,11 +252,12 @@ ensure_script() {
   return 1
 }
 
+# 一键补齐全部内置脚本（xvshishi repair）
 repair_all() {
   log ""
   log "\${C_BOLD}修复/补齐内置脚本\${C_END}"
   local ok=0 fail=0
-  for id in cors-proxy cmd-runner link-meta; do
+  for id in cors-proxy cmd-runner link-meta wechat-claw; do
     if ensure_script "$id"; then ok=$((ok+1)); else fail=$((fail+1)); fi
   done
   log "------------------------------------------"
@@ -379,6 +388,12 @@ start_service() {
     if tail -30 "$logf" 2>/dev/null | grep -q "Cannot find module"; then
       log "\${C_Y}[!]\${C_END} 检测到脚本文件缺失（Cannot find module）→ 执行 \${C_C}xvshishi repair\${C_END} 可自动补齐"
     fi
+    # 微信 Claw 接入的失败原因几乎都是「还没绑定/还没装」，直接给对指引，别让人去猜日志
+    if [ "$id" = "wechat-claw" ]; then
+      log "\${C_Y}[!]\${C_END} 微信 Claw 接入没起来，通常是还没装插件或还没扫码绑定。先跑一次自检和引导："
+      log "      \${C_C}bash \\$HOME/.xvshishi/wechat-claw.sh check\${C_END}"
+      log "      \${C_C}xvshishi guide wechat-claw\${C_END}"
+    fi
   fi
 }
 
@@ -451,12 +466,13 @@ tui_menu() {
     log "\${C_BOLD}============================================\${C_END}"
     list_all
     log "  请输入操作:"
-    log "  \${C_C}[1]\${C_END} 启动全部服务"
+    log "  \${C_C}[1]\${C_END} 启动全部服务（\${C_DIM}不含微信 Claw，它要先扫码绑定\${C_END}）"
     log "  \${C_C}[2]\${C_END} 停止全部服务"
     log "  \${C_C}[3]\${C_END} 查看服务日志"
     log "  \${C_C}[4]\${C_END} 一键部署/修复依赖"
     log "  \${C_C}[5]\${C_END} 查看持久化数据文件"
     log "  \${C_C}[6]\${C_END} 修复/补齐内置脚本（cmd-runner 等）"
+    log "  \${C_C}[G]\${C_END} 微信 Claw 接入的分步引导（第一次用先看这个）"
     log "  \${C_C}[0]\${C_END} 退出"
     log ""
     log "  \${C_DIM}—— 单独启停（推荐分开启动，避免相互干扰）——\${C_END}"
@@ -472,12 +488,19 @@ tui_menu() {
     printf "  选择: "
     read -r choice
     case "$choice" in
-      1) for entry in "\${SERVICES[@]}"; do start_service "\${entry%%|*}"; done; sleep 1;;
+      1) for entry in "\${SERVICES[@]}"; do
+           # 微信 Claw 是交互式扫码通道，不在「启动全部」里硬拉，避免白跑一遍
+           [ "\${entry%%|*}" = "wechat-claw" ] && continue
+           start_service "\${entry%%|*}"
+         done
+         log "\${C_DIM}（微信 Claw 接入未包含，需要时用 [S5] 或先看 [G] 引导）\${C_END}"
+         sleep 1;;
       2) for entry in "\${SERVICES[@]}"; do stop_service "\${entry%%|*}"; done; sleep 1;;
       3) tui_logs;;
       4) tui_repair;;
       5) tui_data;;
       6) repair_all; sleep 1;;
+      G|g) claw_guide; printf "  回车继续..."; read -r _dummy;;
       0) log "再见！随时输入 \${C_C}xvshishi\${C_END} 可再次唤出本页面"; exit 0;;
       S1|s1) [ -n "\${SERVICES[0]}" ] && start_service "\${SERVICES[0]%%|*}"; sleep 1;;
       S2|s2) [ -n "\${SERVICES[1]}" ] && start_service "\${SERVICES[1]%%|*}"; sleep 1;;
@@ -487,6 +510,8 @@ tui_menu() {
       T3|t3) [ -n "\${SERVICES[2]}" ] && stop_service "\${SERVICES[2]%%|*}"; sleep 1;;
       S4|s4) [ -n "\${SERVICES[3]}" ] && start_service "\${SERVICES[3]%%|*}"; sleep 1;;
       T4|t4) [ -n "\${SERVICES[3]}" ] && stop_service "\${SERVICES[3]%%|*}"; sleep 1;;
+      S5|s5) [ -n "\${SERVICES[4]}" ] && start_service "\${SERVICES[4]%%|*}"; sleep 1;;
+      T5|t5) [ -n "\${SERVICES[4]}" ] && stop_service "\${SERVICES[4]%%|*}"; sleep 1;;
       *) log "无效选项"; sleep 1;;
     esac
   done
@@ -550,6 +575,58 @@ tui_data() {
   read -r _
 }
 
+# ---------- 微信 Claw 接入：分步引导 / 查看日志 ----------
+# 这服务不是 HTTP 服务，「启动」只是把网关挂到后台，真正的关键步骤（扫码绑定）
+# 必须在 Termux 里看得到输出，所以单独给一个 guide 和 logs 入口。
+claw_guide() {
+  log ""
+  log "\${C_BOLD}============================================\${C_END}"
+  log "\${C_BOLD}  微信 Claw 接入 · 步骤\${C_END}"
+  log "\${C_BOLD}============================================\${C_END}"
+  log ""
+  log "\${C_BOLD}第 1 步 · 确认微信灰度到了 ClawBot 插件\${C_END}"
+  log "  微信需 >= 8.0.70。打开： 我 → 设置 → 插件"
+  log "  看列表里有没有 \${C_BOLD}「微信 ClawBot」\${C_END}"
+  log "  \${C_DIM}没有的话：把微信从后台彻底杀掉重开再看；仍没有就是还没灰度到你，只能等。\${C_END}"
+  log ""
+  log "\${C_BOLD}第 2 步 · 装依赖\${C_END}"
+  log "  pkg install -y nodejs-lts"
+  log "  \${C_DIM}需要 Node >= 22，脚本会自己检测版本。\${C_END}"
+  log ""
+  log "\${C_BOLD}第 3 步 · 装微信 Channel 插件\${C_END}"
+  log "  bash \\$HOME/.xvshishi/wechat-claw.sh install"
+  log "  \${C_DIM}它会调用官方 CLI。若报错，请以微信插件详情页显示的安装命令为准。\${C_END}"
+  log ""
+  log "\${C_BOLD}第 4 步 · 扫码绑定\${C_END}"
+  log "  安装/登录时会显示二维码 → 微信里进 ClawBot 插件详情页 → 扫一扫 → 点绿色「连接」"
+  log "  掉线或换号后重新出码： bash \\$HOME/.xvshishi/wechat-claw.sh login"
+  log ""
+  log "\${C_BOLD}第 5 步 · 挂到后台常驻\${C_END}"
+  log "  xvshishi start wechat-claw"
+  log "  \${C_DIM}脚本会自动申请 Termux 唤醒锁，尽量避免被系统冻结。\${C_END}"
+  log ""
+  log "\${C_BOLD}常用命令\${C_END}"
+  log "  xvshishi status wechat-claw      # 看有没有在跑"
+  log "  xvshishi logs wechat-claw        # 看日志（二维码/报错都在这里）"
+  log "  xvshishi stop wechat-claw        # 停掉"
+  log "  bash \\$HOME/.xvshishi/wechat-claw.sh check   # 环境自检"
+  log ""
+  log "\${C_Y}[!]\${C_END} 这条通道是「你 ↔ 你自己的 AI」，它只能跟 ClawBot 这个联系人一对一聊，"
+  log "     \${C_Y}\${C_END} 不能代替你给微信好友发消息（那需要另一种方案）。"
+  log ""
+}
+
+claw_logs() {
+  local f="$LOG_DIR/wechat-claw.log"
+  log ""
+  log "\${C_BOLD}微信 Claw 接入 · 日志（末尾 40 行）\${C_END}"
+  log "\${C_DIM}$f\${C_END}"
+  log "------------------------------------------"
+  if [ -f "$f" ]; then tail -40 "$f"; else log "（还没有日志，先跑一次 install 或 start）"; fi
+  log "------------------------------------------"
+  log ""
+}
+
 # ---------- 命令分发 ----------
 case "\${1:-tui}" in
   start)   start_service "$2" ;;
@@ -558,8 +635,17 @@ case "\${1:-tui}" in
   status)  [ -n "$2" ] && show_status "$2" || list_all ;;
   list)    list_all ;;
   repair)  repair_all ;;
+  logs)    if [ "$2" = "wechat-claw" ] || [ -z "$2" ]; then
+             claw_logs
+           else
+             lf=$(log_file "$2")
+             if [ -f "$lf" ]; then tail -40 "$lf"; else log "没有日志: $lf"; fi
+           fi ;;
+  guide)   if [ "$2" = "wechat-claw" ]; then claw_guide; else
+             log "目前只有 wechat-claw 有分步引导： xvshishi guide wechat-claw"
+           fi ;;
   tui)     tui_menu ;;
-  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]|repair}";;
+  *)       log "用法: bash xvshishi-services.sh {tui|list|start <id>|stop <id>|restart <id>|status [id]|logs [id]|guide wechat-claw|repair}";;
 esac
 `;
   var XSHISHI_LAUNCHER_SOURCE = `#!/data/data/com.termux/files/usr/bin/bash
@@ -570,7 +656,12 @@ esac
 # 之后在 Termux 任意位置直接输入：
 #     xvshishi
 # 即可立刻唤出脚本交互页面（服务管理器 TUI），无需再输入长命令。
-# 也支持子命令：xvshishi repair / xvshishi start cmd-runner / xvshishi list
+# ============================================================
+# 用法：
+#     xvshishi              # 进入交互式管理菜单
+#     xvshishi repair       # 修复/补齐内置脚本（如 cmd-runner 缺失）
+#     xvshishi start cmd-runner
+#     xvshishi list
 # ============================================================
 if [ $# -gt 0 ]; then
   exec bash "$HOME/.xvshishi/xvshishi-services.sh" "$@"
@@ -687,11 +778,20 @@ server.listen(PORT, '127.0.0.1', function () {
     try { return decodeURIComponent(escape(atob(LINK_META_SOURCE_B64))); } catch (e) { return ""; }
   }
 
+  // wechat-claw.sh 同样以 Base64 内嵌：它是 bash 脚本，含 $ / ` / \ 等字符，
+  // 直接放进模板字符串会被转义破坏，Base64 最稳（与 link-meta 同一套做法）。
+  var WECHAT_CLAW_SOURCE_B64 = "IyEvZGF0YS9kYXRhL2NvbS50ZXJtdXgvZmlsZXMvdXNyL2Jpbi9iYXNoCiMgPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CiMg5Y+Z5LqL6K+X5bCP5omL5py6IC0g5b6u5L+hIENsYXcg5o6l5YWl77yI5YaF572u6ISa5pysNe+8iQojIC0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLQojIOW5suS7gOS5iO+8muWcqOS9oOiHquW3seeahOaJi+acuuS4iui3keS4gOS4qiBPcGVuQ2xhd++8jOW5tumAmui/h+iFvuiur+WumOaWueeahAojICAgICAgICDjgIzlvq7kv6EgQ2xhd0JvdOOAjeaPkuS7tuaKiuWug+aOpeaIkOW+ruS/oemHjOeahOS4gOS4quiBlOezu+S6uuOAggojCiMg5Li65LuA5LmI55So6L+Z5p2h6Lev77yI6ICM5LiN5piv5peg6Zqc56KN77yJ77yaCiMgICAtIENsYXdCb3Qg5piv6IW+6K6v5a6Y5pa55o+S5Lu277yM6LWw5q2j6KeE5o+S5Lu25L2T57O777yM5LiN6Ieq5Yqo5YyW5L2g55qE5b6u5L+h6LSm5Y+377ybCiMgICAtIOWboOatpOWHoOS5juayoeaciemjjuaOpy/lsIHlj7fpo47pmanvvJsKIyAgIC0g5Luj5Lu377ya5a6D5Y+q5piv44CM5L2gIOKGlCDkvaDoh6rlt7HnmoQgQUnjgI3ov5nkuIDmnaHpgJrpgZPvvIwKIyAgICAg5LiN6IO96K6pIGNoYXIg5Lul5L2g55qE6Lqr5Lu95Y676Lef5Yir5Lq66IGK5aSp77yI6YKj5piv5peg6Zqc56KN5pa55qGI55qE6IO95Yqb77yJ44CCCiMKIyDliY3mj5DvvJoKIyAgIDEpIOW+ruS/oSBpT1MvQW5kcm9pZCDpnIAgPj0gOC4wLjcw77yM5LiU5bey54Gw5bqm5YiwIENsYXdCb3Qg5o+S5Lu2CiMgICAgICDvvIjlvq7kv6Eg4oaSIOaIkSDihpIg6K6+572uIOKGkiDmj5Lku7bvvIznnIvmnInmsqHmnInjgIzlvq7kv6EgQ2xhd0JvdOOAje+8iQojICAgMikgTm9kZS5qcyA+PSAyMu+8iOacrOiEmuacrOS8muiHquWKqOajgOa1i+W5tuaPkOekuuWuieijhe+8iQojCiMg55So5rOV77yI5Lmf5Y+v55SxIHh2c2hpc2hpIOacjeWKoeeuoeeQhuWZqOe7n+S4gOWQr+WBnO+8ie+8mgojICAgYmFzaCB3ZWNoYXQtY2xhdy5zaCBjaGVjayAgICAgICMg546v5aKD6Ieq5qOA77yaTm9kZSDniYjmnKwgLyDlvq7kv6Hmj5Lku7bliY3mj5AgLyDlt7Loo4XmsqHoo4UKIyAgIGJhc2ggd2VjaGF0LWNsYXcuc2ggaW5zdGFsbCAgICAjIOWuieijheW+ruS/oSBDaGFubmVsIOaPkuS7tu+8iOS8muiHquWKqOiwg+i1t+WumOaWueWuieijheWRveS7pO+8iQojICAgYmFzaCB3ZWNoYXQtY2xhdy5zaCBsb2dpbiAgICAgICMg6YeN5paw55Sf5oiQ57uR5a6a5LqM57u056CB77yI5o2i5Y+3L+aOiee6v+aXtueUqO+8iQojICAgYmFzaCB3ZWNoYXQtY2xhdy5zaCBydW4gICAgICAgICMg5YmN5Y+w6L+Q6KGMIE9wZW5DbGF3IOe9keWFs++8iOiwg+ivleeUqO+8jEN0cmwrQyDpgIDlh7rvvIkKIyAgIGJhc2ggd2VjaGF0LWNsYXcuc2ggc3RhcnQgICAgICAjIOWQjuWPsOW4uOmpu+i/kOihjO+8iOiHquW4piB0ZXJtdXgtd2FrZS1sb2NrIOS/nea0u++8iQojICAgYmFzaCB3ZWNoYXQtY2xhdy5zaCBzdG9wCiMgICBiYXNoIHdlY2hhdC1jbGF3LnNoIHN0YXR1cwojICAgYmFzaCB3ZWNoYXQtY2xhdy5zaCBsb2dzCiMgPT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09CgpzZXQgLW8gcGlwZWZhaWwKClhTSF9ESVI9IiR7WFNIX0RJUjotJEhPTUUvLnh2c2hpc2hpfSIKTE9HX0RJUj0iJFhTSF9ESVIvbG9ncyIKUElEX0RJUj0iJFhTSF9ESVIvcGlkcyIKbWtkaXIgLXAgIiRMT0dfRElSIiAiJFBJRF9ESVIiICIkWFNIX0RJUi93ZWNoYXQtY2xhdyIKCkxPR19GSUxFPSIkTE9HX0RJUi93ZWNoYXQtY2xhdy5sb2ciClBJRF9GSUxFPSIkUElEX0RJUi93ZWNoYXQtY2xhdy5waWQiCldBS0VfTE9DS19GSUxFPSIkWFNIX0RJUi93ZWNoYXQtY2xhdy8ud2FrZS1sb2NrIgoKQ19HPSJcMDMzWzMybSI7IENfUj0iXDAzM1szMW0iOyBDX1k9IlwwMzNbMzNtIjsgQ19CPSJcMDMzWzM0bSI7IENfRElNPSJcMDMzWzJtIjsgQ19CT0xEPSJcMDMzWzFtIjsgQ19FTkQ9IlwwMzNbMG0iCmxvZygpIHsgZWNobyAtZSAiJCoiOyB9CgojIOWumOaWueWuieijheWRveS7pO+8mueUseW+ruS/oeOAjENsYXdCb3TjgI3mj5Lku7bor6bmg4XpobXnu5nlh7rvvIzov5nph4znlKjlroPlkIzmupDnmoQgQ0xJIOWMheWQjeOAggojIOiLpeiFvuiur+iwg+aVtOS6huWMheWQjS/lkb3ku6TvvIzku6Xmj5Lku7bor6bmg4XpobXmmL7npLrnmoTkuLrlh4bvvIzmnKzohJrmnKznmoQgaW5zdGFsbCDkvJrmj5DnpLrkvaDku6XpobXpnaLkuLrlh4bjgIIKT0ZGSUNJQUxfQ0xJX1BLRz0iQHRlbmNlbnQtd2VpeGluL29wZW5jbGF3LXdlaXhpbi1jbGlAbGF0ZXN0IgoKbmVlZF9ub2RlKCkgewogIGlmICEgY29tbWFuZCAtdiBub2RlID4vZGV2L251bGwgMj4mMTsgdGhlbgogICAgbG9nICIke0NfUn1beF0ke0NfRU5EfSDmsqHmib7liLAgbm9kZeOAguivt+WFiOWcqCBUZXJtdXgg5omn6KGM77yaIHBrZyBpbnN0YWxsIC15IG5vZGVqcy1sdHMiCiAgICByZXR1cm4gMQogIGZpCiAgbG9jYWwgbWFqb3IKICBtYWpvcj0kKG5vZGUgLXAgJ3Byb2Nlc3MudmVyc2lvbnMubm9kZS5zcGxpdCgiLiIpWzBdJyAyPi9kZXYvbnVsbCB8IHRyIC1kICdbOnNwYWNlOl0nKQogICMg5b+F6aG755yf55qE5piv5Liq5pWw5a2X5omN5pWi5q+U6L6D77ya5ZCm5YiZIGBbICJ4eCIgLWx0IDIyIF1gIOS8muaKpSBpbnRlZ2VyIGV4cHJlc3Npb24gZXhwZWN0ZWQKICAjIOW5tuS4lOOAjOS4jea7oei2s+OAjeS8muiiq+W9k+aIkOOAjOa7oei2s+OAje+8jOebtOaOpeaUvui/h+WOuyDigJTigJQg6YKj5piv5pyA5Z2P55qE5oOF5Ya177yI5ZCO6Z2iIG5weCDmiY3ngrjvvInjgIIKICBjYXNlICIkbWFqb3IiIGluCiAgICAnJ3wqWyEwLTldKikKICAgICAgbG9nICIke0NfUn1beF0ke0NfRU5EfSDor7vkuI3liLAgbm9kZSDkuLvniYjmnKzlj7fvvIhub2RlIC1wIOayoei/lOWbnuaVsOWtl++8ieOAgiIKICAgICAgbG9nICIgICAgICAgIOivt+ehruiupCBub2RlIOijheWlveS6hu+8miBub2RlIC12IgogICAgICByZXR1cm4gMQogICAgICA7OwogIGVzYWMKICBpZiBbICIkbWFqb3IiIC1sdCAyMiBdOyB0aGVuCiAgICBsb2cgIiR7Q19ZfVshXSR7Q19FTkR9IOW9k+WJjSBOb2RlIOeJiOacrOaYryAkKG5vZGUgLXYp77yMQ2xhd0JvdCDpnIDopoEgPj0gMjLjgIIiCiAgICBsb2cgIiAgICAgICAg6K+35Y2H57qn77yaIHBrZyBpbnN0YWxsIC15IG5vZGVqcy1sdHMgICDvvIjmiJYgcGtnIHVwZ3JhZGUgbm9kZWpzLWx0c++8iSIKICAgIHJldHVybiAxCiAgZmkKICBsb2cgIiR7Q19HfVvinJNdJHtDX0VORH0gTm9kZSDniYjmnKwgJChub2RlIC12KSDmu6HotrPopoHmsYIiCiAgcmV0dXJuIDAKfQoKY21kX2NoZWNrKCkgewogIGxvZyAiIgogIGxvZyAiJHtDX0JPTER95b6u5L+hIENsYXcg5o6l5YWlIMK3IOeOr+Wig+iHquajgCR7Q19FTkR9IgogIGxvZyAiLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tIgogIG5lZWRfbm9kZSB8fCB0cnVlCgogIGxvZyAiIgogIGxvZyAiJHtDX0JPTER95b6u5L+h5L6n5YmN5o+Q77yI6ZyA6KaB5L2g5omL5Yqo56Gu6K6k77yM6ISa5pys6K+75LiN5Yiw5b6u5L+h5o+S5Lu25YiX6KGo77yJJHtDX0VORH0iCiAgbG9nICIgIDEuIOW+ruS/oeeJiOacrOmcgCA+PSA4LjAuNzAiCiAgbG9nICIgIDIuIOaJk+W8gOW+ruS/oe+8miDmiJEg4oaSIOiuvue9riDihpIg5o+S5Lu2IgogIGxvZyAiICAzLiDnnIvliJfooajph4zmnInmsqHmnIkgJHtDX0JPTER944CM5b6u5L+hIENsYXdCb3TjgI0ke0NfRU5EfSIKICBsb2cgIiAgICAgJHtDX0RJTX3lpoLmnpzmsqHmnInvvJrmiorlvq7kv6Hku47lkI7lj7DlvbvlupXmnYDmjonph43lvIDlho3nnIvkuIDmrKHvvJvku43msqHmnInlsLHmmK/ov5jmsqHngbDluqbliLDkvaDvvIzlj6rog73nrYnjgIIke0NfRU5EfSIKCiAgbG9nICIiCiAgbG9nICIke0NfQk9MRH3mnKzmnLrnirbmgIEke0NfRU5EfSIKICBpZiBjb21tYW5kIC12IG9wZW5jbGF3ID4vZGV2L251bGwgMj4mMTsgdGhlbgogICAgbG9nICIgICR7Q19HfeKXjyR7Q19FTkR9IOW3suaJvuWIsCBvcGVuY2xhdyDlkb3ku6QiCiAgZWxzZQogICAgbG9nICIgICR7Q19ESU194peLJHtDX0VORH0g6L+Y5rKh6KOFIE9wZW5DbGF3IOeahOW+ruS/oeaPkuS7tu+8iOWFiOi3kSBpbnN0YWxs77yJIgogIGZpCiAgaWYgWyAtZiAiJFBJRF9GSUxFIiBdICYmIGtpbGwgLTAgIiQoY2F0ICIkUElEX0ZJTEUiIDI+L2Rldi9udWxsKSIgMj4vZGV2L251bGw7IHRoZW4KICAgIGxvZyAiICAke0NfR33il48ke0NfRU5EfSDlkI7lj7DnvZHlhbPov5DooYzkuK3vvIhQSUQgJChjYXQgIiRQSURfRklMRSIp77yJIgogIGVsc2UKICAgIGxvZyAiICAke0NfRElNfeKXiyR7Q19FTkR9IOWQjuWPsOe9keWFs+acqui/kOihjCIKICBmaQogIGxvZyAiICDmlbDmja7nm67lvZXvvJokWFNIX0RJUi93ZWNoYXQtY2xhdyIKICBsb2cgIiAg5pel5b+X77yaJExPR19GSUxFIgogIGxvZyAiLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tLS0tIgogIGxvZyAiIgp9CgpjbWRfaW5zdGFsbCgpIHsKICBuZWVkX25vZGUgfHwgcmV0dXJuIDEKICBsb2cgIiIKICBsb2cgIiR7Q19CT0xEfeWuieijheW+ruS/oSBDbGF3Qm90IOaPkuS7tiR7Q19FTkR9IgogIGxvZyAi5Y2z5bCG5omn6KGM5a6Y5pa5IENMSe+8miIKICBsb2cgIiAgJHtDX0RJTX1ucHggLXkgJE9GRklDSUFMX0NMSV9QS0cgaW5zdGFsbCR7Q19FTkR9IgogIGxvZyAiIgogIGxvZyAiJHtDX1l9WyFdJHtDX0VORH0g6Iul5LiL6Z2i5oql6ZSZ44CB5oiW5o+Q56S65ZG95Luk5LiN5a2Y5Zyo77yM6K+35LulJHtDX0JPTER95b6u5L+h6YeM44CMQ2xhd0JvdCDmj5Lku7bor6bmg4XpobXjgI3mmL7npLrnmoTlronoo4Xlkb3ku6TkuLrlh4Yke0NfRU5EfSIKICBsb2cgIiAgICAg77yI6IW+6K6v5Y+v6IO95Lya6LCD5pW05YyF5ZCN5oiW5ZG95Luk5b2i5byP77yM5o+S5Lu26aG157uZ5Ye655qE5oC75piv5a+555qE77yJIgogIGxvZyAiIgogIHByaW50ZiAi57un57ut5ZCX77yfW3kvTl0gIgogIHJlYWQgLXIgYW5zCiAgY2FzZSAiJGFucyIgaW4KICAgIHl8WXx5ZXN8WUVTKSA7OwogICAgKikgbG9nICLlt7Llj5bmtogiOyByZXR1cm4gMDs7CiAgZXNhYwogICggY2QgIiRYU0hfRElSL3dlY2hhdC1jbGF3IiAmJiBucHggLXkgIiRPRkZJQ0lBTF9DTElfUEtHIiBpbnN0YWxsICkgMj4mMSB8IHRlZSAtYSAiJExPR19GSUxFIgogIGxvY2FsIHJjPSR7UElQRVNUQVRVU1swXX0KICBsb2cgIiIKICBpZiBbICIkcmMiIC1lcSAwIF07IHRoZW4KICAgIGxvZyAiJHtDX0d9W+Kck10ke0NfRU5EfSDlronoo4XmtYHnqIvnu5PmnZ/jgILoi6Xnu4jnq6/mmL7npLrkuobkuoznu7TnoIHvvJoiCiAgICBsb2cgIiAgICDmiZPlvIDlvq7kv6Eg4oaSIOaIkSDihpIg6K6+572uIOKGkiDmj5Lku7Yg4oaSIOW+ruS/oSBDbGF3Qm90IOKGkiDmiavkuIDmiavvvIzmiavnoIHlkI7ngrnnu7/oibLjgIzov57mjqXjgI3jgIIiCiAgICBsb2cgIiAgICDov57kuIrlkI7lvq7kv6Hph4zkvJrlh7rnjrDjgIzlvq7kv6EgQ2xhd0JvdOOAjeeahOWvueivneWFpeWPo++8iOWPr+iDveS4jeWcqOWIl+ihqOmHjO+8jOmcgOimgeaQnOe0ou+8ieOAgiIKICBlbHNlCiAgICBsb2cgIiR7Q19SfVt4XSR7Q19FTkR9IOWuieijheWRveS7pOi/lOWbnueggSAkcmPvvIzor7fmiorkuIrpnaLnmoTovpPlh7rlj5Hnu5nlvIDlj5HogIXvvIzmiJbku6Xmj5Lku7bor6bmg4XpobXnmoTlkb3ku6TkuLrlh4bph43or5XjgIIiCiAgZmkKfQoKY21kX2xvZ2luKCkgewogIG5lZWRfbm9kZSB8fCByZXR1cm4gMQogIGxvZyAiJHtDX0J9WypdJHtDX0VORH0g6YeN5paw55Sf5oiQ57uR5a6a5LqM57u056CBIC4uLiIKICAoIGNkICIkWFNIX0RJUi93ZWNoYXQtY2xhdyIgJiYgbnB4IC15ICIkT0ZGSUNJQUxfQ0xJX1BLRyIgbG9naW4gKSAyPiYxIHwgdGVlIC1hICIkTE9HX0ZJTEUiCn0KCiMg5Y+W5ZCO5Y+w6L+b56iL5a2Y5rS754q25oCBCnJ1bm5pbmdfcGlkKCkgewogIFsgLWYgIiRQSURfRklMRSIgXSB8fCByZXR1cm4gMQogIGxvY2FsIHAKICBwPSQoY2F0ICIkUElEX0ZJTEUiIDI+L2Rldi9udWxsIHwgdHIgLWQgJyAnKQogIFsgLW4gIiRwIiBdICYmIGtpbGwgLTAgIiRwIiAyPi9kZXYvbnVsbCAmJiBlY2hvICIkcCIKfQoKd2FrZV9sb2NrX29uKCkgewogICMg5a6J5Y2T5Lya5oqKIFRlcm11eCDov5vnqIvlhrvnu5Mv5Zue5pS277yM6ZW/6am75b+F6aG75oyBIHdha2UgbG9ja++8m+iusOW9leS4gOS4i+S7peS+vyBzdG9wIOaXtumHiuaUvgogIGlmIGNvbW1hbmQgLXYgdGVybXV4LXdha2UtbG9jayA+L2Rldi9udWxsIDI+JjE7IHRoZW4KICAgIHRlcm11eC13YWtlLWxvY2sgMj4vZGV2L251bGwgJiYgdG91Y2ggIiRXQUtFX0xPQ0tfRklMRSIgJiYgbG9nICIke0NfR31b4pyTXSR7Q19FTkR9IOW3sueUs+ivtyBUZXJtdXgg5ZSk6YaS6ZSB77yI6Ziy5q2i6KKr57O757uf5Ya757uT77yJIgogIGVsc2UKICAgIGxvZyAiJHtDX1l9WyFdJHtDX0VORH0g5rKh5pyJIHRlcm11eC13YWtlLWxvY2vvvIzlkI7lj7Dlj6/og73ooqvns7vnu5/lhrvnu5PjgILlu7rorq4gcGtnIGluc3RhbGwgLXkgdGVybXV4LWFwaSIKICBmaQp9Cgp3YWtlX2xvY2tfb2ZmKCkgewogIGlmIFsgLWYgIiRXQUtFX0xPQ0tfRklMRSIgXSAmJiBjb21tYW5kIC12IHRlcm11eC13YWtlLXVubG9jayA+L2Rldi9udWxsIDI+JjE7IHRoZW4KICAgIHRlcm11eC13YWtlLXVubG9jayAyPi9kZXYvbnVsbAogICAgcm0gLWYgIiRXQUtFX0xPQ0tfRklMRSIKICBmaQp9CgpjbWRfcnVuKCkgewogIG5lZWRfbm9kZSB8fCByZXR1cm4gMQogIGxvY2FsIGJpbj0iIgogIGlmIGNvbW1hbmQgLXYgb3BlbmNsYXcgPi9kZXYvbnVsbCAyPiYxOyB0aGVuCiAgICBiaW49Im9wZW5jbGF3IgogIGZpCiAgaWYgWyAteiAiJGJpbiIgXTsgdGhlbgogICAgbG9nICIke0NfUn1beF0ke0NfRU5EfSDov5jmsqHmib7liLAgb3BlbmNsYXcg5ZG95Luk77yM6K+35YWI6L+Q6KGM77yaIGJhc2ggJDAgaW5zdGFsbCIKICAgIHJldHVybiAxCiAgZmkKICB3YWtlX2xvY2tfb24KICBsb2cgIiR7Q19CfVsqXSR7Q19FTkR9IOWJjeWPsOWQr+WKqCBPcGVuQ2xhdyDnvZHlhbPvvIhDdHJsK0Mg6YCA5Ye677yJLi4uIgogICggY2QgIiRYU0hfRElSL3dlY2hhdC1jbGF3IiAmJiAiJGJpbiIgKSAyPiYxIHwgdGVlIC1hICIkTE9HX0ZJTEUiCn0KCmNtZF9zdGFydCgpIHsKICBpZiBbIC1uICIkKHJ1bm5pbmdfcGlkKSIgXTsgdGhlbgogICAgbG9nICIke0NfWX1bIV0ke0NfRU5EfSDlt7LlnKjov5DooYzvvIhQSUQgJChydW5uaW5nX3BpZCnvvIkiCiAgICByZXR1cm4gMAogIGZpCiAgbG9jYWwgYmluPSIiCiAgY29tbWFuZCAtdiBvcGVuY2xhdyA+L2Rldi9udWxsIDI+JjEgJiYgYmluPSJvcGVuY2xhdyIKICBpZiBbIC16ICIkYmluIiBdOyB0aGVuCiAgICBsb2cgIiR7Q19SfVt4XSR7Q19FTkR9IOaJvuS4jeWIsCBvcGVuY2xhdyDlkb3ku6TvvIzor7flhYjov5DooYzvvJogYmFzaCAkMCBpbnN0YWxsIgogICAgcmV0dXJuIDEKICBmaQogIHdha2VfbG9ja19vbgogIGxvZyAiJHtDX0J9WypdJHtDX0VORH0g5ZCO5Y+w5ZCv5YqoIE9wZW5DbGF3IOe9keWFsyAuLi4iCiAgKCBjZCAiJFhTSF9ESVIvd2VjaGF0LWNsYXciICYmIG5vaHVwICIkYmluIiA+PiAiJExPR19GSUxFIiAyPiYxICYgZWNobyAkISA+ICIkUElEX0ZJTEUiICkKICBzbGVlcCAyCiAgbG9jYWwgcAogIHA9JChydW5uaW5nX3BpZCkKICBpZiBbIC1uICIkcCIgXTsgdGhlbgogICAgbG9nICIke0NfR31b4pyTXSR7Q19FTkR9IOW3suWQr+WKqO+8iFBJRCAkcO+8ie+8jOaXpeW/l++8miRMT0dfRklMRSIKICBlbHNlCiAgICBsb2cgIiR7Q19SfVt4XSR7Q19FTkR9IOWQr+WKqOWksei0pe+8jOacgOi/keaXpeW/l++8miIKICAgIHRhaWwgLTE1ICIkTE9HX0ZJTEUiIDI+L2Rldi9udWxsIHwgc2VkICdzL14vICAgIC8nCiAgICBsb2cgIiAgICDluLjop4Hljp/lm6DvvJrov5jmsqEgaW5zdGFsbCAvIE5vZGUg54mI5pys5LiN5aSfIC8g572R5YWz6YWN572u57y65aSxIgogIGZpCn0KCmNtZF9zdG9wKCkgewogIGxvY2FsIHAKICBwPSQocnVubmluZ19waWQpCiAgaWYgWyAtbiAiJHAiIF07IHRoZW4KICAgIGtpbGwgIiRwIiAyPi9kZXYvbnVsbAogICAgc2xlZXAgMQogICAga2lsbCAtOSAiJHAiIDI+L2Rldi9udWxsCiAgICBybSAtZiAiJFBJRF9GSUxFIgogICAgbG9nICIke0NfR31b4pyTXSR7Q19FTkR9IOW3suWBnOatou+8iFBJRCAkcO+8iSIKICBlbHNlCiAgICBsb2cgIiR7Q19ZfVshXSR7Q19FTkR9IOacrOadpeWwseayoeWcqOi3kSIKICBmaQogICMg5YWc5bqV5riF55CG5q6L55WZ55qEIG9wZW5jbGF3IOi/m+eoi++8iOWPquWMuemFjeWPr+aJp+ihjOWQje+8jOS4jeivr+S8pOWIq+eahCBub2Rl77yJCiAgcGtpbGwgLWYgIm9wZW5jbGF3IiAyPi9kZXYvbnVsbAogIHdha2VfbG9ja19vZmYKfQoKY21kX3N0YXR1cygpIHsKICBsb2NhbCBwCiAgcD0kKHJ1bm5pbmdfcGlkKQogIGlmIFsgLW4gIiRwIiBdOyB0aGVuCiAgICBsb2cgIiAgJHtDX0d94pePJHtDX0VORH0g5b6u5L+hIENsYXcg5o6l5YWlICDov5DooYzkuK0gKFBJRCAkcCkiCiAgZWxzZQogICAgbG9nICIgICR7Q19ESU194peLJHtDX0VORH0g5b6u5L+hIENsYXcg5o6l5YWlICDlt7LlgZzmraIiCiAgZmkKfQoKY21kX2xvZ3MoKSB7CiAgaWYgWyAtZiAiJExPR19GSUxFIiBdOyB0aGVuCiAgICB0YWlsIC00MCAiJExPR19GSUxFIgogIGVsc2UKICAgIGxvZyAi6L+Y5rKh5pyJ5pel5b+X77yIJExPR19GSUxF77yJIgogIGZpCn0KCmNhc2UgIiR7MTotY2hlY2t9IiBpbgogIGNoZWNrKSAgIGNtZF9jaGVjayA7OwogIGluc3RhbGwpIGNtZF9pbnN0YWxsIDs7CiAgbG9naW4pICAgY21kX2xvZ2luIDs7CiAgcnVuKSAgICAgY21kX3J1biA7OwogIHN0YXJ0KSAgIGNtZF9zdGFydCA7OwogIHN0b3ApICAgIGNtZF9zdG9wIDs7CiAgc3RhdHVzKSAgY21kX3N0YXR1cyA7OwogIGxvZ3MpICAgIGNtZF9sb2dzIDs7CiAgKikgICAgICAgbG9nICLnlKjms5U6IGJhc2ggd2VjaGF0LWNsYXcuc2gge2NoZWNrfGluc3RhbGx8bG9naW58cnVufHN0YXJ0fHN0b3B8c3RhdHVzfGxvZ3N9IiA7Owplc2FjCg==";
+  function getWechatClawSource() {
+    try { return decodeURIComponent(escape(atob(WECHAT_CLAW_SOURCE_B64))); } catch (e) { return ""; }
+  }
+
   var BUILTIN_SCRIPTS = [
     { id: "ncm-api", name: "网易云音乐 API", desc: "网易云登录代理 / 歌单同步 / 歌词搜索（端口 3000）", port: 3000, healthUrl: "http://localhost:3000/search?keywords=test&limit=1", termuxCmd: "NeteaseCloudMusicApi -p 3000", fileContent: "", isBuiltin: true },
     { id: "cors-proxy", name: "CORS 跨域中转", desc: "为 PWA/网页版打破跨域限制，代理任意 HTTP/HTTPS 请求（端口 3001）", port: 3001, healthUrl: "http://localhost:3001/health", termuxCmd: "node $HOME/.xvshishi/cors-proxy.js", fileContent: CORS_PROXY_SOURCE, isBuiltin: true },
     { id: "cmd-runner", name: "AI 命令执行服务（工作台）", desc: "工作台 Agent 执行 termux 命令 / 自写脚本 / git 仓库操作（端口 3002）", port: 3002, healthUrl: "http://localhost:3002/health", termuxCmd: "node $HOME/.xvshishi/cmd-runner.js", fileContent: CMD_RUNNER_SOURCE, isBuiltin: true },
-    { id: "link-meta", name: "分享链接解析服务", desc: "解析小红书/B站等分享链接的标题/封面/摘要，供聊天分享卡片使用（端口 3003）", port: 3003, healthUrl: "http://localhost:3003/health", termuxCmd: "node $HOME/.xvshishi/link-meta.js", fileContent: getLinkMetaSource(), isBuiltin: true }
+    { id: "link-meta", name: "分享链接解析服务", desc: "解析小红书/B站等分享链接的标题/封面/摘要，供聊天分享卡片使用（端口 3003）", port: 3003, healthUrl: "http://localhost:3003/health", termuxCmd: "node $HOME/.xvshishi/link-meta.js", fileContent: getLinkMetaSource(), isBuiltin: true },
+    // 微信 Claw 接入：不是 HTTP 服务（没有端口/健康检查），由 wechat-claw.sh 自己管启停
+    { id: "wechat-claw", name: "微信 Claw 接入", desc: "用腾讯官方「微信 ClawBot」插件把 OpenClaw 接成微信里的联系人（非 HTTP 服务）", port: 0, healthUrl: "", termuxCmd: "bash $HOME/.xvshishi/wechat-claw.sh start", fileContent: getWechatClawSource(), isBuiltin: true }
   ];
 
   // 合并内置脚本：内置脚本始终存在（旧版 localStorage 里没有 cors-proxy 也会自动补上），
@@ -734,12 +834,34 @@ server.listen(PORT, '127.0.0.1', function () {
           <div class="local-deploy-intro-card">
             <div class="local-deploy-intro-title">本地部署中心</div>
             <div class="local-deploy-intro-desc">
-              通过 Termux 在手机上运行本地脚本服务（网易云 API / CORS 跨域中转 / AI 命令执行服务 / 分享链接解析），App 通过 localhost 访问。
+              通过 Termux 在手机上运行本地脚本服务（网易云 API / CORS 跨域中转 / AI 命令执行服务 / 分享链接解析 / 微信 Claw 接入），App 通过 localhost 访问。
               部署引导命令已内置全部脚本内容，复制到 Termux 执行即可直接创建脚本文件，无需联网下载。
             </div>
           </div>
           <div class="form-actions" style="margin-bottom:14px;">
             <button id="btn-local-deploy-guide" class="btn btn-outline" style="flex:1;">部署引导（命令可一键复制）</button>
+          </div>
+
+          <!-- 微信 Claw 接入：与上面那几个 HTTP 服务不是一类东西，单独一张卡讲清楚 -->
+          <div style="background:linear-gradient(135deg,#EAF6F3,#F3F9FC); border:1.5px solid #CDE9E3; border-radius:14px; padding:14px; margin-bottom:14px;">
+            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="#2C6E63" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+              </svg>
+              <span style="font-size:13.5px; font-weight:800; color:#2C6E63;">微信 Claw 接入（官方插件）</span>
+            </div>
+            <div style="font-size:11.5px; line-height:1.75; color:#3D5A56;">
+              用腾讯官方的<b>「微信 ClawBot」插件</b>，把你自己的 OpenClaw 接成微信里的一个联系人。
+              <b>走官方插件体系，不用自动化你的微信账号，基本没有封号风险</b>；代价是它只能“你和自己的 AI”一对一聊，
+              <b>不能让 char 代替你给微信好友发消息</b>（那种能力在「聊天 → 我的 → 微信接入」那条无障碍通道里）。
+            </div>
+            <div style="font-size:11px; line-height:1.7; color:#6B8A85; margin-top:6px;">
+              前提：微信 ≥ 8.0.70 且已灰度到 ClawBot 插件（微信 → 我 → 设置 → 插件 里能看到）；Node ≥ 22。
+            </div>
+            <div style="display:flex; gap:8px; margin-top:10px;">
+              <button id="btn-local-deploy-claw-guide" class="btn btn-primary" style="flex:1; font-size:12px;">查看接入步骤</button>
+              <button id="btn-local-deploy-claw-export" class="btn btn-outline" style="flex:1; font-size:12px;">导出脚本到手机</button>
+            </div>
           </div>
           <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
             <span style="font-size:13px; font-weight:800; color:var(--text-primary);">我的脚本</span>
@@ -793,6 +915,10 @@ server.listen(PORT, '127.0.0.1', function () {
       var btnGuide = document.getElementById("btn-local-deploy-guide");
       var btnAdd = document.getElementById("btn-local-deploy-add");
       if (btnGuide) btnGuide.onclick = function () { self.showGuide(); };
+      var btnClawGuide = document.getElementById("btn-local-deploy-claw-guide");
+      if (btnClawGuide) btnClawGuide.onclick = function () { self.showClawGuide(); };
+      var btnClawExport = document.getElementById("btn-local-deploy-claw-export");
+      if (btnClawExport) btnClawExport.onclick = function () { self.exportScriptsToPhone(); };
       if (btnAdd) btnAdd.onclick = function () { self.openScriptModal("add"); };
       var btnClose = document.getElementById("btn-local-deploy-guide-close");
       if (btnClose) btnClose.onclick = function () { self.hideGuide(); };
@@ -972,6 +1098,9 @@ server.listen(PORT, '127.0.0.1', function () {
       L.push("cat > ~/.xvshishi/link-meta.js <<'XSH_EOF'");
       L.push(trimSrc(getLinkMetaSource()));
       L.push("XSH_EOF");
+      L.push("cat > ~/.xvshishi/wechat-claw.sh <<'XSH_EOF'");
+      L.push(trimSrc(getWechatClawSource()));
+      L.push("XSH_EOF");
       L.push("cat > ~/.xvshishi/xvshishi-services.sh <<'XSH_EOF'");
       L.push(trimSrc(SERVICES_MANAGER_SOURCE));
       L.push("XSH_EOF");
@@ -981,6 +1110,7 @@ server.listen(PORT, '127.0.0.1', function () {
       L.push("XSH_EOF");
       L.push("chmod +x $PREFIX/bin/xvshishi");
       L.push("chmod +x ~/.xvshishi/xvshishi-services.sh");
+      L.push("chmod +x ~/.xvshishi/wechat-claw.sh");
       L.push("pkg update -y");
       L.push("pkg install -y nodejs-lts");
       L.push("pkg install -y git");
@@ -1000,6 +1130,7 @@ server.listen(PORT, '127.0.0.1', function () {
         ["cors-proxy.js", CORS_PROXY_SOURCE],
         ["cmd-runner.js", CMD_RUNNER_SOURCE],
         ["link-meta.js", getLinkMetaSource()],
+        ["wechat-claw.sh", getWechatClawSource()],
         ["xvshishi-services.sh", SERVICES_MANAGER_SOURCE],
         ["xvshishi", XSHISHI_LAUNCHER_SOURCE]
       ];
@@ -1027,9 +1158,9 @@ server.listen(PORT, '127.0.0.1', function () {
 
       var steps = [
         { title: "第 1 步：安装 Termux", desc: "务必用 F-Droid 版（Play 版已停更）：https://f-droid.org/packages/com.termux/　首次使用请先执行一次 termux-setup-storage 授权存储（否则读不到手机 Download 目录）", cmd: "termux-setup-storage" },
-        { title: "第 2 步（推荐）：导出脚本到手机存储", desc: "先点下面的『导出脚本到手机存储』按钮（App 会把 4 个脚本直接写进手机 Download/Storypoem/xvshishi-scripts/，不经过剪贴板，绝不会被截断），然后在 Termux 执行这条短命令安装：", cmd: "mkdir -p ~/.xvshishi \"$PREFIX/bin\" && cp /sdcard/Download/Storypoem/xvshishi-scripts/* ~/.xvshishi/ && cp ~/.xvshishi/xvshishi \"$PREFIX/bin/xvshishi\" && chmod +x ~/.xvshishi/xvshishi-services.sh \"$PREFIX/bin/xvshishi\" && xvshishi" },
+        { title: "第 2 步（推荐）：导出脚本到手机存储", desc: "先点下面的『导出脚本到手机存储』按钮（App 会把 6 个脚本直接写进手机 Download/Storypoem/xvshishi-scripts/，不经过剪贴板，绝不会被截断），然后在 Termux 执行这条短命令安装：", cmd: "mkdir -p ~/.xvshishi \"$PREFIX/bin\" && cp /sdcard/Download/Storypoem/xvshishi-scripts/* ~/.xvshishi/ && cp ~/.xvshishi/xvshishi \"$PREFIX/bin/xvshishi\" && chmod +x ~/.xvshishi/xvshishi-services.sh \"$PREFIX/bin/xvshishi\" && xvshishi" },
         { title: "第 2 步（备选）：一键长命令部署", desc: "若不想用导出方式，也可复制下面整条命令到 Termux 执行（内容较长，注意别被截断）：", cmd: this.buildDeployCommand() },
-        { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy\nbash $HOME/.xvshishi/xvshishi-services.sh start cmd-runner" },
+        { title: "第 3 步：启动服务", desc: "在服务管理器菜单按 [1] 启动全部；或分别执行（微信 Claw 接入是另一条路，先看上面那张卡，别盲目启动）：", cmd: "bash $HOME/.xvshishi/xvshishi-services.sh start ncm-api\nbash $HOME/.xvshishi/xvshishi-services.sh start cors-proxy\nbash $HOME/.xvshishi/xvshishi-services.sh start cmd-runner" },
         { title: "脚本缺失 / 启动失败时", desc: "若某服务提示找不到脚本（Cannot find module），执行这条短命令即可自动补齐：优先从手机存储复制，其次从仓库下载：", cmd: "xvshishi repair" },
         { title: "第 4 步：随时唤出脚本页面", desc: "退出 Termux 后再进入时，直接输入下面的命令即可再次进入脚本交互页面：", cmd: "xvshishi" },
         { title: "第 5 步：保活", desc: "安装 termux-api 并开启保活：", cmd: "pkg install termux-api && termux-wake-lock" },
@@ -1101,6 +1232,85 @@ server.listen(PORT, '127.0.0.1', function () {
     hideGuide: function () {
       var overlay = document.getElementById("local-deploy-guide-overlay");
       if (overlay) overlay.style.display = "none";
+    },
+
+    // ============ 微信 Claw 接入：分步引导 ============
+    // 复用部署引导那个弹层，只换内容。命令都可点击复制。
+    showClawGuide: function () {
+      var overlay = document.getElementById("local-deploy-guide-overlay");
+      var body = document.getElementById("local-deploy-guide-body");
+      if (!overlay || !body) return;
+
+      var steps = [
+        {
+          title: "第 1 步：确认微信灰度到了 ClawBot 插件",
+          desc: "微信版本需 ≥ 8.0.70。打开：我 → 设置 → 插件，看列表里有没有「微信 ClawBot」。没有的话把微信从后台彻底杀掉重开再看一次；仍然没有就是还没灰度到你，只能等（这一步脚本帮不上忙）。",
+          cmd: ""
+        },
+        {
+          title: "第 2 步：装 Node（≥ 22）",
+          desc: "ClawBot 需要 Node 22 以上，先在 Termux 装好：",
+          cmd: "pkg install -y nodejs-lts"
+        },
+        {
+          title: "第 3 步：把脚本装进 Termux",
+          desc: "先点上面那张卡的『导出脚本到手机』，再在 Termux 执行这条命令把它装到工作目录：",
+          cmd: "mkdir -p ~/.xvshishi && cp /sdcard/Download/Storypoem/xvshishi-scripts/wechat-claw.sh ~/.xvshishi/ && chmod +x ~/.xvshishi/wechat-claw.sh && bash ~/.xvshishi/wechat-claw.sh check"
+        },
+        {
+          title: "第 4 步：装微信 Channel 插件（关键）",
+          desc: "打开微信 → 我 → 设置 → 插件 → 微信 ClawBot → 进插件详情页，页面上会给出官方安装命令（也可以直接复制命令）。把那条命令整条复制到 Termux 执行 —— 以插件页显示的命令为准，别用别处抄来的。装完终端会显示一个二维码。",
+          cmd: ""
+        },
+        {
+          title: "第 5 步：扫码绑定",
+          desc: "回到微信 ClawBot 插件详情页 → 点「扫一扫」→ 扫 Termux 里那个二维码 → 弹出确认页后点绿色的「连接」。连上后微信里会出现「微信 ClawBot」的对话入口（有时不在聊天列表里，用微信搜索框搜「微信 ClawBot」能找到）。",
+          cmd: ""
+        },
+        {
+          title: "第 6 步：挂到后台常驻",
+          desc: "绑好后让它后台跑着，并申请唤醒锁防止被系统冻结。之后在微信里给 ClawBot 发消息就是在跟你的 AI 对话：",
+          cmd: "bash ~/.xvshishi/wechat-claw.sh start && bash ~/.xvshishi/wechat-claw.sh status"
+        },
+        {
+          title: "掉线 / 换号了怎么办",
+          desc: "重新出一张二维码再扫一次：",
+          cmd: "bash ~/.xvshishi/wechat-claw.sh login"
+        },
+        {
+          title: "出问题看日志",
+          desc: "二维码、报错、网关输出都在日志里：",
+          cmd: "bash ~/.xvshishi/wechat-claw.sh logs"
+        }
+      ];
+
+      var html = '<div style="margin-bottom:12px; padding:10px; border-radius:10px; background:rgba(44,110,99,0.08); color:#2C6E63; font-size:11.5px; line-height:1.75;">' +
+        '<b>先说清楚它能做什么</b><br>' +
+        'ClawBot 是腾讯官方插件，走正规插件体系、不会自动化你的微信账号，所以基本没有封号风险。<br>' +
+        '但它是<b>「你 ↔ 你自己的 AI」</b>这一条通道：你只能跟 ClawBot 这个联系人一对一聊，' +
+        '<b>不能让 char 代替你给微信好友发消息</b>。想要后者，用「聊天 → 我的 → 微信接入」那条无障碍通道。' +
+        '</div>';
+
+      steps.forEach(function (step, i) {
+        html += '<div style="margin-bottom:12px;">';
+        html += '<b style="color:var(--text-primary);">' + esc(step.title) + '</b><br>';
+        if (step.desc) html += '<span style="color:var(--text-secondary);">' + esc(step.desc) + '</span>';
+        if (step.cmd) {
+          html += '<br><code class="ld-cmd" data-idx="' + i + '" style="background:rgba(0,0,0,0.06);padding:6px 8px;border-radius:6px;display:inline-block;max-width:100%;overflow-x:auto;word-break:break-all;cursor:pointer;color:var(--text-primary);">' + esc(step.cmd) + '</code>';
+          html += '<span class="ld-copy-tag" data-idx="' + i + '" style="font-size:10px;color:#16a34a;margin-left:8px;cursor:pointer;display:inline-block;user-select:none;">复制</span>';
+        }
+        html += '</div>';
+      });
+
+      body.innerHTML = html;
+      body.querySelectorAll(".ld-cmd, .ld-copy-tag").forEach(function (el) {
+        el.onclick = function () {
+          var i = Number(el.getAttribute("data-idx"));
+          copyText(steps[i].cmd);
+        };
+      });
+
+      overlay.style.display = "flex";
     }
   };
 
