@@ -299,7 +299,9 @@ class McpForegroundService : Service() {
             }
 
             // 关键：不 addView 到任何窗口 —— Headless 模式只执行 JS，不渲染 UI
-            webView.loadUrl("file:///android_asset/index.html")
+            // 带 #sp_bg=1 标记：页面脚本据此在「加载前」就知道自己是后台中枢，
+            // 从而立刻取得长轮询持有权（用 URL 片段而非加载后注入，避免竞态）。
+            webView.loadUrl("file:///android_asset/index.html#sp_bg=1")
             AndroidMcp.centerWebView = webView
             android.util.Log.d(TAG, "Headless 后台中枢 WebView 已启动")
         } catch (e: Exception) {

@@ -57,7 +57,11 @@
     // 事件流分实例持久化：前台页与后台中枢各写各的键，面板渲染时合并。
     // 这样打开 App 时能同时看到两个实例各自做了什么，便于判断是否重复收消息。
     eventsFront: "wx-ilink-events-front",
-    eventsCenter: "wx-ilink-events-center"
+    eventsCenter: "wx-ilink-events-center",
+    // 长轮询心跳：两个实例各自记录「我最后一次成功轮询的时间」，
+    // 用来决定当前该由谁持有长轮询（服务端不允许同一 bot 并发长轮询）。
+    beatFront: "wx-ilink-beat-front",
+    beatCenter: "wx-ilink-beat-center"
   };
 
   var DEFAULTS = { autoReply: false, minDelay: 3, maxDelay: 8, hourlyLimit: 20 };
@@ -114,9 +118,42 @@
   }
 
   // 当前实例身份：前台页面 / 后台中枢（由前台服务托管的隐藏 WebView）。
-  // window.__isBackgroundCenter 由原生在页面加载完成后注入。
-  function instTag() { return window.__isBackgroundCenter ? "后台" : "前台"; }
-  function eventKey() { return window.__isBackgroundCenter ? K.eventsCenter : K.eventsFront; }
+  // 原生给中枢页加 #sp_bg=1 标记（加载前就确定，无竞态）；initBackgroundCenter()
+  // 之后也会置 window.__isBackgroundCenter，两者取或。
+  function isCenterInstance() {
+    return !!window.__isBackgroundCenter || /(^|[#&])sp_bg=1/.test(location.hash || "");
+  }
+  function instTag() { return isCenterInstance() ? "后台" : "前台"; }
+  function eventKey() { return isCenterInstance() ? K.eventsCenter : K.eventsFront; }
+
+  // =========================================================================
+  // 长轮询持有权（单实例）
+  //   iLink 的 getupdates 是「同一个 bot 同时只能有一条长轮询」的语义：
+  //   两个实例并发轮询时服务端会返回 HTTP 500 并踢掉连接（用户实测：
+  //   「收消息失败：HTTP 500」「发到一半就掉了」）。
+  //   规则：后台中枢是首选持有者（它由前台服务托管，活得更久）；
+  //        前台页只在「中枢心跳已过期」时接管，从而实现无缝接替、不会同时轮询。
+  // =========================================================================
+  var CENTER_BEAT_TTL_MS = 90 * 1000;
+
+  function centerAlive() {
+    try {
+      var t = parseInt(localStorage.getItem(K.beatCenter) || "0", 10) || 0;
+      return Date.now() - t < CENTER_BEAT_TTL_MS;
+    } catch (e) { return false; }
+  }
+
+  function writeBeat() {
+    try { localStorage.setItem(isCenterInstance() ? K.beatCenter : K.beatFront, String(Date.now())); } catch (e) { }
+  }
+
+  var lastYieldLogAt = 0;
+  function noteFrontYield() {
+    var now = Date.now();
+    if (now - lastYieldLogAt < 120 * 1000) return;
+    lastYieldLogAt = now;
+    logEvent("后台中枢持有中，前台让出长轮询", "info");
+  }
 
   function logEvent(text, tone) {
     var e = { at: Date.now(), text: String(text), tone: tone || "info", src: instTag() };
@@ -507,10 +544,21 @@
           state.loop = null;
           refreshPanelIfOpen();
         },
-        onIdle: function () { }
+        onIdle: function () { },
+        // 单实例持有：中枢无脑持有；前台只在中枢心跳过期时接管。
+        beforePoll: function () {
+          if (isCenterInstance()) return true;
+          if (centerAlive()) { noteFrontYield(); return false; }
+          return true;
+        },
+        // 每一轮轮询后打点（含超时也算活着），供另一方判断持有权。
+        afterPoll: writeBeat
       }
     );
     logEvent("已开始接收微信消息", "ok");
+    // 中枢一起循环就立刻打点，让前台在下一轮（≤35 秒内）尽快让出长轮询，
+    // 把「两个实例同时轮询」的窗口压到最小。
+    if (isCenterInstance()) writeBeat();
     return true;
   }
 
@@ -729,10 +777,10 @@
   function settingsCardHtml() {
     var c = cfg();
     var delay = '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;">' +
-      '<input id="il-min-delay" class="il-mono" type="number" min="1" max="60" value="' + c.minDelay +
+      '<input id="il-min-delay" class="il-mono" type="number" min="0" max="60" value="' + c.minDelay +
       '" style="width:54px;padding:6px;border:1.5px solid ' + PASTEL.border + ';border-radius:8px;text-align:center;">' +
       '<span style="color:' + PASTEL.sub + '">~</span>' +
-      '<input id="il-max-delay" class="il-mono" type="number" min="1" max="120" value="' + c.maxDelay +
+      '<input id="il-max-delay" class="il-mono" type="number" min="0" max="120" value="' + c.maxDelay +
       '" style="width:54px;padding:6px;border:1.5px solid ' + PASTEL.border + ';border-radius:8px;text-align:center;">' +
       '<span style="font-size:11px;color:' + PASTEL.sub + ';">秒</span></div>';
     var limit = '<input id="il-hourly-limit" class="il-mono" type="number" min="1" max="200" value="' + c.hourlyLimit +
@@ -978,8 +1026,10 @@
     var mn = document.getElementById("il-min-delay"),
         mx = document.getElementById("il-max-delay"),
         hl = document.getElementById("il-hourly-limit");
-    var a = Math.max(1, Math.min(60, parseInt(mn && mn.value, 10) || DEFAULTS.minDelay));
-    var b = Math.max(1, Math.min(120, parseInt(mx && mx.value, 10) || DEFAULTS.maxDelay));
+    var a = Math.max(0, Math.min(60, parseInt(mn && mn.value, 10)));
+    var b = Math.max(0, Math.min(120, parseInt(mx && mx.value, 10)));
+    if (isNaN(a)) a = DEFAULTS.minDelay;
+    if (isNaN(b)) b = DEFAULTS.maxDelay;
     if (b < a) b = a;
     var c = Math.max(1, Math.min(200, parseInt(hl && hl.value, 10) || DEFAULTS.hourlyLimit));
     localStorage.setItem(K.minDelay, String(a));

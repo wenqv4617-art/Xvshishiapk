@@ -35,6 +35,7 @@
   var BACKOFF_FAIL_THRESHOLD = 3;    // 连续失败达到这个次数后加长等待
   var BACKOFF_SHORT_MS = 2000;
   var BACKOFF_LONG_MS = 30000;
+  var POLL_SKIP_MS = 3000;           // 把长轮询让给另一实例时的重试间隔
 
   var LS = {
     token: "ilink-bot-token",
@@ -680,11 +681,27 @@
     var onError = opts.onError || function () { };
     var onStale = opts.onStale || function () { };
     var onIdle = opts.onIdle || function () { };
+    // 上层钩子：让调用方决定「这一轮该不该由本实例发起长轮询」。
+    // 用途：本应用存在前后台两个 WebView 实例，若同时长轮询同一个 bot token，
+    // 服务端会返回 HTTP 500 并踢掉连接，所以需要单实例持有。
+    var beforePoll = typeof opts.beforePoll === "function" ? opts.beforePoll : null;
+    var afterPoll = typeof opts.afterPoll === "function" ? opts.afterPoll : null;
 
     var tick = async function () {
       if (loopState.abort || !loopState.running) return;
+
+      if (beforePoll) {
+        var go = true;
+        try { go = beforePoll() !== false; } catch (e) { go = true; }
+        if (!go) {
+          loopState.timer = setTimeout(tick, POLL_SKIP_MS);
+          return;
+        }
+      }
+
       try {
         var r = await getUpdates();
+        if (afterPoll) { try { afterPoll(r); } catch (e) { } }
         if (loopState.abort || !loopState.running) return;
 
         if (r.stale) {
