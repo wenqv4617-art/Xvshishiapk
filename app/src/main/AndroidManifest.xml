@@ -100,6 +100,22 @@
             </intent-filter>
         </service>
 
+        <!-- ★ 微信接入无障碍服务：读取微信新消息并（按开关）代为回复
+             只监听 com.tencent.mm；必须在系统设置 → 无障碍里由用户手动开启才生效。
+             android:exported="true" 是无障碍服务的系统要求（系统要能绑定它）。 -->
+        <service
+            android:name=".WeChatAccessibilityService"
+            android:exported="true"
+            android:label="叙事诗小手机 · 微信接入"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/wechat_accessibility_config" />
+        </service>
+
     </application>
 
 </manifest>

@@ -2585,6 +2585,9 @@ async function openWeChatDialog(sessionId) {
   activeSessionUserName = sess.customUserName || user?.name || '我';
   
   document.getElementById("dialog-header-title").innerText = sess.customCharName || char?.name || "未知角色";
+  // 记录当前对话显示的名字：isActiveDialogSession() 用它确认「界面上正开着的是哪个会话」，
+  // 避免后台回复（微信接入通道）把界面状态改到别的会话上。
+  window.__spDialogSessionName = document.getElementById("dialog-header-title").innerText;
   document.getElementById("chat-dialog-panel").classList.add("active");
 
   updateThemeColor("#ededed");
@@ -5218,11 +5221,12 @@ function bindChatAppEvents() {
   }
 
   // 2. 获取 AI 仿真回复 (微信交易及多媒体引擎重构)
+  //    实际逻辑已抽到下方 generateReplyForSession()，微信接入通道共用同一个函数。
   const btnReply = document.getElementById("btn-dialog-reply");
   if (btnReply) {
     btnReply.onclick = async () => {
       const header = document.getElementById("dialog-header-title");
-      const originalTitle = header.innerText;
+      const originalTitle = header ? header.innerText : "";
 
       // 如果当前正在请求，点击按钮立即中断
       if (onlineAbortController) {
@@ -5246,100 +5250,147 @@ function bindChatAppEvents() {
       // 切换成停止按钮 (浅红色圆角方块)
       btnReply.innerHTML = '<svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="3" fill="#f87171"/></svg>';
 
+      onlineAbortController = new AbortController();
+      onlineAbortController._reqSessionId = reqSessionId; // 标记本次请求所属会话
       try {
-        onlineAbortController = new AbortController();
-        window._visionUsedInRequest = false; // 每次请求重置视觉标记，避免上一次的带图状态污染降级判断
-        onlineAbortController._reqSessionId = reqSessionId; // 标记本次请求所属会话
-        const api = await getFeatureApiPreset("chat");
-        if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
+        await generateReplyForSession(reqSessionId, {});
+      } finally {
+        if (onlineAbortController && onlineAbortController._reqSessionId === reqSessionId) {
+          onlineAbortController = null;
+        }
+      }
+    };
+  }
 
-        // === 【微信交易引擎核心逻辑】：AI自动拦截并收取/拆开玩家发送的交易，并生成对应的灰色系统卡片 ===
-        const rawList = await db.messages.where('sessionId').equals(activeSessionId).toArray();
-        const pendingUserTransactions = rawList.filter(m => m.senderType === 'user' && (m.contentType === 'transfer' || m.contentType === 'red_envelope'));
-        
-        // 直接复用函数头部已加载的 sessObj 变量，绝不重复定义以避免 SyntaxError 异常
-        let autoReclaimContext = "";
-        for (let ut of pendingUserTransactions) {
-          try {
-            const data = JSON.parse(ut.content);
-            if (data.status === 'pending') {
-              // 模拟AI自动收钱行为并更新数据库
-              data.status = ut.contentType === 'transfer' ? 'received' : 'opened';
-              await db.messages.update(ut.id, { content: JSON.stringify(data) });
-              
-              // 物理向数据库追加一条系统通知灰字，确保上屏与存盘对齐
-              let noticeText = "";
-              if (ut.contentType === 'transfer') {
-                noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 确认收钱，收取了 你的转账` : `[系统通知] 对方已确认收钱`;
-              } else {
-                noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 领取了 你的红包` : `[系统通知] 对方领取了你的红包`;
-              }
+// ============================================================
+// 可复用的 AI 回复生成（线上单聊 / 群聊 / 微信接入通道共用）
+//   · 这段逻辑原来只写在「获取AI仿真回复」按钮的 onclick 里，现抽成函数，
+//     让微信接入通道能直接对指定会话生成回复，而不是去模拟点按钮。
+//   · opts.background = true 时不碰聊天界面（标题栏 / 按钮），只在数据层落库；
+//     若用户此时正好打开着该会话，仍然照常流式上屏。
+//   · opts.onText(text) 在每个文本气泡落库前回调，供微信通道取走要发出去的文本。
+//   · opts.silentError = true 时不弹错误框（后台通道弹框会打断用户）。
+// ============================================================
+function isActiveDialogSession(sid) {
+  try {
+    const panel = document.getElementById("chat-dialog-panel");
+    if (!panel || !panel.classList.contains("active")) return false;
+    if (String(activeSessionId) !== String(sid)) return false;
+    const titleEl = document.getElementById("dialog-header-title");
+    if (!titleEl) return false;
+    const sessName = String(window.__spDialogSessionName || "").trim();
+    return !sessName || titleEl.innerText.trim() === sessName;
+  } catch (e) { return false; }
+}
 
-              const sysMsg = {
-                sessionId: activeSessionId,
-                senderType: 'system',
-                senderId: 0,
-                content: noticeText,
-                contentType: 'text',
-                timestamp: Date.now()
-              };
-              await db.messages.add(sysMsg);
-              await appendMessageToDOM(sysMsg); // 瞬时灰字置中上屏
-              
-              // 自动合成记账文本提示词喂给大模型
-              const transactionName = ut.contentType === 'transfer' ? '微信转账' : '微信红包';
-              autoReclaimContext += `【系统通知：对方（${originalTitle}）已经确认领取并收下了你刚刚发送的${transactionName}，资金为 ￥ ${data.amount.toFixed(2)} 元${ut.contentType === 'red_envelope' ? `，红包备注为："${data.remark}"` : ''}】\n`;
-            }
-          } catch(e) { console.error(e); }
+async function generateReplyForSession(sid, opts) {
+  opts = opts || {};
+  const background = opts.background === true;
+  const silentError = opts.silentError === true;
+  const onText = typeof opts.onText === "function" ? opts.onText : null;
+  sid = Number(sid);
+  if (!sid || isNaN(sid)) throw new Error("无效的会话 ID，无法生成回复");
+  const uiLive = () => isActiveDialogSession(sid);
+  const uiTouchable = () => !background || uiLive();
+
+  const header = document.getElementById("dialog-header-title");
+  const originalTitle = header ? header.innerText : "";
+
+  /* eslint-disable no-unused-vars */
+try {
+  onlineAbortController = new AbortController();
+  window._visionUsedInRequest = false; // 每次请求重置视觉标记，避免上一次的带图状态污染降级判断
+  onlineAbortController._reqSessionId = reqSessionId; // 标记本次请求所属会话
+  const api = await getFeatureApiPreset("chat");
+  if (!api) throw new Error("未配置全局默认 API，请前往‘系统设置 - API 协议设置’中配置并应用！");
+
+  // === 【微信交易引擎核心逻辑】：AI自动拦截并收取/拆开玩家发送的交易，并生成对应的灰色系统卡片 ===
+  const rawList = await db.messages.where('sessionId').equals(sid).toArray();
+  const pendingUserTransactions = rawList.filter(m => m.senderType === 'user' && (m.contentType === 'transfer' || m.contentType === 'red_envelope'));
+
+  // 直接复用函数头部已加载的 sessObj 变量，绝不重复定义以避免 SyntaxError 异常
+  let autoReclaimContext = "";
+  for (let ut of pendingUserTransactions) {
+    try {
+      const data = JSON.parse(ut.content);
+      if (data.status === 'pending') {
+        // 模拟AI自动收钱行为并更新数据库
+        data.status = ut.contentType === 'transfer' ? 'received' : 'opened';
+        await db.messages.update(ut.id, { content: JSON.stringify(data) });
+
+        // 物理向数据库追加一条系统通知灰字，确保上屏与存盘对齐
+        let noticeText = "";
+        if (ut.contentType === 'transfer') {
+          noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 确认收钱，收取了 你的转账` : `[系统通知] 对方已确认收钱`;
+        } else {
+          noticeText = sessObj.isGroup === 1 ? `[系统通知] ${originalTitle} 领取了 你的红包` : `[系统通知] 对方领取了你的红包`;
         }
 
-        const history = await db.messages.where('sessionId').equals(activeSessionId).reverse().limit(10).toArray();
-        history.reverse();
+        const sysMsg = {
+          sessionId: sid,
+          senderType: 'system',
+          senderId: 0,
+          content: noticeText,
+          contentType: 'text',
+          timestamp: Date.now()
+        };
+        await db.messages.add(sysMsg);
+        await appendMessageToDOM(sysMsg); // 瞬时灰字置中上屏
 
-        // === 线下赴约记录拼入线上上下文（对话详情开关"线下赴约记录拼入线上上下文"开启时生效）===
-        // 核心隔离：赴约模式的记录是小说白描式线下对白，与线上微信短句格式完全不同。
-        // 拼入时必须做标签清洗（剥离 CoT/心声/翻译等随动标签）与场景隔离（【线下赴约】前缀 + 场景切换 system 提示），
-        // 防止 AI 混淆线上线下格式。已被跟随线上对话总结并自动存档的记录（mergedArchived===1）不再拼入。
-        let offlineMergeHistory = [];
-        const mergeCtxSess = await db.sessions.get(activeSessionId);
-        if (mergeCtxSess && mergeCtxSess.mergeOfflineIntoContext === 1) {
-          offlineMergeHistory = await db.offline_messages
-            .where('sessionId').equals(activeSessionId)
-            .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
-            .sortBy('timestamp');
-        }
-        // 线上消息 + 线下赴约记录按时间线合并排序（线下记录内部同样按时间戳递增）
-        const mergedTimeline = history.map(h => ({ type: 'online', ts: h.timestamp || 0, h }));
-        offlineMergeHistory.forEach(m => {
-          mergedTimeline.push({ type: 'offline', ts: m.timestamp || 0, m });
-        });
-        mergedTimeline.sort((a, b) => a.ts - b.ts);
-        let offlineSceneHintPushed = false;
+        // 自动合成记账文本提示词喂给大模型
+        const transactionName = ut.contentType === 'transfer' ? '微信转账' : '微信红包';
+        autoReclaimContext += `【系统通知：对方（${originalTitle}）已经确认领取并收下了你刚刚发送的${transactionName}，资金为 ￥ ${data.amount.toFixed(2)} 元${ut.contentType === 'red_envelope' ? `，红包备注为："${data.remark}"` : ''}】\n`;
+      }
+    } catch(e) { console.error(e); }
+  }
 
-        const systemPrompt = await buildSystemPrompt(activeSessionId);
+  const history = await db.messages.where('sessionId').equals(sid).reverse().limit(10).toArray();
+  history.reverse();
 
-        // 检查"心声随动生产"开关状态
-        const statusAutoToggle = document.getElementById("details-status-auto");
-        const isStatusAutoOn = statusAutoToggle ? statusAutoToggle.checked : false;
+  // === 线下赴约记录拼入线上上下文（对话详情开关"线下赴约记录拼入线上上下文"开启时生效）===
+  // 核心隔离：赴约模式的记录是小说白描式线下对白，与线上微信短句格式完全不同。
+  // 拼入时必须做标签清洗（剥离 CoT/心声/翻译等随动标签）与场景隔离（【线下赴约】前缀 + 场景切换 system 提示），
+  // 防止 AI 混淆线上线下格式。已被跟随线上对话总结并自动存档的记录（mergedArchived===1）不再拼入。
+  let offlineMergeHistory = [];
+  const mergeCtxSess = await db.sessions.get(sid);
+  if (mergeCtxSess && mergeCtxSess.mergeOfflineIntoContext === 1) {
+    offlineMergeHistory = await db.offline_messages
+      .where('sessionId').equals(sid)
+      .and(m => m.isTheater === 0 && m.mergedArchived !== 1)
+      .sortBy('timestamp');
+  }
+  // 线上消息 + 线下赴约记录按时间线合并排序（线下记录内部同样按时间戳递增）
+  const mergedTimeline = history.map(h => ({ type: 'online', ts: h.timestamp || 0, h }));
+  offlineMergeHistory.forEach(m => {
+    mergedTimeline.push({ type: 'offline', ts: m.timestamp || 0, m });
+  });
+  mergedTimeline.sort((a, b) => a.ts - b.ts);
+  let offlineSceneHintPushed = false;
 
-        // 检查"翻译随动生成"开关状态
-        const translateAutoToggleEl = document.getElementById("details-translate-auto");
-        const isTranslateAutoOn = translateAutoToggleEl ? translateAutoToggleEl.checked : false;
-        // 翻译随动子开关：翻译未命中时是否允许追加一次翻译 API（默认关＝严格单次调用）
-        const translateFallbackEl = document.getElementById("details-translate-fallback");
-        const isTranslateFallbackOn = translateFallbackEl ? translateFallbackEl.checked : false;
+  const systemPrompt = await buildSystemPrompt(sid);
 
-        let finalSystemPrompt = systemPrompt;
-        if (isStatusAutoOn) {
-          const session = await db.sessions.get(activeSessionId);
-          const charName = session ? (session.customCharName || session.name || "对方") : "对方";
-          let myName = "我";
-          if (session && session.userId) {
-            const userArch = await db.archives.get(session.userId);
-            if (userArch && userArch.name) myName = userArch.name;
-          }
+  // 检查"心声随动生产"开关状态
+  const statusAutoToggle = document.getElementById("details-status-auto");
+  const isStatusAutoOn = statusAutoToggle ? statusAutoToggle.checked : false;
 
-          const statusExtra = `\n\n【心声随动指令（重要）】
+  // 检查"翻译随动生成"开关状态
+  const translateAutoToggleEl = document.getElementById("details-translate-auto");
+  const isTranslateAutoOn = translateAutoToggleEl ? translateAutoToggleEl.checked : false;
+  // 翻译随动子开关：翻译未命中时是否允许追加一次翻译 API（默认关＝严格单次调用）
+  const translateFallbackEl = document.getElementById("details-translate-fallback");
+  const isTranslateFallbackOn = translateFallbackEl ? translateFallbackEl.checked : false;
+
+  let finalSystemPrompt = systemPrompt;
+  if (isStatusAutoOn) {
+    const session = await db.sessions.get(sid);
+    const charName = session ? (session.customCharName || session.name || "对方") : "对方";
+    let myName = "我";
+    if (session && session.userId) {
+      const userArch = await db.archives.get(session.userId);
+      if (userArch && userArch.name) myName = userArch.name;
+    }
+
+    const statusExtra = `\n\n【心声随动指令（重要）】
 你需要在回复正常对话内容之后，额外输出当前角色（${charName}）对 ${myName} 此时此刻的真实内心状态。
 请严格按照以下格式输出：
 
@@ -5347,16 +5398,16 @@ function bindChatAppEvents() {
 
 [STATUS]
 { "attire": "当前穿着描述", "affection": "好感度描述(0-100)", "excitement": "兴奋度/紧绷感描述", "thoughts": "此刻真实倾诉想法", "hiddenCorners": "心底隐秘想法/反差心声" }`;
-          finalSystemPrompt += statusExtra;
-          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
-            window.contextManager.pushExtraSection("online", { id: "status_auto", label: "心声随动", group: "开关", content: statusExtra, enabled: true });
-          }
-        }
+    finalSystemPrompt += statusExtra;
+    if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+      window.contextManager.pushExtraSection("online", { id: "status_auto", label: "心声随动", group: "开关", content: statusExtra, enabled: true });
+    }
+  }
 
-        // 翻译随动生成：默认单次调用——要求 AI 在正文最末尾追加结构化译文块，
-        // 本地解析后剥离并逐气泡挂载（正文零污染）；不再使用会穿插正文的 [TRANSLATE] 标签
-        if (isTranslateAutoOn) {
-          const translateExtra = `\n\n【翻译随动指令（重要）】
+  // 翻译随动生成：默认单次调用——要求 AI 在正文最末尾追加结构化译文块，
+  // 本地解析后剥离并逐气泡挂载（正文零污染）；不再使用会穿插正文的 [TRANSLATE] 标签
+  if (isTranslateAutoOn) {
+    const translateExtra = `\n\n【翻译随动指令（重要）】
 当你的回复包含非中文内容（英语/日语/法语等）时，请在**整条回复的最末尾**单独追加一行机器可读块，格式严格如下（必须是合法 JSON 数组，不要加代码块围栏）：
 [TRANS_JSON][{"src":"正文中的原文片段（必须与正文逐字一致，含标点）","t":"该片段的简体中文翻译"}]
 规则：
@@ -5364,1265 +5415,1266 @@ function bindChatAppEvents() {
 2) t 是流畅自然的简体中文翻译；纯中文片段不需要列出；
 3) 该块只能出现在最后，前面必须是完整正文；正文中严禁出现 [TRANSLATE] 等翻译标签；
 4) 若整条回复都是中文，则不要输出该块。`;
-          finalSystemPrompt += translateExtra;
-          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
-            window.contextManager.pushExtraSection("online", { id: "translate_auto", label: "翻译随动", group: "开关", content: translateExtra, enabled: true });
-          }
-        }
-
-        // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
-        if (window.miniProgramSystem && typeof window.miniProgramSystem.buildSharePrompt === "function") {
-          try {
-            const mpPrompt = await window.miniProgramSystem.buildSharePrompt(activeSessionId);
-            if (mpPrompt) {
-              finalSystemPrompt += mpPrompt;
-              if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
-                window.contextManager.pushExtraSection("online", { id: "miniprogram_share", label: "小程序分享", group: "开关", content: mpPrompt, enabled: true });
-              }
-            }
-          } catch (e) {}
-        }
-
-        // 主动发起通话特权（开关打开才注入；该段以前只定义了 builder 却从没被调用）
-        if (window.callSystem && typeof window.callSystem.buildAutoCallPromptSegment === "function") {
-          try {
-            const callPrompt = await window.callSystem.buildAutoCallPromptSegment(activeSessionId);
-            if (callPrompt) {
-              finalSystemPrompt += "\n\n" + callPrompt;
-              if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
-                window.contextManager.pushExtraSection("online", { id: "auto_call", label: "主动发起通话", group: "开关", content: callPrompt, enabled: true });
-              }
-            }
-          } catch (e) {}
-        }
-
-        // 突然发起查手机特权（开关打开才注入；由 char 在对话里用 [CHECK_PHONE] 自己挑时机）
-        if (window.reverseCheckSystem && typeof window.reverseCheckSystem.buildAutoCheckPhonePromptSegment === "function") {
-          try {
-            const cpPrompt = await window.reverseCheckSystem.buildAutoCheckPhonePromptSegment(activeSessionId);
-            if (cpPrompt) {
-              finalSystemPrompt += "\n\n" + cpPrompt;
-              if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
-                window.contextManager.pushExtraSection("online", { id: "auto_check_phone", label: "突然查手机请求", group: "开关", content: cpPrompt, enabled: true });
-              }
-            }
-          } catch (e) {}
-        }
-
-        // 注入回溯重回要求（若存在），约束 char 本次重回的内容方向
-        if (window._rerollRequirement) {
-          const rerollExtra = `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
-          finalSystemPrompt += rerollExtra;
-          if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
-            window.contextManager.pushExtraSection("online", { id: "reroll", label: "回溯重回要求", group: "附加", content: rerollExtra, enabled: true });
-          }
-          // 注入后立即清除，避免污染后续普通回复
-          window._rerollRequirement = "";
-        }
-
-        const messagesToSend = [{ role: "system", content: finalSystemPrompt }];
-
-        // 核心注入：在消息对话前注入领取提醒，实现极其逼生的互动对白！
-        if (autoReclaimContext) {
-          messagesToSend.push({
-            role: "system", 
-            content: `【微信收账通知（请立刻动态做出符合性格特色的反应）】：你在打开微信时，屏幕上弹出了你刚刚点击领取并成功入账用户钱款的通知：\n${autoReclaimContext}\n请你在本次回复中，配合符合你自身身份口吻 and 态度的台词，对此做出道谢、调侃、戏谑或客气回应，严厉禁止说教！`
-          });
-        }
-
-        const sessObj = await db.sessions.get(activeSessionId);
-
-        // 预解析当前会话的角色名与用户名，用于转发卡片在上下文中的明确摘要（标注谁转发给谁）
-        let _chatCharName = "对方";
-        let _chatMyName = "我";
-        if (sessObj) {
-          if (sessObj.customCharName) {
-            _chatCharName = sessObj.customCharName;
-          } else if (sessObj.charId) {
-            const _charArch = await db.archives.get(sessObj.charId);
-            if (_charArch && _charArch.name) _chatCharName = _charArch.name;
-          }
-          if (sessObj.userId) {
-            const _userArch = await db.archives.get(sessObj.userId);
-            if (_userArch && _userArch.name) _chatMyName = _userArch.name;
-          }
-        }
-
-        // 异步映射历史记录，智能计算设定/真实时间流逝，插入带精准场景虚拟时间的系统标块
-        const simNow = getSimulatedNow(sessObj);
-        let prevTime = null;
-        // 角色交替守卫：部分 API 严格要求 user/assistant 交替，连续同角色消息自动合并，防止请求被拒
-        const pushMergedMessage = (role, content) => {
-          const lastMsg = messagesToSend[messagesToSend.length - 1];
-          if (lastMsg && lastMsg.role === role && typeof lastMsg.content === 'string') {
-            lastMsg.content += "\n" + content;
-          } else {
-            messagesToSend.push({ role, content });
-          }
-        };
-        for (const tl of mergedTimeline) {
-          // === 线下赴约记录分支：标签清洗 + 场景隔离，防止线上线下格式混淆 ===
-          if (tl.type === 'offline') {
-            const om = tl.m;
-            // 场景隔离提示：仅在第一条线下记录出现前注入一次
-            if (!offlineSceneHintPushed) {
-              offlineSceneHintPushed = true;
-              messagesToSend.push({
-                role: "system",
-                content: "【场景切换提示（重要）】\n下方以【线下赴约】标签开头的对话记录，是你们此前在线下真实见面（面对面，非手机微信聊天）时发生的小说白描式对白。它们仅作为背景记忆供你回忆当时发生的事，请不要把它们当作当前的聊天格式。\n现在你们已经回到线上微信聊天场景，你接下来的回复必须立刻回归线上微信短句聊天的格式与口吻，绝对禁止继续使用线下白描/小说式描写格式，也禁止输出任何【线下赴约】标签！"
-              });
-            }
-            // 标签清洗：剥离线下白描中的思维链 / 心声随动 / 翻译随动 / 引用 / MSG_ID 等标签，防止污染线上格式
-            let offlineClean = om.content;
-            if (typeof offlineClean === 'string') {
-              offlineClean = offlineClean
-                .replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "")
-                .replace(/\n?\s*\[STATUS\]\s*\{[\s\S]*?\}\s*/gi, "")
-                .replace(/\n?\s*【心声】\s*\{[\s\S]*?\}\s*/gi, "")
-                .replace(/\n?\s*\[TRANSLATE\]\s*[\s\S]*$/gi, "")
-                .replace(/[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/gi, "")
-                .replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "")
-                .trim();
-            }
-            if (offlineClean) {
-              const offlineSender = om.senderType === 'user' ? _chatMyName : _chatCharName;
-              pushMergedMessage(
-                om.senderType === 'user' ? 'user' : 'assistant',
-                `【线下赴约·${offlineSender}】${offlineClean}`
-              );
-            }
-            // 线下记录同样推进时间线，保持后续时间流逝计算连续
-            prevTime = om.timestamp || prevTime;
-            continue;
-          }
-          const h = tl.h;
-          const simDate = getMessageDisplayDate(h, sessObj);
-          // 智能计算时间间隔插入系统标块 (超过15分钟自动提示时间流逝并附带当时虚拟场景时刻)
-          if (prevTime !== null && h.timestamp) {
-            const diffMs = h.timestamp - prevTime;
-            const diffMin = Math.floor(diffMs / 60000);
-            if (diffMin >= 15) {
-              let timeGapText = "";
-              const formattedSimTime = formatWeChatTime(simDate, simNow);
-              if (diffMin < 60) {
-                timeGapText = `[系统提示：距离上一条对话过去了 ${diffMin} 分钟，当前场景时间：${formattedSimTime}]`;
-              } else if (diffMin < 1440) {
-                const diffHours = (diffMin / 60).toFixed(1);
-                timeGapText = `[系统提示：距离上一条对话过去了 ${diffHours} 小时，当前场景时间：${formattedSimTime}]`;
-              } else {
-                const diffDays = Math.floor(diffMin / 1440);
-                timeGapText = `[系统提示：距离上一条对话过去了 ${diffDays} 天，当前场景时间：${formattedSimTime}]`;
-              }
-              messagesToSend.push({ role: "system", content: timeGapText });
-            }
-          }
-          prevTime = h.timestamp || prevTime;
-
-          const prefix = `[MSG_ID: ${h.id}] `;
-          let displayContent = h.content;
-          let visionImageUrls = []; // 真实照片 / 分享链接配图（视觉模型可直接读图）
-
-          // 从历史消息中物理剥离旧思维链（覆盖所有标签变体 + 未闭合兜底）
-          if (typeof displayContent === 'string') {
-            displayContent = displayContent.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
-          }
-
-          if (h.isRecalled === 1) {
-            displayContent = "[已撤回该消息]";
-          } else if (h.contentType === 'image') {
-            try {
-              const data = JSON.parse(h.content);
-              const isRealPhoto = typeof data.url === 'string' && /^data:image\//i.test(data.url) && !/svg\+xml/i.test(data.url);
-              if (isRealPhoto && h.senderType === 'user' && visionSendEnabled(api)) {
-                // 视觉模型：把真实照片以 OpenAI vision 格式随消息一起发送
-                visionImageUrls = [data.url];
-                displayContent = data.text ? `[你发送了一张真实照片，附言：${data.text}]` : '[你发送了一张真实照片]';
-              } else {
-                displayContent = `[图片描述: ${data.text || '（无描述）'}]`;
-              }
-            } catch(e) {}
-          } else if (h.contentType === 'voice') {
-            try {
-              const data = JSON.parse(h.content);
-              displayContent = `[语音转文字: ${data.text}]`;
-            } catch(e) {}
-          } else if (h.contentType === 'call') {
-            // 通话记录卡片在上下文中转为简短可读摘要，避免裸 JSON 污染
-            try {
-              const c = JSON.parse(h.content);
-              if (c.rejected) {
-                displayContent = `[你拒绝了对方的${c.type === 'video' ? '视频' : '语音'}通话请求]`;
-              } else {
-                displayContent = `[${c.type === 'video' ? '视频' : '语音'}通话记录 · ${c.summary || ''}]`;
-              }
-            } catch(e) { displayContent = "[通话记录]"; }
-          } else if (h.contentType === 'social_notice') {
-            // 社交动作跳转卡片在上下文中转为简短摘要
-            try {
-              const sn = JSON.parse(h.content);
-              if (sn.type === 'moment') {
-                displayContent = `[你发了一条朋友圈：${sn.summary || ''}]`;
-              } else if (sn.type === 'forum_post') {
-                displayContent = `[你以 ${sn.roleLabel || ''} @${sn.username || ''} 身份在论坛发了帖子《${sn.title || ''}》]`;
-              } else if (sn.type === 'forum_alt_create') {
-                displayContent = `[你建立了一个论坛小号 @${sn.username || ''}（${sn.nickname || ''}）]`;
-              } else {
-                displayContent = `[社交动作记录]`;
-              }
-            } catch(e) { displayContent = "[社交动作记录]"; }
-          } else if (h.contentType === 'moment_share') {
-            // 朋友圈转发卡片在上下文中转为明确摘要，明确标注"谁转发给谁"
-            try {
-              const ms = JSON.parse(h.content);
-              const originalAuthor = ms.authorName || '某人';
-              const commentSuffix = ms.commentText ? `（附言：${ms.commentText}）` : '';
-              if (h.senderType === 'user') {
-                // 我转发给当前会话角色
-                displayContent = `[${_chatMyName} 向 ${_chatCharName} 转发了 ${originalAuthor} 的朋友圈动态：${ms.summary || ''}${commentSuffix}]`;
-              } else {
-                // 当前会话角色转发给我
-                const forwarderName = ms.forwarderName || _chatCharName;
-                displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的朋友圈动态：${ms.summary || ''}${commentSuffix}]`;
-              }
-            } catch(e) { displayContent = "[转发了一条朋友圈]"; }
-          } else if (h.contentType === 'forum_post_share') {
-            // 论坛帖子转发卡片在上下文中转为明确摘要，明确标注"谁转发给谁"
-            try {
-              const fps = JSON.parse(h.content);
-              const originalAuthor = fps.authorName || '某成员';
-              const commentSuffix = fps.commentText ? `（附言：${fps.commentText}）` : '';
-              if (h.senderType === 'user') {
-                displayContent = `[${_chatMyName} 向 ${_chatCharName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
-              } else {
-                const forwarderName = fps.forwarderName || _chatCharName;
-                displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
-              }
-            } catch(e) { displayContent = "[转发了一条论坛帖子]"; }
-          } else if (h.contentType === 'miniprogram_share') {
-            // 小程序分享卡片在上下文中转为可读摘要（避免裸 JSON 污染）
-            try {
-              const mp = JSON.parse(h.content);
-              if (h.senderType === 'user') {
-                displayContent = `[小程序分享] ${_chatMyName} 邀请 ${_chatCharName} 一起玩「${mp.mpName || '小程序'}」：${mp.inviteText || ''}`;
-              } else {
-                displayContent = `[小程序分享] ${_chatCharName} 邀请 ${_chatMyName} 一起玩「${mp.mpName || '小程序'}」：${mp.inviteText || ''}`;
-              }
-            } catch(e) { displayContent = "[小程序分享]"; }
-          } else if (h.contentType === 'pay_for_me') {
-            // 代付请求卡片在上下文中转为明确摘要，便于 AI 识别这是一个"需要它代付的订单"
-            // 而不是普通转账/红包，从而使用 AGREE_PAY 指令而非发起转账。
-            try {
-              const pf = JSON.parse(h.content);
-              const isPaid = pf.status === 'paid';
-              const itemsStr = (pf.items || []).map(it =>
-                `${it.name || it.title || '商品'} x${it.quantity || 1} ¥${(it.price || 0).toFixed(2)}`
-              ).join('，');
-              const totalStr = (pf.total || 0).toFixed(2);
-              const msgSuffix = pf.message ? `，留言："${pf.message}"` : '';
-              if (h.senderType === 'user') {
-                // 我向对方发起代付请求
-                if (isPaid) {
-                  displayContent = `[${_chatCharName} 已为你代付了订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}]`;
-                } else {
-                  displayContent = `[你向 ${_chatCharName} 发送了一个代付请求订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}。该订单等待对方代付，对方应使用 [AGREE_PAY]{} 指令同意代付]`;
-                }
-              } else {
-                // 对方（AI 角色）向我发起代付请求 —— 这是 AI 最需要识别的场景
-                if (isPaid) {
-                  displayContent = `[你已经为 ${_chatCharName} 代付了订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}]`;
-                } else {
-                  displayContent = `[${_chatCharName} 向你发送了一个代付请求订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}。这是一个需要你代为付款的订单，你若愿意帮忙，请在回复末尾追加 [AGREE_PAY]{} 指令表示同意代付；切勿用 [TRANSFER] 转账代替，代付与转账是两种不同动作]`;
-                }
-              }
-            } catch(e) { displayContent = "[收到一个代付请求]"; }
-          } else if (h.contentType === 'gift') {
-            // 礼物卡片在上下文中转为明确摘要
-            try {
-              const gf = JSON.parse(h.content);
-              const isReceived = gf.status === 'paid';
-              const itemsStr = (gf.items || []).map(it =>
-                `${it.name || it.title || '礼物'} x${it.quantity || 1} ¥${(it.price || 0).toFixed(2)}`
-              ).join('，');
-              const totalStr = (gf.total || 0).toFixed(2);
-              const msgSuffix = gf.message ? `，附言："${gf.message}"` : '';
-              if (h.senderType === 'user') {
-                displayContent = `[你向 ${_chatCharName} 送了礼物：${itemsStr}，合计 ¥${totalStr}${msgSuffix}]`;
-              } else {
-                displayContent = `[${_chatCharName} 送了你礼物：${itemsStr}，合计 ¥${totalStr}${msgSuffix}${isReceived ? '，你已查收' : ''}]`;
-              }
-            } catch(e) { displayContent = "[收到一份礼物]"; }
-          } else if (h.contentType === 'withdraw_share') {
-            // 砍一刀提现分享链接：在上下文中转为明确摘要，让 AI 知道这是 user 在转发砍一刀活动
-            try {
-              const ws = JSON.parse(h.content);
-              const targetStr = (ws.targetAmount || 700) + '元';
-              const currentStr = (ws.currentAmount || 0).toFixed(2) + '元';
-              if (h.senderType === 'user') {
-                displayContent = `[你向 ${_chatCharName} 转发了一个"砍一刀提现"活动链接，你正在提现${targetStr}，目前已有${currentStr}，希望对方帮你点击助力。这是一条仿拼多多砍一刀的分享链接，不是真实的网页链接]`;
-              } else {
-                displayContent = `[${_chatCharName} 向你转发了一个"砍一刀提现"活动链接]`;
-              }
-            } catch(e) { displayContent = "[转发了一个砍一刀提现链接]"; }
-          } else if (h.contentType === 'chat_log_share') {
-            // 聊天记录转发：展开成"谁把谁和谁的聊天记录转发给了你"的可读摘要
-            try {
-              displayContent = (window.chatLogShareSystem && window.chatLogShareSystem.buildContextSummary)
-                ? window.chatLogShareSystem.buildContextSummary(JSON.parse(h.content))
-                : '[聊天记录转发]';
-            } catch (e) { displayContent = '[聊天记录转发]'; }
-          } else if (h.contentType === 'share') {
-            // 分享链接：转为干净上下文（标题/正文/互动数据/评论/链接），避免乱码与标签污染
-            displayContent = formatShareContextText(h, h.senderType === 'user', _chatCharName);
-            // 帖子配图：分享时已压缩存库，视觉模型下直接随消息附带（最多前 N 张）
-            try {
-              const _sd = JSON.parse(h.content);
-              if (Array.isArray(_sd.imageData) && _sd.imageData.length && visionSendEnabled(api)) {
-                visionImageUrls = _sd.imageData.slice(0, 6);
-              }
-            } catch (e) {}
-          } else if (h.contentType === 'reverse_check_report') {
-            // 反查手机报告：把角色当时的动线与感想还原成可读上下文
-            try {
-              const rc = JSON.parse(h.content);
-              const rcLines = ['[你之前偷偷翻过 ' + _chatMyName + ' 的手机，这里是当时的记录]'];
-              if (rc.mood) rcLines.push('当时的情绪：' + rc.mood);
-              if (rc.comment) rcLines.push('当时的感想：' + String(rc.comment).slice(0, 300));
-              (rc.timeline || []).slice(0, 12).forEach(function (t) { rcLines.push('- ' + String(t.text || '').slice(0, 80)); });
-              displayContent = rcLines.join('\n');
-            } catch (e) { displayContent = '[反查手机报告]'; }
-          }
-
-          // 核心 Few-shot 历史格式对齐
-          if (sessObj && sessObj.isGroup === 1 && h.senderType === 'char') {
-            const charSender = await db.archives.get(Number(h.senderId));
-            let senderName = charSender ? charSender.name : "群成员";
-            // 文件管理来源的角色加括号标记
-            try {
-              const gm = await db.group_members.where('[groupId+memberId+memberType]').equals([sessObj.groupId, Number(h.senderId), 'char']).first();
-              if (gm && gm.sourceArchiveId) {
-                const srcArchive = await db.chat_archives.get(gm.sourceArchiveId);
-                if (srcArchive) {
-                  const parts = srcArchive.customLabel.split('-');
-                  const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
-                  senderName = `${senderName}(${tag})`;
-                }
-              }
-            } catch(e) {}
-            displayContent = `[SENDER: ${senderName}] ${displayContent}`;
-          }
-
-          if (displayContent) {
-            if (visionImageUrls.length) {
-              // 视觉格式：文本 + 真实图片（真实照片 / 分享链接配图）
-              const parts = [{ type: 'text', text: prefix + displayContent }];
-              visionImageUrls.forEach(function (u) { parts.push({ type: 'image_url', image_url: { url: u } }); });
-              messagesToSend.push({
-                role: h.senderType === 'user' ? 'user' : 'assistant',
-                content: parts
-              });
-              window._visionUsedInRequest = true;
-            } else {
-              messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
-            }
-          }
-        }
-
-        // TODO (待以后优化解决): 群聊模式下由于多角色 (Multi-Char) 连续发言与流式/思维链容易卡死，
-        // 暂时在群聊场景关闭流式传输与思维链预显，采用单次响应。
-        const isGroupMode = sessObj && sessObj.isGroup === 1;
-        const activeApi = isGroupMode ? { ...api, disableStream: true } : api;
-
-        // 挂载流式渲染交互气泡 (单聊模式下正常预显)
-        let streamingBubble = null;
-        const handleStreamChunk = isGroupMode ? null : (delta, currentFullText) => {
-          // 会话隔离：只有在用户仍在原请求会话时才渲染流式气泡
-          if (activeSessionId !== reqSessionId) return;
-
-          const container = document.getElementById("dialog-messages-container");
-          if (!container) return;
-
-          if (!streamingBubble) {
-            streamingBubble = document.createElement("div");
-            streamingBubble.className = "msg-bubble other streaming";
-            streamingBubble.style.cssText = "position: relative; display: flex; align-items: flex-start;";
-            container.appendChild(streamingBubble);
-          }
-
-          // 流式期间隐藏结构化译文块，避免在气泡里闪现 [TRANS_JSON]...JSON
-          const tjCutIdx = String(currentFullText || "").indexOf("[TRANS_JSON]");
-          const displayFullText = tjCutIdx >= 0 ? String(currentFullText).slice(0, tjCutIdx) : currentFullText;
-          const parsedCot = parseThoughtFromText(displayFullText);
-          let streamHtml = "";
-
-          // 关键修复：流式渲染也必须遵守思维链开关。关闭时剥离 <think> 不显示思维链卡片，
-          // 否则即使关闭开关，推理模型（如 DeepSeek-R1 / GLM）原生输出的 <think> 仍会实时显示在屏幕上
-          const isCotStreamEnabled = sessObj && sessObj.cotToggle === 1;
-
-          if (isCotStreamEnabled && parsedCot.thought) {
-            streamHtml += `<div class="cot-thought-card" style="margin-bottom:6px; width:100%;"><div class="cot-thought-card-header"><div class="cot-thought-card-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg><span>深度思考中...</span></div></div><div class="cot-thought-card-body" style="display:block;">${escapeHtml(parsedCot.thought)}</div></div>`;
-          }
-          if (parsedCot.cleanText) {
-            streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(parsedCot.cleanText)}</div>`;
-          } else if (!parsedCot.thought) {
-            streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(displayFullText)}</div>`;
-          }
-
-          streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar, activeSessionCharName)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
-          scrollChatToBottom(container, false);
-        };
-
-        // 世界书「聊天内注入」：按深度插入到最近消息之间（对标酒馆 @Depth）
-        try {
-          if (window.worldBookEngine && typeof window.worldBookEngine.getResult === "function") {
-            var _wbResOnline = window.worldBookEngine.getResult(reqSessionId, "online");
-            if (_wbResOnline && _wbResOnline.atDepth && _wbResOnline.atDepth.length) {
-              window.worldBookEngine.insertAtDepth(messagesToSend, _wbResOnline.atDepth);
-            }
-          }
-        } catch (e) { console.warn("世界书聊天内注入失败:", e); }
-
-        // 上下文管理：捕获最近一轮完整请求（供「对话详情 → 上下文管理」查看全文）
-        if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
-          window.contextManager.captureRequest(reqSessionId, "online", messagesToSend);
-        }
-
-        let rawReply = await fetchStreamOrJson(activeApi.url, activeApi, messagesToSend, onlineAbortController.signal, handleStreamChunk);
-
-        if (streamingBubble) {
-          streamingBubble.remove();
-          streamingBubble = null;
-        }
-
-        // 核心消除：自动擦除大模型在对白中误编或幻觉出来的 [MSG_ID: xxx] 标签
-        rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
-
-        // 核心：前置整块提取 CoT 思维链 (仅在当前会话开启思维链且非群聊时才保留保存，关闭时直接擦除)
-        let sessionCotHeader = "";
-        const masterCot = parseThoughtFromText(rawReply);
-        if (masterCot.thought) {
-          const isCotEnabled = sessObj && sessObj.cotToggle === 1 && !isGroupMode;
-          if (isCotEnabled) {
-            sessionCotHeader = `<think>\n${masterCot.thought}\n</think>\n`;
-          }
-          rawReply = masterCot.cleanText; // 清洗后，rawReply 只保留对白与指令，绝对不会包含被切断的 <think>
-        }
-
-        // 核心自愈：检验首部是否包含 [QUOTE:消息ID]，若有，强制将引用原句清除并与后续真实回复并入单行，杜绝被回车切分为多条空卡片消息 [1.1]
-        const firstQuoteMatch = rawReply.match(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]/i);
-        if (firstQuoteMatch) {
-          const quoteTag = firstQuoteMatch[0];
-          const quoteId = Number(firstQuoteMatch[2]);
-          const quotedMsg = await db.messages.get(quoteId);
-          if (quotedMsg) {
-            const origText = quotedMsg.content;
-            const origBareText = typeof origText === 'string' ? origText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '').trim() : "";
-            
-            let remaining = rawReply.replace(firstQuoteMatch[0], "").trim();
-            if (origBareText) {
-              // 精准捕捉并抹除可能紧随其后（包括换行符之后）的被引用原文，如：\n"原话"\n
-              const quotesRegex = /^[\s\n\r]*["'“‘『「\(（【\[]*(.*?)[”’』」\)）】\]]*[\s\n\r]*/;
-              let tempMatch = remaining.match(quotesRegex);
-              if (tempMatch) {
-                const innerText = tempMatch[1].trim();
-                if (innerText.toLowerCase() === origBareText.toLowerCase() || origBareText.toLowerCase().includes(innerText.toLowerCase())) {
-                  remaining = remaining.replace(tempMatch[0], "").trim();
-                }
-              }
-            }
-            // 重新拼接为单行气泡内容，打破 split 的换行切割条件，保障完美融合
-            rawReply = `${quoteTag} ${remaining}`;
-          }
-        }
-
-        // === 【群聊 AI 多人分流与指令决策器】 ===
-            const currentSess = await db.sessions.get(reqSessionId);
-            if (currentSess && currentSess.isGroup === 1) {
-              // 打印大模型吐出的原始未加工对白，用以排查格式异形
-              console.log("[Group Chat Debug] 1. 大模型返回的原始对白文本 rawReply:\n", rawReply);
-
-              // 升级为高宽容双轨非消耗性正向断言正则，确保群聊对白零遗漏捕获
-              const senderRegex = /[\[【]SENDER:\s*([^\]】\n]+)[\]】]\s*([\s\S]+?)(?=[\[【]SENDER:|$)/gi;
-              let match;
-              let hasGroupReplies = false;
-
-              while ((match = senderRegex.exec(rawReply)) !== null) {
-                hasGroupReplies = true;
-                // 清洗可能伴随出现的冒号或空格，确保拿到纯净的档案馆角色名字
-                const senderName = match[1].replace(/[:：]/g, "").trim();
-                let textContent = match[2].trim();
-                
-                // 打印正则捕获的每次分流细节
-                console.log(`[Group Chat Debug] 2. 正则分流捕获成功 -> 发信人: "${senderName}"，发言正文: "${textContent}"`);
-                
-                if (!textContent) continue;
-
-            // 检查并执行 AI 物理管理动作指令 (禁言、踢人、头衔等)
-            const actionMuteRegex = /[\[【]MUTE\s*[:：]\s*([^\s(（]+)\s*\((\d+)\)[\]】]/i;
-            const muteMatch = textContent.match(actionMuteRegex);
-            if (muteMatch && window.groupChatSystem) {
-              const targetName = muteMatch[1].trim();
-              const duration = parseInt(muteMatch[2]);
-              await window.groupChatSystem.executeAiMuteCommand(senderName, targetName, duration);
-              textContent = textContent.replace(actionMuteRegex, "").trim();
-            }
-
-            const actionKickRegex = /[\[【]KICK\s*[:：]\s*([^\]】]+)[\]】]/i;
-            const kickMatch = textContent.match(actionKickRegex);
-            if (kickMatch && window.groupChatSystem) {
-              const targetName = kickMatch[1].trim();
-              await window.groupChatSystem.executeAiKickCommand(senderName, targetName);
-              textContent = textContent.replace(actionKickRegex, "").trim();
-            }
-
-            const actionTitleRegex = /[\[【]TITLE\s*[:：]\s*([^\s(（]+)\s*\(([^)]+)\)[\]】]/i;
-            const titleMatch = textContent.match(actionTitleRegex);
-            if (titleMatch && window.groupChatSystem) {
-              const targetName = titleMatch[1].trim();
-              const newTitle = titleMatch[2].trim();
-              await window.groupChatSystem.executeAiTitleCommand(senderName, targetName, newTitle);
-              textContent = textContent.replace(actionTitleRegex, "").trim();
-            }
-
-            const actionAdminRegex = /[\[【]ADMIN\s*[:：]\s*([^\s(（]+)\s*\((设为|取消)\)[\]】]/i;
-            const adminMatch = textContent.match(actionAdminRegex);
-            if (adminMatch && window.groupChatSystem) {
-              const targetName = adminMatch[1].trim();
-              const actType = adminMatch[2].trim();
-              await window.groupChatSystem.executeAiAdminCommand(senderName, targetName, actType);
-              textContent = textContent.replace(actionAdminRegex, "").trim();
-            }
-
-            const actionTransferRegex = /[\[【]TRANSFER_OWNER\s*[:：]\s*([^\]】]+)[\]】]/i;
-            const txMatch = textContent.match(actionTransferRegex);
-            if (txMatch && window.groupChatSystem) {
-              const targetName = txMatch[1].trim();
-              await window.groupChatSystem.executeAiTransferOwnerCommand(senderName, targetName);
-              textContent = textContent.replace(actionTransferRegex, "").trim();
-            }
-
-            // 检查并执行 AI 发起群投票指令 [POLL: 主题 (选项1 | 选项2)]
-            const actionPollRegex = /[\[【]POLL\s*[:：]\s*([^\s(（]+)\s*\(([^)]+)\)[\]】]/i;
-            const pollMatch = textContent.match(actionPollRegex);
-            if (pollMatch && window.groupChatSystem) {
-              const pollTitle = pollMatch[1].trim();
-              const optionsStr = pollMatch[2].trim();
-              await window.groupChatSystem.executeAiPollCommand(senderName, pollTitle, optionsStr);
-              textContent = textContent.replace(actionPollRegex, "").trim();
-            }
-
-            // 检查并执行 AI 发布群公告指令 [ANNOUNCE: 标题 (内容)] (升级为高宽容换行匹配正则)
-            const actionAnnounceRegex = /[\[【]ANNOUNCE\s*[:：]\s*([^((（]+?)\s*[(（]([\s\S]+?)[)）][\]】]/i;
-            const announceMatch = textContent.match(actionAnnounceRegex);
-            if (announceMatch && window.groupChatSystem) {
-              const annTitle = announceMatch[1].trim();
-              const annText = announceMatch[2].trim();
-              await window.groupChatSystem.executeAiAnnounceCommand(senderName, annTitle, annText);
-              textContent = textContent.replace(actionAnnounceRegex, "").trim();
-            }
-
-            // 检查并执行 AI 发起定向转账指令 [TRANSFER: 收款人 (金额)]
-            const actionTransferValRegex = /[\[【]TRANSFER\s*[:：]\s*([^\s(（]+)\s*\((\d+(?:\.\d+)?)\)[\]】]/i;
-            const transferValMatch = textContent.match(actionTransferValRegex);
-            if (transferValMatch && window.groupChatSystem) {
-              const targetName = transferValMatch[1].trim();
-              const amount = parseFloat(transferValMatch[2]) || 0;
-              await window.groupChatSystem.executeAiTransferCommand(senderName, targetName, amount);
-              textContent = textContent.replace(actionTransferValRegex, "").trim();
-            }
-
-            // 检查并执行 AI 发送普通/拼手气红包指令 (普通或拼手气) [RED_ENVELOPE: normal/lucky (金额) (备注)]
-            const actionRedEnvelopeValRegex = /[\[【]RED_ENVELOPE\s*[:：]\s*(normal|lucky)\s*\((\d+(?:\.\d+)?)\)\s*(?:\(([^)]+)\))?[\]】]/i;
-            const redEnvelopeValMatch = textContent.match(actionRedEnvelopeValRegex);
-            if (redEnvelopeValMatch && window.groupChatSystem) {
-              const envType = redEnvelopeValMatch[1].toLowerCase();
-              const amount = parseFloat(redEnvelopeValMatch[2]) || 0;
-              const remark = redEnvelopeValMatch[3] ? redEnvelopeValMatch[3].trim() : "恭喜发财，大吉大利";
-              await window.groupChatSystem.executeAiRedEnvelopeCommand(senderName, envType, amount, remark);
-              textContent = textContent.replace(actionRedEnvelopeValRegex, "").trim();
-            }
-
-            // 检查并执行 AI 拆开红包指令 [OPEN_RED_ENVELOPE: 消息ID]
-            const actionOpenRedEnvelopeRegex = /[\[【](?:OPEN_RED_ENVELOPE|拆红包)\s*[:：]\s*(\d+)[\]】]/i;
-            const openRedEnvelopeMatch = textContent.match(actionOpenRedEnvelopeRegex);
-            if (openRedEnvelopeMatch && window.groupChatSystem) {
-              const targetMsgId = Number(openRedEnvelopeMatch[1]);
-              await window.groupChatSystem.executeAiClaimRedEnvelopeCommand(senderName, targetMsgId);
-              textContent = textContent.replace(actionOpenRedEnvelopeRegex, "").trim();
-            }
-
-            // 检查并执行 AI 收取定向转账指令 [RECEIVE_TRANSFER: 消息ID]
-            const actionReceiveTransferRegex = /[\[【](?:RECEIVE_TRANSFER|收钱|收转账)\s*[:：]\s*(\d+)[\]】]/i;
-            const receiveTransferMatch = textContent.match(actionReceiveTransferRegex);
-            if (receiveTransferMatch && window.groupChatSystem) {
-              const targetMsgId = Number(receiveTransferMatch[1]);
-              await window.groupChatSystem.executeAiClaimTransferCommand(senderName, targetMsgId);
-              textContent = textContent.replace(actionReceiveTransferRegex, "").trim();
-            }
-
-            // 检查并执行 AI 已阅公告指令 [READ_ANNOUNCE: 消息ID] [2]
-            const actionReadAnnounceRegex = /[\[【](?:READ_ANNOUNCE|已阅公告|阅读公告)\s*[:：]\s*(\d+)[\]】]/i;
-            const readAnnounceMatch = textContent.match(actionReadAnnounceRegex);
-            if (readAnnounceMatch && window.groupChatSystem) {
-              const targetMsgId = Number(readAnnounceMatch[1]);
-              await window.groupChatSystem.executeAiReadAnnounceCommand(senderName, targetMsgId);
-              textContent = textContent.replace(actionReadAnnounceRegex, "").trim();
-            }
-
-            // 检查并执行 AI 参与投票指令 [VOTE_POLL: 消息ID (选项索引)] [2]
-            const actionVotePollRegex = /[\[【](?:VOTE_POLL|参与投票|投票)\s*[:：]\s*(\d+)\s*\((\d+)\)[\]】]/i;
-            const votePollMatch = textContent.match(actionVotePollRegex);
-            if (votePollMatch && window.groupChatSystem) {
-              const targetMsgId = Number(votePollMatch[1]);
-              const optIdx = parseInt(votePollMatch[2]);
-              await window.groupChatSystem.executeAiVotePollCommand(senderName, targetMsgId, optIdx);
-              textContent = textContent.replace(actionVotePollRegex, "").trim();
-            }
-
-            if (textContent) {
-              await window.groupChatSystem.saveGroupAiMessage(senderName, textContent);
-            }
-          }
-
-          if (hasGroupReplies) {
-            header.classList.remove("header-typing");
-            header.innerText = originalTitle;
-            btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
-            onlineAbortController = null;
-            return; // 直接退出，阻止原有单聊上屏逻辑
-          }
-        }
-
-        // === 智能高精拉黑与解除拉黑指令高自愈性解析器（全/半角英文或中文括号均可） ===
-        const charBlockRegex = /(\[|【)(BLOCK|拉黑)\s*[:：]\s*([^\]】\n]+)(\]|】)/i;
-        const charUnblockRegex = /(\[|【)(UNBLOCK|解除拉黑)(\]|】)/i;
-
-        const blockMatch = rawReply.match(charBlockRegex);
-        if (blockMatch) {
-          const reason = blockMatch[3].trim();
-          await db.sessions.update(activeSessionId, {
-            isBlockedByChar: 1,
-            blockByCharReason: reason
-          });
-          rawReply = rawReply.replace(charBlockRegex, "").trim();
-          showToast(`对方（${originalTitle}）拉黑了你。原因：${reason}`);
-        }
-
-        const unblockMatch = rawReply.match(charUnblockRegex);
-        if (unblockMatch) {
-          await db.sessions.update(activeSessionId, {
-            isBlockedByChar: 0,
-            blockByCharReason: ""
-          });
-          rawReply = rawReply.replace(charUnblockRegex, "").trim();
-          showToast(`对方（${originalTitle}）已解除对你的拉黑`);
-        }
-
-        // === Char (AI) 撤回消息处理 ===
-        const recallRegex = /[\[【](RECALL|撤回|撤回消息)(?:\s*:\s*(\d+))?[\]】]/i;
-        const recallMatch = rawReply.match(recallRegex);
-        if (recallMatch) {
-          const targetId = recallMatch[2] ? Number(recallMatch[2]) : null;
-          let targetMsg = null;
-          if (targetId) {
-            targetMsg = await db.messages.get(targetId);
-          } else {
-            const charMsgs = await db.messages.where('sessionId').equals(activeSessionId).and(m => m.senderType === 'char').toArray();
-            targetMsg = charMsgs.sort((a,b) => b.timestamp - a.timestamp)[0];
-          }
-
-          if (targetMsg && targetMsg.senderType === 'char' && targetMsg.sessionId === activeSessionId) {
-            await db.messages.update(targetMsg.id, { isRecalled: 1 });
-            rawReply = rawReply.replace(recallRegex, "").trim();
-            await renderDialogMessages();
-          } else {
-            rawReply = rawReply.replace(recallRegex, "").trim();
-            alert(`系统提示：对方（${originalTitle}）试图撤回一则消息（ID: ${targetId || '最新'}），但由于消息ID无效，撤回失败！`);
-          }
-        }
-
-        // === Char (AI) 自动驱使本地音乐播放指令解析 ===
-        const playMusicRegex = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
-        const playMusicMatch = rawReply.match(playMusicRegex);
-        if (playMusicMatch) {
-          try {
-            const parsed = JSON.parse(playMusicMatch[2]);
-            const targetIndex = parseInt(parsed.index);
-            if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
-              window.mcpSystem.playTrackByIndex(targetIndex);
-            } else if (parsed.title && window.mcpSystem && typeof window.mcpSystem.playTrackByTitle === 'function') {
-              window.mcpSystem.playTrackByTitle(parsed.title);
-            }
-          } catch(e) {
-            console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
-          }
-          // 擦除放歌指令，避免污染对话气泡呈现
-          rawReply = rawReply.replace(playMusicRegex, "").trim();
-        }
-
-        // === Char (AI) 停止/暂停音乐指令解析 ===
-        const stopMusicRegex = /[\[【](STOP_MUSIC|停止音乐|暂停音乐|MCP_STOP_MUSIC)[\]】]/i;
-        if (stopMusicRegex.test(rawReply)) {
-          if (window.mcpSystem && typeof window.mcpSystem.stopMusic === 'function') {
-            window.mcpSystem.stopMusic();
-          }
-          // 擦除停止指令，避免污染对话气泡呈现
-          rawReply = rawReply.replace(stopMusicRegex, "").trim();
-        }
-
-        // === Char (AI) 自主设闹钟指令解析（容错：JSON 解析失败也能提取 delay 设闹钟）===
-        const setAlarmRegex = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
-        const setAlarmMatch = rawReply.match(setAlarmRegex);
-        if (setAlarmMatch) {
-          if (window.mcpSystem && typeof window.mcpSystem.setAlarmFromRawJson === 'function') {
-            window.mcpSystem.setAlarmFromRawJson(setAlarmMatch[2]);
-          }
-          // 擦除设闹钟指令，避免污染对话气泡
-          rawReply = rawReply.replace(setAlarmRegex, "").trim();
-        }
-
-        // === Char (AI) 蓝牙设备控制指令解析 ===
-        const btCmdRegex = /[\[【](BLUETOOTH_CMD|蓝牙控制|MCP_BLUETOOTH)[\]】]\s*(\{[\s\S]*?\})/i;
-        const btCmdMatch = rawReply.match(btCmdRegex);
-        if (btCmdMatch) {
-          if (window.mcpSystem && typeof window.mcpSystem.handleBluetoothCommand === 'function') {
-            window.mcpSystem.handleBluetoothCommand(btCmdMatch[2]);
-          }
-          // 擦除蓝牙指令，避免污染对话气泡
-          rawReply = rawReply.replace(btCmdRegex, "").trim();
-        }
-
-        // === Char (AI) 表情反应处理 ===
-        const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
-        const reactMatch = rawReply.match(reactRegex);
-        if (reactMatch) {
-          const targetId = Number(reactMatch[1]);
-          const emoji = reactMatch[2].trim();
-          const validEmojis = ["😂", "😚", "😌", "😊", "👿", "😪", "😭", "😣", "🙄", "🥺", "🥵", "🥰", "😉", "😏"];
-
-          if (validEmojis.includes(emoji)) {
-            const targetMsg = await db.messages.get(targetId);
-            if (targetMsg && targetMsg.sessionId === activeSessionId) {
-              const msgs = await db.messages.where('sessionId').equals(activeSessionId).sortBy('timestamp');
-              const last20 = msgs.slice(-20);
-              const isWithinLastRounds = last20.some(m => m.id === targetId);
-              if (isWithinLastRounds) {
-                await db.messages.update(targetId, { reactionEmoji: emoji });
-                rawReply = rawReply.replace(reactRegex, "").trim();
-                await renderDialogMessages();
-              } else {
-                rawReply = rawReply.replace(reactRegex, "").trim();
-              }
-            } else {
-              rawReply = rawReply.replace(reactRegex, "").trim();
-            }
-          } else {
-            rawReply = rawReply.replace(reactRegex, "").trim();
-          }
-        }
-
-        // === 【社交动作指令预处理】在 MCP 循环之前提取并执行 [AUTO_MOMENT] / [FORUM_POST] 等 ===
-        // 避免 AI 同时输出 [CALL_TOOL] 和 [FORUM_POST] 时，MCP 循环先把 FORUM_POST 当作普通文本消耗掉
-        let pendingSocialNotices = [];
-        if (window.socialActions && typeof window.socialActions.detectAndExecute === 'function') {
-          try {
-            const saResult = await window.socialActions.detectAndExecute(rawReply, activeSessionId);
-            rawReply = saResult.cleanedText;
-            pendingSocialNotices = saResult.sysNotices || [];
-          } catch (e) { /* 静默 */ }
-        }
-
-        // === 【MCP 连贯 Agent 循环与折叠卡片渲染引擎（支持嵌套 JSON 与裸 JSON 智能自愈）】 ===
-        const isAgentLoopEnabled = localStorage.getItem("settings-mcp-agent-loop-enabled") !== "false";
-        let maxAgentLoops = 5; // 安全深度限制
-
-        while (maxAgentLoops > 0) {
-          const toolCallInfo = parseToolCallFromReply(rawReply);
-          if (!toolCallInfo || !window.mcpClientSystem) {
-            break;
-          }
-
-          try {
-            const fullMatchStr = toolCallInfo.fullMatchStr;
-            const toolIndex = toolCallInfo.index;
-
-            // 提取工具调用之前的“前半句台词”
-            let prefixText = rawReply.substring(0, toolIndex).trim();
-
-            // 若思维链尚待绑定，将完整的 <think> 标签重新附着在第一句前置台词头部
-            if (sessionCotHeader) {
-              prefixText = sessionCotHeader + (prefixText ? ("\n" + prefixText) : "");
-              sessionCotHeader = ""; // 标记为已消耗，防止后续重复绑卡
-            }
-
-            if (prefixText) {
-              await saveAndRenderMessage('char', prefixText, 'text', reqSessionId);
-            }
-
-            const toolCallPayload = toolCallInfo.payload;
-            const serverName = toolCallPayload.server;
-            const toolName = toolCallPayload.tool;
-            const toolArgs = toolCallPayload.arguments || {};
-
-            rawReply = rawReply.substring(toolIndex + fullMatchStr.length).trim();
-
-            showToast(`正在调用 MCP 工具: [${serverName}] -> ${toolName}...`);
-
-            let executionResult = null;
-            let isSuccess = true;
-            try {
-              executionResult = await window.mcpClientSystem.callMcpTool(serverName, toolName, toolArgs);
-            } catch (execErr) {
-              isSuccess = false;
-              executionResult = { error: execErr.message };
-            }
-
-            const toolCardData = {
-              server: serverName,
-              tool: toolName,
-              arguments: toolArgs,
-              result: executionResult,
-              status: isSuccess ? 'success' : 'error'
-            };
-            const toolMsg = {
-              sessionId: activeSessionId,
-              senderType: 'char',
-              senderId: 0,
-              content: JSON.stringify(toolCardData),
-              contentType: 'mcp_tool',
-              timestamp: Date.now()
-            };
-            toolMsg.id = await db.messages.add(toolMsg);
-            await appendMessageToDOM(toolMsg);
-
-            const assistantRecord = prefixText ? `${prefixText}\n[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]` : `[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]`;
-            messagesToSend.push({ role: "assistant", content: assistantRecord });
-            messagesToSend.push({
-              role: "system",
-              content: `【MCP 工具执行反馈通知】\n工具 [${serverName}.${toolName}] 返回了以下执行结果：\n${JSON.stringify(executionResult)}\n\n请结合上述工具执行结果，继续顺着你刚才的话（如有）以自然角色的口吻接下去说。如果你认为还需要调用其他工具，可以继续嵌入 [CALL_TOOL: ...] 指令。`
-            });
-
-            if (!isAgentLoopEnabled) break;
-            maxAgentLoops--;
-
-            rawReply = await fetchStreamOrJson(api.url, api, messagesToSend, onlineAbortController.signal, handleStreamChunk);
-
-            if (streamingBubble) {
-              streamingBubble.remove();
-              streamingBubble = null;
-            }
-
-            rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
-            if (!rawReply) break;
-
-          } catch (e) {
-            console.error("MCP 工具 Agent 循环异常:", e);
-            showToast("MCP 工具执行终止: " + e.message);
-            break;
-          }
-        }
-
-        // 尝试解析心声随动 [STATUS] 格式（用括号平衡法提取完整 JSON）
-        let statusJson = null;
-        let textReply = rawReply;
-        if (isStatusAutoOn) {
-          const statusIdx = rawReply.indexOf('[STATUS]');
-          if (statusIdx !== -1) {
-            const afterStatus = rawReply.substring(statusIdx + 8);
-            const balancedJson = extractBalancedJson(afterStatus);
-            if (balancedJson) {
-              try {
-                statusJson = JSON.parse(balancedJson);
-                textReply = rawReply.substring(0, statusIdx).trim();
-                // 保存心声到 status_history（线上：isTheater=0）
-                try {
-                  const userRegex = /\buser\b/gi;
-                  const cleanProp = (val) => (typeof val === 'string') ? val.replace(userRegex, (sessObj?.customUserName || '我')) : val;
-                  await db.status_history.add({
-                    sessionId: activeSessionId,
-                    theaterId: 0,
-                    isTheater: 0,
-                    source: 'online',
-                    timestamp: Date.now(),
-                    attire: cleanProp(statusJson.attire) || '未详',
-                    affection: cleanProp(statusJson.affection) || '未详',
-                    excitement: cleanProp(statusJson.excitement) || '未详',
-                    thoughts: cleanProp(statusJson.thoughts) || '未详',
-                    hiddenCorners: cleanProp(statusJson.hiddenCorners) || '无'
-                  });
-                } catch (saveErr) { console.warn('保存心声历史失败:', saveErr); }
-              } catch (e) {
-                console.warn("解析心声 JSON 失败:", e);
-              }
-            }
-          }
-        }
-
-        // 尝试解析翻译随动 [TRANSLATE] 格式
-        // 结构化译文块解析（默认单次调用方案）：从正文末尾剥离 [TRANS_JSON] 块
-        let autoTransEntries = [];
-        if (isTranslateAutoOn) {
-          const ex = extractTranslateJsonBlock(rawReply);
-          if (ex.entries.length > 0) {
-            autoTransEntries = ex.entries;
-            rawReply = ex.cleanText;
-            textReply = textReply.replace(/[\[【]TRANS_JSON[\]】][\s\S]*$/i, "").trim();
-          }
-        }
-
-        let translationText = null;
-        if (isTranslateAutoOn) {
-          // 这里将保留支持旧的全局 [TRANSLATE]xxx 格式，但重点支持新的分段解析。
-          // 因为在 chat_html_widget 渲染层面，我们希望把翻译嵌入到气泡文字中，
-          // 所以在数据层，我们不再将其抽取到 translationText 字段，而是将其直接保留在 textReply 中，
-          // 并通过替换为特定的 HTML 标签以便在渲染时识别，或者在渲染时直接解析 [TRANSLATE]...[/TRANSLATE] 标签。
-          // 这里的处理简化为：如果是旧格式（只有一个 [TRANSLATE] 且到末尾），则抽取出来；
-          // 如果是新格式，就不做处理，直接留给渲染层去处理。
-          const oldTranslateMatch = rawReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
-          const newTranslateMatch = rawReply.match(/\[TRANSLATE\][\s\S]*?\[\/TRANSLATE\]/);
-          if (oldTranslateMatch && !newTranslateMatch) {
-            translationText = oldTranslateMatch[1].trim();
-            textReply = textReply.replace(/\[TRANSLATE\]\s*[\s\S]*?(?=\[STATUS\]|$)/, '').trim();
-          }
-        }
-
-        // === 无条件兜底标签清洗（极其重要）===
-        // 修改这里的清洗，仅清洗没有闭合标签的旧版全局翻译，
-        // 含有闭合标签 [/TRANSLATE] 的新版分段翻译予以保留，交由前端渲染组件处理。
-        textReply = textReply
-          .replace(/[\[【]STATUS[\]】][\s\S]*$/gi, '')
-          .trim();
-        if(!textReply.includes('[/TRANSLATE]')) {
-            textReply = textReply
-              .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
-              .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
-              .trim();
-        }
-
-        // 小程序分享：解析 AI 回复中的 [MP_INVITE] 指令 → 转为 char 发出的分享卡片（无损，未开启开关则无效）
-        if (window.miniProgramSystem && typeof window.miniProgramSystem.parseAndApplyInvite === "function") {
-          try {
-            const cleaned = await window.miniProgramSystem.parseAndApplyInvite(rawReply, activeSessionId);
-            if (cleaned && cleaned !== rawReply) {
-              rawReply = cleaned;
-              textReply = textReply.replace(/\[MP_INVITE\]\s*\{[\s\S]*?\}/, "").trim();
-            }
-          } catch (e) {}
-        }
-
-        // === 【全模态多语境时序渲染中枢 3.0】：绑定未消耗的 CoT + 顺序分发文本与多媒体指令 ===
-        if (sessionCotHeader) {
-          textReply = sessionCotHeader + (textReply ? ("\n" + textReply) : "");
-          sessionCotHeader = "";
-        }
-
-        const parsedCotMaster = parseThoughtFromText(textReply);
-        let preservedThoughtHeader = "";
-        let cleanReplyText = textReply;
-        if (parsedCotMaster.thought) {
-          preservedThoughtHeader = `<think>\n${parsedCotMaster.thought}\n</think>\n`;
-          cleanReplyText = parsedCotMaster.cleanText;
-        }
-
-        // 0. 图片标签格式归一化预处理
-        // 兼容 AI 输出的非标准格式：[图片描述: xxx] / [图片描述：xxx] / [图片: xxx] / [图片：xxx] / 【图片描述: xxx】
-        // 统一归一化为标准 [IMAGE] xxx 格式，确保后续 transactionRegex 能正确识别
-        cleanReplyText = cleanReplyText
-          .replace(/([\[【])\s*图片描述\s*[:：]\s*([\s\S]*?)([\]】])/gi, function(m, b1, content, b2) {
-            return '[IMAGE] ' + String(content).trim();
-          })
-          .replace(/([\[【])\s*图片\s*[:：]\s*([\s\S]*?)([\]】])/gi, function(m, b1, content, b2) {
-            return '[IMAGE] ' + String(content).trim();
-          });
-
-        // 1. 顺序解析出文本与多媒体卡片序列 (保持 AI 吐字的原生前后顺序，杜绝多媒体卡片置顶置乱)
-        // 关键修复：lookahead 只在下一个已知指令 token（[TOKEN] / 【TOKEN】）处切片，避免把 JSON 数组里的 [ 误判为新 token 起点导致 JSON 被腰斩
-        const tokenKeywords = "TRANSFER|RED_ENVELOPE|RECEIVE_TRANSFER|OPEN_RED_ENVELOPE|VOICE|IMAGE|LOCATION|PAY_FOR_ME|GIFT|AGREE_PAY|转账|红包|收钱|收转账|拆红包|领红包|语音|图片|位置|代付|送礼|同意代付";
-        const transactionRegex = new RegExp("([\\[【])(" + tokenKeywords + ")([\\]】])\\s*([\\s\\S]*?)(?=(?:[\\[【])(?:" + tokenKeywords + ")[\\]】]|$)", "gi");
-        
-        let responseItems = [];
-        let lastIndex = 0;
-        let tMatch;
-
-        // 辅助智能分发切片器：基于 Session 配置的【最少句数】与【最多气泡数】实施受控拟真分句
-        const minSentences = sessObj?.minSentenceCount || 1;
-        const maxSentences = sessObj?.maxSentenceCount || 3;
-
-        const splitTextIntoBubbles = (text, minCount = minSentences, maxCount = maxSentences) => {
-          if (!text || typeof text !== 'string') return [];
-          
-          // 预处理：提取并保护新版翻译标签，防止被拆分
-          let transMap = {};
-          let tIdx = 0;
-          text = text.replace(/(?:[\n\r\s]*)\[TRANSLATE\]([\s\S]*?)\[\/TRANSLATE\]/gi, (m, content) => {
-            let key = `__TR${tIdx++}__`;
-            transMap[key] = `\n[TRANSLATE]${content.trim()}[/TRANSLATE]`;
-            return key;
-          });
-
-          // 第一步：按 [SPLIT] / 【SPLIT】 / 换行 粗切成大段（不使用捕获组，避免 undefined）
-          let coarseParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => (p || '').trim()).filter(Boolean);
-          // 第二步：从每段中分离出表情包标签，使其作为独立分句依据
-          let initialParts = [];
-          coarseParts.forEach(part => {
-            const subParts = part.split(/(【表情包：[^】]+】)/).map(p => (p || '').trim()).filter(Boolean);
-            initialParts.push(...subParts);
-          });
-          let rawBubbles = [];
-          initialParts.forEach(part => {
-            const quoteMatch = part.match(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i);
-            let quotePrefix = "";
-            let barePart = part;
-            if (quoteMatch) {
-              quotePrefix = quoteMatch[0];
-              barePart = part.substring(quoteMatch[0].length).trim();
-            }
-            // 表情包格式标签：作为独立分句依据，单独成为一个气泡
-            if (/^【表情包：[^】]+】$/.test(barePart)) {
-              let bubbleText = barePart;
-              if (rawBubbles.length === 0 && quotePrefix) {
-                bubbleText = quotePrefix + bubbleText;
-              }
-              if (bubbleText) rawBubbles.push(bubbleText);
-              return;
-            }
-            // 按句末标点 (。！？!? 中英文) 拆分句项列表
-            const sentenceRegex = /([^。！？!?]+[。！？!?]+(?:__TR\d+__)*)/g;
-            let subSentences = barePart.match(sentenceRegex);
-            // 加强约束：若句末标点拆出的句数不足 minCount（模型只返回 1-2 句），
-            // 用弱标点（逗号/分号/顿号/省略号 中英文）尝试再拆出更多句，强化时序级联效果
-            if ((!subSentences || subSentences.length < minCount) && barePart.length > 0) {
-              const weakRegex = /([^，；、,;…]+[，；、,;…]+(?:__TR\d+__)*)/g;
-              const weakParts = barePart.match(weakRegex);
-              if (weakParts && weakParts.length > (subSentences ? subSentences.length : 1)) {
-                let weakLen = 0;
-                weakParts.forEach(w => weakLen += w.length);
-                const weakLeftover = barePart.substring(weakLen).trim();
-                subSentences = weakParts;
-                if (weakLeftover) subSentences.push(weakLeftover);
-              }
-            }
-            if (subSentences && subSentences.length > 0) {
-              let reassembledLen = 0;
-              let currentChunk = [];
-              subSentences.forEach((s, sIdx) => {
-                currentChunk.push(s.trim());
-                reassembledLen += s.length;
-                // 只有合并句数达到最少句数 minCount，或是最后一个标点句时，才打包为一个独立的组合气泡
-                if (currentChunk.length >= minCount || sIdx === subSentences.length - 1) {
-                  let chunkText = currentChunk.join("");
-                  currentChunk = [];
-                  if (rawBubbles.length === 0 && quotePrefix) {
-                    chunkText = quotePrefix + chunkText;
-                    quotePrefix = "";
-                  }
-                  if (chunkText) rawBubbles.push(chunkText);
-                }
-              });
-              // 补全末尾未带句末标点的残余尾巴
-              const leftover = barePart.substring(reassembledLen).trim();
-              if (leftover) {
-                if (rawBubbles.length > 0) {
-                  rawBubbles[rawBubbles.length - 1] += leftover;
-                } else {
-                  rawBubbles.push(leftover);
-                }
-              }
-            } else {
-              let singleText = part;
-              if (rawBubbles.length === 0 && quotePrefix) {
-                singleText = quotePrefix + singleText;
-              }
-              rawBubbles.push(singleText);
-            }
-          });
-          
-          // 还原翻译标签
-          rawBubbles = rawBubbles.map(bubble => bubble.replace(/__TR\d+__/g, m => transMap[m] || m));
-          
-          // 核心上限管控：如果拆出的气泡数超过上限 maxCount，把溢出的气泡全部合拢合并到最后一个气泡中
-          if (rawBubbles.length > maxCount) {
-            const allowedBubbles = rawBubbles.slice(0, maxCount - 1);
-            const overflowText = rawBubbles.slice(maxCount - 1).join("");
-            allowedBubbles.push(overflowText);
-            return allowedBubbles.filter(Boolean);
-          }
-          return rawBubbles.filter(Boolean);
-        };
-
-        while ((tMatch = transactionRegex.exec(cleanReplyText)) !== null) {
-          const matchIndex = tMatch.index;
-          if (matchIndex > lastIndex) {
-            const textSegment = cleanReplyText.substring(lastIndex, matchIndex).trim();
-            if (textSegment) {
-              let splitParts = splitTextIntoBubbles(textSegment);
-              splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
-            }
-          }
-
-          responseItems.push({
-            kind: 'special',
-            tokenRaw: tMatch[2].toUpperCase(),
-            contentRaw: tMatch[4].trim(),
-            fullMatch: tMatch[0]
-          });
-
-          lastIndex = transactionRegex.lastIndex;
-        }
-
-        if (lastIndex < cleanReplyText.length) {
-          const remainingText = cleanReplyText.substring(lastIndex).trim();
-          if (remainingText) {
-            let splitParts = splitTextIntoBubbles(remainingText);
-            splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
-          }
-        }
-
-        if (responseItems.length === 0 && cleanReplyText.trim()) {
-          let splitParts = splitTextIntoBubbles(cleanReplyText);
-          splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
-        }
-
-        // 2. 思维链独立存储：不再附着到首条文本消息内容里，而是作为独立 thought 字段保存到首条消息
-        //    这样编辑/格式修复/翻译/收藏双击首条消息时不会带上思维链
-        let preservedThoughtText = preservedThoughtHeader ? parseThoughtFromText(preservedThoughtHeader).thought : "";
-
-        // 3. 顺序时序队列上屏
-        const sessionObj = await db.sessions.get(activeSessionId);
-        const userName = sessionObj?.customUserName || "我";
-
-        // 翻译随动：优先用正文末尾的结构化译文块，按原文片段精确匹配到各气泡（一次调用即可）；
-        // 仅当子开关"翻译未命中时允许追加一次 API"开启且仍有气泡缺译文时，才追加一次批量翻译调用
-        let autoTranslationByIndex = {};
-        if (isTranslateAutoOn && Array.isArray(responseItems) && responseItems.length > 0) {
-          const textItems = [];
-          responseItems.forEach((it, idx) => {
-            if (it && it.kind === 'text' && String(it.content || "").trim()) {
-              textItems.push({ idx: idx, content: String(it.content) });
-            }
-          });
-          if (textItems.length > 0) {
-            if (autoTransEntries.length > 0) {
-              const matched = mapTranslationsToBubbles(textItems.map(x => x.content), autoTransEntries);
-              Object.keys(matched).forEach(k => {
-                const hit = textItems[Number(k)];
-                if (hit && matched[k]) autoTranslationByIndex[hit.idx] = matched[k];
-              });
-            }
-            const missing = textItems.filter(x => !autoTranslationByIndex[x.idx] && shouldAutoTranslateText(x.content));
-            if (missing.length > 0 && isTranslateFallbackOn) {
-              try {
-                showToast("正在生成翻译…");
-                const trans = await translateTextsBatch(missing.map(x => x.content));
-                if (Array.isArray(trans)) {
-                  missing.forEach((x, k) => { if (trans[k]) autoTranslationByIndex[x.idx] = trans[k]; });
-                }
-              } catch (e) {
-                console.warn("翻译随动兜底调用失败（本次仅显示正文）:", e);
-              }
-            }
-          }
-        }
-
-        let currentItemIndex = 0;
-        async function processNextResponseItem() {
-          if (currentItemIndex < responseItems.length) {
-            const item = responseItems[currentItemIndex];
-            currentItemIndex++;
-
-            if (item.kind === 'text') {
-              // 检测 char 主动发起通话指令 [AUTO_CALL:voice|video]，触发后清洗指令文本
-              let textToSave = item.content;
-              if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
-                textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, reqSessionId);
-              }
-              // 检测 char 突然发起查手机指令 [CHECK_PHONE]{...}，触发后清洗指令文本
-              if (window.reverseCheckSystem && typeof window.reverseCheckSystem.detectAndTriggerCheckPhone === 'function') {
-                textToSave = window.reverseCheckSystem.detectAndTriggerCheckPhone(textToSave, reqSessionId);
-              }
-              // 翻译随动：优先取上屏前预生成的逐气泡译文；兼容旧版 [TRANSLATE] 标签
-              const transForThis = translationText || autoTranslationByIndex[currentItemIndex - 1] || null;
-              translationText = null;
-              // 思维链：只附加到第一条 char 文本消息上（独立字段，不污染正文）
-              const thoughtForThis = preservedThoughtText;
-              preservedThoughtText = "";
-              await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
-            } else if (item.kind === 'special') {
-              await processAndRenderSpecialItem(item, userName, reqSessionId);
-            }
-
-            if (currentItemIndex < responseItems.length) {
-              const delay = 1000;
-              setTimeout(processNextResponseItem, delay);
-            } else {
-              // 所有气泡上屏完毕后，写入社交动作系统消息（朋友圈/论坛发帖/建立小号等）
-              if (pendingSocialNotices.length > 0 && window.socialActions) {
-                for (const notice of pendingSocialNotices) {
-                  await window.socialActions.writeSysNoticeToChat(activeSessionId, notice);
-                }
-                pendingSocialNotices = [];
-              }
-              header.classList.remove("header-typing");
-              header.innerText = originalTitle;
-              if (typeof checkAndTriggerAutoSummary !== 'undefined') {
-                checkAndTriggerAutoSummary(activeSessionId);
-              }
-            }
-          } else {
-            // 空队列也需处理社交动作系统消息
-            if (pendingSocialNotices.length > 0 && window.socialActions) {
-              for (const notice of pendingSocialNotices) {
-                await window.socialActions.writeSysNoticeToChat(activeSessionId, notice);
-              }
-              pendingSocialNotices = [];
-            }
-            header.classList.remove("header-typing");
-            header.innerText = originalTitle;
-            if (typeof checkAndTriggerAutoSummary !== 'undefined') {
-              checkAndTriggerAutoSummary(activeSessionId);
-            }
-          }
-        }
-
-        if (responseItems.length > 0) {
-          await processNextResponseItem();
-        } else {
-          header.classList.remove("header-typing");
-          header.innerText = originalTitle;
-          if (typeof checkAndTriggerAutoSummary !== 'undefined') {
-            checkAndTriggerAutoSummary(activeSessionId);
-          }
-        }
-
-      } catch (err) {
-        if (err.name === 'AbortError') {
-          // 被中止，默默忽略，不触发错误提示卡片
-          return;
-        }
-        console.error(err);
-        // 会话隔离：只在用户仍在原会话时才弹错误框，避免跨会话干扰
-        if (activeSessionId === reqSessionId) {
-          // 视觉降级：本次带图且报错 → 自动关闭图片发送，下次仅发文字描述
-          if (window._visionUsedInRequest) {
-            window._visionUsedInRequest = false;
-            localStorage.setItem('api-vision-mode', 'off');
-            showCustomAlert("模型可能不支持图片，已自动降级",
-              (err.message || '') + "\n\n已切换为「仅文字描述」模式，请再点一次获取回复。若该模型其实支持视觉，可执行 localStorage.setItem('api-vision-mode','on') 重新开启。");
-          } else {
-            showCustomAlert("API 发生错误", err.message);
-          }
-        }
-      } finally {
-        // 会话隔离：只在用户仍在原请求会话时才恢复 header 和按钮 UI
-        // 如果用户已切换到其他会话，openWeChatDialog 已经处理了新会话的 UI 状态
-        if (activeSessionId === reqSessionId) {
-          header.classList.remove("header-typing");
-          header.innerText = originalTitle;
-          btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
-        }
-        onlineAbortController = null;
-      }
-    };
+    finalSystemPrompt += translateExtra;
+    if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+      window.contextManager.pushExtraSection("online", { id: "translate_auto", label: "翻译随动", group: "开关", content: translateExtra, enabled: true });
+    }
   }
+
+  // 小程序分享开关：注入小程序分享卡片指令（无损，开关关闭则完全不影响）
+  if (window.miniProgramSystem && typeof window.miniProgramSystem.buildSharePrompt === "function") {
+    try {
+      const mpPrompt = await window.miniProgramSystem.buildSharePrompt(sid);
+      if (mpPrompt) {
+        finalSystemPrompt += mpPrompt;
+        if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+          window.contextManager.pushExtraSection("online", { id: "miniprogram_share", label: "小程序分享", group: "开关", content: mpPrompt, enabled: true });
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 主动发起通话特权（开关打开才注入；该段以前只定义了 builder 却从没被调用）
+  if (window.callSystem && typeof window.callSystem.buildAutoCallPromptSegment === "function") {
+    try {
+      const callPrompt = await window.callSystem.buildAutoCallPromptSegment(sid);
+      if (callPrompt) {
+        finalSystemPrompt += "\n\n" + callPrompt;
+        if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+          window.contextManager.pushExtraSection("online", { id: "auto_call", label: "主动发起通话", group: "开关", content: callPrompt, enabled: true });
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 突然发起查手机特权（开关打开才注入；由 char 在对话里用 [CHECK_PHONE] 自己挑时机）
+  if (window.reverseCheckSystem && typeof window.reverseCheckSystem.buildAutoCheckPhonePromptSegment === "function") {
+    try {
+      const cpPrompt = await window.reverseCheckSystem.buildAutoCheckPhonePromptSegment(sid);
+      if (cpPrompt) {
+        finalSystemPrompt += "\n\n" + cpPrompt;
+        if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+          window.contextManager.pushExtraSection("online", { id: "auto_check_phone", label: "突然查手机请求", group: "开关", content: cpPrompt, enabled: true });
+        }
+      }
+    } catch (e) {}
+  }
+
+  // 注入回溯重回要求（若存在），约束 char 本次重回的内容方向
+  if (window._rerollRequirement) {
+    const rerollExtra = `\n\n【回溯重回要求（本次回复必须严格遵守）】：${window._rerollRequirement}`;
+    finalSystemPrompt += rerollExtra;
+    if (window.contextManager && typeof window.contextManager.pushExtraSection === "function") {
+      window.contextManager.pushExtraSection("online", { id: "reroll", label: "回溯重回要求", group: "附加", content: rerollExtra, enabled: true });
+    }
+    // 注入后立即清除，避免污染后续普通回复
+    window._rerollRequirement = "";
+  }
+
+  const messagesToSend = [{ role: "system", content: finalSystemPrompt }];
+
+  // 核心注入：在消息对话前注入领取提醒，实现极其逼生的互动对白！
+  if (autoReclaimContext) {
+    messagesToSend.push({
+      role: "system", 
+      content: `【微信收账通知（请立刻动态做出符合性格特色的反应）】：你在打开微信时，屏幕上弹出了你刚刚点击领取并成功入账用户钱款的通知：\n${autoReclaimContext}\n请你在本次回复中，配合符合你自身身份口吻 and 态度的台词，对此做出道谢、调侃、戏谑或客气回应，严厉禁止说教！`
+    });
+  }
+
+  const sessObj = await db.sessions.get(sid);
+
+  // 预解析当前会话的角色名与用户名，用于转发卡片在上下文中的明确摘要（标注谁转发给谁）
+  let _chatCharName = "对方";
+  let _chatMyName = "我";
+  if (sessObj) {
+    if (sessObj.customCharName) {
+      _chatCharName = sessObj.customCharName;
+    } else if (sessObj.charId) {
+      const _charArch = await db.archives.get(sessObj.charId);
+      if (_charArch && _charArch.name) _chatCharName = _charArch.name;
+    }
+    if (sessObj.userId) {
+      const _userArch = await db.archives.get(sessObj.userId);
+      if (_userArch && _userArch.name) _chatMyName = _userArch.name;
+    }
+  }
+
+  // 异步映射历史记录，智能计算设定/真实时间流逝，插入带精准场景虚拟时间的系统标块
+  const simNow = getSimulatedNow(sessObj);
+  let prevTime = null;
+  // 角色交替守卫：部分 API 严格要求 user/assistant 交替，连续同角色消息自动合并，防止请求被拒
+  const pushMergedMessage = (role, content) => {
+    const lastMsg = messagesToSend[messagesToSend.length - 1];
+    if (lastMsg && lastMsg.role === role && typeof lastMsg.content === 'string') {
+      lastMsg.content += "\n" + content;
+    } else {
+      messagesToSend.push({ role, content });
+    }
+  };
+  for (const tl of mergedTimeline) {
+    // === 线下赴约记录分支：标签清洗 + 场景隔离，防止线上线下格式混淆 ===
+    if (tl.type === 'offline') {
+      const om = tl.m;
+      // 场景隔离提示：仅在第一条线下记录出现前注入一次
+      if (!offlineSceneHintPushed) {
+        offlineSceneHintPushed = true;
+        messagesToSend.push({
+          role: "system",
+          content: "【场景切换提示（重要）】\n下方以【线下赴约】标签开头的对话记录，是你们此前在线下真实见面（面对面，非手机微信聊天）时发生的小说白描式对白。它们仅作为背景记忆供你回忆当时发生的事，请不要把它们当作当前的聊天格式。\n现在你们已经回到线上微信聊天场景，你接下来的回复必须立刻回归线上微信短句聊天的格式与口吻，绝对禁止继续使用线下白描/小说式描写格式，也禁止输出任何【线下赴约】标签！"
+        });
+      }
+      // 标签清洗：剥离线下白描中的思维链 / 心声随动 / 翻译随动 / 引用 / MSG_ID 等标签，防止污染线上格式
+      let offlineClean = om.content;
+      if (typeof offlineClean === 'string') {
+        offlineClean = offlineClean
+          .replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "")
+          .replace(/\n?\s*\[STATUS\]\s*\{[\s\S]*?\}\s*/gi, "")
+          .replace(/\n?\s*【心声】\s*\{[\s\S]*?\}\s*/gi, "")
+          .replace(/\n?\s*\[TRANSLATE\]\s*[\s\S]*$/gi, "")
+          .replace(/[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/gi, "")
+          .replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "")
+          .trim();
+      }
+      if (offlineClean) {
+        const offlineSender = om.senderType === 'user' ? _chatMyName : _chatCharName;
+        pushMergedMessage(
+          om.senderType === 'user' ? 'user' : 'assistant',
+          `【线下赴约·${offlineSender}】${offlineClean}`
+        );
+      }
+      // 线下记录同样推进时间线，保持后续时间流逝计算连续
+      prevTime = om.timestamp || prevTime;
+      continue;
+    }
+    const h = tl.h;
+    const simDate = getMessageDisplayDate(h, sessObj);
+    // 智能计算时间间隔插入系统标块 (超过15分钟自动提示时间流逝并附带当时虚拟场景时刻)
+    if (prevTime !== null && h.timestamp) {
+      const diffMs = h.timestamp - prevTime;
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin >= 15) {
+        let timeGapText = "";
+        const formattedSimTime = formatWeChatTime(simDate, simNow);
+        if (diffMin < 60) {
+          timeGapText = `[系统提示：距离上一条对话过去了 ${diffMin} 分钟，当前场景时间：${formattedSimTime}]`;
+        } else if (diffMin < 1440) {
+          const diffHours = (diffMin / 60).toFixed(1);
+          timeGapText = `[系统提示：距离上一条对话过去了 ${diffHours} 小时，当前场景时间：${formattedSimTime}]`;
+        } else {
+          const diffDays = Math.floor(diffMin / 1440);
+          timeGapText = `[系统提示：距离上一条对话过去了 ${diffDays} 天，当前场景时间：${formattedSimTime}]`;
+        }
+        messagesToSend.push({ role: "system", content: timeGapText });
+      }
+    }
+    prevTime = h.timestamp || prevTime;
+
+    const prefix = `[MSG_ID: ${h.id}] `;
+    let displayContent = h.content;
+    let visionImageUrls = []; // 真实照片 / 分享链接配图（视觉模型可直接读图）
+
+    // 从历史消息中物理剥离旧思维链（覆盖所有标签变体 + 未闭合兜底）
+    if (typeof displayContent === 'string') {
+      displayContent = displayContent.replace(/(?:<think>|\[THINKING\]|【思考】|<thought>|<thinking>)[\s\S]*?(?:<\/think>|\[\/THINKING\]|【\/思考】|<\/thought>|<\/thinking>|(?=\n\s*\n)|$)/gi, "").trim();
+    }
+
+    if (h.isRecalled === 1) {
+      displayContent = "[已撤回该消息]";
+    } else if (h.contentType === 'image') {
+      try {
+        const data = JSON.parse(h.content);
+        const isRealPhoto = typeof data.url === 'string' && /^data:image\//i.test(data.url) && !/svg\+xml/i.test(data.url);
+        if (isRealPhoto && h.senderType === 'user' && visionSendEnabled(api)) {
+          // 视觉模型：把真实照片以 OpenAI vision 格式随消息一起发送
+          visionImageUrls = [data.url];
+          displayContent = data.text ? `[你发送了一张真实照片，附言：${data.text}]` : '[你发送了一张真实照片]';
+        } else {
+          displayContent = `[图片描述: ${data.text || '（无描述）'}]`;
+        }
+      } catch(e) {}
+    } else if (h.contentType === 'voice') {
+      try {
+        const data = JSON.parse(h.content);
+        displayContent = `[语音转文字: ${data.text}]`;
+      } catch(e) {}
+    } else if (h.contentType === 'call') {
+      // 通话记录卡片在上下文中转为简短可读摘要，避免裸 JSON 污染
+      try {
+        const c = JSON.parse(h.content);
+        if (c.rejected) {
+          displayContent = `[你拒绝了对方的${c.type === 'video' ? '视频' : '语音'}通话请求]`;
+        } else {
+          displayContent = `[${c.type === 'video' ? '视频' : '语音'}通话记录 · ${c.summary || ''}]`;
+        }
+      } catch(e) { displayContent = "[通话记录]"; }
+    } else if (h.contentType === 'social_notice') {
+      // 社交动作跳转卡片在上下文中转为简短摘要
+      try {
+        const sn = JSON.parse(h.content);
+        if (sn.type === 'moment') {
+          displayContent = `[你发了一条朋友圈：${sn.summary || ''}]`;
+        } else if (sn.type === 'forum_post') {
+          displayContent = `[你以 ${sn.roleLabel || ''} @${sn.username || ''} 身份在论坛发了帖子《${sn.title || ''}》]`;
+        } else if (sn.type === 'forum_alt_create') {
+          displayContent = `[你建立了一个论坛小号 @${sn.username || ''}（${sn.nickname || ''}）]`;
+        } else {
+          displayContent = `[社交动作记录]`;
+        }
+      } catch(e) { displayContent = "[社交动作记录]"; }
+    } else if (h.contentType === 'moment_share') {
+      // 朋友圈转发卡片在上下文中转为明确摘要，明确标注"谁转发给谁"
+      try {
+        const ms = JSON.parse(h.content);
+        const originalAuthor = ms.authorName || '某人';
+        const commentSuffix = ms.commentText ? `（附言：${ms.commentText}）` : '';
+        if (h.senderType === 'user') {
+          // 我转发给当前会话角色
+          displayContent = `[${_chatMyName} 向 ${_chatCharName} 转发了 ${originalAuthor} 的朋友圈动态：${ms.summary || ''}${commentSuffix}]`;
+        } else {
+          // 当前会话角色转发给我
+          const forwarderName = ms.forwarderName || _chatCharName;
+          displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的朋友圈动态：${ms.summary || ''}${commentSuffix}]`;
+        }
+      } catch(e) { displayContent = "[转发了一条朋友圈]"; }
+    } else if (h.contentType === 'forum_post_share') {
+      // 论坛帖子转发卡片在上下文中转为明确摘要，明确标注"谁转发给谁"
+      try {
+        const fps = JSON.parse(h.content);
+        const originalAuthor = fps.authorName || '某成员';
+        const commentSuffix = fps.commentText ? `（附言：${fps.commentText}）` : '';
+        if (h.senderType === 'user') {
+          displayContent = `[${_chatMyName} 向 ${_chatCharName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
+        } else {
+          const forwarderName = fps.forwarderName || _chatCharName;
+          displayContent = `[${forwarderName} 向 ${_chatMyName} 转发了 ${originalAuthor} 的论坛帖子《${fps.title || ''}》：${fps.summary || ''}${commentSuffix}]`;
+        }
+      } catch(e) { displayContent = "[转发了一条论坛帖子]"; }
+    } else if (h.contentType === 'miniprogram_share') {
+      // 小程序分享卡片在上下文中转为可读摘要（避免裸 JSON 污染）
+      try {
+        const mp = JSON.parse(h.content);
+        if (h.senderType === 'user') {
+          displayContent = `[小程序分享] ${_chatMyName} 邀请 ${_chatCharName} 一起玩「${mp.mpName || '小程序'}」：${mp.inviteText || ''}`;
+        } else {
+          displayContent = `[小程序分享] ${_chatCharName} 邀请 ${_chatMyName} 一起玩「${mp.mpName || '小程序'}」：${mp.inviteText || ''}`;
+        }
+      } catch(e) { displayContent = "[小程序分享]"; }
+    } else if (h.contentType === 'pay_for_me') {
+      // 代付请求卡片在上下文中转为明确摘要，便于 AI 识别这是一个"需要它代付的订单"
+      // 而不是普通转账/红包，从而使用 AGREE_PAY 指令而非发起转账。
+      try {
+        const pf = JSON.parse(h.content);
+        const isPaid = pf.status === 'paid';
+        const itemsStr = (pf.items || []).map(it =>
+          `${it.name || it.title || '商品'} x${it.quantity || 1} ¥${(it.price || 0).toFixed(2)}`
+        ).join('，');
+        const totalStr = (pf.total || 0).toFixed(2);
+        const msgSuffix = pf.message ? `，留言："${pf.message}"` : '';
+        if (h.senderType === 'user') {
+          // 我向对方发起代付请求
+          if (isPaid) {
+            displayContent = `[${_chatCharName} 已为你代付了订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}]`;
+          } else {
+            displayContent = `[你向 ${_chatCharName} 发送了一个代付请求订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}。该订单等待对方代付，对方应使用 [AGREE_PAY]{} 指令同意代付]`;
+          }
+        } else {
+          // 对方（AI 角色）向我发起代付请求 —— 这是 AI 最需要识别的场景
+          if (isPaid) {
+            displayContent = `[你已经为 ${_chatCharName} 代付了订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}]`;
+          } else {
+            displayContent = `[${_chatCharName} 向你发送了一个代付请求订单：${itemsStr}，合计 ¥${totalStr}${msgSuffix}。这是一个需要你代为付款的订单，你若愿意帮忙，请在回复末尾追加 [AGREE_PAY]{} 指令表示同意代付；切勿用 [TRANSFER] 转账代替，代付与转账是两种不同动作]`;
+          }
+        }
+      } catch(e) { displayContent = "[收到一个代付请求]"; }
+    } else if (h.contentType === 'gift') {
+      // 礼物卡片在上下文中转为明确摘要
+      try {
+        const gf = JSON.parse(h.content);
+        const isReceived = gf.status === 'paid';
+        const itemsStr = (gf.items || []).map(it =>
+          `${it.name || it.title || '礼物'} x${it.quantity || 1} ¥${(it.price || 0).toFixed(2)}`
+        ).join('，');
+        const totalStr = (gf.total || 0).toFixed(2);
+        const msgSuffix = gf.message ? `，附言："${gf.message}"` : '';
+        if (h.senderType === 'user') {
+          displayContent = `[你向 ${_chatCharName} 送了礼物：${itemsStr}，合计 ¥${totalStr}${msgSuffix}]`;
+        } else {
+          displayContent = `[${_chatCharName} 送了你礼物：${itemsStr}，合计 ¥${totalStr}${msgSuffix}${isReceived ? '，你已查收' : ''}]`;
+        }
+      } catch(e) { displayContent = "[收到一份礼物]"; }
+    } else if (h.contentType === 'withdraw_share') {
+      // 砍一刀提现分享链接：在上下文中转为明确摘要，让 AI 知道这是 user 在转发砍一刀活动
+      try {
+        const ws = JSON.parse(h.content);
+        const targetStr = (ws.targetAmount || 700) + '元';
+        const currentStr = (ws.currentAmount || 0).toFixed(2) + '元';
+        if (h.senderType === 'user') {
+          displayContent = `[你向 ${_chatCharName} 转发了一个"砍一刀提现"活动链接，你正在提现${targetStr}，目前已有${currentStr}，希望对方帮你点击助力。这是一条仿拼多多砍一刀的分享链接，不是真实的网页链接]`;
+        } else {
+          displayContent = `[${_chatCharName} 向你转发了一个"砍一刀提现"活动链接]`;
+        }
+      } catch(e) { displayContent = "[转发了一个砍一刀提现链接]"; }
+    } else if (h.contentType === 'chat_log_share') {
+      // 聊天记录转发：展开成"谁把谁和谁的聊天记录转发给了你"的可读摘要
+      try {
+        displayContent = (window.chatLogShareSystem && window.chatLogShareSystem.buildContextSummary)
+          ? window.chatLogShareSystem.buildContextSummary(JSON.parse(h.content))
+          : '[聊天记录转发]';
+      } catch (e) { displayContent = '[聊天记录转发]'; }
+    } else if (h.contentType === 'share') {
+      // 分享链接：转为干净上下文（标题/正文/互动数据/评论/链接），避免乱码与标签污染
+      displayContent = formatShareContextText(h, h.senderType === 'user', _chatCharName);
+      // 帖子配图：分享时已压缩存库，视觉模型下直接随消息附带（最多前 N 张）
+      try {
+        const _sd = JSON.parse(h.content);
+        if (Array.isArray(_sd.imageData) && _sd.imageData.length && visionSendEnabled(api)) {
+          visionImageUrls = _sd.imageData.slice(0, 6);
+        }
+      } catch (e) {}
+    } else if (h.contentType === 'reverse_check_report') {
+      // 反查手机报告：把角色当时的动线与感想还原成可读上下文
+      try {
+        const rc = JSON.parse(h.content);
+        const rcLines = ['[你之前偷偷翻过 ' + _chatMyName + ' 的手机，这里是当时的记录]'];
+        if (rc.mood) rcLines.push('当时的情绪：' + rc.mood);
+        if (rc.comment) rcLines.push('当时的感想：' + String(rc.comment).slice(0, 300));
+        (rc.timeline || []).slice(0, 12).forEach(function (t) { rcLines.push('- ' + String(t.text || '').slice(0, 80)); });
+        displayContent = rcLines.join('\n');
+      } catch (e) { displayContent = '[反查手机报告]'; }
+    }
+
+    // 核心 Few-shot 历史格式对齐
+    if (sessObj && sessObj.isGroup === 1 && h.senderType === 'char') {
+      const charSender = await db.archives.get(Number(h.senderId));
+      let senderName = charSender ? charSender.name : "群成员";
+      // 文件管理来源的角色加括号标记
+      try {
+        const gm = await db.group_members.where('[groupId+memberId+memberType]').equals([sessObj.groupId, Number(h.senderId), 'char']).first();
+        if (gm && gm.sourceArchiveId) {
+          const srcArchive = await db.chat_archives.get(gm.sourceArchiveId);
+          if (srcArchive) {
+            const parts = srcArchive.customLabel.split('-');
+            const tag = parts.length >= 3 ? parts[parts.length - 1] : srcArchive.customLabel;
+            senderName = `${senderName}(${tag})`;
+          }
+        }
+      } catch(e) {}
+      displayContent = `[SENDER: ${senderName}] ${displayContent}`;
+    }
+
+    if (displayContent) {
+      if (visionImageUrls.length) {
+        // 视觉格式：文本 + 真实图片（真实照片 / 分享链接配图）
+        const parts = [{ type: 'text', text: prefix + displayContent }];
+        visionImageUrls.forEach(function (u) { parts.push({ type: 'image_url', image_url: { url: u } }); });
+        messagesToSend.push({
+          role: h.senderType === 'user' ? 'user' : 'assistant',
+          content: parts
+        });
+        window._visionUsedInRequest = true;
+      } else {
+        messagesToSend.push({ role: h.senderType === 'user' ? 'user' : 'assistant', content: prefix + displayContent });
+      }
+    }
+  }
+
+  // TODO (待以后优化解决): 群聊模式下由于多角色 (Multi-Char) 连续发言与流式/思维链容易卡死，
+  // 暂时在群聊场景关闭流式传输与思维链预显，采用单次响应。
+  const isGroupMode = sessObj && sessObj.isGroup === 1;
+  const activeApi = isGroupMode ? { ...api, disableStream: true } : api;
+
+  // 挂载流式渲染交互气泡 (单聊模式下正常预显)
+  let streamingBubble = null;
+  const handleStreamChunk = isGroupMode ? null : (delta, currentFullText) => {
+    // 会话隔离：只有在用户仍在原请求会话时才渲染流式气泡
+    if (!uiTouchable()) return;
+if (sid !== reqSessionId) return;
+
+    const container = document.getElementById("dialog-messages-container");
+    if (!container) return;
+
+    if (!streamingBubble) {
+      streamingBubble = document.createElement("div");
+      streamingBubble.className = "msg-bubble other streaming";
+      streamingBubble.style.cssText = "position: relative; display: flex; align-items: flex-start;";
+      container.appendChild(streamingBubble);
+    }
+
+    // 流式期间隐藏结构化译文块，避免在气泡里闪现 [TRANS_JSON]...JSON
+    const tjCutIdx = String(currentFullText || "").indexOf("[TRANS_JSON]");
+    const displayFullText = tjCutIdx >= 0 ? String(currentFullText).slice(0, tjCutIdx) : currentFullText;
+    const parsedCot = parseThoughtFromText(displayFullText);
+    let streamHtml = "";
+
+    // 关键修复：流式渲染也必须遵守思维链开关。关闭时剥离 <think> 不显示思维链卡片，
+    // 否则即使关闭开关，推理模型（如 DeepSeek-R1 / GLM）原生输出的 <think> 仍会实时显示在屏幕上
+    const isCotStreamEnabled = sessObj && sessObj.cotToggle === 1;
+
+    if (isCotStreamEnabled && parsedCot.thought) {
+      streamHtml += `<div class="cot-thought-card" style="margin-bottom:6px; width:100%;"><div class="cot-thought-card-header"><div class="cot-thought-card-title"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="6" y1="3" x2="6" y2="15"></line><circle cx="18" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M18 9a9 9 0 0 1-9 9"></path></svg><span>深度思考中...</span></div></div><div class="cot-thought-card-body" style="display:block;">${escapeHtml(parsedCot.thought)}</div></div>`;
+    }
+    if (parsedCot.cleanText) {
+      streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(parsedCot.cleanText)}</div>`;
+    } else if (!parsedCot.thought) {
+      streamHtml += `<div class="msg-text" style="position: relative;">${escapeHtml(displayFullText)}</div>`;
+    }
+
+    streamingBubble.innerHTML = `<img class="msg-avatar" src="${resolveAvatar(activeSessionCharAvatar, activeSessionCharName)}"><div style="flex:1; max-width: 80%;">${streamHtml}</div>`;
+    scrollChatToBottom(container, false);
+  };
+
+  // 世界书「聊天内注入」：按深度插入到最近消息之间（对标酒馆 @Depth）
+  try {
+    if (window.worldBookEngine && typeof window.worldBookEngine.getResult === "function") {
+      var _wbResOnline = window.worldBookEngine.getResult(reqSessionId, "online");
+      if (_wbResOnline && _wbResOnline.atDepth && _wbResOnline.atDepth.length) {
+        window.worldBookEngine.insertAtDepth(messagesToSend, _wbResOnline.atDepth);
+      }
+    }
+  } catch (e) { console.warn("世界书聊天内注入失败:", e); }
+
+  // 上下文管理：捕获最近一轮完整请求（供「对话详情 → 上下文管理」查看全文）
+  if (window.contextManager && typeof window.contextManager.captureRequest === "function") {
+    window.contextManager.captureRequest(reqSessionId, "online", messagesToSend);
+  }
+
+  let rawReply = await fetchStreamOrJson(activeApi.url, activeApi, messagesToSend, onlineAbortController.signal, handleStreamChunk);
+
+  if (streamingBubble) {
+    streamingBubble.remove();
+    streamingBubble = null;
+  }
+
+  // 核心消除：自动擦除大模型在对白中误编或幻觉出来的 [MSG_ID: xxx] 标签
+  rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+
+  // 核心：前置整块提取 CoT 思维链 (仅在当前会话开启思维链且非群聊时才保留保存，关闭时直接擦除)
+  let sessionCotHeader = "";
+  const masterCot = parseThoughtFromText(rawReply);
+  if (masterCot.thought) {
+    const isCotEnabled = sessObj && sessObj.cotToggle === 1 && !isGroupMode;
+    if (isCotEnabled) {
+      sessionCotHeader = `<think>\n${masterCot.thought}\n</think>\n`;
+    }
+    rawReply = masterCot.cleanText; // 清洗后，rawReply 只保留对白与指令，绝对不会包含被切断的 <think>
+  }
+
+  // 核心自愈：检验首部是否包含 [QUOTE:消息ID]，若有，强制将引用原句清除并与后续真实回复并入单行，杜绝被回车切分为多条空卡片消息 [1.1]
+  const firstQuoteMatch = rawReply.match(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]/i);
+  if (firstQuoteMatch) {
+    const quoteTag = firstQuoteMatch[0];
+    const quoteId = Number(firstQuoteMatch[2]);
+    const quotedMsg = await db.messages.get(quoteId);
+    if (quotedMsg) {
+      const origText = quotedMsg.content;
+      const origBareText = typeof origText === 'string' ? origText.replace(/^[\[【](QUOTE|引用)\s*:\s*(\d+)[\]】]\s*/i, '').trim() : "";
+
+      let remaining = rawReply.replace(firstQuoteMatch[0], "").trim();
+      if (origBareText) {
+        // 精准捕捉并抹除可能紧随其后（包括换行符之后）的被引用原文，如：\n"原话"\n
+        const quotesRegex = /^[\s\n\r]*["'“‘『「\(（【\[]*(.*?)[”’』」\)）】\]]*[\s\n\r]*/;
+        let tempMatch = remaining.match(quotesRegex);
+        if (tempMatch) {
+          const innerText = tempMatch[1].trim();
+          if (innerText.toLowerCase() === origBareText.toLowerCase() || origBareText.toLowerCase().includes(innerText.toLowerCase())) {
+            remaining = remaining.replace(tempMatch[0], "").trim();
+          }
+        }
+      }
+      // 重新拼接为单行气泡内容，打破 split 的换行切割条件，保障完美融合
+      rawReply = `${quoteTag} ${remaining}`;
+    }
+  }
+
+  // === 【群聊 AI 多人分流与指令决策器】 ===
+      const currentSess = await db.sessions.get(reqSessionId);
+      if (currentSess && currentSess.isGroup === 1) {
+        // 打印大模型吐出的原始未加工对白，用以排查格式异形
+        console.log("[Group Chat Debug] 1. 大模型返回的原始对白文本 rawReply:\n", rawReply);
+
+        // 升级为高宽容双轨非消耗性正向断言正则，确保群聊对白零遗漏捕获
+        const senderRegex = /[\[【]SENDER:\s*([^\]】\n]+)[\]】]\s*([\s\S]+?)(?=[\[【]SENDER:|$)/gi;
+        let match;
+        let hasGroupReplies = false;
+
+        while ((match = senderRegex.exec(rawReply)) !== null) {
+          hasGroupReplies = true;
+          // 清洗可能伴随出现的冒号或空格，确保拿到纯净的档案馆角色名字
+          const senderName = match[1].replace(/[:：]/g, "").trim();
+          let textContent = match[2].trim();
+
+          // 打印正则捕获的每次分流细节
+          console.log(`[Group Chat Debug] 2. 正则分流捕获成功 -> 发信人: "${senderName}"，发言正文: "${textContent}"`);
+
+          if (!textContent) continue;
+
+      // 检查并执行 AI 物理管理动作指令 (禁言、踢人、头衔等)
+      const actionMuteRegex = /[\[【]MUTE\s*[:：]\s*([^\s(（]+)\s*\((\d+)\)[\]】]/i;
+      const muteMatch = textContent.match(actionMuteRegex);
+      if (muteMatch && window.groupChatSystem) {
+        const targetName = muteMatch[1].trim();
+        const duration = parseInt(muteMatch[2]);
+        await window.groupChatSystem.executeAiMuteCommand(senderName, targetName, duration);
+        textContent = textContent.replace(actionMuteRegex, "").trim();
+      }
+
+      const actionKickRegex = /[\[【]KICK\s*[:：]\s*([^\]】]+)[\]】]/i;
+      const kickMatch = textContent.match(actionKickRegex);
+      if (kickMatch && window.groupChatSystem) {
+        const targetName = kickMatch[1].trim();
+        await window.groupChatSystem.executeAiKickCommand(senderName, targetName);
+        textContent = textContent.replace(actionKickRegex, "").trim();
+      }
+
+      const actionTitleRegex = /[\[【]TITLE\s*[:：]\s*([^\s(（]+)\s*\(([^)]+)\)[\]】]/i;
+      const titleMatch = textContent.match(actionTitleRegex);
+      if (titleMatch && window.groupChatSystem) {
+        const targetName = titleMatch[1].trim();
+        const newTitle = titleMatch[2].trim();
+        await window.groupChatSystem.executeAiTitleCommand(senderName, targetName, newTitle);
+        textContent = textContent.replace(actionTitleRegex, "").trim();
+      }
+
+      const actionAdminRegex = /[\[【]ADMIN\s*[:：]\s*([^\s(（]+)\s*\((设为|取消)\)[\]】]/i;
+      const adminMatch = textContent.match(actionAdminRegex);
+      if (adminMatch && window.groupChatSystem) {
+        const targetName = adminMatch[1].trim();
+        const actType = adminMatch[2].trim();
+        await window.groupChatSystem.executeAiAdminCommand(senderName, targetName, actType);
+        textContent = textContent.replace(actionAdminRegex, "").trim();
+      }
+
+      const actionTransferRegex = /[\[【]TRANSFER_OWNER\s*[:：]\s*([^\]】]+)[\]】]/i;
+      const txMatch = textContent.match(actionTransferRegex);
+      if (txMatch && window.groupChatSystem) {
+        const targetName = txMatch[1].trim();
+        await window.groupChatSystem.executeAiTransferOwnerCommand(senderName, targetName);
+        textContent = textContent.replace(actionTransferRegex, "").trim();
+      }
+
+      // 检查并执行 AI 发起群投票指令 [POLL: 主题 (选项1 | 选项2)]
+      const actionPollRegex = /[\[【]POLL\s*[:：]\s*([^\s(（]+)\s*\(([^)]+)\)[\]】]/i;
+      const pollMatch = textContent.match(actionPollRegex);
+      if (pollMatch && window.groupChatSystem) {
+        const pollTitle = pollMatch[1].trim();
+        const optionsStr = pollMatch[2].trim();
+        await window.groupChatSystem.executeAiPollCommand(senderName, pollTitle, optionsStr);
+        textContent = textContent.replace(actionPollRegex, "").trim();
+      }
+
+      // 检查并执行 AI 发布群公告指令 [ANNOUNCE: 标题 (内容)] (升级为高宽容换行匹配正则)
+      const actionAnnounceRegex = /[\[【]ANNOUNCE\s*[:：]\s*([^((（]+?)\s*[(（]([\s\S]+?)[)）][\]】]/i;
+      const announceMatch = textContent.match(actionAnnounceRegex);
+      if (announceMatch && window.groupChatSystem) {
+        const annTitle = announceMatch[1].trim();
+        const annText = announceMatch[2].trim();
+        await window.groupChatSystem.executeAiAnnounceCommand(senderName, annTitle, annText);
+        textContent = textContent.replace(actionAnnounceRegex, "").trim();
+      }
+
+      // 检查并执行 AI 发起定向转账指令 [TRANSFER: 收款人 (金额)]
+      const actionTransferValRegex = /[\[【]TRANSFER\s*[:：]\s*([^\s(（]+)\s*\((\d+(?:\.\d+)?)\)[\]】]/i;
+      const transferValMatch = textContent.match(actionTransferValRegex);
+      if (transferValMatch && window.groupChatSystem) {
+        const targetName = transferValMatch[1].trim();
+        const amount = parseFloat(transferValMatch[2]) || 0;
+        await window.groupChatSystem.executeAiTransferCommand(senderName, targetName, amount);
+        textContent = textContent.replace(actionTransferValRegex, "").trim();
+      }
+
+      // 检查并执行 AI 发送普通/拼手气红包指令 (普通或拼手气) [RED_ENVELOPE: normal/lucky (金额) (备注)]
+      const actionRedEnvelopeValRegex = /[\[【]RED_ENVELOPE\s*[:：]\s*(normal|lucky)\s*\((\d+(?:\.\d+)?)\)\s*(?:\(([^)]+)\))?[\]】]/i;
+      const redEnvelopeValMatch = textContent.match(actionRedEnvelopeValRegex);
+      if (redEnvelopeValMatch && window.groupChatSystem) {
+        const envType = redEnvelopeValMatch[1].toLowerCase();
+        const amount = parseFloat(redEnvelopeValMatch[2]) || 0;
+        const remark = redEnvelopeValMatch[3] ? redEnvelopeValMatch[3].trim() : "恭喜发财，大吉大利";
+        await window.groupChatSystem.executeAiRedEnvelopeCommand(senderName, envType, amount, remark);
+        textContent = textContent.replace(actionRedEnvelopeValRegex, "").trim();
+      }
+
+      // 检查并执行 AI 拆开红包指令 [OPEN_RED_ENVELOPE: 消息ID]
+      const actionOpenRedEnvelopeRegex = /[\[【](?:OPEN_RED_ENVELOPE|拆红包)\s*[:：]\s*(\d+)[\]】]/i;
+      const openRedEnvelopeMatch = textContent.match(actionOpenRedEnvelopeRegex);
+      if (openRedEnvelopeMatch && window.groupChatSystem) {
+        const targetMsgId = Number(openRedEnvelopeMatch[1]);
+        await window.groupChatSystem.executeAiClaimRedEnvelopeCommand(senderName, targetMsgId);
+        textContent = textContent.replace(actionOpenRedEnvelopeRegex, "").trim();
+      }
+
+      // 检查并执行 AI 收取定向转账指令 [RECEIVE_TRANSFER: 消息ID]
+      const actionReceiveTransferRegex = /[\[【](?:RECEIVE_TRANSFER|收钱|收转账)\s*[:：]\s*(\d+)[\]】]/i;
+      const receiveTransferMatch = textContent.match(actionReceiveTransferRegex);
+      if (receiveTransferMatch && window.groupChatSystem) {
+        const targetMsgId = Number(receiveTransferMatch[1]);
+        await window.groupChatSystem.executeAiClaimTransferCommand(senderName, targetMsgId);
+        textContent = textContent.replace(actionReceiveTransferRegex, "").trim();
+      }
+
+      // 检查并执行 AI 已阅公告指令 [READ_ANNOUNCE: 消息ID] [2]
+      const actionReadAnnounceRegex = /[\[【](?:READ_ANNOUNCE|已阅公告|阅读公告)\s*[:：]\s*(\d+)[\]】]/i;
+      const readAnnounceMatch = textContent.match(actionReadAnnounceRegex);
+      if (readAnnounceMatch && window.groupChatSystem) {
+        const targetMsgId = Number(readAnnounceMatch[1]);
+        await window.groupChatSystem.executeAiReadAnnounceCommand(senderName, targetMsgId);
+        textContent = textContent.replace(actionReadAnnounceRegex, "").trim();
+      }
+
+      // 检查并执行 AI 参与投票指令 [VOTE_POLL: 消息ID (选项索引)] [2]
+      const actionVotePollRegex = /[\[【](?:VOTE_POLL|参与投票|投票)\s*[:：]\s*(\d+)\s*\((\d+)\)[\]】]/i;
+      const votePollMatch = textContent.match(actionVotePollRegex);
+      if (votePollMatch && window.groupChatSystem) {
+        const targetMsgId = Number(votePollMatch[1]);
+        const optIdx = parseInt(votePollMatch[2]);
+        await window.groupChatSystem.executeAiVotePollCommand(senderName, targetMsgId, optIdx);
+        textContent = textContent.replace(actionVotePollRegex, "").trim();
+      }
+
+      if (textContent) {
+        await window.groupChatSystem.saveGroupAiMessage(senderName, textContent);
+      }
+    }
+
+    if (hasGroupReplies) {
+      header.classList.remove("header-typing");
+      header.innerText = originalTitle;
+      btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
+      onlineAbortController = null;
+      return; // 直接退出，阻止原有单聊上屏逻辑
+    }
+  }
+
+  // === 智能高精拉黑与解除拉黑指令高自愈性解析器（全/半角英文或中文括号均可） ===
+  const charBlockRegex = /(\[|【)(BLOCK|拉黑)\s*[:：]\s*([^\]】\n]+)(\]|】)/i;
+  const charUnblockRegex = /(\[|【)(UNBLOCK|解除拉黑)(\]|】)/i;
+
+  const blockMatch = rawReply.match(charBlockRegex);
+  if (blockMatch) {
+    const reason = blockMatch[3].trim();
+    await db.sessions.update(sid, {
+      isBlockedByChar: 1,
+      blockByCharReason: reason
+    });
+    rawReply = rawReply.replace(charBlockRegex, "").trim();
+    showToast(`对方（${originalTitle}）拉黑了你。原因：${reason}`);
+  }
+
+  const unblockMatch = rawReply.match(charUnblockRegex);
+  if (unblockMatch) {
+    await db.sessions.update(sid, {
+      isBlockedByChar: 0,
+      blockByCharReason: ""
+    });
+    rawReply = rawReply.replace(charUnblockRegex, "").trim();
+    showToast(`对方（${originalTitle}）已解除对你的拉黑`);
+  }
+
+  // === Char (AI) 撤回消息处理 ===
+  const recallRegex = /[\[【](RECALL|撤回|撤回消息)(?:\s*:\s*(\d+))?[\]】]/i;
+  const recallMatch = rawReply.match(recallRegex);
+  if (recallMatch) {
+    const targetId = recallMatch[2] ? Number(recallMatch[2]) : null;
+    let targetMsg = null;
+    if (targetId) {
+      targetMsg = await db.messages.get(targetId);
+    } else {
+      const charMsgs = await db.messages.where('sessionId').equals(sid).and(m => m.senderType === 'char').toArray();
+      targetMsg = charMsgs.sort((a,b) => b.timestamp - a.timestamp)[0];
+    }
+
+    if (targetMsg && targetMsg.senderType === 'char' && targetMsg.sessionId === sid) {
+      await db.messages.update(targetMsg.id, { isRecalled: 1 });
+      rawReply = rawReply.replace(recallRegex, "").trim();
+      await renderDialogMessages();
+    } else {
+      rawReply = rawReply.replace(recallRegex, "").trim();
+      alert(`系统提示：对方（${originalTitle}）试图撤回一则消息（ID: ${targetId || '最新'}），但由于消息ID无效，撤回失败！`);
+    }
+  }
+
+  // === Char (AI) 自动驱使本地音乐播放指令解析 ===
+  const playMusicRegex = /[\[【](PLAY_MUSIC|播放音乐|MCP_PLAY_MUSIC)[\]】]\s*(\{[\s\S]*?\})/i;
+  const playMusicMatch = rawReply.match(playMusicRegex);
+  if (playMusicMatch) {
+    try {
+      const parsed = JSON.parse(playMusicMatch[2]);
+      const targetIndex = parseInt(parsed.index);
+      if (!isNaN(targetIndex) && window.mcpSystem && typeof window.mcpSystem.playTrackByIndex === 'function') {
+        window.mcpSystem.playTrackByIndex(targetIndex);
+      } else if (parsed.title && window.mcpSystem && typeof window.mcpSystem.playTrackByTitle === 'function') {
+        window.mcpSystem.playTrackByTitle(parsed.title);
+      }
+    } catch(e) {
+      console.warn("解析 AI 自动放歌指令 JSON 失败:", e);
+    }
+    // 擦除放歌指令，避免污染对话气泡呈现
+    rawReply = rawReply.replace(playMusicRegex, "").trim();
+  }
+
+  // === Char (AI) 停止/暂停音乐指令解析 ===
+  const stopMusicRegex = /[\[【](STOP_MUSIC|停止音乐|暂停音乐|MCP_STOP_MUSIC)[\]】]/i;
+  if (stopMusicRegex.test(rawReply)) {
+    if (window.mcpSystem && typeof window.mcpSystem.stopMusic === 'function') {
+      window.mcpSystem.stopMusic();
+    }
+    // 擦除停止指令，避免污染对话气泡呈现
+    rawReply = rawReply.replace(stopMusicRegex, "").trim();
+  }
+
+  // === Char (AI) 自主设闹钟指令解析（容错：JSON 解析失败也能提取 delay 设闹钟）===
+  const setAlarmRegex = /[\[【](SET_ALARM|设闹钟|设定闹钟|MCP_SET_ALARM)[\]】]\s*(\{[\s\S]*?\})/i;
+  const setAlarmMatch = rawReply.match(setAlarmRegex);
+  if (setAlarmMatch) {
+    if (window.mcpSystem && typeof window.mcpSystem.setAlarmFromRawJson === 'function') {
+      window.mcpSystem.setAlarmFromRawJson(setAlarmMatch[2]);
+    }
+    // 擦除设闹钟指令，避免污染对话气泡
+    rawReply = rawReply.replace(setAlarmRegex, "").trim();
+  }
+
+  // === Char (AI) 蓝牙设备控制指令解析 ===
+  const btCmdRegex = /[\[【](BLUETOOTH_CMD|蓝牙控制|MCP_BLUETOOTH)[\]】]\s*(\{[\s\S]*?\})/i;
+  const btCmdMatch = rawReply.match(btCmdRegex);
+  if (btCmdMatch) {
+    if (window.mcpSystem && typeof window.mcpSystem.handleBluetoothCommand === 'function') {
+      window.mcpSystem.handleBluetoothCommand(btCmdMatch[2]);
+    }
+    // 擦除蓝牙指令，避免污染对话气泡
+    rawReply = rawReply.replace(btCmdRegex, "").trim();
+  }
+
+  // === Char (AI) 表情反应处理 ===
+  const reactRegex = /[\[【]REACT\s*:\s*(\d+)[\]】]\s*([\s\S]*?)(?=(?:\[|【|$))/i;
+  const reactMatch = rawReply.match(reactRegex);
+  if (reactMatch) {
+    const targetId = Number(reactMatch[1]);
+    const emoji = reactMatch[2].trim();
+    const validEmojis = ["😂", "😚", "😌", "😊", "👿", "😪", "😭", "😣", "🙄", "🥺", "🥵", "🥰", "😉", "😏"];
+
+    if (validEmojis.includes(emoji)) {
+      const targetMsg = await db.messages.get(targetId);
+      if (targetMsg && targetMsg.sessionId === sid) {
+        const msgs = await db.messages.where('sessionId').equals(sid).sortBy('timestamp');
+        const last20 = msgs.slice(-20);
+        const isWithinLastRounds = last20.some(m => m.id === targetId);
+        if (isWithinLastRounds) {
+          await db.messages.update(targetId, { reactionEmoji: emoji });
+          rawReply = rawReply.replace(reactRegex, "").trim();
+          await renderDialogMessages();
+        } else {
+          rawReply = rawReply.replace(reactRegex, "").trim();
+        }
+      } else {
+        rawReply = rawReply.replace(reactRegex, "").trim();
+      }
+    } else {
+      rawReply = rawReply.replace(reactRegex, "").trim();
+    }
+  }
+
+  // === 【社交动作指令预处理】在 MCP 循环之前提取并执行 [AUTO_MOMENT] / [FORUM_POST] 等 ===
+  // 避免 AI 同时输出 [CALL_TOOL] 和 [FORUM_POST] 时，MCP 循环先把 FORUM_POST 当作普通文本消耗掉
+  let pendingSocialNotices = [];
+  if (window.socialActions && typeof window.socialActions.detectAndExecute === 'function') {
+    try {
+      const saResult = await window.socialActions.detectAndExecute(rawReply, sid);
+      rawReply = saResult.cleanedText;
+      pendingSocialNotices = saResult.sysNotices || [];
+    } catch (e) { /* 静默 */ }
+  }
+
+  // === 【MCP 连贯 Agent 循环与折叠卡片渲染引擎（支持嵌套 JSON 与裸 JSON 智能自愈）】 ===
+  const isAgentLoopEnabled = localStorage.getItem("settings-mcp-agent-loop-enabled") !== "false";
+  let maxAgentLoops = 5; // 安全深度限制
+
+  while (maxAgentLoops > 0) {
+    const toolCallInfo = parseToolCallFromReply(rawReply);
+    if (!toolCallInfo || !window.mcpClientSystem) {
+      break;
+    }
+
+    try {
+      const fullMatchStr = toolCallInfo.fullMatchStr;
+      const toolIndex = toolCallInfo.index;
+
+      // 提取工具调用之前的“前半句台词”
+      let prefixText = rawReply.substring(0, toolIndex).trim();
+
+      // 若思维链尚待绑定，将完整的 <think> 标签重新附着在第一句前置台词头部
+      if (sessionCotHeader) {
+        prefixText = sessionCotHeader + (prefixText ? ("\n" + prefixText) : "");
+        sessionCotHeader = ""; // 标记为已消耗，防止后续重复绑卡
+      }
+
+      if (prefixText) {
+        await saveAndRenderMessage('char', prefixText, 'text', reqSessionId);
+      }
+
+      const toolCallPayload = toolCallInfo.payload;
+      const serverName = toolCallPayload.server;
+      const toolName = toolCallPayload.tool;
+      const toolArgs = toolCallPayload.arguments || {};
+
+      rawReply = rawReply.substring(toolIndex + fullMatchStr.length).trim();
+
+      showToast(`正在调用 MCP 工具: [${serverName}] -> ${toolName}...`);
+
+      let executionResult = null;
+      let isSuccess = true;
+      try {
+        executionResult = await window.mcpClientSystem.callMcpTool(serverName, toolName, toolArgs);
+      } catch (execErr) {
+        isSuccess = false;
+        executionResult = { error: execErr.message };
+      }
+
+      const toolCardData = {
+        server: serverName,
+        tool: toolName,
+        arguments: toolArgs,
+        result: executionResult,
+        status: isSuccess ? 'success' : 'error'
+      };
+      const toolMsg = {
+        sessionId: sid,
+        senderType: 'char',
+        senderId: 0,
+        content: JSON.stringify(toolCardData),
+        contentType: 'mcp_tool',
+        timestamp: Date.now()
+      };
+      toolMsg.id = await db.messages.add(toolMsg);
+      await appendMessageToDOM(toolMsg);
+
+      const assistantRecord = prefixText ? `${prefixText}\n[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]` : `[CALL_TOOL: ${JSON.stringify(toolCallPayload)}]`;
+      messagesToSend.push({ role: "assistant", content: assistantRecord });
+      messagesToSend.push({
+        role: "system",
+        content: `【MCP 工具执行反馈通知】\n工具 [${serverName}.${toolName}] 返回了以下执行结果：\n${JSON.stringify(executionResult)}\n\n请结合上述工具执行结果，继续顺着你刚才的话（如有）以自然角色的口吻接下去说。如果你认为还需要调用其他工具，可以继续嵌入 [CALL_TOOL: ...] 指令。`
+      });
+
+      if (!isAgentLoopEnabled) break;
+      maxAgentLoops--;
+
+      rawReply = await fetchStreamOrJson(api.url, api, messagesToSend, onlineAbortController.signal, handleStreamChunk);
+
+      if (streamingBubble) {
+        streamingBubble.remove();
+        streamingBubble = null;
+      }
+
+      rawReply = rawReply.replace(/[\[【]MSG_ID\s*:\s*\d+[\]】]/gi, "").trim();
+      if (!rawReply) break;
+
+    } catch (e) {
+      console.error("MCP 工具 Agent 循环异常:", e);
+      showToast("MCP 工具执行终止: " + e.message);
+      break;
+    }
+  }
+
+  // 尝试解析心声随动 [STATUS] 格式（用括号平衡法提取完整 JSON）
+  let statusJson = null;
+  let textReply = rawReply;
+  if (isStatusAutoOn) {
+    const statusIdx = rawReply.indexOf('[STATUS]');
+    if (statusIdx !== -1) {
+      const afterStatus = rawReply.substring(statusIdx + 8);
+      const balancedJson = extractBalancedJson(afterStatus);
+      if (balancedJson) {
+        try {
+          statusJson = JSON.parse(balancedJson);
+          textReply = rawReply.substring(0, statusIdx).trim();
+          // 保存心声到 status_history（线上：isTheater=0）
+          try {
+            const userRegex = /\buser\b/gi;
+            const cleanProp = (val) => (typeof val === 'string') ? val.replace(userRegex, (sessObj?.customUserName || '我')) : val;
+            await db.status_history.add({
+              sessionId: sid,
+              theaterId: 0,
+              isTheater: 0,
+              source: 'online',
+              timestamp: Date.now(),
+              attire: cleanProp(statusJson.attire) || '未详',
+              affection: cleanProp(statusJson.affection) || '未详',
+              excitement: cleanProp(statusJson.excitement) || '未详',
+              thoughts: cleanProp(statusJson.thoughts) || '未详',
+              hiddenCorners: cleanProp(statusJson.hiddenCorners) || '无'
+            });
+          } catch (saveErr) { console.warn('保存心声历史失败:', saveErr); }
+        } catch (e) {
+          console.warn("解析心声 JSON 失败:", e);
+        }
+      }
+    }
+  }
+
+  // 尝试解析翻译随动 [TRANSLATE] 格式
+  // 结构化译文块解析（默认单次调用方案）：从正文末尾剥离 [TRANS_JSON] 块
+  let autoTransEntries = [];
+  if (isTranslateAutoOn) {
+    const ex = extractTranslateJsonBlock(rawReply);
+    if (ex.entries.length > 0) {
+      autoTransEntries = ex.entries;
+      rawReply = ex.cleanText;
+      textReply = textReply.replace(/[\[【]TRANS_JSON[\]】][\s\S]*$/i, "").trim();
+    }
+  }
+
+  let translationText = null;
+  if (isTranslateAutoOn) {
+    // 这里将保留支持旧的全局 [TRANSLATE]xxx 格式，但重点支持新的分段解析。
+    // 因为在 chat_html_widget 渲染层面，我们希望把翻译嵌入到气泡文字中，
+    // 所以在数据层，我们不再将其抽取到 translationText 字段，而是将其直接保留在 textReply 中，
+    // 并通过替换为特定的 HTML 标签以便在渲染时识别，或者在渲染时直接解析 [TRANSLATE]...[/TRANSLATE] 标签。
+    // 这里的处理简化为：如果是旧格式（只有一个 [TRANSLATE] 且到末尾），则抽取出来；
+    // 如果是新格式，就不做处理，直接留给渲染层去处理。
+    const oldTranslateMatch = rawReply.match(/\[TRANSLATE\]\s*([\s\S]*?)(?=\[STATUS\]|$)/);
+    const newTranslateMatch = rawReply.match(/\[TRANSLATE\][\s\S]*?\[\/TRANSLATE\]/);
+    if (oldTranslateMatch && !newTranslateMatch) {
+      translationText = oldTranslateMatch[1].trim();
+      textReply = textReply.replace(/\[TRANSLATE\]\s*[\s\S]*?(?=\[STATUS\]|$)/, '').trim();
+    }
+  }
+
+  // === 无条件兜底标签清洗（极其重要）===
+  // 修改这里的清洗，仅清洗没有闭合标签的旧版全局翻译，
+  // 含有闭合标签 [/TRANSLATE] 的新版分段翻译予以保留，交由前端渲染组件处理。
+  textReply = textReply
+    .replace(/[\[【]STATUS[\]】][\s\S]*$/gi, '')
+    .trim();
+  if(!textReply.includes('[/TRANSLATE]')) {
+      textReply = textReply
+        .replace(/[\[【]TRANSLATE[\]】]\s*[\s\S]*?(?=[\[【]STATUS[\]】]|$)/gi, '')
+        .replace(/[\[【]TRANSLATE[\]】][\s\S]*$/gi, '')
+        .trim();
+  }
+
+  // 小程序分享：解析 AI 回复中的 [MP_INVITE] 指令 → 转为 char 发出的分享卡片（无损，未开启开关则无效）
+  if (window.miniProgramSystem && typeof window.miniProgramSystem.parseAndApplyInvite === "function") {
+    try {
+      const cleaned = await window.miniProgramSystem.parseAndApplyInvite(rawReply, sid);
+      if (cleaned && cleaned !== rawReply) {
+        rawReply = cleaned;
+        textReply = textReply.replace(/\[MP_INVITE\]\s*\{[\s\S]*?\}/, "").trim();
+      }
+    } catch (e) {}
+  }
+
+  // === 【全模态多语境时序渲染中枢 3.0】：绑定未消耗的 CoT + 顺序分发文本与多媒体指令 ===
+  if (sessionCotHeader) {
+    textReply = sessionCotHeader + (textReply ? ("\n" + textReply) : "");
+    sessionCotHeader = "";
+  }
+
+  const parsedCotMaster = parseThoughtFromText(textReply);
+  let preservedThoughtHeader = "";
+  let cleanReplyText = textReply;
+  if (parsedCotMaster.thought) {
+    preservedThoughtHeader = `<think>\n${parsedCotMaster.thought}\n</think>\n`;
+    cleanReplyText = parsedCotMaster.cleanText;
+  }
+
+  // 0. 图片标签格式归一化预处理
+  // 兼容 AI 输出的非标准格式：[图片描述: xxx] / [图片描述：xxx] / [图片: xxx] / [图片：xxx] / 【图片描述: xxx】
+  // 统一归一化为标准 [IMAGE] xxx 格式，确保后续 transactionRegex 能正确识别
+  cleanReplyText = cleanReplyText
+    .replace(/([\[【])\s*图片描述\s*[:：]\s*([\s\S]*?)([\]】])/gi, function(m, b1, content, b2) {
+      return '[IMAGE] ' + String(content).trim();
+    })
+    .replace(/([\[【])\s*图片\s*[:：]\s*([\s\S]*?)([\]】])/gi, function(m, b1, content, b2) {
+      return '[IMAGE] ' + String(content).trim();
+    });
+
+  // 1. 顺序解析出文本与多媒体卡片序列 (保持 AI 吐字的原生前后顺序，杜绝多媒体卡片置顶置乱)
+  // 关键修复：lookahead 只在下一个已知指令 token（[TOKEN] / 【TOKEN】）处切片，避免把 JSON 数组里的 [ 误判为新 token 起点导致 JSON 被腰斩
+  const tokenKeywords = "TRANSFER|RED_ENVELOPE|RECEIVE_TRANSFER|OPEN_RED_ENVELOPE|VOICE|IMAGE|LOCATION|PAY_FOR_ME|GIFT|AGREE_PAY|转账|红包|收钱|收转账|拆红包|领红包|语音|图片|位置|代付|送礼|同意代付";
+  const transactionRegex = new RegExp("([\\[【])(" + tokenKeywords + ")([\\]】])\\s*([\\s\\S]*?)(?=(?:[\\[【])(?:" + tokenKeywords + ")[\\]】]|$)", "gi");
+
+  let responseItems = [];
+  let lastIndex = 0;
+  let tMatch;
+
+  // 辅助智能分发切片器：基于 Session 配置的【最少句数】与【最多气泡数】实施受控拟真分句
+  const minSentences = sessObj?.minSentenceCount || 1;
+  const maxSentences = sessObj?.maxSentenceCount || 3;
+
+  const splitTextIntoBubbles = (text, minCount = minSentences, maxCount = maxSentences) => {
+    if (!text || typeof text !== 'string') return [];
+
+    // 预处理：提取并保护新版翻译标签，防止被拆分
+    let transMap = {};
+    let tIdx = 0;
+    text = text.replace(/(?:[\n\r\s]*)\[TRANSLATE\]([\s\S]*?)\[\/TRANSLATE\]/gi, (m, content) => {
+      let key = `__TR${tIdx++}__`;
+      transMap[key] = `\n[TRANSLATE]${content.trim()}[/TRANSLATE]`;
+      return key;
+    });
+
+    // 第一步：按 [SPLIT] / 【SPLIT】 / 换行 粗切成大段（不使用捕获组，避免 undefined）
+    let coarseParts = text.split(/\[SPLIT\]|【SPLIT】|[\n\r]+/i).map(p => (p || '').trim()).filter(Boolean);
+    // 第二步：从每段中分离出表情包标签，使其作为独立分句依据
+    let initialParts = [];
+    coarseParts.forEach(part => {
+      const subParts = part.split(/(【表情包：[^】]+】)/).map(p => (p || '').trim()).filter(Boolean);
+      initialParts.push(...subParts);
+    });
+    let rawBubbles = [];
+    initialParts.forEach(part => {
+      const quoteMatch = part.match(/^[\[【](QUOTE|引用)\s*:\s*\d+[\]】]\s*/i);
+      let quotePrefix = "";
+      let barePart = part;
+      if (quoteMatch) {
+        quotePrefix = quoteMatch[0];
+        barePart = part.substring(quoteMatch[0].length).trim();
+      }
+      // 表情包格式标签：作为独立分句依据，单独成为一个气泡
+      if (/^【表情包：[^】]+】$/.test(barePart)) {
+        let bubbleText = barePart;
+        if (rawBubbles.length === 0 && quotePrefix) {
+          bubbleText = quotePrefix + bubbleText;
+        }
+        if (bubbleText) rawBubbles.push(bubbleText);
+        return;
+      }
+      // 按句末标点 (。！？!? 中英文) 拆分句项列表
+      const sentenceRegex = /([^。！？!?]+[。！？!?]+(?:__TR\d+__)*)/g;
+      let subSentences = barePart.match(sentenceRegex);
+      // 加强约束：若句末标点拆出的句数不足 minCount（模型只返回 1-2 句），
+      // 用弱标点（逗号/分号/顿号/省略号 中英文）尝试再拆出更多句，强化时序级联效果
+      if ((!subSentences || subSentences.length < minCount) && barePart.length > 0) {
+        const weakRegex = /([^，；、,;…]+[，；、,;…]+(?:__TR\d+__)*)/g;
+        const weakParts = barePart.match(weakRegex);
+        if (weakParts && weakParts.length > (subSentences ? subSentences.length : 1)) {
+          let weakLen = 0;
+          weakParts.forEach(w => weakLen += w.length);
+          const weakLeftover = barePart.substring(weakLen).trim();
+          subSentences = weakParts;
+          if (weakLeftover) subSentences.push(weakLeftover);
+        }
+      }
+      if (subSentences && subSentences.length > 0) {
+        let reassembledLen = 0;
+        let currentChunk = [];
+        subSentences.forEach((s, sIdx) => {
+          currentChunk.push(s.trim());
+          reassembledLen += s.length;
+          // 只有合并句数达到最少句数 minCount，或是最后一个标点句时，才打包为一个独立的组合气泡
+          if (currentChunk.length >= minCount || sIdx === subSentences.length - 1) {
+            let chunkText = currentChunk.join("");
+            currentChunk = [];
+            if (rawBubbles.length === 0 && quotePrefix) {
+              chunkText = quotePrefix + chunkText;
+              quotePrefix = "";
+            }
+            if (chunkText) rawBubbles.push(chunkText);
+          }
+        });
+        // 补全末尾未带句末标点的残余尾巴
+        const leftover = barePart.substring(reassembledLen).trim();
+        if (leftover) {
+          if (rawBubbles.length > 0) {
+            rawBubbles[rawBubbles.length - 1] += leftover;
+          } else {
+            rawBubbles.push(leftover);
+          }
+        }
+      } else {
+        let singleText = part;
+        if (rawBubbles.length === 0 && quotePrefix) {
+          singleText = quotePrefix + singleText;
+        }
+        rawBubbles.push(singleText);
+      }
+    });
+
+    // 还原翻译标签
+    rawBubbles = rawBubbles.map(bubble => bubble.replace(/__TR\d+__/g, m => transMap[m] || m));
+
+    // 核心上限管控：如果拆出的气泡数超过上限 maxCount，把溢出的气泡全部合拢合并到最后一个气泡中
+    if (rawBubbles.length > maxCount) {
+      const allowedBubbles = rawBubbles.slice(0, maxCount - 1);
+      const overflowText = rawBubbles.slice(maxCount - 1).join("");
+      allowedBubbles.push(overflowText);
+      return allowedBubbles.filter(Boolean);
+    }
+    return rawBubbles.filter(Boolean);
+  };
+
+  while ((tMatch = transactionRegex.exec(cleanReplyText)) !== null) {
+    const matchIndex = tMatch.index;
+    if (matchIndex > lastIndex) {
+      const textSegment = cleanReplyText.substring(lastIndex, matchIndex).trim();
+      if (textSegment) {
+        let splitParts = splitTextIntoBubbles(textSegment);
+        splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
+      }
+    }
+
+    responseItems.push({
+      kind: 'special',
+      tokenRaw: tMatch[2].toUpperCase(),
+      contentRaw: tMatch[4].trim(),
+      fullMatch: tMatch[0]
+    });
+
+    lastIndex = transactionRegex.lastIndex;
+  }
+
+  if (lastIndex < cleanReplyText.length) {
+    const remainingText = cleanReplyText.substring(lastIndex).trim();
+    if (remainingText) {
+      let splitParts = splitTextIntoBubbles(remainingText);
+      splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
+    }
+  }
+
+  if (responseItems.length === 0 && cleanReplyText.trim()) {
+    let splitParts = splitTextIntoBubbles(cleanReplyText);
+    splitParts.forEach(p => responseItems.push({ kind: 'text', content: p }));
+  }
+
+  // 2. 思维链独立存储：不再附着到首条文本消息内容里，而是作为独立 thought 字段保存到首条消息
+  //    这样编辑/格式修复/翻译/收藏双击首条消息时不会带上思维链
+  let preservedThoughtText = preservedThoughtHeader ? parseThoughtFromText(preservedThoughtHeader).thought : "";
+
+  // 3. 顺序时序队列上屏
+  const sessionObj = await db.sessions.get(sid);
+  const userName = sessionObj?.customUserName || "我";
+
+  // 翻译随动：优先用正文末尾的结构化译文块，按原文片段精确匹配到各气泡（一次调用即可）；
+  // 仅当子开关"翻译未命中时允许追加一次 API"开启且仍有气泡缺译文时，才追加一次批量翻译调用
+  let autoTranslationByIndex = {};
+  if (isTranslateAutoOn && Array.isArray(responseItems) && responseItems.length > 0) {
+    const textItems = [];
+    responseItems.forEach((it, idx) => {
+      if (it && it.kind === 'text' && String(it.content || "").trim()) {
+        textItems.push({ idx: idx, content: String(it.content) });
+      }
+    });
+    if (textItems.length > 0) {
+      if (autoTransEntries.length > 0) {
+        const matched = mapTranslationsToBubbles(textItems.map(x => x.content), autoTransEntries);
+        Object.keys(matched).forEach(k => {
+          const hit = textItems[Number(k)];
+          if (hit && matched[k]) autoTranslationByIndex[hit.idx] = matched[k];
+        });
+      }
+      const missing = textItems.filter(x => !autoTranslationByIndex[x.idx] && shouldAutoTranslateText(x.content));
+      if (missing.length > 0 && isTranslateFallbackOn) {
+        try {
+          showToast("正在生成翻译…");
+          const trans = await translateTextsBatch(missing.map(x => x.content));
+          if (Array.isArray(trans)) {
+            missing.forEach((x, k) => { if (trans[k]) autoTranslationByIndex[x.idx] = trans[k]; });
+          }
+        } catch (e) {
+          console.warn("翻译随动兜底调用失败（本次仅显示正文）:", e);
+        }
+      }
+    }
+  }
+
+  let currentItemIndex = 0;
+  async function processNextResponseItem() {
+    if (currentItemIndex < responseItems.length) {
+      const item = responseItems[currentItemIndex];
+      currentItemIndex++;
+
+      if (item.kind === 'text') {
+        // 检测 char 主动发起通话指令 [AUTO_CALL:voice|video]，触发后清洗指令文本
+        let textToSave = item.content;
+        if (window.callSystem && typeof window.callSystem.detectAndTriggerAutoCall === 'function') {
+          textToSave = window.callSystem.detectAndTriggerAutoCall(item.content, reqSessionId);
+        }
+        // 检测 char 突然发起查手机指令 [CHECK_PHONE]{...}，触发后清洗指令文本
+        if (window.reverseCheckSystem && typeof window.reverseCheckSystem.detectAndTriggerCheckPhone === 'function') {
+          textToSave = window.reverseCheckSystem.detectAndTriggerCheckPhone(textToSave, reqSessionId);
+        }
+        // 翻译随动：优先取上屏前预生成的逐气泡译文；兼容旧版 [TRANSLATE] 标签
+        const transForThis = translationText || autoTranslationByIndex[currentItemIndex - 1] || null;
+        translationText = null;
+        // 思维链：只附加到第一条 char 文本消息上（独立字段，不污染正文）
+        const thoughtForThis = preservedThoughtText;
+        preservedThoughtText = "";
+        if (onText) { try { onText(textToSave); } catch (e) { console.warn('[reply] onText 回调异常:', e); } }
+        await saveAndRenderMessage('char', textToSave, 'text', reqSessionId, transForThis, thoughtForThis);
+      } else if (item.kind === 'special') {
+        await processAndRenderSpecialItem(item, userName, reqSessionId);
+      }
+
+      if (currentItemIndex < responseItems.length) {
+        const delay = 1000;
+        setTimeout(processNextResponseItem, delay);
+      } else {
+        // 所有气泡上屏完毕后，写入社交动作系统消息（朋友圈/论坛发帖/建立小号等）
+        if (pendingSocialNotices.length > 0 && window.socialActions) {
+          for (const notice of pendingSocialNotices) {
+            await window.socialActions.writeSysNoticeToChat(sid, notice);
+          }
+          pendingSocialNotices = [];
+        }
+        header.classList.remove("header-typing");
+        header.innerText = originalTitle;
+        if (typeof checkAndTriggerAutoSummary !== 'undefined') {
+          checkAndTriggerAutoSummary(sid);
+        }
+      }
+    } else {
+      // 空队列也需处理社交动作系统消息
+      if (pendingSocialNotices.length > 0 && window.socialActions) {
+        for (const notice of pendingSocialNotices) {
+          await window.socialActions.writeSysNoticeToChat(sid, notice);
+        }
+        pendingSocialNotices = [];
+      }
+      header.classList.remove("header-typing");
+      header.innerText = originalTitle;
+      if (typeof checkAndTriggerAutoSummary !== 'undefined') {
+        checkAndTriggerAutoSummary(sid);
+      }
+    }
+  }
+
+  if (responseItems.length > 0) {
+    await processNextResponseItem();
+  } else {
+    header.classList.remove("header-typing");
+    header.innerText = originalTitle;
+    if (typeof checkAndTriggerAutoSummary !== 'undefined') {
+      checkAndTriggerAutoSummary(sid);
+    }
+  }
+
+} catch (err) {
+  if (err.name === 'AbortError') {
+    // 被中止，默默忽略，不触发错误提示卡片
+    return;
+  }
+  console.error(err);
+  // 会话隔离：只在用户仍在原会话时才弹错误框，避免跨会话干扰
+  if (sid === reqSessionId && !silentError && uiTouchable()) {
+    // 视觉降级：本次带图且报错 → 自动关闭图片发送，下次仅发文字描述
+    if (window._visionUsedInRequest) {
+      window._visionUsedInRequest = false;
+      localStorage.setItem('api-vision-mode', 'off');
+      showCustomAlert("模型可能不支持图片，已自动降级",
+        (err.message || '') + "\n\n已切换为「仅文字描述」模式，请再点一次获取回复。若该模型其实支持视觉，可执行 localStorage.setItem('api-vision-mode','on') 重新开启。");
+    } else {
+      showCustomAlert("API 发生错误", err.message);
+    }
+  }
+} finally {
+  // 会话隔离：只在用户仍在原请求会话时才恢复 header 和按钮 UI
+  // 如果用户已切换到其他会话，openWeChatDialog 已经处理了新会话的 UI 状态
+  if (sid === reqSessionId && uiTouchable()) {
+    header.classList.remove("header-typing");
+    header.innerText = originalTitle;
+    btnReply.innerHTML = '<svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 9l1.25-2.75L23 5l-2.75-1.25L19 1 17.75 3.75 15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5 2.5-5.5 5.5-2.5-5.5-2.5zm7.5 5l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 14.5z"/></svg>';
+  }
+  onlineAbortController = null;
+}
+}
 
   // 3. 输入栏加号展开
   const btnExpand = document.getElementById("btn-chat-expand-toggle");
@@ -6760,6 +6812,13 @@ function openMeSub(target) {
       window.chatArchiveSystem.renderFileManagementPage(body);
     } else {
       body.innerHTML = `<p style="padding:40px; text-align:center; color:var(--text-secondary);">文件管理模块加载中...</p>`;
+    }
+  } else if (target === 'wechat-bridge') {
+    title.innerText = "微信接入";
+    if (window.wechatBridge && typeof window.wechatBridge.renderPanel === "function") {
+      window.wechatBridge.renderPanel();
+    } else {
+      body.innerHTML = `<p style="padding:40px; text-align:center; color:var(--text-secondary);">微信接入模块加载中…</p>`;
     }
   }
 }

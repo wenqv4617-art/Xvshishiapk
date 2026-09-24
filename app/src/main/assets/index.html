@@ -279,6 +279,8 @@
   <script src="./app_crypto.js"></script>
   <script src="./app_auth.js" defer></script>
   <script src="./app_local_deploy.js" defer></script>
+  <!-- 微信接入（无障碍通道）：只定义 window.wechatBridge，真正启动在 DOMContentLoaded 之后 -->
+  <script src="./app_wechat_bridge.js" defer></script>
   <!-- 开屏启动动画样式（禁止 emoji：全部为通用路径 SVG + 进度条） -->
   <style id="boot-splash-style">
     #boot-splash {
@@ -2020,6 +2022,11 @@
               </div>
               <div class="menu-item" onclick="AppAssistant.openPanel()">
                 <span>应用小助手</span>
+                <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
+              </div>
+              <!-- 微信接入：把真实微信接到 char 单聊（无障碍通道），入口固定在小助手下方 -->
+              <div class="menu-item" onclick="openMeSub('wechat-bridge')">
+                <span>微信接入</span>
                 <svg viewBox="0 0 24 24" class="chevron"><path fill="currentColor" d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z"/></svg>
               </div>
               <div class="menu-item" onclick="openMeSub('collection')">

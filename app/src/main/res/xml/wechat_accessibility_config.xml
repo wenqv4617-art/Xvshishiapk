@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  微信接入无障碍服务配置
+  - 只监听微信（com.tencent.mm），不读取任何其它 App 的界面内容。
+  - eventTypes 只开窗口切换与内容变化两类，足以覆盖「新消息到达」与「会话切换」。
+  - 不开 retrieveInteractiveWindows：本服务不需要把全部窗口拉回来，减少内存与隐私面。
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/wechat_accessibility_description"
+    android:packageNames="com.tencent.mm"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
+    android:notificationTimeout="120"
+    android:canRetrieveWindowContent="true"
+    android:canPerformGestures="true"
+    android:settingsActivity="com.story.phone.MainActivity" />
