@@ -224,6 +224,94 @@ class WeChatAccessibilityService : AccessibilityService() {
             return arr
         }
 
+        /**
+         * 界面诊断：把「服务眼里的微信」原样吐出来。
+         * 微信版本众多、各家 ROM 的无障碍树也不一致，没有这个就只能靠「没反应」猜。
+         * 返回：能否读到会话名 / 消息条数 / 输入框是否可见可编辑 / 发送按钮是否找得到 /
+         *       当前前台包名，以及失败时最可能的原因。
+         */
+        fun probeCurrentScreen(): String {
+            val obj = JSONObject()
+            try {
+                obj.put("ok", true)
+                val svc = instance
+                if (svc == null) {
+                    obj.put("running", false)
+                    obj.put("hint", "无障碍服务没有连上：请到系统设置 → 无障碍 里打开「叙事诗小手机 · 微信接入」")
+                    return obj.toString()
+                }
+                obj.put("running", true)
+                obj.put("configuredListen", listenEnabled)
+                obj.put("configuredAutoReply", autoReplyEnabled)
+                obj.put("lastStatus", lastStatus)
+
+                // 当前前台的是什么应用：不是微信的话，一切都无从谈起
+                var fgPkg = ""
+                try {
+                    val w = svc.windows
+                    if (w != null && w.isNotEmpty()) {
+                        fgPkg = w[0].root?.packageName?.toString() ?: ""
+                    }
+                } catch (e: Exception) {
+                }
+                obj.put("foregroundPackage", fgPkg)
+
+                val root = svc.rootInActiveWindow
+                if (root == null) {
+                    obj.put("reason", "取不到活动窗口（微信不在前台，或被系统拦住）")
+                    obj.put("foregroundIsWechat", fgPkg == WECHAT_PKG)
+                    return obj.toString()
+                }
+                try {
+                    val pkg = root.packageName?.toString() ?: ""
+                    obj.put("windowPackage", pkg)
+                    obj.put("foregroundIsWechat", pkg == WECHAT_PKG)
+
+                    val input = svc.findChatInput(root)
+                    obj.put("inputFound", input != null)
+                    obj.put("inputEditable", input?.isEditable ?: false)
+
+                    val sendBtn = svc.findSendButton(root)
+                    obj.put("sendButtonFound", sendBtn != null)
+
+                    val chatName = svc.resolveChatName(root)
+                    obj.put("chatName", chatName ?: "")
+                    obj.put("chatNameResolved", chatName != null)
+
+                    val msgs = svc.collectMessages(root, chatName)
+                    obj.put("visibleMessageCount", msgs.size)
+                    obj.put("incomingCount", msgs.count { it.optString("direction") == "in" })
+                    obj.put("systemLineCount", msgs.count { it.optBoolean("systemLine") })
+
+                    val preview = JSONArray()
+                    for (m in msgs.takeLast(6)) {
+                        preview.put(JSONObject().apply {
+                            put("dir", m.optString("direction"))
+                            put("sys", m.optBoolean("systemLine"))
+                            put("sender", m.optString("sender"))
+                            put("text", m.optString("text").take(60))
+                        })
+                    }
+                    obj.put("preview", preview)
+
+                    if (input == null) {
+                        obj.put("reason", "当前界面看起来不是微信会话页（没找到底部输入框）")
+                    } else if (chatName == null) {
+                        obj.put("reason", "找不到会话名，为防串台会跳过读取")
+                    } else if (msgs.isEmpty()) {
+                        obj.put("reason", "会话名读到了，但没读到任何消息气泡（可能是微信屏蔽了无障碍读取）")
+                    } else {
+                        obj.put("reason", "正常：可以读取这个会话的消息")
+                    }
+                } finally {
+                    try { root.recycle() } catch (e: Exception) {}
+                }
+            } catch (e: Exception) {
+                return "{\"ok\":false,\"error\":\"" + (e.message ?: "诊断异常") + "\"}"
+            }
+            return obj.toString()
+        }
+
         /** 供 AndroidMcp 查询的状态 JSON */
         fun buildStatusJson(): String {
             return try {

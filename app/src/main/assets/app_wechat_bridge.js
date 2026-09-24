@@ -90,6 +90,7 @@
     stats: { received: 0, replied: 0, sent: 0, blocked: 0 },
     recentLog: [],                 // 界面上的事件流（最多 30 条）
     lastSentAt: 0,
+    lastProbe: null,
     replyBusy: {},                 // sessionId -> true，防同会话并发请求
     sentTimestamps: []             // 用于小时频率限制
   };
@@ -776,6 +777,18 @@
       "微信里的消息会进 App 会话；你在 App 里发的消息不会自动发到微信，避免来回打架。");
     html += card("开关", listenRow + replyRow + navRow + echoRow, { accent: PASTEL.green, soft: PASTEL.greenSoft, border: PASTEL.greenBorder });
 
+    // ---- 界面诊断：微信版本/ROM 差异大，出问题时靠它定位 ----
+    var probeHost = '<div id="wx-probe-result" style="font-size:11.5px;color:' + PASTEL.sub + ';line-height:1.8;">' +
+      (state.lastProbe ? probeHtml(state.lastProbe) : "还没诊断过。点下面的按钮，它会把「无障碍服务眼里的微信」原样显示出来。") +
+      '</div>';
+    html += card("界面诊断",
+      probeHost +
+      '<div style="margin-top:10px;">' +
+        '<button class="wx-btn wx-btn-primary" onclick="wechatBridge.probe()">诊断当前微信界面</button>' +
+        '<span style="font-size:11px;color:' + PASTEL.sub + ';margin-left:8px;">请先切到微信、打开某个聊天窗口，再回来点</span>' +
+      '</div>',
+      { accent: PASTEL.accent });
+
     // ---- 风险提示（打开自动回信才显示，且需确认） ----
     if (c.autoReply && localStorage.getItem(K.riskAccepted) !== "true") {
       html += card("发送前请确认",
@@ -830,6 +843,7 @@
       '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">' +
         '<button class="wx-btn wx-btn-soft" onclick="wechatBridge.openWechat()">打开微信</button>' +
         '<button class="wx-btn wx-btn-soft" onclick="wechatBridge.snapshotNow()">立即读一次</button>' +
+        '<button class="wx-btn wx-btn-soft" onclick="wechatBridge.probe()">界面诊断</button>' +
         '<button class="wx-btn wx-btn-ghost" onclick="wechatBridge.clearInbox()">清空收件箱</button>' +
         '<button class="wx-btn wx-btn-ghost" onclick="wechatBridge.clearReplies()">清空待发</button>' +
         '<button class="wx-btn wx-btn-ghost" onclick="wechatBridge.clearContext()">清理上下文</button>' +
@@ -877,6 +891,50 @@
       '<div style="font-size:16px;font-weight:800;color:' + PASTEL.accent + ';">' + value + '</div>' +
       '<div style="font-size:10.5px;color:' + PASTEL.sub + ';margin-top:1px;">' + label + '</div>' +
       '</div>';
+  }
+
+  /** 把诊断结果渲染成人能看懂的几行 */
+  function probeHtml(p) {
+    if (!p) return "";
+    if (!p.ok) return '<span style="color:' + PASTEL.danger + ';">诊断失败：' + esc(p.error || "未知错误") + '</span>';
+
+    var line = function (k, v, tone) {
+      return '<div><span style="color:' + PASTEL.sub + ';">' + k + '：</span>' +
+        '<span style="color:' + (tone || PASTEL.ink) + ';font-weight:600;">' + esc(String(v)) + '</span></div>';
+    };
+    var yn = function (b) {
+      return '<span style="color:' + (b ? PASTEL.green : PASTEL.danger) + ';font-weight:800;">' + (b ? "是" : "否") + '</span>';
+    };
+    var h = '';
+    h += line("服务已连接", p.running ? "是" : "否", p.running ? PASTEL.green : PASTEL.danger);
+    if (p.hint) h += '<div style="color:' + PASTEL.warn + ';margin-top:4px;">' + esc(p.hint) + '</div>';
+    h += line("当前前台应用", p.foregroundPackage || "（取不到）");
+    h += line("窗口属于微信", p.foregroundIsWechat ? "是" : "否", p.foregroundIsWechat ? PASTEL.green : PASTEL.warn);
+    h += '<div><span style="color:' + PASTEL.sub + ';">找到输入框：</span>' + yn(p.inputFound) +
+      ' <span style="color:' + PASTEL.sub + ';">可编辑：</span>' + yn(p.inputEditable) +
+      ' <span style="color:' + PASTEL.sub + ';">找到发送按钮：</span>' + yn(p.sendButtonFound) + '</div>';
+    h += line("识别到的会话名", p.chatName || "（没识别出来）", p.chatName ? PASTEL.ink : PASTEL.warn);
+    h += line("可见消息条数", (p.visibleMessageCount || 0) + "（其中对方发来 " + (p.incomingCount || 0) + " 条，系统行 " + (p.systemLineCount || 0) + " 条）");
+
+    var tone = (!p.foregroundIsWechat || !p.inputFound || !p.chatName) ? PASTEL.danger
+      : (p.visibleMessageCount ? PASTEL.green : PASTEL.warn);
+    h += '<div style="margin-top:6px;padding:7px 9px;border-radius:9px;background:' +
+      (tone === PASTEL.green ? PASTEL.greenSoft : tone === PASTEL.warn ? PASTEL.warnSoft : PASTEL.dangerSoft) +
+      ';color:' + tone + ';font-weight:600;">' + esc(p.reason || "") + '</div>';
+
+    if (Array.isArray(p.preview) && p.preview.length) {
+      h += '<div style="margin-top:8px;color:' + PASTEL.sub + ';">最近几条读到的内容：</div>';
+      h += '<div style="max-height:150px;overflow-y:auto;margin-top:2px;">';
+      p.preview.forEach(function (m) {
+        h += '<div class="wx-log-line" style="border-bottom:1px dashed #F1F4F8;">' +
+          '<span class="wx-mono" style="flex-shrink:0;color:' + (m.dir === "in" ? PASTEL.green : PASTEL.accent) + ';">' +
+          (m.dir === "in" ? "对方" : "自己") + (m.sys ? "·系统行" : "") + '</span>' +
+          '<span style="word-break:break-all;">' + esc(m.text || "") + '</span>' +
+          '</div>';
+      });
+      h += '</div>';
+    }
+    return h;
   }
 
   /** 绑定卡片：列出所有 char 单聊，选一个作为微信对接对象 */
@@ -1036,6 +1094,23 @@
     setTimeout(function () { state.lastStatus = a11yStatus(); refreshPanelIfOpen(); }, 1200);
   }
 
+  /**
+   * 界面诊断：把无障碍服务当前看到的微信界面读出来。
+   * 微信版本与各家 ROM 的无障碍树差异很大，出问题时要靠这个定位到底卡在哪一步。
+   */
+  function probe() {
+    if (!hasNative("wechatA11yProbe")) { toast("当前环境不支持（需要最新版 APK）"); return; }
+    try {
+      state.lastProbe = JSON.parse(window.AndroidMCP.wechatA11yProbe() || "{}");
+    } catch (e) {
+      state.lastProbe = { ok: false, error: (e && e.message) ? e.message : String(e) };
+    }
+    var p = state.lastProbe || {};
+    logEvent("界面诊断：" + (p.reason || p.error || "完成"), p.foregroundIsWechat && p.inputFound ? "ok" : "warn");
+    toast(p.reason || "诊断完成");
+    renderPanel();
+  }
+
   function clearInbox() {
     if (!hasNative("wechatA11yClearInbox")) return;
     window.AndroidMCP.wechatA11yClearInbox();
@@ -1112,6 +1187,7 @@
     openA11ySettings: openA11ySettings,
     openWechat: openWechat,
     snapshotNow: snapshotNow,
+    probe: probe,
     clearInbox: clearInbox,
     clearReplies: clearReplies,
     clearContext: clearContext,

@@ -1752,6 +1752,20 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * 界面诊断：当前微信界面上到底能不能读到消息、能不能写输入框、能不能点发送。
+     * 微信版本众多、各家 ROM 的无障碍树也不一致，光靠「没反应」无法定位问题，
+     * 所以这里把「服务眼里的微信」原样吐给设置面板。
+     */
+    @JavascriptInterface
+    fun wechatA11yProbe(): String {
+        return try {
+            WeChatAccessibilityService.probeCurrentScreen()
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"" + (e.message ?: "诊断失败") + "\"}"
+        }
+    }
+
 // ============================================================
     //  桌面悬浮桌宠 (升级版：支持多状态复合控制、真机拖动过滤、双击跨进程反向唤醒、TextView原生冒泡)
     // ============================================================
