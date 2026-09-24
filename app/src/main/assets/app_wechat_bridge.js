@@ -360,6 +360,18 @@
       return;
     }
 
+    // 跨实例原子去重：前台页与后台中枢会各自长轮询，同一条消息可能被两边都收到，
+    // 导致聊天页出现两条一样的消息、并触发两次生成。向原生认领，只放行一次。
+    // （原生侧是进程级单例 + ConcurrentHashMap，认领是原子的；没有 msgId 时一律放行）
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.claimIncomingMessage === "function") {
+        if (!window.AndroidMCP.claimIncomingMessage(userId, msg.msgId || "")) {
+          logEvent("重复消息，已跳过（另一实例已在处理）", "warn");
+          return;
+        }
+      }
+    } catch (e) { }
+
     state.stats.received++;
     ctxPush(userId, "in", text);
     logEvent("收到：" + text.slice(0, 24) + (text.length > 24 ? "…" : ""), "in");

@@ -102,6 +102,13 @@ class MainActivity : AppCompatActivity() {
         // 解锁 AI 在后台静默自动点播放歌
         settings.mediaPlaybackRequiresUserGesture = false
 
+        // 后台保活关键：告诉 Chromium 即使这个 WebView 不可见，也保持渲染进程为
+        // 「重要」优先级、不降级冻结。否则 App 切到后台后 WebView 会被冻结，
+        // 里面的 iLink 长轮询和 AI 请求都会停摆（表现为微信侧显示「未连接」）。
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+        }
+
         // 注入 window.AndroidMCP 原生接口并向静态通道注册主 Activity 引用
         AndroidMcp.mainActivity = this
         androidMcp = AndroidMcp.getInstance(this)
@@ -266,6 +273,12 @@ class McpForegroundService : Service() {
             settings.useWideViewPort = true
             settings.loadWithOverviewMode = true
             settings.mediaPlaybackRequiresUserGesture = false
+
+            // 同样对后台中枢生效：中枢 WebView 从未挂到窗口上，更要显式声明
+            // 「不可见也不降级」，否则它的 JS 循环会被 Chromium 冻结。
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                webView.setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, false)
+            }
 
             val mcp = AndroidMcp.getInstance(applicationContext)
             webView.addJavascriptInterface(mcp, "AndroidMCP")

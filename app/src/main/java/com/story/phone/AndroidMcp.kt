@@ -350,6 +350,44 @@ class AndroidMcp private constructor(private val context: Context) {
 
     private val ilinkHttpSeq = java.util.concurrent.atomic.AtomicLong(0)
 
+    // ============================================================
+    //  微信接入 · 跨实例消息去重
+    //
+    //  本应用同时存在两个 WebView：前台 Activity 的，和 McpForegroundService 里的
+    //  headless 中枢。两者都会走 app_wechat_bridge.js 的 boot() 并各自启动 iLink 长轮询，
+    //  于是同一条微信消息可能被两边各收到一次 —— 表现为聊天页出现两条一样的消息、
+    //  并触发两次 AI 生成（用户实测已复现）。
+    //
+    //  AndroidMcp 是进程级单例（getInstance 返回同一对象，两个 WebView 共用），
+    //  所以这里用一个 ConcurrentHashMap 做原子认领：先到的返回 true，后到的直接跳过。
+    // ============================================================
+
+    private val claimedMsgKeys =
+        java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    private val claimedMsgTtlMs = 10 * 60 * 1000L
+
+    /**
+     * 认领一条入站微信消息。true = 本实例负责处理；false = 已被另一实例处理，应跳过。
+     * 没有 msgId 时一律放行 —— 宁可不判重，也不能误丢消息。
+     */
+    @JavascriptInterface
+    fun claimIncomingMessage(userId: String?, msgId: String?): Boolean {
+        try {
+            val mid = msgId ?: ""
+            if (mid.isEmpty()) return true
+            val key = (userId ?: "") + ":" + mid
+            val now = System.currentTimeMillis()
+            val it = claimedMsgKeys.entries.iterator()
+            while (it.hasNext()) {
+                if (now - it.next().value > claimedMsgTtlMs) it.remove()
+            }
+            return claimedMsgKeys.putIfAbsent(key, now) == null
+        } catch (e: Exception) {
+            return true
+        }
+    }
+
     /**
      * 提交一个异步 HTTP 请求，立刻返回 taskId（不阻塞 JS 线程）。
      * 返回 JSON: { ok, taskId } 或 { ok:false, error }

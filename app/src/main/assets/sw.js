@@ -1,4 +1,6 @@
-const CACHE_NAME = 'story-phone-v136';
+const CACHE_NAME = 'story-phone-v137';
+// v137: 修「同一条微信消息在聊天页出现两次」—— 前台页与后台中枢会各自长轮询，加原生原子认领去重；
+//       两个 WebView 都声明 setRendererPriorityPolicy(IMPORTANT,false)，后台不再被降级冻结；v1.5.58
 // v136: 微信接入后台回信失败自动重试一次（原来要等用户打开 App 才补上）；事件流按实例持久化并合并显示，便于排查「后台到底是谁在处理」；v1.5.57
 // v135: 修「微信能收到消息但永远不回」—— 回复引擎被误放进另一函数内部（外部读不到）+ 内部残留未改名的 reqSessionId（一调用就 ReferenceError）；v1.5.56
 // v134: 修「微信接入连上后界面卡死」—— 原生 HTTP 改异步（提交+轮询），长轮询不再阻塞 JS 主线程；v1.5.55
