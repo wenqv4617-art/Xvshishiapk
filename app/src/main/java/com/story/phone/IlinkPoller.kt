@@ -373,7 +373,7 @@ object IlinkPoller {
         val bytes = ByteArray(8)
         var x = v.toLong()
         for (i in 0 until 8) {
-            bytes[i] = (x and 0xFF).toByte()
+            bytes[i] = (x and 0xFFL).toByte()
             x = x shr 8
         }
         return Base64.encodeToString(bytes, Base64.NO_WRAP)
