@@ -227,10 +227,23 @@ object IlinkPoller {
         }
     }
 
-    /** 取所有尚未 ack 的消息，返回 JSON 数组字符串 */
+    /**
+     * 取所有尚未 ack 的消息，返回 JSON 数组字符串。
+     *
+     * ⚠ 这个方法会刷新「网页消费端心跳」—— 它只应该由 JS 侧调用。
+     *   原生自己读队列请用 [pendingSnapshot]，否则原生一读就变成「网页还活着」。
+     */
     fun fetchPending(ctx: Context): String {
         // 网页来拉队列 = 它的 JS 还活着。这个时间戳是「谁负责回消息」的判据。
         lastWebPullAt = System.currentTimeMillis()
+        return pendingSnapshot(ctx)
+    }
+
+    /**
+     * 只读地取一份未 ack 的消息快照，**不触碰**网页心跳。
+     * 供原生兜底回信（NativeReplyFallback）读取待处理消息。
+     */
+    fun pendingSnapshot(ctx: Context): String {
         try {
             val sp = prefs(ctx)
             synchronized(lock) {

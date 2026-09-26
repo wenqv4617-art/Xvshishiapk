@@ -149,16 +149,18 @@ object NativeReplyFallback {
             if (pending.isEmpty()) return
 
             val snap = OfflineBrain.loadSnapshot(ctx)
-            if (!OfflineBrain.isFresh(snap)) {
+            if (snap == null || !OfflineBrain.isFresh(snap)) {
                 recordError(ctx, "没有可用的原生上下文快照（网页从未保存过对话快照），无法兜底回信")
                 Log.w(TAG, "快照缺失或过期，跳过兜底")
                 return
             }
 
             for (msg in pending) {
+                // 注意：这里只能用 IlinkPoller 的心跳判断，不能再去读一次队列
+                //（读队列会刷新心跳，等于自己骗自己「网页还活着」）
                 if (IlinkPoller.isWebConsumerAlive()) break
                 if (hourlyRemaining(ctx) <= 0) break
-                handleOne(ctx, snap!!, msg)
+                handleOne(ctx, snap, msg)
             }
         } catch (e: Exception) {
             Log.e(TAG, "兜底任务异常: ${e.message}")
@@ -175,11 +177,15 @@ object NativeReplyFallback {
         val msgId: String
     )
 
-    /** 直接读原生队列里未 ack 的消息（不走 JS 桥） */
+    /**
+     * 读原生队列里未 ack 的消息。
+     * 用 pendingSnapshot 而不是 fetchPending —— 后者会刷新「网页心跳」，原生自己读会让
+     * 兜底逻辑误判网页还活着，从而永远不接管。
+     */
     private fun pendingMessages(ctx: Context): List<PendingMsg> {
         val out = ArrayList<PendingMsg>()
         try {
-            val raw = IlinkPoller.fetchPending(ctx)
+            val raw = IlinkPoller.pendingSnapshot(ctx)
             val arr = JSONArray(raw)
             for (i in 0 until arr.length()) {
                 val item = arr.optJSONObject(i) ?: continue

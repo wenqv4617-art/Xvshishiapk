@@ -447,6 +447,18 @@
     }
 
     state.replyBusy[sid] = true;
+    // ★ 生成期间持续向原生报「我还在干活」。
+    //   为什么需要：原生兜底判定网页失联的依据是 45 秒没有心跳，而一次长上下文的
+    //   生成经常要 30~60 秒。如果不额外打点，网页明明在正常生成，原生却会以为它死了，
+    //   于是同一条消息被两边各回一遍。这里每 5 秒续一次；反过来，如果网页真的被冻结，
+    //   这个心跳会在 45 秒内变旧，原生就能正确接管。
+    var busyTimer = setInterval(function () {
+      try {
+        if (window.AndroidMCP && typeof window.AndroidMCP.ilinkWebBusy === "function") {
+          window.AndroidMCP.ilinkWebBusy();
+        }
+      } catch (e) { }
+    }, 5000);
     var collected = [];
     var IL = ilink();
     var ticket = "";
@@ -487,11 +499,13 @@
       state.lastError = String(e && e.message || e);
       logEvent("生成回复失败：" + state.lastError, "danger");
       state.replyBusy[sid] = false;
+      clearInterval(busyTimer);
       if (IL && ticket) { try { await IL.sendTyping(msg.fromUserId, ticket, 2); } catch (e2) { } }
       refreshPanelIfOpen();
       return;
     }
     state.replyBusy[sid] = false;
+    clearInterval(busyTimer);
     if (IL && ticket) { try { await IL.sendTyping(msg.fromUserId, ticket, 2); } catch (e) { } }
 
     var outTexts = collected.map(cleanOutbound).filter(Boolean);
