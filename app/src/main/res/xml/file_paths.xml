@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider 可分享目录白名单。
+
+  为什么需要它：导出的人设卡片 / 世界书文件要能「拉起系统分享面板」发给别人。
+  Android 7.0 起禁止直接把 file:// 路径交给别的应用（FileUriExposedException），
+  必须用 FileProvider 生成 content:// URI 并临时授权。
+
+  这里只开放两个目录，都不含敏感数据：
+    · cache/export —— 导出的临时文件（分享完即可丢弃）
+    · files/share  —— 需要稍后再次分享的导出文件
+-->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="export_cache" path="export/" />
+    <files-path name="share_files" path="share/" />
+</paths>

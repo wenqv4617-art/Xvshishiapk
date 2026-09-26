@@ -1509,6 +1509,7 @@
               <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
             </button>
             <input type="file" id="file-archive-import" accept=".txt,.docx" style="display:none;">
+            <input type="file" id="file-archive-own-import" accept=".txt,.docx" style="display:none;">
             <input type="file" id="file-archive-png-import" accept=".png" style="display:none;">
             <button class="btn-icon" id="btn-add-archive">
               <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
@@ -1517,15 +1518,35 @@
         </header>
         <div class="win-body">
           <div id="archive-list-container" class="archive-main"></div>
-          <!-- 导入格式选择弹层 -->
+          <!-- 导入格式选择弹层（导入 / 导出 两个面板切换） -->
           <div id="archive-import-choice-overlay" class="modal-overlay" style="z-index: 1200; align-items: center !important; justify-content: center !important;">
-            <div class="modal" style="max-width: 300px; padding: 20px; border-radius: 16px; background: #ffffff; text-align: center;">
-              <h4 style="margin: 0 0 14px 0; font-size: 15px; font-weight: 700; color: var(--text-primary);">选择导入设定类型</h4>
-              <div style="display: flex; flex-direction: column; gap: 10px;">
-                <button class="btn btn-primary" id="btn-choice-import-png" style="padding: 12px; font-size: 13px; font-weight: 700; background-color: #8b5cf6; border: none;">导入酒馆角色卡 (.png)</button>
-                <button class="btn btn-outline" id="btn-choice-import-doc" style="padding: 12px; font-size: 13px; font-weight: 700;">导入纯文本/Word (.txt / .docx)</button>
-                <button class="btn btn-danger-outline" onclick="document.getElementById('archive-import-choice-overlay').classList.remove('active')" style="padding: 8px; font-size: 12px; margin-top: 4px;">取消</button>
+            <div class="modal" style="max-width: 320px; padding: 18px; border-radius: 16px; background: #ffffff; text-align: center;">
+              <!-- 面板切换 -->
+              <div style="display:flex; gap:0; background:#f1f5f9; border-radius:10px; padding:3px; margin-bottom:14px;">
+                <button id="archive-io-tab-import" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:#fff; color:var(--text-primary); box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer;">导入</button>
+                <button id="archive-io-tab-export" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:transparent; color:var(--text-secondary); cursor:pointer;">导出</button>
               </div>
+
+              <!-- 面板一：导入 -->
+              <div id="archive-io-panel-import">
+                <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6;">选择导入设定类型</p>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <button class="btn btn-primary" id="btn-choice-import-png" style="padding: 12px; font-size: 13px; font-weight: 700; background-color: #8b5cf6; border: none;">导入酒馆角色卡 (.png)</button>
+                  <button class="btn btn-outline" id="btn-choice-import-doc" style="padding: 12px; font-size: 13px; font-weight: 700;">导入纯文本/Word (.txt / .docx)</button>
+                  <button class="btn btn-outline" id="btn-choice-import-own" style="padding: 12px; font-size: 13px; font-weight: 700; border-color:#0ea5e9; color:#0369a1;">导入本 App 导出的文件（恢复分组）</button>
+                </div>
+                <p style="margin:10px 0 0 0; font-size:10.5px; color:var(--text-secondary); line-height:1.5; text-align:left;">
+                  提示：本 App 导出的 .txt/.docx 带识别标记，用上面任意一个入口导入都会被自动识别并按分组重建。
+                </p>
+              </div>
+
+              <!-- 面板二：导出 -->
+              <div id="archive-io-panel-export" style="display:none;">
+                <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6;">把人设卡片导出为文件（可分享给别人，也可导回本 App 完整恢复分组）</p>
+                <button class="btn btn-primary" id="btn-choice-export-archive" style="width:100%; padding: 12px; font-size: 13px; font-weight: 700;">导出人设卡片</button>
+              </div>
+
+              <button class="btn btn-danger-outline" id="btn-archive-io-cancel" style="padding: 8px; font-size: 12px; margin-top: 12px; width:100%;">取消</button>
             </div>
           </div>
 
@@ -1740,6 +1761,31 @@
             <button type="button" class="btn btn-outline" id="btn-wb-tidy-old" style="width:100%; margin-top:8px; padding:7px 9px; font-size:11px; border-radius:8px;">一键整理旧条目（未设置插入位置）</button>
           </div>
           <div id="world_book-list-container"></div>
+
+          <!-- 世界书 导入/导出 双面板弹层 -->
+          <div id="wb-io-overlay" class="modal-overlay" style="z-index: 1200; align-items: center !important; justify-content: center !important;">
+            <div class="modal" style="max-width: 320px; padding: 18px; border-radius: 16px; background: #ffffff; text-align: center;">
+              <div style="display:flex; gap:0; background:#f1f5f9; border-radius:10px; padding:3px; margin-bottom:14px;">
+                <button id="wb-io-tab-import" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:#fff; color:var(--text-primary); box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer;">导入</button>
+                <button id="wb-io-tab-export" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:transparent; color:var(--text-secondary); cursor:pointer;">导出</button>
+              </div>
+
+              <div id="wb-io-panel-import">
+                <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6;">导入一份设定作为新条目</p>
+                <button class="btn btn-outline" id="btn-choice-wb-import-doc" style="width:100%; padding: 12px; font-size: 13px; font-weight: 700;">导入纯文本/Word (.txt / .docx)</button>
+                <p style="margin:10px 0 0 0; font-size:10.5px; color:var(--text-secondary); line-height:1.5; text-align:left;">
+                  提示：本 App 导出的世界书文件带识别标记，选它会被自动识别并按分组批量重建条目（不再逐条填表）。
+                </p>
+              </div>
+
+              <div id="wb-io-panel-export" style="display:none;">
+                <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6;">把世界书条目导出为文件（可分享，也可导回本 App 完整恢复分组与全部高级字段）</p>
+                <button class="btn btn-primary" id="btn-choice-export-wb" style="width:100%; padding: 12px; font-size: 13px; font-weight: 700;">导出世界书</button>
+              </div>
+
+              <button class="btn btn-danger-outline" id="btn-wb-io-cancel" style="padding: 8px; font-size: 12px; margin-top: 12px; width:100%;">取消</button>
+            </div>
+          </div>
           
           <!-- 世界书条目弹层 -->
           <div id="world_book-form-overlay" class="modal-overlay">
@@ -6787,6 +6833,10 @@
   <script src="app_desktop_guard.js"></script>
   <script src="app_settings.js"></script>
   <script src="app_changelog.js"></script>
+  <!-- 人设卡片 / 世界书 的导出与回导（带指纹识别）。
+       必须排在 app_archive.js / app_world_book.js 之前：这两个应用在初始化时
+       要引用 window.exportCenter 来接管导出入口。 -->
+  <script src="app_export_center.js"></script>
   <script src="app_archive.js"></script>
   <script src="app_world_book.js"></script>
   <script src="app_tts.js"></script>

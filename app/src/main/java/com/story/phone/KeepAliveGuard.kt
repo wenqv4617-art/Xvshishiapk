@@ -38,13 +38,41 @@ object KeepAliveGuard {
     private const val TAG = "KeepAliveGuard"
     private const val PREF = "keep_alive_guard"
 
-    private const val KEY_ARMED = "armed"          // 用户是否开过微信接入（决定要不要保活）
+    private const val KEY_ARMED = "armed"          // 兼容旧字段：是否曾经武装过
     private const val KEY_ALARM_AT = "alarm_at"    // 下一次闹钟时间，供诊断面板展示
     private const val KEY_REVIVE_COUNT = "revive_count"
     private const val KEY_LAST_WAKE_AT = "last_wake_at"
 
+    /**
+     * 需要保活的「理由」集合（逗号分隔），例如 `ilink,pet`。
+     *
+     * 为什么用集合而不是一个布尔：微信接入、桌宠主动发信、应用内闹钟都会要求保活，
+     * 但它们开关是独立的。任何一个关掉时都不能把闹钟链停掉 —— 只有全部关闭才解除，
+     * 否则「关掉微信接入」会顺手把桌宠的主动发信也弄死。
+     */
+    private const val KEY_REASONS = "reasons"
+
+    const val REASON_ILINK = "ilink"   // 微信 ClawBot 收发
+    const val REASON_PET = "pet"       // 桌面桌宠主动发信
+    const val REASON_ALARM = "alarm"   // 应用内定时闹钟
+
     private const val REQUEST_CODE = 9992
     private const val ACTION_TICK = "com.story.phone.ACTION_KEEPALIVE_TICK"
+
+    /**
+     * 紧急复活闹钟的 action 与 requestCode。
+     *
+     * 什么时候用：用户在最近任务里划掉卡片时。此刻进程已经离开前台，
+     * **直接在 onTaskRemoved 里 startForegroundService 会被 Android 12+ 拒绝**
+     * （ForegroundServiceStartNotAllowedException），所以那一步只能静默失败。
+     * 正确做法是设一个 1~2 秒后的闹钟：闹钟触发属于系统豁免，届时再启动前台服务
+     * 就是合法的 —— 这是划卡片后唯一还来得及的自救窗口。
+     */
+    private const val ACTION_REVIVE_NOW = "com.story.phone.ACTION_KEEPALIVE_REVIVE_NOW"
+    private const val REQUEST_CODE_REVIVE = 9993
+
+    /** 划卡片后多久尝试复活（太短系统可能还没把进程标记为可调度） */
+    private const val REVIVE_DELAY_MS = 1500L
 
     /** 进程活着时的心跳间隔：只做体检，别费电 */
     private const val INTERVAL_ARMED_MS = 15L * 60_000L
@@ -65,7 +93,47 @@ object KeepAliveGuard {
     // =========================================================================
 
     /**
-     * 武装看门狗：用户开启了微信接入（或开机自启恢复）时调用。
+     * 设置/清除某一个「保活理由」。
+     *
+     * 这是各功能与看门狗之间唯一的开关通道：
+     *   · 微信接入开启 → setReason(REASON_ILINK, true)
+     *   · 微信接入关闭 → setReason(REASON_ILINK, false)
+     *   · 桌宠主动发信开启/关闭 → setReason(REASON_PET, ...)
+     * 只要还有任意一个理由为真，闹钟链就继续跑；全部为假才真正解除。
+     */
+    fun setReason(ctx: Context, reason: String, wanted: Boolean) {
+        try {
+            val app = ctx.applicationContext
+            val sp = prefs(app)
+            val cur = reasonsOf(app).toMutableSet()
+            val changed = if (wanted) cur.add(reason) else cur.remove(reason)
+            if (!changed) return
+            sp.edit().putString(KEY_REASONS, cur.joinToString(",")).apply()
+            Log.d(TAG, "保活理由变更：${if (wanted) "+" else "-"}$reason → [${cur.joinToString(",")}]")
+
+            if (cur.isEmpty()) {
+                disarmInternal(app, "no-reason")
+            } else {
+                arm(app, "reason:$reason")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "设置保活理由失败: ${e.message}")
+        }
+    }
+
+    private fun reasonsOf(ctx: Context): Set<String> {
+        val raw = try { prefs(ctx).getString(KEY_REASONS, "") ?: "" } catch (e: Exception) { "" }
+        if (raw.isBlank()) return emptySet()
+        return raw.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    }
+
+    fun reasons(ctx: Context): Set<String> = reasonsOf(ctx)
+
+    /** 是否还有任何功能要求保活 */
+    fun hasAnyReason(ctx: Context): Boolean = reasonsOf(ctx).isNotEmpty()
+
+    /**
+     * 武装看门狗：用户开启了需要后台存活的功能（微信接入 / 桌宠发信 / 闹钟）时调用。
      * 幂等，重复调用只会把下一次闹钟往后推。
      */
     fun arm(ctx: Context, reason: String) {
@@ -74,7 +142,7 @@ object KeepAliveGuard {
             sp.edit().putBoolean(KEY_ARMED, true).apply()
             schedule(ctx, INTERVAL_ARMED_MS)
             Log.d(TAG, "看门狗已武装（$reason），下次体检 ${INTERVAL_ARMED_MS / 60000} 分钟后")
-            // 立刻做一次自检并拉起服务：用户刚打开微信接入时通常服务已经在了，
+            // 立刻做一次自检并拉起服务：用户刚打开功能时通常服务已经在了，
             // 但从后台被复活的情况下未必。
             ensureServiceRunning(ctx, "arm:$reason")
         } catch (e: Exception) {
@@ -82,20 +150,30 @@ object KeepAliveGuard {
         }
     }
 
-    /** 解除武装：用户主动「停止接收」或退出登录时调用，彻底停掉闹钟链 */
+    /** 解除武装：没有任何功能需要保活了（用户全部关掉） */
     fun disarm(ctx: Context, reason: String) {
+        disarmInternal(ctx.applicationContext, reason)
+    }
+
+    private fun disarmInternal(app: Context, reason: String) {
         try {
-            val sp = prefs(ctx)
-            sp.edit().putBoolean(KEY_ARMED, false).putLong(KEY_ALARM_AT, 0L).apply()
-            cancelAlarm(ctx)
+            prefs(app).edit()
+                .putBoolean(KEY_ARMED, false)
+                .putString(KEY_REASONS, "")
+                .putLong(KEY_ALARM_AT, 0L)
+                .apply()
+            cancelAlarm(app)
             Log.d(TAG, "看门狗已解除（$reason）")
         } catch (e: Exception) {
             Log.e(TAG, "解除看门狗失败: ${e.message}")
         }
     }
 
-    fun isArmed(ctx: Context): Boolean =
-        try { prefs(ctx).getBoolean(KEY_ARMED, false) } catch (e: Exception) { false }
+    /**
+     * 兼容旧调用点：微信接入专用。
+     * 等价于 setReason(REASON_ILINK, ...)，保留是为了不破坏既有调用。
+     */
+    fun isArmed(ctx: Context): Boolean = hasAnyReason(ctx)
 
     // =========================================================================
     // 闹钟调度（自续期链）
@@ -124,6 +202,51 @@ object KeepAliveGuard {
         }
     }
 
+    /**
+     * 划掉最近任务卡片后的紧急自救：设一个 1.5 秒后的闹钟把自己叫回来。
+     *
+     * 为什么不能直接 startForegroundService：Android 12+ 明确禁止"应用因用户划掉卡片
+     * 离开前台后，再从后台启动前台服务"，会抛 ForegroundServiceStartNotAllowedException。
+     * 而 AlarmManager 触发的广播是系统豁免路径 —— 先设闹钟，再由闹钟去启动服务。
+     *
+     * 这里用 set() 而不是 setAndAllowWhileIdle()：我们要的是"尽快"，Doze 那一套
+     * 白名单节流反而会把它推迟；1.5 秒的短延时也不受后台启动限制约束。
+     */
+    fun armEmergencyRevive(ctx: Context, reason: String) {
+        try {
+            val app = ctx.applicationContext
+            prefs(app).edit().putBoolean(KEY_ARMED, true).apply()
+            val am = app.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(app, KeepAliveReceiver::class.java).apply { action = ACTION_REVIVE_NOW }
+            val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
+            val pi = PendingIntent.getBroadcast(app, REQUEST_CODE_REVIVE, intent, flags)
+            am.set(AlarmManager.RTC_WAKEUP, System.currentTimeMillis() + REVIVE_DELAY_MS, pi)
+            Log.w(TAG, "已排紧急复活闹钟（$reason），${REVIVE_DELAY_MS}ms 后尝试把服务拉回来")
+        } catch (e: Exception) {
+            Log.e(TAG, "排紧急复活闹钟失败（$reason）: ${e.message}")
+        }
+    }
+
+    /** 紧急复活闹钟到点：立刻复活服务，并把常规体检链也续上 */
+    fun onEmergencyRevive(ctx: Context) {
+        val app = ctx.applicationContext
+        try {
+            // 强制绕过 20 秒防抖：这一刻我们就是被系统叫回来干这件事的
+            lastReviveAt = 0L
+            val revived = ensureServiceRunning(app, "emergencyRevive")
+            IlinkPoller.resumeIfWanted(app)
+            KeepAliveGuard.schedule(app, INTERVAL_ARMED_MS)
+            Log.w(TAG, "紧急复活完成：revived=$revived")
+        } catch (e: Exception) {
+            Log.e(TAG, "紧急复活失败: ${e.message}")
+            try { schedule(app, INTERVAL_DEAD_MS) } catch (e2: Exception) { }
+        }
+    }
+
     private fun cancelAlarm(ctx: Context) {
         try {
             val am = ctx.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -140,18 +263,18 @@ object KeepAliveGuard {
         try {
             prefs(app).edit().putLong(KEY_LAST_WAKE_AT, System.currentTimeMillis()).apply()
 
-            val armed = isArmed(app)
-            val pollerWanted = IlinkPoller.isWanted(app)
-            if (!armed && !pollerWanted) {
-                Log.d(TAG, "体检：未武装且未开接收，停止闹钟链")
-                disarm(app, "tick:not-wanted")
+            // 判据是「还有没有任何功能需要保活」。微信接入与桌宠发信是两套独立开关，
+            // 用理由集合表示，避免关掉其中一个把另一个也停了。
+            if (!hasAnyReason(app)) {
+                Log.d(TAG, "体检：已无任何保活理由，停止闹钟链")
+                disarmInternal(app, "tick:no-reason")
                 return
             }
 
             // 1) 前台服务是否活着？不活就拉起来（这一步就是「进程被清后自动复活」）
             val revived = ensureServiceRunning(app, "tick")
 
-            // 2) 服务活着但长轮询线程掉了？一并重启
+            // 2) 服务活着但长轮询线程掉了？一并重启（桌宠的主动发信扫描挂在同一进程上）
             if (!revived) {
                 try { IlinkPoller.resumeIfWanted(app) } catch (e: Exception) { }
             }
@@ -159,7 +282,8 @@ object KeepAliveGuard {
             // 3) 续期：进程已经不在了（本次是被闹钟叫醒的）用短间隔，否则用长间隔
             val interval = if (revived) INTERVAL_DEAD_MS else INTERVAL_ARMED_MS
             schedule(app, interval)
-            Log.d(TAG, "体检完成：revived=$revived 下次 ${interval / 60000} 分钟后")
+            Log.d(TAG, "体检完成：revived=$revived reasons=[${reasonsOf(app).joinToString(",")}] " +
+                "下次 ${interval / 60000} 分钟后")
         } catch (e: Exception) {
             Log.e(TAG, "体检异常: ${e.message}")
             // 出任何意外都要保证链不断，否则一次异常就永久失联
@@ -294,6 +418,7 @@ object KeepAliveGuard {
         return try {
             org.json.JSONObject().apply {
                 put("armed", sp.getBoolean(KEY_ARMED, false))
+                put("reasons", org.json.JSONArray(reasonsOf(ctx).toList()))
                 put("serviceAlive", McpForegroundService.isAlive)
                 put("alarmAt", alarmAt)
                 put("alarmInMs", if (alarmAt > now) alarmAt - now else -1L)
@@ -318,7 +443,11 @@ object KeepAliveGuard {
 class KeepAliveReceiver : android.content.BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         try {
-            KeepAliveGuard.onTick(context.applicationContext)
+            val app = context.applicationContext
+            when (intent?.action) {
+                "com.story.phone.ACTION_KEEPALIVE_REVIVE_NOW" -> KeepAliveGuard.onEmergencyRevive(app)
+                else -> KeepAliveGuard.onTick(app)
+            }
         } catch (e: Exception) {
             Log.e("KeepAliveReceiver", "体检失败: ${e.message}")
         }

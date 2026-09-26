@@ -177,9 +177,10 @@ object IlinkPoller {
             }
             wantRun = true
             ensureWorker()
-            // ★ 用户开启了接收 → 武装保活看门狗：进程万一被 ROM 清掉，靠闹钟链复活。
-            //   这一步是「离开 App 后还能收到/回微信」的前提，必须在这里同步打开。
-            try { KeepAliveGuard.arm(ctx.applicationContext, "ilinkStart") } catch (e: Exception) { }
+            // ★ 用户开启了接收 → 登记「微信接入」这个保活理由：进程万一被 ROM 清掉，
+            //   闹钟链会把它拉回来。桌宠主动发信是另一个独立理由，两者互不影响。
+            try { KeepAliveGuard.setReason(ctx.applicationContext, KeepAliveGuard.REASON_ILINK, true) } catch (e: Exception) { }
+            return status(ctx)
             return status(ctx)
         } catch (e: Exception) {
             return JSONObject().apply {
@@ -194,8 +195,9 @@ object IlinkPoller {
         try {
             prefs(ctx).edit().putBoolean(KEY_WANTED, false).apply()
         } catch (e: Exception) { }
-        // ★ 用户主动停止接收 → 解除看门狗，否则闹钟会一直把服务拉回来，用户以为关不掉
-        try { KeepAliveGuard.disarm(ctx.applicationContext, "ilinkStop") } catch (e: Exception) { }
+        // ★ 只注销「微信接入」这个理由。若桌宠主动发信还开着，闹钟链必须继续跑
+        //   （这里曾经直接 disarm，会把桌宠的后台发信一起弄死）。
+        try { KeepAliveGuard.setReason(ctx.applicationContext, KeepAliveGuard.REASON_ILINK, false) } catch (e: Exception) { }
         notifyJs("stopped")
     }
 

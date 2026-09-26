@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.webkit.JavascriptInterface
 import android.media.MediaPlayer
 import android.util.Log
+import androidx.core.content.FileProvider
 import java.io.File
 import java.io.FileWriter
 import org.json.JSONArray
@@ -341,6 +342,88 @@ class AndroidMcp private constructor(private val context: Context) {
         }
     }
 
+    // ============================================================
+    //  导出文件 → 系统分享面板
+    // ============================================================
+
+    /** 分享用的导出目录（FileProvider 白名单里已声明 cache/export） */
+    private fun exportCacheDir(): File {
+        val d = File(context.cacheDir, "export")
+        if (!d.exists()) d.mkdirs()
+        return d
+    }
+
+    /**
+     * 把一段文本内容写成文件，并拉起系统分享面板（微信/QQ/邮件/网盘都能接）。
+     *
+     * 为什么必须走 FileProvider：Android 7.0 起跨应用传 file:// 会抛
+     * FileUriExposedException。这里用 content:// + FLAG_GRANT_READ_URI_PERMISSION。
+     *
+     * @param contentBase64 文件内容（Base64）。用 Base64 而不是明文，是因为导出的是
+     *        UTF-8 中文文档，直接经 JS 桥传字符串容易被编码/长度问题咬到；
+     *        docx 这类二进制当然也必须走 Base64。
+     * @param mimeType 例如 text/plain（.txt）或 application/vnd.openxmlformats-officedocument.wordprocessingml.document（.docx）
+     * @return JSON: {ok, uri} 或 {ok:false, error}
+     */
+    @JavascriptInterface
+    fun shareFile(fileName: String, contentBase64: String, mimeType: String, chooserTitle: String): String {
+        return try {
+            val safeName = (fileName.ifBlank { "export.txt" })
+                .replace("/", "_").replace("\\", "_").replace(":", "_")
+            val f = File(exportCacheDir(), safeName)
+            val bytes = android.util.Base64.decode(contentBase64, android.util.Base64.DEFAULT)
+            f.writeBytes(bytes)
+
+            val authority = context.packageName + ".fileprovider"
+            val uri = FileProvider.getUriForFile(context, authority, f)
+
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = if (mimeType.isBlank()) "application/octet-stream" else mimeType
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, safeName)
+                putExtra(Intent.EXTRA_TITLE, safeName)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val chooser = Intent.createChooser(send, chooserTitle.ifBlank { "分享导出文件" }).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(chooser)
+            Log.d(TAG, "shareFile() 已拉起分享面板: $safeName (${bytes.size} bytes)")
+            JSONObject().apply {
+                put("ok", true)
+                put("uri", uri.toString())
+                put("bytes", bytes.size)
+            }.toString()
+        } catch (e: Exception) {
+            Log.e(TAG, "shareFile() 失败: ${e.message}")
+            JSONObject().apply {
+                put("ok", false)
+                put("error", e.message ?: "分享失败")
+            }.toString()
+        }
+    }
+
+    /**
+     * 把导出文件同时落一份到公共下载目录（Download/Storypoem/）。
+     * 分享面板是主路径；这一份是「用户想自己留档」的保险，失败不影响分享。
+     */
+    @JavascriptInterface
+    fun saveExportFile(fileName: String, contentBase64: String): Boolean {
+        return try {
+            val safeName = (fileName.ifBlank { "export.txt" })
+                .replace("/", "_").replace("\\", "_")
+            val f = File(getDownloadDir(), safeName)
+            val bytes = android.util.Base64.decode(contentBase64, android.util.Base64.DEFAULT)
+            f.writeBytes(bytes)
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "saveExportFile() 失败: ${e.message}")
+            false
+        }
+    }
+
     // 1.4 降级容灾直写：保留作为纯文本备份或单卡片调试导入直写
     @JavascriptInterface
     fun saveBackupFile(jsonString: String, fileName: String): Boolean {
@@ -556,6 +639,38 @@ class AndroidMcp private constructor(private val context: Context) {
     /** 当前品牌对应的「怎么开自启动」中文指引 */
     @JavascriptInterface
     fun keepAliveBrandHint(): String = KeepAliveGuard.brandHint()
+
+    /**
+     * 桌宠「主动发信」的保活开关。
+     *
+     * 背景：桌宠的主动发信扫描是 JS 里的 30 秒 setInterval，后台靠一个原生闹钟注入
+     * `triggerBackgroundActiveMessageNative()` 兜底。但那条闹钟链是**从网页里排的** ——
+     * 进程一被 ROM 清掉，链就断了，桌宠再也不会主动发信。
+     *
+     * 这里让桌宠共用微信接入那套保活看门狗：开启时登记一个独立的保活理由，
+     * 进程被杀后由闹钟链把它拉回来，桌宠的定时发信调度随之恢复。
+     * 与微信接入互不影响（关掉微信接入不会停掉桌宠的保活）。
+     */
+    @JavascriptInterface
+    fun setPetKeepAlive(enabled: Boolean): String {
+        return try {
+            KeepAliveGuard.setReason(context.applicationContext, KeepAliveGuard.REASON_PET, enabled)
+            KeepAliveGuard.statusJson(context.applicationContext)
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"" + (e.message ?: "未知错误") + "\"}"
+        }
+    }
+
+    /** 应用内闹钟的保活登记（闹钟本身由系统 AlarmManager 唤醒，这里只为保证进程在） */
+    @JavascriptInterface
+    fun setAlarmKeepAlive(enabled: Boolean): String {
+        return try {
+            KeepAliveGuard.setReason(context.applicationContext, KeepAliveGuard.REASON_ALARM, enabled)
+            KeepAliveGuard.statusJson(context.applicationContext)
+        } catch (e: Exception) {
+            "{\"ok\":false,\"error\":\"" + (e.message ?: "未知错误") + "\"}"
+        }
+    }
 
     /**
      * 认领一条入站微信消息。true = 本实例负责处理；false = 已被另一实例处理，应跳过。

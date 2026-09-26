@@ -236,21 +236,19 @@ class McpForegroundService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // 用户在最近任务里划掉卡片。国产 ROM 常常顺带「强停」整个进程，
-        // 这一步先把看门狗重新排上，至少保证下一次闹钟能把我们拉回来。
-        android.util.Log.w(TAG, "最近任务卡片被划掉，重排看门狗并抢救轮询")
+        // 用户在最近任务里划掉卡片。国产 ROM 常常顺带「强停」整个进程。
+        //
+        // ⚠ 关键修正：这里**不能**直接 startForegroundService。
+        //   Android 12+ 规定「应用因用户划掉卡片离开前台后，不得再从后台启动前台服务」，
+        //   直接调用会抛 ForegroundServiceStartNotAllowedException —— 而异常被 catch 掉后
+        //   表现就是「划卡片后彻底静默死亡」（真机实测：连原生的"正在输入"都发不出来，
+        //   正说明服务压根没起来）。正确路径是设一个 1.5 秒后的 AlarmManager 闹钟，
+        //   由闹钟触发的广播（系统豁免路径）去启动服务。
+        android.util.Log.w(TAG, "最近任务卡片被划掉，排紧急复活闹钟并抢救轮询")
         try {
             if (IlinkPoller.isWanted(applicationContext)) {
-                KeepAliveGuard.arm(applicationContext, "taskRemoved")
+                KeepAliveGuard.armEmergencyRevive(applicationContext, "taskRemoved")
                 IlinkPoller.resumeIfWanted(applicationContext)
-                // 服务自身也再拉一次：部分 ROM 划卡片后会把 service 一并停掉，
-                // 这里用 START_STICKY + 显式再启动双保险。
-                val intent = Intent(applicationContext, McpForegroundService::class.java)
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    applicationContext.startForegroundService(intent)
-                } else {
-                    applicationContext.startService(intent)
-                }
             }
         } catch (e: Exception) {
             android.util.Log.e(TAG, "划卡片后抢救失败: ${e.message}")

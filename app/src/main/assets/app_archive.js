@@ -558,18 +558,46 @@ function initArchiveImport() {
   const choiceOverlay = document.getElementById("archive-import-choice-overlay");
   const btnChoicePng = document.getElementById("btn-choice-import-png");
   const btnChoiceDoc = document.getElementById("btn-choice-import-doc");
+  const btnChoiceOwn = document.getElementById("btn-choice-import-own");
   const fileImportDoc = document.getElementById("file-archive-import");
+  const fileImportOwn = document.getElementById("file-archive-own-import");
   const fileImportPng = document.getElementById("file-archive-png-import");
 
   if (btnImport && choiceOverlay) {
     btnImport.onclick = () => {
       choiceOverlay.classList.add("active");
+      // 每次打开都回到「导入」面板，避免上次停在导出面板让人困惑
+      if (typeof switchArchiveIoTab === "function") switchArchiveIoTab("import");
     };
 
     if (btnChoiceDoc && fileImportDoc) {
       btnChoiceDoc.onclick = () => {
         choiceOverlay.classList.remove("active");
         fileImportDoc.click();
+      };
+    }
+
+    // 「导入本 App 导出的文件」：走同一套读取，但强制按自家指纹解析
+    if (btnChoiceOwn && fileImportOwn) {
+      btnChoiceOwn.onclick = () => {
+        choiceOverlay.classList.remove("active");
+        fileImportOwn.click();
+      };
+      fileImportOwn.onchange = async (e) => {
+        if (e.target.files.length > 0) {
+          const file = e.target.files[0];
+          showToast("正在识别导出文件...");
+          try {
+            const text = file.name.endsWith(".docx")
+              ? await parseDocxText(file)
+              : await readTxtFileSafe(file);
+            await importOwnExportedArchive(text, file.name);
+          } catch (err) {
+            console.error(err);
+            showToast("导入失败: " + err.message);
+          }
+          fileImportOwn.value = "";
+        }
       };
     }
 
@@ -588,6 +616,23 @@ function initArchiveImport() {
         }
       };
     }
+
+    // 导出面板：把人设卡片导出为文件并拉起分享
+    const btnExport = document.getElementById("btn-choice-export-archive");
+    if (btnExport) {
+      btnExport.onclick = () => {
+        choiceOverlay.classList.remove("active");
+        openArchiveExportPanel();
+      };
+    }
+
+    // 面板切换 / 取消
+    const tabImport = document.getElementById("archive-io-tab-import");
+    const tabExport = document.getElementById("archive-io-tab-export");
+    if (tabImport) tabImport.onclick = () => switchArchiveIoTab("import");
+    if (tabExport) tabExport.onclick = () => switchArchiveIoTab("export");
+    const btnCancel = document.getElementById("btn-archive-io-cancel");
+    if (btnCancel) btnCancel.onclick = () => choiceOverlay.classList.remove("active");
 
     // 提交激活码事件
     const btnSubmitActivation = document.getElementById("btn-submit-png-activation");
@@ -609,6 +654,14 @@ function initArchiveImport() {
             text = await parseDocxText(file);
           } else {
             text = await readTxtFileSafe(file);
+          }
+
+          // ★ 先判断是不是「本 App 导出的文件」：是的话按分组批量重建，
+          //   而不是把整份文本塞进一个角色的人设里（那是老行为，会毁掉结构）。
+          if (typeof exportCenter !== "undefined" && exportCenter.isOurExport(text)) {
+            await importOwnExportedArchive(text, file.name);
+            fileImportDoc.value = "";
+            return;
           }
 
           await openArchiveForm();
@@ -711,6 +764,125 @@ function initArchiveImport() {
         fileImportPng.value = "";
       }
     };
+  }
+}
+
+// ============================================================================
+// 档案库 · 导入 / 导出 面板（v1.5.64）
+// ============================================================================
+
+/** 在「导入 / 导出」两个面板之间切换 */
+function switchArchiveIoTab(which) {
+  const pImport = document.getElementById("archive-io-panel-import");
+  const pExport = document.getElementById("archive-io-panel-export");
+  const tImport = document.getElementById("archive-io-tab-import");
+  const tExport = document.getElementById("archive-io-tab-export");
+  const on = "flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:#fff; color:var(--text-primary); box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer;";
+  const off = "flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:transparent; color:var(--text-secondary); cursor:pointer;";
+  const isExport = which === "export";
+  if (pImport) pImport.style.display = isExport ? "none" : "block";
+  if (pExport) pExport.style.display = isExport ? "block" : "none";
+  if (tImport) tImport.style.cssText = isExport ? off : on;
+  if (tExport) tExport.style.cssText = isExport ? on : off;
+}
+
+/**
+ * 打开档案库导出面板。
+ *
+ * 数据源：db.archives 里除支线快照（isSnapshot）以外的全部角色档案。
+ * 导出内容刻意**不含头像二进制**：一来 txt/word 装不下图片，二来头像动辄几十 KB 的
+ * Base64 会把文件撑得没人愿意打开。回导时头像留空，用户自己在 App 里补。
+ */
+async function openArchiveExportPanel() {
+  if (typeof exportCenter === "undefined") {
+    showToast("导出模块未加载，请更新到最新版 APK");
+    return;
+  }
+  await exportCenter.openExportPanel({
+    kind: "archive",
+    title: "人设卡片",
+    provider: async () => {
+      const all = await db.archives.toArray();
+      const byGroup = {};
+      all.filter(a => a && !a.isSnapshot).forEach(a => {
+        const g = (a.group && String(a.group).trim()) || "默认未分组";
+        if (!byGroup[g]) byGroup[g] = [];
+        byGroup[g].push({
+          name: a.name || "未命名",
+          payload: {
+            type: a.type || "character",
+            remark: a.remark || "",
+            persona: a.persona || "",
+            parentId: null
+          }
+        });
+      });
+      return Object.keys(byGroup).map(k => ({ name: k, entries: byGroup[k] }));
+    }
+  });
+}
+
+/** 统一的确认框（优先用 App 自绘弹窗，网页环境退回原生 confirm） */
+function archiveConfirmAsync(title, message) {
+  return new Promise((resolve) => {
+    if (typeof showCustomConfirm === "function") {
+      try { showCustomConfirm(title, message, () => resolve(true)); return; } catch (e) { }
+    }
+    resolve(window.confirm(title + "\n\n" + message));
+  });
+}
+
+/**
+ * 导入「本 App 导出的」档案库文件。
+ *
+ * 关键点：导出文件里带着分组信息，导入时**按分组归位**：
+ *   · 数据库里已有同名分组 → 直接并进去（不新建重复分组）
+ *   · 没有 → 用导出文件里的分组名新建
+ * 条目一律「新建」而不是覆盖同名角色 —— 覆盖是不可逆的破坏，而重名角色
+ * 用户自己可以在列表里删掉，代价小得多。
+ */
+async function importOwnExportedArchive(text, fileName) {
+  if (typeof exportCenter === "undefined") { showToast("导出模块未加载"); return; }
+  const parsed = exportCenter.parse(text, "archive");
+  if (!parsed.ok) { showToast(parsed.error || "无法识别该文件"); return; }
+
+  const total = parsed.groups.reduce((n, g) => n + g.entries.length, 0);
+  if (!total) { showToast("文件里没有可导入的条目"); return; }
+
+  const lines = parsed.groups.map(g => `· ${g.name}（${g.entries.length} 条）`).join("\n");
+  const ok = await archiveConfirmAsync(
+    "导入人设卡片",
+    `识别到「叙事诗小手机」导出的档案文件${fileName ? "：" + fileName : ""}\n\n` +
+    `将新建 ${total} 个角色，分布如下：\n${lines}\n\n` +
+    (parsed.warning ? "注意：" + parsed.warning + "\n\n" : "") +
+    `导入是「新增」，不会覆盖已有角色。继续？`
+  );
+  if (!ok) return;
+
+  showToast("正在导入...");
+  let done = 0;
+  try {
+    for (const g of parsed.groups) {
+      for (const e of g.entries) {
+        const p = e.payload || {};
+        await db.archives.add({
+          type: p.type || "character",
+          name: e.name || "未命名",
+          avatar: null,                                  // 头像无法随文本导出，留空待用户补
+          remark: p.remark || "由导出文件导入",
+          group: g.name,                                 // ★ 恢复原分组
+          persona: e.content || p.persona || "",
+          parentId: null
+        });
+        done++;
+      }
+    }
+    showToast(`导入完成，新增 ${done} 个角色`);
+    if (typeof loadArchivesData === "function") loadArchivesData();
+  } catch (err) {
+    console.error(err);
+    showToast(`导入中断：已成功 ${done} 个，失败原因 ${err.message}`);
+    if (typeof loadArchivesData === "function") loadArchivesData();
   }
 }
 

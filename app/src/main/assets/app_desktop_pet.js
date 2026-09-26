@@ -36,6 +36,11 @@
       // 2. 同步当前的编辑窗口
       await this.syncWithActiveSession();
       this.renderPetToDesktop();
+
+      // 3. 冷启动就把「是否有桌宠开着主动发信」同步给原生保活看门狗。
+      //    这一步很关键：如果上次是被 ROM 清掉后由闹钟链复活的，进程起来时
+      //    保活理由可能已丢失，需要网页重启后重新登记。
+      try { if (typeof syncPetKeepAlive === 'function') syncPetKeepAlive(); } catch (e) { }
     },
 
     // 监控活动会话以装载 MCP 面板回显，但不破坏桌宠在桌面上的持续显示
@@ -647,6 +652,8 @@
 
       await db.desktop_pets.put(this.editingPetConfig);
       this.renderPetToDesktop();
+      // 主动发信开关变了就立刻同步给原生保活（不必等下一次 30 秒扫描）
+      try { if (typeof syncPetKeepAlive === 'function') syncPetKeepAlive(); } catch (e) { }
     },
 
     // 上传状态图 (editing)
@@ -1094,11 +1101,40 @@
     }
   };
 
+  /**
+   * 把「是否有桌宠开着主动发信」同步给原生保活看门狗。
+   *
+   * 为什么必须做：主动发信扫描是 JS 里的 30 秒 setInterval，后台靠原生闹钟注入兜底，
+   * 而那条闹钟链是从网页里排的 —— 进程被 ROM 清掉就彻底断了，桌宠再也不会主动发信。
+   * 登记到原生看门狗后，进程被杀会由闹钟链拉回来，调度随之恢复。
+   *
+   * 幂等：只在状态真的变化时调用原生，避免每 30 秒无谓地跨桥。
+   */
+  let _lastPetKeepAlive = null;
+  async function syncPetKeepAlive() {
+    try {
+      if (typeof window === 'undefined' || !window.AndroidMCP) return;
+      if (typeof window.AndroidMCP.setPetKeepAlive !== 'function') return;
+      if (typeof db === 'undefined' || !db.desktop_pets) return;
+      const allPets = await db.desktop_pets.toArray();
+      const wanted = allPets.some(p => p && p.activeMsgEnabled);
+      if (wanted === _lastPetKeepAlive) return;
+      _lastPetKeepAlive = wanted;
+      window.AndroidMCP.setPetKeepAlive(wanted);
+      console.log('[KeepAlive] 桌宠主动发信保活 →', wanted ? '开启' : '关闭');
+    } catch (e) {
+      console.warn('[KeepAlive] 同步桌宠保活状态失败', e);
+    }
+  }
+  window.syncPetKeepAlive = syncPetKeepAlive;
+
   // 全局高精度定时扫描线程（前台保底，后台由 BgPollReceiver 接管）
   if (!window.activeMsgSchedulerInterval) {
     window.activeMsgSchedulerInterval = setInterval(async () => {
       if (typeof db === 'undefined' || !db.desktop_pets) return;
       try {
+        // 顺手把保活状态同步给原生：用户在设置里开关主动发信后，最迟 30 秒内生效
+        syncPetKeepAlive();
         const allPets = await db.desktop_pets.toArray();
         const now = Date.now();
 

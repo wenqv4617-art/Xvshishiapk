@@ -152,37 +152,213 @@ async function tidyLegacyEntries() {
   });
 }
 
-// 初始化世界书导入控制器
+// 初始化世界书导入 / 导出控制器
 function initWorldBookImport() {
   const btnImport = document.getElementById("btn-world_book-import");
+  const overlay = document.getElementById("wb-io-overlay");
   const fileImport = document.getElementById("file-world_book-import");
-  if (btnImport && fileImport) {
-    btnImport.onclick = () => fileImport.click();
-    fileImport.onchange = async (e) => {
-      if (e.target.files.length > 0) {
-        const file = e.target.files[0];
-        showToast("正在解析世界书设定文件...");
-        try {
-          let text = "";
-          if (file.name.endsWith(".docx")) {
-            text = await parseDocxText(file);
-          } else {
-            text = await readTxtFileSafe(file);
-          }
 
-          // 打开新建表单并自动填充数据
-          await openWorldBookForm();
-          const defaultTitle = file.name.substring(0, file.name.lastIndexOf('.')) || "新世界书设定";
-          document.getElementById("wb-entry-title").value = defaultTitle;
-          document.getElementById("wb-entry-content").value = text;
-          showToast(`成功导入并填充设定「${file.name}」！`);
-        } catch(err) {
-          console.error(err);
-          showToast("解析设定文件失败: " + err.message);
-        }
-        fileImport.value = "";
-      }
+  if (!btnImport || !overlay) return;
+
+  // 原来的「点一下直接弹文件选择」改为「弹出导入/导出双面板」
+  btnImport.onclick = () => {
+    overlay.classList.add("active");
+    switchWbIoTab("import");
+  };
+
+  const btnImportDoc = document.getElementById("btn-choice-wb-import-doc");
+  if (btnImportDoc && fileImport) {
+    btnImportDoc.onclick = () => {
+      overlay.classList.remove("active");
+      fileImport.click();
     };
+  }
+
+  const btnExport = document.getElementById("btn-choice-export-wb");
+  if (btnExport) {
+    btnExport.onclick = () => {
+      overlay.classList.remove("active");
+      openWorldBookExportPanel();
+    };
+  }
+
+  const tabImport = document.getElementById("wb-io-tab-import");
+  const tabExport = document.getElementById("wb-io-tab-export");
+  if (tabImport) tabImport.onclick = () => switchWbIoTab("import");
+  if (tabExport) tabExport.onclick = () => switchWbIoTab("export");
+  const btnCancel = document.getElementById("btn-wb-io-cancel");
+  if (btnCancel) btnCancel.onclick = () => overlay.classList.remove("active");
+
+  fileImport.onchange = async (e) => {
+    if (e.target.files.length > 0) {
+      const file = e.target.files[0];
+      showToast("正在解析世界书设定文件...");
+      try {
+        let text = "";
+        if (file.name.endsWith(".docx")) {
+          text = await parseDocxText(file);
+        } else {
+          text = await readTxtFileSafe(file);
+        }
+
+        // ★ 先判断是不是「本 App 导出的文件」：是的话按分组批量重建条目，
+        //   而不是把整份文件塞成一个条目的正文。
+        if (typeof exportCenter !== "undefined" && exportCenter.isOurExport(text)) {
+          await importOwnExportedWorldBook(text, file.name);
+          fileImport.value = "";
+          return;
+        }
+
+        // 打开新建表单并自动填充数据
+        await openWorldBookForm();
+        const defaultTitle = file.name.substring(0, file.name.lastIndexOf('.')) || "新世界书设定";
+        document.getElementById("wb-entry-title").value = defaultTitle;
+        document.getElementById("wb-entry-content").value = text;
+        showToast(`成功导入并填充设定「${file.name}」！`);
+      } catch(err) {
+        console.error(err);
+        showToast("解析设定文件失败: " + err.message);
+      }
+      fileImport.value = "";
+    }
+  };
+}
+
+// ============================================================================
+// 世界书 · 导入 / 导出 面板（v1.5.64）
+// ============================================================================
+
+/** 在「导入 / 导出」两个面板之间切换 */
+function switchWbIoTab(which) {
+  const pImport = document.getElementById("wb-io-panel-import");
+  const pExport = document.getElementById("wb-io-panel-export");
+  const tImport = document.getElementById("wb-io-tab-import");
+  const tExport = document.getElementById("wb-io-tab-export");
+  const on = "flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:#fff; color:var(--text-primary); box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer;";
+  const off = "flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:transparent; color:var(--text-secondary); cursor:pointer;";
+  const isExport = which === "export";
+  if (pImport) pImport.style.display = isExport ? "none" : "block";
+  if (pExport) pExport.style.display = isExport ? "block" : "none";
+  if (tImport) tImport.style.cssText = isExport ? off : on;
+  if (tExport) tExport.style.cssText = isExport ? on : off;
+}
+
+/**
+ * 导出世界书条目。
+ *
+ * 与档案库的关键差别：世界书条目有 20 来个**没法用纯文本表达**的字段
+ * （插入位置 / 顺序 / 扫描深度 / 概率 / 粘滞 / 冷却 / 互斥组 / 关键词逻辑……）。
+ * 所以这里把每条目的完整原始字段放进 payload，回导时原样还原 ——
+ * 正文仍以人类可读区为准（用户改了要生效），字段以 payload 为准。
+ */
+async function openWorldBookExportPanel() {
+  if (typeof exportCenter === "undefined") {
+    showToast("导出模块未加载，请更新到最新版 APK");
+    return;
+  }
+  // 允许导出的字段白名单（显式列举，避免把 id / isActive 这类派生字段带出去）
+  const FIELDS = [
+    "group", "title", "mode", "keywords", "probability", "depth", "content",
+    "position", "order", "role", "selectiveLogic", "secondaryKeys",
+    "inclusionGroup", "groupWeight", "sticky", "cooldown", "scanDepth",
+    "caseSensitive", "matchWholeWords", "useProbability", "groupOverride",
+    "ignoreBudget"
+  ];
+
+  await exportCenter.openExportPanel({
+    kind: "world_book",
+    title: "世界书",
+    provider: async () => {
+      const all = await db.world_book_entries.toArray();
+      const byGroup = {};
+      all.forEach(e => {
+        if (!e) return;
+        const g = (e.group && String(e.group).trim()) || "默认未分组";
+        if (!byGroup[g]) byGroup[g] = [];
+        const payload = {};
+        FIELDS.forEach(f => {
+          if (e[f] !== undefined) payload[f] = e[f];
+        });
+        byGroup[g].push({ name: e.title || "未命名条目", payload: payload });
+      });
+      return Object.keys(byGroup).map(k => ({ name: k, entries: byGroup[k] }));
+    }
+  });
+}
+
+/** 统一的确认框（优先用 App 自绘弹窗，网页环境退回原生 confirm） */
+function wbConfirmAsync(title, message) {
+  return new Promise((resolve) => {
+    if (typeof showCustomConfirm === "function") {
+      try { showCustomConfirm(title, message, () => resolve(true)); return; } catch (e) { }
+    }
+    resolve(window.confirm(title + "\n\n" + message));
+  });
+}
+
+/**
+ * 导入「本 App 导出的」世界书文件：按分组批量重建条目，高级字段原样还原。
+ * 与新条目一律「新增」，不覆盖已有条目（重名条目用户可自行删除）。
+ */
+async function importOwnExportedWorldBook(text, fileName) {
+  if (typeof exportCenter === "undefined") { showToast("导出模块未加载"); return; }
+  const parsed = exportCenter.parse(text, "world_book");
+  if (!parsed.ok) { showToast(parsed.error || "无法识别该文件"); return; }
+
+  const total = parsed.groups.reduce((n, g) => n + g.entries.length, 0);
+  if (!total) { showToast("文件里没有可导入的条目"); return; }
+
+  const lines = parsed.groups.map(g => `· ${g.name}（${g.entries.length} 条）`).join("\n");
+  const ok = await wbConfirmAsync(
+    "导入世界书",
+    `识别到「叙事诗小手机」导出的世界书文件${fileName ? "：" + fileName : ""}\n\n` +
+    `将新建 ${total} 个条目，分布如下：\n${lines}\n\n` +
+    (parsed.warning ? "注意：" + parsed.warning + "\n\n" : "") +
+    `导入是「新增」，不会覆盖已有条目。继续？`
+  );
+  if (!ok) return;
+
+  showToast("正在导入...");
+  let done = 0;
+  try {
+    for (const g of parsed.groups) {
+      for (const e of g.entries) {
+        const p = e.payload || {};
+        const mode = p.mode || "always";
+        await db.world_book_entries.add({
+          group: g.name,                                  // ★ 恢复原分组
+          title: e.name || "未命名条目",
+          mode: mode,
+          keywords: p.keywords || "",
+          probability: (p.probability !== undefined) ? p.probability : 100,
+          depth: (p.depth !== undefined) ? p.depth : 10,
+          content: e.content || p.content || "",
+          position: p.position || "after_char",
+          order: (p.order !== undefined) ? p.order : 100,
+          role: p.role || "system",
+          selectiveLogic: p.selectiveLogic || "and",
+          secondaryKeys: p.secondaryKeys || "",
+          inclusionGroup: p.inclusionGroup || "",
+          groupWeight: (p.groupWeight !== undefined) ? p.groupWeight : 100,
+          sticky: (p.sticky !== undefined) ? p.sticky : 0,
+          cooldown: (p.cooldown !== undefined) ? p.cooldown : 0,
+          scanDepth: (p.scanDepth !== undefined) ? p.scanDepth : null,
+          caseSensitive: !!p.caseSensitive,
+          matchWholeWords: !!p.matchWholeWords,
+          useProbability: (p.useProbability !== undefined) ? !!p.useProbability : true,
+          groupOverride: !!p.groupOverride,
+          ignoreBudget: !!p.ignoreBudget,
+          isActive: mode !== "disabled"
+        });
+        done++;
+      }
+    }
+    showToast(`导入完成，新增 ${done} 个条目`);
+    if (typeof loadWorldBookData === "function") loadWorldBookData();
+  } catch (err) {
+    console.error(err);
+    showToast(`导入中断：已成功 ${done} 条，失败原因 ${err.message}`);
+    if (typeof loadWorldBookData === "function") loadWorldBookData();
   }
 }
 

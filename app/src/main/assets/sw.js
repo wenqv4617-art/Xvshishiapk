@@ -1,4 +1,12 @@
-const CACHE_NAME = 'story-phone-v142';
+const CACHE_NAME = 'story-phone-v143';
+// v143: ①人设卡片 / 世界书 新增导出与回导：导出 .txt / .docx（可选），文件带识别指纹，
+//       导回时按分组完整重建条目；分组可用「可展开多选器」勾选（整组或单条）；
+//       导出后可拉起系统分享面板；导入/导出合并到同一个按钮的两个面板里。
+//       ②修划掉最近任务卡片后彻底静默死亡：onTaskRemoved 里直接 startForegroundService
+//       在 Android 12+ 会被拒（ForegroundServiceStartNotAllowedException），改为排一个
+//       1.5 秒后的紧急复活闹钟（闹钟属系统豁免路径）。③桌宠主动发信接入同一个保活看门狗：
+//       保活理由改为集合（ilink / pet / alarm 各自独立），关掉微信接入不再连带停掉桌宠。
+//       ④新增原生 shareFile（FileProvider + ACTION_SEND）；v1.5.64
 // v142: 修 v1.5.62 里两个会让「原生兜底回信」在最需要时失效的缺陷：
 //       ①原生读取待回消息时误刷新了「网页心跳」，等于自己骗自己「网页还活着」，
 //         导致兜底永远不接管 → 改为只读快照（pendingSnapshot），心跳只由网页刷新；
@@ -83,6 +91,7 @@ const ASSETS = [
   './app_settings.js',
   './app_archive.js',
   './app_world_book.js',
+  './app_export_center.js', // 人设卡片 / 世界书 导出与回导（带指纹识别，v1.5.64）
   './app_chat.js',
   './app_wallet.js',
   './app_chat_quote.js',

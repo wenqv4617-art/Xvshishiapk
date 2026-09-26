@@ -86,6 +86,7 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.story.phone.ACTION_KEEPALIVE_TICK" />
+                <action android:name="com.story.phone.ACTION_KEEPALIVE_REVIVE_NOW" />
             </intent-filter>
         </receiver>
 
@@ -120,6 +121,18 @@
              该方案已弃置（用无障碍读微信界面受版本与 ROM 差异影响大，且只能在微信处于
              前台时工作），现改为「App 内直连腾讯官方 iLink / ClawBot 协议」。
              服务类文件已删除，此处不再注册。 -->
+
+        <!-- ★ 导出文件分享：把导出的 .txt/.docx 通过 content:// 交给系统分享面板。
+             Android 7.0 起禁止跨应用传 file:// 路径，必须走 FileProvider。 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
 
     </application>
 
