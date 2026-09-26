@@ -78,6 +78,9 @@ class AndroidMcp private constructor(private val context: Context) {
             try { instance?.bluetoothMcp?.onDestroy() } catch (e: Exception) { e.printStackTrace() }
         }
 
+        /** 后台 WakeLock 是否持有（诊断面板用，无实例时返回 false） */
+        fun isWakeLockHeld(): Boolean = try { instance?.isWakeLockHeldNow() ?: false } catch (e: Exception) { false }
+
         /** 蓝牙运行时权限申请结果记录（供 JS 判断是否被永久拒绝） */
         @Volatile
         var lastBtPermissionRequestSummary: String = "{\"requested\":false}"
@@ -230,6 +233,9 @@ class AndroidMcp private constructor(private val context: Context) {
             }
         } catch (e: Exception) { e.printStackTrace() }
     }
+
+    /** 后台 WakeLock 当前是否持有（诊断面板用） */
+    fun isWakeLockHeldNow(): Boolean = try { wakeLock?.isHeld == true } catch (e: Exception) { false }
 
     private fun getDownloadDir(): File {
         val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "Storypoem")
@@ -436,6 +442,120 @@ class AndroidMcp private constructor(private val context: Context) {
     /** 原生轮询状态：running / lastPollAt / lastError / pending / stale。 */
     @JavascriptInterface
     fun ilinkNativeStatus(): String = IlinkPoller.status(context.applicationContext)
+
+    /**
+     * 网页上报「我正在处理消息 / 正在生成回复」。
+     * 原生兜底回信据此避让，避免同一条消息被网页和原生各回一遍。
+     */
+    @JavascriptInterface
+    fun ilinkWebBusy(): String {
+        IlinkPoller.webBusy()
+        return "ok"
+    }
+
+    /**
+     * 保存「原生兜底回信」用的上下文快照。
+     *
+     * 网页每次真正请求大模型前调用，把**已经完全拼好的** messages 数组（含角色卡、
+     * 世界书、RAG 记忆、时间提示）连同 API 配置一起交给原生。网页被系统冻结后，
+     * native 侧 NativeReplyFallback 就用这份成品接着把回复生成出来，质量几乎不掉。
+     *
+     * @param messagesJson 与即将发给大模型的 messages 完全一致的 JSON 数组字符串
+     * @param apiJson      {url, key, model, temperature}
+     */
+    @JavascriptInterface
+    fun ilinkSaveContextSnapshot(
+        sessionId: String?,
+        messagesJson: String?,
+        apiJson: String?,
+        charName: String?,
+        userName: String?
+    ): String {
+        val sid = (sessionId ?: "").trim().toLongOrNull() ?: 0L
+        val ok = OfflineBrain.saveSnapshot(
+            context.applicationContext,
+            sid,
+            messagesJson ?: "[]",
+            apiJson ?: "{}",
+            charName ?: "",
+            userName ?: ""
+        )
+        return "{\"ok\":" + ok + "}"
+    }
+
+    /** 清空原生上下文快照（退出登录 / 解绑会话时调用） */
+    @JavascriptInterface
+    fun ilinkClearContextSnapshot(): String {
+        OfflineBrain.clear(context.applicationContext)
+        return "ok"
+    }
+
+    /** 原生兜底回信的状态（诊断面板用） */
+    @JavascriptInterface
+    fun ilinkFallbackStatus(): String = NativeReplyFallback.statusJson(context.applicationContext)
+
+    /**
+     * 取走原生兜底回信的「补录队列」。
+     *
+     * 原生在 WebView 已经死掉的情况下直接回了微信，那两条消息网页当时无从得知；
+     * 网页重新活过来时调用这个接口把记录取走、落进聊天库，再逐条 ack。
+     */
+    @JavascriptInterface
+    fun ilinkFetchNativeReplies(): String =
+        NativeReplyFallback.fetchLog(context.applicationContext)
+
+    /** 补录记录已落库，确认删除 */
+    @JavascriptInterface
+    fun ilinkAckNativeReply(id: String?): String {
+        NativeReplyFallback.ackLog(context.applicationContext, (id ?: "").trim().toLongOrNull() ?: 0L)
+        return "ok"
+    }
+
+    // =========================================================================
+    //  保活诊断与引导：让用户能在 App 里直接看到「保活到底有没有生效」，
+    //  以及一键跳到系统设置把自启动/电池优化白名单打开（国产 ROM 必需）。
+    // =========================================================================
+
+    /** 保活看门狗 + 前台服务 + 电池优化白名单的完整状态 */
+    @JavascriptInterface
+    fun keepAliveStatus(): String = KeepAliveGuard.statusJson(context.applicationContext)
+
+    /** 用户手动「立即体检并复活」：把服务与长轮询拉起来（面板上的自检按钮） */
+    @JavascriptInterface
+    fun keepAliveReviveNow(): String {
+        try {
+            KeepAliveGuard.arm(context.applicationContext, "manual")
+            val intent = Intent(context, McpForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+            IlinkPoller.resumeIfWanted(context.applicationContext)
+            return KeepAliveGuard.statusJson(context.applicationContext)
+        } catch (e: Exception) {
+            return "{\"ok\":false,\"error\":\"" + (e.message ?: "未知错误") + "\"}"
+        }
+    }
+
+    /** 是否已在电池优化白名单里（false = 国产 ROM 下随时可能被清） */
+    @JavascriptInterface
+    fun isIgnoringBatteryOptimizations(): Boolean =
+        KeepAliveGuard.isIgnoringBatteryOptimizations(context.applicationContext)
+
+    /** 弹出系统对话框申请加入电池优化白名单 */
+    @JavascriptInterface
+    fun requestIgnoreBatteryOptimizations(): Boolean =
+        KeepAliveGuard.requestIgnoreBatteryOptimizations(context.applicationContext)
+
+    /** 打开本应用的系统详情页（自启动/后台运行开关通常在里面） */
+    @JavascriptInterface
+    fun openAppDetailSettings(): Boolean =
+        KeepAliveGuard.openAppDetailSettings(context.applicationContext)
+
+    /** 当前品牌对应的「怎么开自启动」中文指引 */
+    @JavascriptInterface
+    fun keepAliveBrandHint(): String = KeepAliveGuard.brandHint()
 
     /**
      * 认领一条入站微信消息。true = 本实例负责处理；false = 已被另一实例处理，应跳过。

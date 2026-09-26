@@ -205,6 +205,57 @@ class McpForegroundService : Service() {
         private const val TAG = "McpForegroundService"
         private const val CHANNEL_ID = "mcp_foreground_service_channel"
         private const val NOTIFICATION_ID = 1005
+
+        /** 看门狗闹钟触发时用的 action，仅用于日志区分来源 */
+        const val ACTION_KEEPALIVE_REVIVE = "com.story.phone.ACTION_KEEPALIVE_REVIVE"
+
+        /**
+         * 前台服务当前是否活着。
+         * 这是「看门狗要不要把进程拉起来」的唯一判据 —— 它由 onCreate/onDestroy 维护，
+         * 与进程同生命周期；进程被 ROM 清掉后这个值自然回到 false。
+         */
+        @Volatile
+        var isAlive: Boolean = false
+            private set
+    }
+
+    /**
+     * 启动（或保活看门狗复活）本服务。
+     *
+     * 注意「被闹钟复活」这条路径：系统在 Doze 下唤醒 CPU 跑 KeepAliveReceiver，
+     * 此时进程是刚创建的，Activity / WebView 都不存在，所以这里只做最必要的事：
+     * 挂常驻通知 → 恢复原生长轮询 → 重建后台中枢 WebView（JS 兜底链路要它）。
+     */
+    @SuppressLint("ForegroundServiceType")
+    private fun startForegroundSafely(reason: String) {
+        try {
+            startForeground(NOTIFICATION_ID, buildNotification())
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "startForeground 失败（$reason）: ${e.message}")
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        // 用户在最近任务里划掉卡片。国产 ROM 常常顺带「强停」整个进程，
+        // 这一步先把看门狗重新排上，至少保证下一次闹钟能把我们拉回来。
+        android.util.Log.w(TAG, "最近任务卡片被划掉，重排看门狗并抢救轮询")
+        try {
+            if (IlinkPoller.isWanted(applicationContext)) {
+                KeepAliveGuard.arm(applicationContext, "taskRemoved")
+                IlinkPoller.resumeIfWanted(applicationContext)
+                // 服务自身也再拉一次：部分 ROM 划卡片后会把 service 一并停掉，
+                // 这里用 START_STICKY + 显式再启动双保险。
+                val intent = Intent(applicationContext, McpForegroundService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    applicationContext.startForegroundService(intent)
+                } else {
+                    applicationContext.startService(intent)
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "划卡片后抢救失败: ${e.message}")
+        }
+        super.onTaskRemoved(rootIntent)
     }
 
     // 静默音频保活：播放无声音频保持 WebView JS 环境活跃，防止后台被冻结
@@ -219,6 +270,7 @@ class McpForegroundService : Service() {
 
         val notification = buildNotification()
         startForeground(NOTIFICATION_ID, notification)
+        isAlive = true
 
         // 启动静默音频保活，保持 WebView JS 环境活跃
         startKeepAliveAudio()
@@ -233,15 +285,38 @@ class McpForegroundService : Service() {
         } catch (e: Exception) {
             android.util.Log.e(TAG, "恢复原生长轮询失败: ${e.message}")
         }
+
+        // ★ 排上保活看门狗：进程万一被 ROM 清掉，靠闹钟链把服务重新拉起来
+        try {
+            if (IlinkPoller.isWanted(applicationContext)) {
+                KeepAliveGuard.arm(applicationContext, "serviceCreate")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "武装看门狗失败: ${e.message}")
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // 被闹钟从「进程已死」状态复活时，onCreate 已经走完全部恢复流程；
+        // 这里只补充处理「服务还活着但被重新 start」的情况（用户重开 App、看门狗体检）。
+        val reason = intent?.action ?: "start"
+        try {
+            // 常驻通知可能被用户手动划掉，重新拉起时补挂
+            startForegroundSafely(reason)
+            if (IlinkPoller.isWanted(applicationContext)) {
+                IlinkPoller.resumeIfWanted(applicationContext)
+                KeepAliveGuard.arm(applicationContext, "startCommand:$reason")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e(TAG, "onStartCommand 恢复失败: ${e.message}")
+        }
         return START_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        isAlive = false
         // 停止静默音频保活
         stopKeepAliveAudio()
         // 销毁后台中枢 WebView，释放渲染进程
@@ -268,6 +343,16 @@ class McpForegroundService : Service() {
         // 释放蓝牙 SPP/GATT 连接资源
         try {
             AndroidMcp.releaseBluetoothIfHeld()
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        // ★ 服务被系统回收（不是用户主动关）：如果微信接入还开着，立刻重排看门狗闹钟。
+        //   这一步是「进程被 ROM 清掉后还能自己回来」的最后一道保险 —— onDestroy 之后
+        //   闹钟链仍然存在，下一次触发就会把服务重新拉起来。
+        try {
+            if (IlinkPoller.isWanted(applicationContext)) {
+                KeepAliveGuard.arm(applicationContext, "serviceDestroyed")
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -867,6 +952,11 @@ class BootReceiver : BroadcastReceiver() {
                 context.startForegroundService(serviceIntent)
             } else {
                 context.startService(serviceIntent)
+            }
+            // ★ 开机后如果用户此前开着微信接入，把看门狗闹钟链也重新排上。
+            //   ROM 的「自启动」白名单没开时这一条可能收不到，所以面板里另外给了指引。
+            if (IlinkPoller.isWanted(context.applicationContext)) {
+                KeepAliveGuard.arm(context.applicationContext, "boot")
             }
         } catch (e: Exception) {
             e.printStackTrace()

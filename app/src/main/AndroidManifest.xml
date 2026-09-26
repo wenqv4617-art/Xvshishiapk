@@ -22,6 +22,10 @@
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- ★ 电池优化白名单：国产 ROM（小米/华为/OPPO/vivo/荣耀）下，不进白名单会在息屏后被
+         系统清理，表现就是「离开 App 后微信 ClawBot 失联」。用户在面板上点一下会弹系统授权框。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     
     <!-- 新增：申请读写外部存储权限 (支持高低安卓版本兼容，打通物理存储扫歌与导出) -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
@@ -72,6 +76,18 @@
             android:name=".BgPollReceiver"
             android:enabled="true"
             android:exported="false" />
+
+        <!-- ★ 保活看门狗 Receiver：进程被国产 ROM 清掉后，由这条闹钟链把前台服务重新拉起来，
+             是「离开 App 后微信 ClawBot 还能收到并能回」的最后一道保险。
+             自己排下一次（自续期），用户点「停止接收」时才解除。 -->
+        <receiver
+            android:name=".KeepAliveReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.story.phone.ACTION_KEEPALIVE_TICK" />
+            </intent-filter>
+        </receiver>
 
         <!-- ★ 应用内定时闹钟 Receiver：到点发通知 + 振动 + 唤醒 WebView -->
         <receiver

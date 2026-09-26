@@ -86,7 +86,10 @@
     recentLog: [],
     sentTimestamps: [],
     replyBusy: {},
-    mode: ""            // "" 未启动 / "native" 原生长轮询 / "js" 网页轮询
+    mode: "",           // "" 未启动 / "native" 原生长轮询 / "js" 网页轮询
+    keepAlive: null,    // 原生保活状态快照（诊断卡用）
+    fallback: null,     // 原生兜底回信状态快照（诊断卡用）
+    lastSnapshotAt: 0   // 最近一次向原生写上下文快照的时间
   };
 
   // =========================================================================
@@ -410,6 +413,15 @@
       }
     } catch (e) { }
 
+    // ★ 告诉原生「网页正在处理」：原生兜底回信据此避让。
+    //   网页每 4 秒都会拉一次队列，原生本来就知道网页活着；这个心跳是给「网页正好
+    //   在处理一条消息、而队列里又来了新消息」时用的 —— 防止同一条被两边各回一遍。
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.ilinkWebBusy === "function") {
+        window.AndroidMCP.ilinkWebBusy();
+      }
+    } catch (e) { }
+
     state.stats.received++;
     ctxPush(userId, "in", text);
     logEvent("收到：" + text.slice(0, 24) + (text.length > 24 ? "…" : ""), "in");
@@ -500,8 +512,110 @@
     refreshPanelIfOpen();
   }
 
-  async function sendToWechat(msg, texts) {
-    var IL = ilink();
+  // =========================================================================
+  // 原生兜底回信：上下文快照 + 回执
+  //
+  // 真机现象：收消息早就在原生线程了，但「生成回复」还在网页里。WebView 被 Blink 冻结、
+  // 渲染进程被回收，或者进程被国产 ROM 清掉后由看门狗拉起来（网页还没重建好）时，
+  // 微信那边就变成「只有进、没有出」。
+  //
+  // 兜底方案的关键不是让原生去复刻提示词（那必然和网页版慢慢分叉），而是**照抄成品**：
+  // 网页每次真正请求大模型前，把已经拼好的 messages（角色卡 + 世界书 + RAG 记忆 +
+  // 时间提示）连同 API 配置交给原生存一份。网页不在时，原生拿这份成品 + 新消息
+  // 调同一个模型，得到的就是同源回复。
+  // =========================================================================
+
+  /**
+   * 由 app_chat.generateReplyForSession 在发请求前调用。
+   * 只有「微信通道绑定的那个会话」才值得存 —— 别为无关会话反复写盘。
+   */
+  function saveWechatContextSnapshot(sid, messagesToSend, activeApi, charName, myName) {
+    try {
+      if (typeof window === "undefined" || !window.AndroidMCP) return false;
+      if (typeof window.AndroidMCP.ilinkSaveContextSnapshot !== "function") return false;
+      var b = state.binding;
+      if (!b || !b.sessionId) return false;
+      if (String(b.sessionId) !== String(sid)) return false;
+      if (!Array.isArray(messagesToSend) || !messagesToSend.length) return false;
+      if (!activeApi || !activeApi.url || !activeApi.model) return false;
+      // 只留最近 40 条：原生那边还会再截一次，这里先压小写入体积
+      var trimmed = messagesToSend.length > 44
+        ? messagesToSend.slice(messagesToSend.length - 40)
+        : messagesToSend;
+      // system 提示词必须带上（它是角色卡+世界书的主体），上面裁剪可能把它切掉
+      if (messagesToSend[0] && messagesToSend[0].role === "system" &&
+        (!trimmed[0] || trimmed[0].role !== "system")) {
+        trimmed = [messagesToSend[0]].concat(trimmed);
+      }
+
+      var api = {
+        url: activeApi.url || "",
+        key: activeApi.key || "",
+        model: activeApi.model || "",
+        temperature: (typeof activeApi.temperature === "number") ? activeApi.temperature : 0.8
+      };
+      window.AndroidMCP.ilinkSaveContextSnapshot(
+        String(sid),
+        JSON.stringify(trimmed),
+        JSON.stringify(api),
+        String(charName || ""),
+        String(myName || "")
+      );
+      state.lastSnapshotAt = Date.now();
+      return true;
+    } catch (e) {
+      console.warn("[ilink] 保存原生上下文快照失败", e);
+      return false;
+    }
+  }
+
+  function b64ToUtf8(b64) {
+    try {
+      var bin = atob(b64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return new TextDecoder("utf-8").decode(bytes);
+    } catch (e) {
+      return "";
+    }
+  }
+
+  // 已经由原生兜底补录过的消息指纹。原生注入回调可能因为页面重载/多实例被投递多次，
+  // 这里做一次幂等保护，避免同一条兜底回复在聊天记录里出现两遍。
+  var nativeRepliedSeen = {};
+
+  /**
+   * 原生兜底回信成功后回调：把这段对话补进 App 的聊天库，
+   * 用户回到 App 时能看到「我不在的时候它们聊了什么」。
+   * 只在网页重新活过来之后才会走到（原生注入 JS 需要 WebView）。
+   */
+  async function onNativeReplied(b64) {
+    try {
+      var json = b64ToUtf8(b64);
+      if (!json) return;
+      var d = JSON.parse(json);
+      var sid = Number(d.sessionId || 0);
+      if (!sid) return;
+      var userText = String(d.userText || "");
+      var replyText = String(d.replyText || "");
+      if (!userText && !replyText) return;
+
+      var fp = sid + "|" + (d.at || 0) + "|" + replyText.slice(0, 40);
+      if (nativeRepliedSeen[fp]) return;
+      nativeRepliedSeen[fp] = 1;
+
+      // 前台与后台中枢都只负责「落库」：渲染交给各自页面自己的刷新逻辑，
+      // 免得后台中枢在无人观看时去动 DOM。
+      await window.saveAndRenderMessage("user", userText, "text", sid);
+      await window.saveAndRenderMessage("char", replyText, "text", sid);
+      logEvent("已补录一条原生兜底回复：" + replyText.slice(0, 20) + "…", "out");
+      if (!isCenterInstance()) refreshPanelIfOpen();
+    } catch (e) {
+      console.warn("[ilink] 补录原生兜底回复失败", e);
+    }
+  }
+
+  async function sendToWechat(msg, texts) {    var IL = ilink();
     if (!IL) { logEvent("iLink 客户端未加载", "danger"); return; }
     var c = cfg();
     for (var i = 0; i < texts.length; i++) {
@@ -545,6 +659,7 @@
   var NATIVE_PULL_MS = 4000;      // 网页拉取原生队列的兜底间隔
   var nativePullTimer = null;
   var nativePulling = false;
+  var nativePullTicks = 0;
 
   function nativeAvailable() {
     if (typeof window === "undefined" || !window.AndroidMCP) return false;
@@ -555,6 +670,14 @@
   }
 
   function nativeRunning() { return state.mode === "native"; }
+
+  /** 原生轮询的实时状态（旧版 APK 没有这个接口时返回 null） */
+  function nativeStatus() {
+    try {
+      if (!window.AndroidMCP || typeof window.AndroidMCP.ilinkNativeStatus !== "function") return null;
+      return JSON.parse(window.AndroidMCP.ilinkNativeStatus() || "{}");
+    } catch (e) { return null; }
+  }
 
   /** 把原生队列里未确认的消息取出来处理，处理完逐条 ack（未 ack 会再次被拉到，保证不丢） */
   function pullNativePending() {
@@ -580,6 +703,8 @@
           try { window.AndroidMCP.ilinkNativeAck(String(item.id || "")); } catch (e) { }
         }
         if (arr.length) refreshPanelIfOpen();
+        // 原生兜底可能刚在我们被节流的这段时间里回了信，顺手补录
+        if (++nativePullTicks % 5 === 0) drainNativeReplies();
       } catch (e) {
         console.warn("[ilink] 拉取原生消息失败", e);
       } finally {
@@ -592,10 +717,59 @@
     stopNativePull();
     nativePullTimer = setInterval(pullNativePending, NATIVE_PULL_MS);
     pullNativePending();
+    // 顺带把「原生替我们回过的消息」补录进聊天库。原生兜底发生时 WebView 通常是死的，
+    // 记录存在原生侧，这里一活过来就取走落库。
+    drainNativeReplies();
   }
 
   function stopNativePull() {
     if (nativePullTimer) { clearInterval(nativePullTimer); nativePullTimer = null; }
+  }
+
+  var drainingReplies = false;
+
+  /** 取走原生补录队列并落库（幂等：落库后逐条 ack 删除，不会重复上屏） */
+  async function drainNativeReplies() {
+    if (drainingReplies) return;
+    try {
+      if (!window.AndroidMCP || typeof window.AndroidMCP.ilinkFetchNativeReplies !== "function") return;
+      drainingReplies = true;
+      var raw = window.AndroidMCP.ilinkFetchNativeReplies() || "[]";
+      var arr = JSON.parse(raw);
+      if (!Array.isArray(arr) || !arr.length) return;
+      if (typeof window.saveAndRenderMessage !== "function") return;
+      for (var i = 0; i < arr.length; i++) {
+        var d = arr[i] || {};
+        var sid = Number(d.sessionId || 0);
+        if (!sid) { ackNativeReply(d.id); continue; }
+        var fp = sid + "|" + (d.at || 0) + "|" + String(d.replyText || "").slice(0, 40);
+        if (!nativeRepliedSeen[fp]) {
+          nativeRepliedSeen[fp] = 1;
+          try {
+            if (d.userText) await window.saveAndRenderMessage("user", String(d.userText), "text", sid);
+            if (d.replyText) await window.saveAndRenderMessage("char", String(d.replyText), "text", sid);
+            logEvent("补录一条底层代回消息：" + String(d.replyText || "").slice(0, 20) + "…", "out");
+          } catch (e) {
+            console.warn("[ilink] 补录失败，保留待下次重试", e);
+            continue;   // 落库失败就不 ack，下次再来
+          }
+        }
+        ackNativeReply(d.id);
+      }
+      if (!isCenterInstance()) refreshPanelIfOpen();
+    } catch (e) {
+      console.warn("[ilink] 取原生补录队列失败", e);
+    } finally {
+      drainingReplies = false;
+    }
+  }
+
+  function ackNativeReply(id) {
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.ilinkAckNativeReply === "function") {
+        window.AndroidMCP.ilinkAckNativeReply(String(id || ""));
+      }
+    } catch (e) { }
   }
 
   /** 原生侧（收到消息/出错/掉线）推过来的提示：立刻拉一次 */
@@ -1027,9 +1201,14 @@
     cssOnce();
     state.binding = loadBinding();
 
+    // 保活与兜底的健康快照：这是判断「离开 App 后为什么没回信」最关键的一块信息
+    state.keepAlive = readNativeJson("keepAliveStatus");
+    state.fallback = readNativeJson("ilinkFallbackStatus");
+
     var sessions = await listCharSessions();
     host.innerHTML = '<div style="padding:4px 2px 14px;">' +
       loginCardHtml() +
+      keepAliveCardHtml() +
       bindCardHtml(sessions) +
       settingsCardHtml() +
       statsCardHtml() +
@@ -1039,6 +1218,107 @@
 
     bindControls();
     if (state.qrContent) drawQr(state.qrContent);
+  }
+
+  /** 安全读取原生返回的 JSON（旧版 APK 没有这些接口时返回 null） */
+  function readNativeJson(fnName) {
+    try {
+      if (typeof window === "undefined" || !window.AndroidMCP) return null;
+      if (typeof window.AndroidMCP[fnName] !== "function") return null;
+      var raw = window.AndroidMCP[fnName]();
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (e) { return null; }
+  }
+
+  function fmtDur(ms) {
+    if (!ms || ms < 0) return "—";
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + " 秒";
+    var m = Math.round(s / 60);
+    if (m < 60) return m + " 分钟";
+    return (m / 60).toFixed(1) + " 小时";
+  }
+
+  /**
+   * 保活与兜底诊断卡。
+   *
+   * 为什么单独做一张卡：真机上「离开 App 后收不到/回不了」有三个完全不同的故障点
+   * （进程被 ROM 清掉 / WebView 被冻结 / 长轮询线程掉了），以前全靠猜。这里把
+   * 原生侧的真实状态直接摊开，一眼就能看出卡在哪一环。
+   */
+  function keepAliveCardHtml() {
+    if (typeof window === "undefined" || !window.AndroidMCP) {
+      return card("保活状态", "网页环境：不适用（此卡片只在 APK 里有意义）",
+        { accent: PASTEL.sub, border: "#E7EDF4" });
+    }
+    var ka = state.keepAlive;
+    var fb = state.fallback;
+    if (!ka) {
+      return card("保活状态", "当前 APK 版本较旧，没有保活诊断接口。请更新到最新版 APK。",
+        { accent: PASTEL.danger, border: PASTEL.dangerBorder });
+    }
+
+    var serviceOk = !!ka.serviceAlive;
+    var batteryOk = !!ka.ignoringBattery;
+    var pollerOk = nativeRunning() && !!(nativeStatus() || {}).running;
+    var webOk = fb ? !!fb.webConsumerAlive : false;
+
+    var rows = "";
+    rows += row("常驻服务", statusChip(serviceOk, serviceOk ? "运行中" : "已停止"),
+      "进程内的前台守护服务。它没了，长轮询也会一起没。");
+    rows += row("微信收发线程", statusChip(pollerOk, pollerOk ? "运行中" : "未运行"),
+      pollerOk ? "原生线程在跑，不受网页冻结影响。" : "点下面的「立即体检修复」重启它。");
+    rows += row("网页应答端", statusChip(webOk, webOk ? "在线" : "不在线（原生兜底接管）"),
+      webOk ? "网页活着，回复由网页生成（质量最高）。"
+        : "网页被冻结或已回收，回复改由 App 底层直接生成并发出。");
+    rows += row("看门狗闹钟", statusChip(!!ka.armed, ka.armed ? ("下次 " + fmtDur(ka.alarmInMs) + " 后") : "未开启"),
+      "进程被系统清掉后，靠这个闹钟把它拉回来。");
+    rows += row("电池优化白名单", statusChip(batteryOk, batteryOk ? "已加入" : "未加入"),
+      batteryOk ? "系统不会在息屏后清理本应用。"
+        : "国产 ROM（小米/华为/OPPO/vivo/荣耀）息屏后必然清进程，务必加入。");
+    rows += row("累计自救次数", '<span class="il-mono">' + (ka.reviveCount || 0) + "</span>",
+      "看门狗发现服务已死并把它拉起来的次数。持续增长 = ROM 在反复清你。");
+
+    if (fb) {
+      rows += row("原生兜底回信", fb.hasSnapshot
+        ? statusChip(true, "已就绪（" + fmtDur(fb.snapshotAgeMs) + "前更新）")
+        : statusChip(false, "缺少上下文快照"),
+        fb.hasSnapshot
+          ? ("模型：" + esc(fb.snapshotApiModel || "—") + "；本小时还能发 " + fb.hourlyRemaining + " 条。")
+          : "先在 App 里正常聊一次绑定的会话，原生就会拿到上下文。");
+      rows += row("兜底已回信", '<span class="il-mono">' + (fb.sentTotal || 0) + " 条</span>",
+        fb.lastSentAt ? ("最近一次：" + timeStr(fb.lastSentAt)) : "还没发生过（说明网页一直活着，是好事）。");
+      if (fb.pendingLog) {
+        rows += row("待补录进聊天库", '<span class="il-mono">' + fb.pendingLog + " 条</span>",
+          "底层代回的消息会在本页恢复后自动补进对应聊天记录，正常情况下几秒内清零。");
+      }
+      if (fb.lastError) {
+        rows += '<div style="margin-top:8px;padding:7px 9px;border-radius:9px;background:' + PASTEL.dangerSoft +
+          ';color:' + PASTEL.danger + ';font-size:11.5px;line-height:1.6;">兜底最近一次失败：' +
+          esc(fb.lastError) + '</div>';
+      }
+    }
+
+    var actions = '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap;">' +
+      '<button class="il-btn il-btn-primary" onclick="wechatBridge.reviveNow()">立即体检修复</button>' +
+      (batteryOk ? "" :
+        '<button class="il-btn il-btn-green" onclick="wechatBridge.requestBatteryWhitelist()">加入电池白名单</button>') +
+      '<button class="il-btn il-btn-ghost" onclick="wechatBridge.openSystemSettings()">打开系统设置</button>' +
+      '</div>';
+
+    var hint = ka.brandHint
+      ? '<div style="margin-top:10px;padding:8px 10px;border-radius:9px;background:#FFF8E8;border:1px solid #F3E2B8;' +
+        'color:#8A6A1F;font-size:11.5px;line-height:1.65;">' +
+        '<b>本机（' + esc(ka.brand || "未知品牌") + '）还需要手动做一步</b><br>' + esc(ka.brandHint) + '</div>'
+      : "";
+
+    var overall = (serviceOk && pollerOk && batteryOk) ? true : false;
+    return card("保活与兜底", rows + actions + hint, {
+      accent: overall ? PASTEL.green : PASTEL.danger,
+      border: overall ? PASTEL.greenBorder : PASTEL.dangerBorder,
+      right: statusChip(overall, overall ? "配置完整" : "有缺口")
+    });
   }
 
   /** 用本地二维码库把内容画到 canvas 上 */
@@ -1157,6 +1437,12 @@
     if (!window.confirm("退出登录会清除本机的微信登录凭据，需要重新扫码。继续？")) return;
     await stopLoop();
     IL.clearLogin();
+    // 清掉原生侧的上下文快照与兜底计数：换账号后旧上下文不该被复用
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.ilinkClearContextSnapshot === "function") {
+        window.AndroidMCP.ilinkClearContextSnapshot();
+      }
+    } catch (e) { }
     state.qrContent = "";
     toast("已退出登录");
     renderPanel();
@@ -1164,6 +1450,53 @@
 
   function startReceive() {
     if (startLoop()) { toast("已开始接收微信消息"); refreshPanelIfOpen(); }
+  }
+
+  // ---------- 保活相关的用户动作 ----------
+
+  /** 立即体检：把常驻服务、看门狗、原生长轮询都重新拉一遍 */
+  function reviveNow() {
+    try {
+      if (!window.AndroidMCP || typeof window.AndroidMCP.keepAliveReviveNow !== "function") {
+        toast("当前 APK 版本较旧，请更新后再试");
+        return;
+      }
+      window.AndroidMCP.keepAliveReviveNow();
+      // 原生重启轮询后，网页这边的拉取循环也要跟着起（停止状态下用户手动修的话）
+      logEvent("已执行保活体检修复", "ok");
+      toast("已重新拉起服务与收发线程");
+      setTimeout(refreshPanelIfOpen, 800);
+    } catch (e) {
+      toast("体检失败：" + String(e && e.message || e));
+    }
+  }
+
+  /** 申请加入系统电池优化白名单（国产 ROM 保活的关键一步） */
+  function requestBatteryWhitelist() {
+    try {
+      if (!window.AndroidMCP || typeof window.AndroidMCP.requestIgnoreBatteryOptimizations !== "function") {
+        toast("当前 APK 版本较旧，请更新后再试");
+        return;
+      }
+      window.AndroidMCP.requestIgnoreBatteryOptimizations();
+      toast("请在系统弹窗里点「允许」");
+      logEvent("已请求加入电池优化白名单", "info");
+    } catch (e) {
+      toast("打开失败，请手动到系统设置里允许后台运行");
+    }
+  }
+
+  /** 打开本应用的系统详情页（自启动开关通常在里面） */
+  function openSystemSettings() {
+    try {
+      if (window.AndroidMCP && typeof window.AndroidMCP.openAppDetailSettings === "function") {
+        window.AndroidMCP.openAppDetailSettings();
+      } else {
+        toast("请手动进入系统设置 → 应用管理");
+      }
+    } catch (e) {
+      toast("请手动进入系统设置 → 应用管理");
+    }
   }
 
   async function stopReceive() {
@@ -1275,7 +1608,16 @@
     listCharSessions: listCharSessions,
     onNativePending: onNativePending,
     pullNativePending: pullNativePending,
+    onNativeReplied: onNativeReplied,
+    reviveNow: reviveNow,
+    requestBatteryWhitelist: requestBatteryWhitelist,
+    openSystemSettings: openSystemSettings,
     state: state
+  };
+
+  /** 供 app_chat.generateReplyForSession 在发请求前调用（挂全局，跨模块调用） */
+  window.saveWechatContextSnapshot = function (sid, messagesToSend, activeApi, charName, myName) {
+    return saveWechatContextSnapshot(sid, messagesToSend, activeApi, charName, myName);
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

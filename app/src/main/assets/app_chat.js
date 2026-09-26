@@ -5923,6 +5923,16 @@ async function generateReplyForSession(sid, opts) {
     window.contextManager.captureRequest(sid, "online", messagesToSend);
   }
 
+  // 微信接入「原生兜底回信」的上下文快照：把这份已经完全拼好的 messages（角色卡 +
+  // 世界书 + RAG 记忆 + 时间提示）连同 API 配置交给原生保存。网页被系统冻结/回收时，
+  // native 的 NativeReplyFallback 就用这份成品接着生成回复 —— 质量与网页同源。
+  // 只在微信通道已绑定会话时才做，避免无关会话白白写盘。
+  try {
+    if (typeof window.saveWechatContextSnapshot === "function") {
+      window.saveWechatContextSnapshot(sid, messagesToSend, activeApi, _chatCharName, _chatMyName);
+    }
+  } catch (e) { console.warn("[ilink] 保存原生上下文快照失败", e); }
+
   let rawReply = await fetchStreamOrJson(activeApi.url, activeApi, messagesToSend, onlineAbortController.signal, handleStreamChunk);
 
   if (streamingBubble) {
