@@ -174,14 +174,6 @@ function initWorldBookImport() {
     };
   }
 
-  const btnExport = document.getElementById("btn-choice-export-wb");
-  if (btnExport) {
-    btnExport.onclick = () => {
-      overlay.classList.remove("active");
-      openWorldBookExportPanel();
-    };
-  }
-
   const tabImport = document.getElementById("wb-io-tab-import");
   const tabExport = document.getElementById("wb-io-tab-export");
   if (tabImport) tabImport.onclick = () => switchWbIoTab("import");
@@ -228,7 +220,7 @@ function initWorldBookImport() {
 // 世界书 · 导入 / 导出 面板（v1.5.64）
 // ============================================================================
 
-/** 在「导入 / 导出」两个面板之间切换 */
+/** 在「导入 / 导出」两个面板之间切换；每次切到导出都重新挂载选择器 */
 function switchWbIoTab(which) {
   const pImport = document.getElementById("wb-io-panel-import");
   const pExport = document.getElementById("wb-io-panel-export");
@@ -241,22 +233,22 @@ function switchWbIoTab(which) {
   if (pExport) pExport.style.display = isExport ? "block" : "none";
   if (tImport) tImport.style.cssText = isExport ? off : on;
   if (tExport) tExport.style.cssText = isExport ? on : off;
+  if (isExport) mountWorldBookExportPicker();
 }
 
 /**
- * 导出世界书条目。
+ * 把分组选择器挂载到「导出」页内部（v1.5.66 起不再是独立浮层）。
  *
  * 与档案库的关键差别：世界书条目有 20 来个**没法用纯文本表达**的字段
  * （插入位置 / 顺序 / 扫描深度 / 概率 / 粘滞 / 冷却 / 互斥组 / 关键词逻辑……）。
  * 所以这里把每条目的完整原始字段放进 payload，回导时原样还原 ——
  * 正文仍以人类可读区为准（用户改了要生效），字段以 payload 为准。
  */
-async function openWorldBookExportPanel() {
-  if (typeof exportCenter === "undefined") {
+function mountWorldBookExportPicker() {
+  if (typeof exportCenter === "undefined" || typeof exportCenter.mountExportPicker !== "function") {
     showToast("导出模块未加载，请更新到最新版 APK");
     return;
   }
-  // 允许导出的字段白名单（显式列举，避免把 id / isActive 这类派生字段带出去）
   const FIELDS = [
     "group", "title", "mode", "keywords", "probability", "depth", "content",
     "position", "order", "role", "selectiveLogic", "secondaryKeys",
@@ -264,8 +256,7 @@ async function openWorldBookExportPanel() {
     "caseSensitive", "matchWholeWords", "useProbability", "groupOverride",
     "ignoreBudget"
   ];
-
-  await exportCenter.openExportPanel({
+  exportCenter.mountExportPicker("wb", {
     kind: "world_book",
     title: "世界书",
     provider: async () => {

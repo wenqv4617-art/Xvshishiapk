@@ -3095,12 +3095,16 @@ async function openImageManager() {
   const render = () => {
     // 缩略图高度写成**确定像素**（IMG_THUMB_H），不用 aspect-ratio：
     // 网格单元一旦没有明确高度，里面的 img{height:100%} 就失去参照、塌成一条细缝，
-    // 图片一多就互相叠在一起 —— 这正是真机上反馈的现象。
+    // 图片一多就互相叠在一起。
+    //
+    // 另外这一版把「卡片外框」补上了：上一版只给了高度，结果缩略图之间只剩 grid 的
+    // 10px 缝隙，外框、圆角、标签底色都看不出来，观感是「一大堆图挤在一起」。
+    // 现在每个单元自带白底卡片 + 描边 + 圆角阴影，缩略图内缩 4px 贴在卡片里。
     const IMG_THUMB_H = 104;
     listEl.innerHTML = items.map((it, i) => {
       const on = selected.has(i);
-      return '<div class="imgmgr-item" data-i="' + i + '" style="position:relative;border-radius:12px;overflow:hidden;background:#f8fafc;border:1.5px solid ' + (on ? "#7c3aed" : "#eef2f7") + ';cursor:pointer;box-sizing:border-box;">' +
-        '<div style="width:100%;height:' + IMG_THUMB_H + 'px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;">' +
+      return '<div class="imgmgr-item" data-i="' + i + '" style="position:relative;border-radius:14px;overflow:hidden;background:#ffffff;border:1.5px solid ' + (on ? "#7c3aed" : "#e8edf5") + ';cursor:pointer;box-sizing:border-box;padding:4px;box-shadow:0 1px 3px rgba(44,58,75,0.05);">' +
+        '<div style="width:100%;height:' + IMG_THUMB_H + 'px;overflow:hidden;background:#f1f5f9;border-radius:10px;display:flex;align-items:center;justify-content:center;">' +
           '<img src="' + it.data + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
         '</div>' +
         '<div style="padding:5px 6px;">' +

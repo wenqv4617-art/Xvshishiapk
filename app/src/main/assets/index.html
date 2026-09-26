@@ -6927,7 +6927,7 @@
 
   <!-- 档案库：导入 / 导出 -->
   <div id="archive-import-choice-overlay" class="modal-overlay" style="z-index: 99000; position: fixed; inset: 0; width: auto; height: auto; align-items: center !important; justify-content: center !important;">
-    <div class="modal" style="max-width: 320px; padding: 18px; border-radius: 16px; background: #ffffff; text-align: center; transform: none; max-height: 86vh;">
+    <div class="modal" style="max-width: 340px; padding: 18px; border-radius: 16px; background: #ffffff; text-align: center; transform: none; max-height: 88vh; overflow-y: auto;">
       <div style="display:flex; gap:0; background:#f1f5f9; border-radius:10px; padding:3px; margin-bottom:14px;">
         <button id="archive-io-tab-import" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:#fff; color:var(--text-primary); box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer;">导入</button>
         <button id="archive-io-tab-export" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:transparent; color:var(--text-secondary); cursor:pointer;">导出</button>
@@ -6946,8 +6946,25 @@
       </div>
 
       <div id="archive-io-panel-export" style="display:none;">
-        <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6;">把人设卡片导出为文件（可分享给别人，也可导回本 App 完整恢复分组）</p>
-        <button class="btn btn-primary" id="btn-choice-export-archive" style="width:100%; padding: 12px; font-size: 13px; font-weight: 700;">导出人设卡片</button>
+        <p style="margin:0 0 10px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6; text-align:left;">
+          导出人设卡片为文件，可分享给别人，也可导回本 App 完整恢复分组。
+        </p>
+        <!-- 格式 -->
+        <div style="display:flex; gap:8px; margin-bottom:9px;">
+          <button type="button" id="ar-ex-fmt-txt" style="flex:1; padding:8px 0; font-size:12px; font-weight:700; border-radius:9px; border:1.5px solid #4A7DBF; background:#4A7DBF; color:#fff; cursor:pointer;">TXT 纯文本</button>
+          <button type="button" id="ar-ex-fmt-docx" style="flex:1; padding:8px 0; font-size:12px; font-weight:700; border-radius:9px; border:1.5px solid #cfd8e3; background:#fff; color:#64748b; cursor:pointer;">DOCX 文档</button>
+        </div>
+        <!-- 已选计数 + 全选/清空 -->
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 9px; background:#f8fafc; border-radius:9px; margin-bottom:7px;">
+          <span id="ar-ex-count" style="font-size:11px; color:var(--text-secondary);">正在读取…</span>
+          <span style="display:flex; gap:6px;">
+            <button type="button" id="ar-ex-all" style="padding:4px 9px; font-size:11px; border-radius:7px; border:1.5px solid #dbe3ec; background:#fff; color:#475569; font-weight:700; cursor:pointer;">全选</button>
+            <button type="button" id="ar-ex-none" style="padding:4px 9px; font-size:11px; border-radius:7px; border:1.5px solid #dbe3ec; background:#fff; color:#475569; font-weight:700; cursor:pointer;">清空</button>
+          </span>
+        </div>
+        <!-- 分组选择器（内嵌，不再是独立浮层） -->
+        <div id="ar-ex-list" style="max-height:42vh; overflow-y:auto; border:1.5px solid #e8edf5; border-radius:11px; padding:4px; text-align:left;"></div>
+        <button type="button" class="btn btn-primary" id="ar-ex-go" style="width:100%; margin-top:10px; padding:11px 0; font-size:12.5px; font-weight:800;">导出并分享</button>
       </div>
 
       <button class="btn btn-danger-outline" id="btn-archive-io-cancel" style="padding: 8px; font-size: 12px; margin-top: 12px; width:100%;">取消</button>
@@ -6956,7 +6973,7 @@
 
   <!-- 世界书：导入 / 导出 -->
   <div id="wb-io-overlay" class="modal-overlay" style="z-index: 99000; position: fixed; inset: 0; width: auto; height: auto; align-items: center !important; justify-content: center !important;">
-    <div class="modal" style="max-width: 320px; padding: 18px; border-radius: 16px; background: #ffffff; text-align: center; transform: none; max-height: 86vh;">
+    <div class="modal" style="max-width: 340px; padding: 18px; border-radius: 16px; background: #ffffff; text-align: center; transform: none; max-height: 88vh; overflow-y: auto;">
       <div style="display:flex; gap:0; background:#f1f5f9; border-radius:10px; padding:3px; margin-bottom:14px;">
         <button id="wb-io-tab-import" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:#fff; color:var(--text-primary); box-shadow:0 1px 3px rgba(0,0,0,.08); cursor:pointer;">导入</button>
         <button id="wb-io-tab-export" style="flex:1; padding:8px 0; font-size:12.5px; font-weight:700; border:none; border-radius:8px; background:transparent; color:var(--text-secondary); cursor:pointer;">导出</button>
@@ -6971,8 +6988,22 @@
       </div>
 
       <div id="wb-io-panel-export" style="display:none;">
-        <p style="margin:0 0 12px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6;">把世界书条目导出为文件（可分享，也可导回本 App 完整恢复分组与全部高级字段）</p>
-        <button class="btn btn-primary" id="btn-choice-export-wb" style="width:100%; padding: 12px; font-size: 13px; font-weight: 700;">导出世界书</button>
+        <p style="margin:0 0 10px 0; font-size:11.5px; color:var(--text-secondary); line-height:1.6; text-align:left;">
+          导出世界书条目为文件，可分享，也可导回本 App 完整恢复分组与全部高级字段。
+        </p>
+        <div style="display:flex; gap:8px; margin-bottom:9px;">
+          <button type="button" id="wb-ex-fmt-txt" style="flex:1; padding:8px 0; font-size:12px; font-weight:700; border-radius:9px; border:1.5px solid #4A7DBF; background:#4A7DBF; color:#fff; cursor:pointer;">TXT 纯文本</button>
+          <button type="button" id="wb-ex-fmt-docx" style="flex:1; padding:8px 0; font-size:12px; font-weight:700; border-radius:9px; border:1.5px solid #cfd8e3; background:#fff; color:#64748b; cursor:pointer;">DOCX 文档</button>
+        </div>
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 9px; background:#f8fafc; border-radius:9px; margin-bottom:7px;">
+          <span id="wb-ex-count" style="font-size:11px; color:var(--text-secondary);">正在读取…</span>
+          <span style="display:flex; gap:6px;">
+            <button type="button" id="wb-ex-all" style="padding:4px 9px; font-size:11px; border-radius:7px; border:1.5px solid #dbe3ec; background:#fff; color:#475569; font-weight:700; cursor:pointer;">全选</button>
+            <button type="button" id="wb-ex-none" style="padding:4px 9px; font-size:11px; border-radius:7px; border:1.5px solid #dbe3ec; background:#fff; color:#475569; font-weight:700; cursor:pointer;">清空</button>
+          </span>
+        </div>
+        <div id="wb-ex-list" style="max-height:42vh; overflow-y:auto; border:1.5px solid #e8edf5; border-radius:11px; padding:4px; text-align:left;"></div>
+        <button type="button" class="btn btn-primary" id="wb-ex-go" style="width:100%; margin-top:10px; padding:11px 0; font-size:12.5px; font-weight:800;">导出并分享</button>
       </div>
 
       <button class="btn btn-danger-outline" id="btn-wb-io-cancel" style="padding: 8px; font-size: 12px; margin-top: 12px; width:100%;">取消</button>

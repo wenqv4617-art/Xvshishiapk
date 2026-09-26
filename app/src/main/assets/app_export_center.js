@@ -524,266 +524,293 @@
     parse: parse,
     deliver: deliver,
     sanitizeFileName: sanitizeFileName,
-    openExportPanel: openExportPanel,
+    mountExportPicker: mountExportPicker,
     _parseReadable: parseReadableSection
   };
 
   // =========================================================================
-  // 导出面板 UI（档案库 / 世界书 共用）
+  // 导出选择器（**内嵌**在「导入 / 导出」卡片里，不再是独立浮层）
   //
-  // 需求：点导入按钮后弹出的卡片里，能在「导入 / 导出」两个面板之间切换；
-  //       导出面板要有「按分组可展开的勾选器」，支持整组多选，也支持只勾单条。
+  // 为什么要改成内嵌（v1.5.66）：
+  //   原来选择器是 document.body 上另起的一个浮层。App 的每个 .app-window 都是
+  //   position:relative + z-index:101（各自是一个层叠上下文），浮层要不要盖住窗口，
+  //   取决于它自己的 z-index 与所在层叠上下文 —— 这条路踩过两次坑（面板被档案库盖住）。
+  //   干脆不再另起浮层：选择器直接画在导出页内部，**只有一个卡片、一套层叠关系**，
+  //   层级问题从根上不存在。用户也是这么建议的。
   //
-  // 为什么做成浮层注入而不是写进 index.html：
-  //   两个应用（档案库 / 世界书）用同一套选择器逻辑，集中在一个文件里维护，
-  //   以后加第三种导出对象也不用再复制一遍 UI。
+  // 交互修正（同一版）：上一版点分组行会同时切换勾选并把条目收起，很反直觉。
+  //   现在**职责分开**：
+  //     · 点分组行的「标题区」= 只展开/收起，不碰勾选；
+  //     · 点左侧勾选框 = 只整组勾选/取消；
+  //     · 分组行尾部有一个明确的 ▸/▾ 展开按钮，视觉上告诉用户这里可以点。
   // =========================================================================
 
-  var uiState = {
+  var picker = {
     kind: "",
-    fmt: "txt",
     title: "",
+    fmt: "txt",
     groups: [],
-    // 选择状态：sel[groupName][entryName] = true/false
     sel: {},
-    open: false,
     provider: null,
-    onDone: null
+    ids: null,
+    busy: false
   };
 
-  function uiEsc(s) {
+  function pkEsc(s) {
     return String(s == null ? "" : s)
       .replace(/&/g, "&amp;").replace(/</g, "&lt;")
       .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
 
-  function ensureUiDom() {
-    var old = document.getElementById("export-center-overlay");
-    if (old) old.remove();
+  /** 选择器的 DOM id 组（两个应用各一套，互不干扰） */
+  function pickerIds(prefix) {
+    return {
+      fmtTxt: prefix + "-ex-fmt-txt",
+      fmtDocx: prefix + "-ex-fmt-docx",
+      count: prefix + "-ex-count",
+      all: prefix + "-ex-all",
+      none: prefix + "-ex-none",
+      list: prefix + "-ex-list",
+      go: prefix + "-ex-go"
+    };
+  }
 
-    var div = document.createElement("div");
-    div.id = "export-center-overlay";
-    div.className = "modal-overlay";
-    div.style.cssText = "z-index:1350; align-items:center !important; justify-content:center !important;";
-    div.innerHTML = '' +
-      '<div class="modal" style="max-width:380px; width:92%; max-height:82vh; display:flex; flex-direction:column; padding:16px; border-radius:16px; background:#fff;">' +
-      '  <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">' +
-      '    <h4 id="export-center-title" style="margin:0; font-size:15px; font-weight:800; color:var(--text-primary);">导出</h4>' +
-      '    <button class="btn-icon" id="export-center-close">' +
-      '      <svg viewBox="0 0 24 24"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>' +
-      '    </button>' +
-      '  </div>' +
-      // 格式选择
-      '  <div style="display:flex; gap:8px; margin-bottom:10px;">' +
-      '    <button class="btn" id="export-center-fmt-txt" style="flex:1; padding:9px 0; font-size:12px; font-weight:700;">TXT 纯文本</button>' +
-      '    <button class="btn" id="export-center-fmt-docx" style="flex:1; padding:9px 0; font-size:12px; font-weight:700;">DOCX 文档</button>' +
-      '  </div>' +
-      '  <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:7px 9px; background:#f8fafc; border-radius:9px; margin-bottom:8px;">' +
-      '    <span id="export-center-count" style="font-size:11px; color:var(--text-secondary);">已选 0 项</span>' +
-      '    <span style="display:flex; gap:6px;">' +
-      '      <button class="btn btn-outline" id="export-center-all" style="padding:4px 9px; font-size:11px;">全选</button>' +
-      '      <button class="btn btn-outline" id="export-center-none" style="padding:4px 9px; font-size:11px;">清空</button>' +
-      '    </span>' +
-      '  </div>' +
-      '  <div id="export-center-list" style="flex:1; overflow-y:auto; border:1.5px solid var(--border); border-radius:11px; padding:6px; min-height:120px;"></div>' +
-      '  <button class="btn btn-primary" id="export-center-go" style="width:100%; margin-top:12px; padding:12px 0; font-size:13px; font-weight:800;">导出并分享</button>' +
-      '</div>';
-    document.body.appendChild(div);
+  /**
+   * 挂载（或重新挂载）导出选择器。
+   * @param prefix  'ar' | 'wb'
+   * @param opts    { kind, title, provider }
+   */
+  async function mountExportPicker(prefix, opts) {
+    picker.kind = opts.kind;
+    picker.title = opts.title || (KIND_LABEL[opts.kind] || "导出");
+    picker.provider = opts.provider;
+    picker.ids = pickerIds(prefix);
+    picker.sel = {};
+    picker.busy = false;
 
-    document.getElementById("export-center-close").onclick = closeExportPanel;
-    document.getElementById("export-center-all").onclick = function () {
-      uiState.groups.forEach(function (g) {
-        uiState.sel[g.name] = {};
-        g.entries.forEach(function (e) { uiState.sel[g.name][e.name] = true; });
+    var ids = picker.ids;
+    var listEl = document.getElementById(ids.list);
+    if (!listEl) return;
+
+    setPickerFmt("txt");
+
+    // 绑定（用 onclick 覆盖，重复挂载不会叠加监听）
+    var elTxt = document.getElementById(ids.fmtTxt);
+    var elDocx = document.getElementById(ids.fmtDocx);
+    var elAll = document.getElementById(ids.all);
+    var elNone = document.getElementById(ids.none);
+    var elGo = document.getElementById(ids.go);
+    if (elTxt) elTxt.onclick = function () { setPickerFmt("txt"); };
+    if (elDocx) elDocx.onclick = function () { setPickerFmt("docx"); };
+    if (elAll) elAll.onclick = function () {
+      picker.groups.forEach(function (g) {
+        picker.sel[g.name] = {};
+        g.entries.forEach(function (e) { picker.sel[g.name][e.name] = true; });
       });
-      renderList();
+      renderPickerList();
     };
-    document.getElementById("export-center-none").onclick = function () {
-      uiState.sel = {};
-      renderList();
-    };
-    document.getElementById("export-center-fmt-txt").onclick = function () { setFmt("txt"); };
-    document.getElementById("export-center-fmt-docx").onclick = function () { setFmt("docx"); };
-    document.getElementById("export-center-go").onclick = doExport;
+    if (elNone) elNone.onclick = function () { picker.sel = {}; renderPickerList(); };
+    if (elGo) elGo.onclick = doPickerExport;
 
-    // 点遮罩空白处关闭
-    div.addEventListener("click", function (ev) {
-      if (ev.target === div) closeExportPanel();
-    });
-  }
-
-  function setFmt(fmt) {
-    uiState.fmt = fmt;
-    var t = document.getElementById("export-center-fmt-txt");
-    var d = document.getElementById("export-center-fmt-docx");
-    if (t) {
-      t.className = "btn " + (fmt === "txt" ? "btn-primary" : "btn-outline");
-    }
-    if (d) {
-      d.className = "btn " + (fmt === "docx" ? "btn-primary" : "btn-outline");
+    listEl.innerHTML = '<div style="padding:20px 10px; text-align:center; font-size:12px; color:#94a3b8;">正在读取数据…</div>';
+    try {
+      var groups = await opts.provider();
+      groups = (groups || []).filter(function (g) { return g.entries && g.entries.length; });
+      groups.sort(function (a, b) { return String(a.name).localeCompare(String(b.name), "zh"); });
+      picker.groups = groups;
+      // 默认全选：多数场景是「全部导出」，少选比多选麻烦
+      groups.forEach(function (g) {
+        picker.sel[g.name] = {};
+        g.entries.forEach(function (e) { picker.sel[g.name][e.name] = true; });
+      });
+      renderPickerList();
+    } catch (e) {
+      listEl.innerHTML = '<div style="padding:20px 10px; text-align:center; font-size:12px; color:#dc2626;">读取失败：' + pkEsc(e && e.message || e) + '</div>';
     }
   }
 
-  function selectedCount() {
+  function setPickerFmt(fmt) {
+    picker.fmt = fmt;
+    var ids = picker.ids;
+    if (!ids) return;
+    var on = "flex:1; padding:8px 0; font-size:12px; font-weight:700; border-radius:9px; border:1.5px solid #4A7DBF; background:#4A7DBF; color:#fff; cursor:pointer;";
+    var off = "flex:1; padding:8px 0; font-size:12px; font-weight:700; border-radius:9px; border:1.5px solid #cfd8e3; background:#fff; color:#64748b; cursor:pointer;";
+    var elTxt = document.getElementById(ids.fmtTxt);
+    var elDocx = document.getElementById(ids.fmtDocx);
+    if (elTxt) elTxt.style.cssText = (fmt === "txt") ? on : off;
+    if (elDocx) elDocx.style.cssText = (fmt === "docx") ? on : off;
+  }
+
+  function pickerSelectedCount() {
     var n = 0;
-    Object.keys(uiState.sel).forEach(function (g) {
-      Object.keys(uiState.sel[g] || {}).forEach(function (e) {
-        if (uiState.sel[g][e]) n++;
+    Object.keys(picker.sel).forEach(function (g) {
+      Object.keys(picker.sel[g] || {}).forEach(function (e) {
+        if (picker.sel[g][e]) n++;
       });
     });
     return n;
   }
 
-  function renderList() {
-    var host = document.getElementById("export-center-list");
+  function updatePickerCount() {
+    if (!picker.ids) return;
+    var el = document.getElementById(picker.ids.count);
+    if (el) el.innerText = "已选 " + pickerSelectedCount() + " 项";
+  }
+
+  /** 展开/收起某分组（只动可见性，不碰勾选） */
+  function togglePickerGroup(gid) {
+    var box = document.getElementById(gid);
+    if (!box) return;
+    var open = box.style.display !== "none";
+    box.style.display = open ? "none" : "block";
+    // 同步箭头方向：▸ 收起 / ▾ 展开
+    var arrows = document.querySelectorAll('[data-ex-arrow="' + gid + '"]');
+    for (var i = 0; i < arrows.length; i++) {
+      arrows[i].innerText = open ? "▸" : "▾";
+    }
+  }
+
+  function renderPickerList() {
+    if (!picker.ids) return;
+    var host = document.getElementById(picker.ids.list);
     if (!host) return;
 
-    if (!uiState.groups.length) {
-      host.innerHTML = '<div style="padding:22px 10px; text-align:center; font-size:12px; color:var(--text-secondary);">暂无可导出的内容</div>';
-      updateCount();
+    if (!picker.groups.length) {
+      host.innerHTML = '<div style="padding:22px 10px; text-align:center; font-size:12px; color:#94a3b8;">暂无可导出的内容</div>';
+      updatePickerCount();
       return;
     }
 
     var html = "";
-    uiState.groups.forEach(function (g, gi) {
-      var gid = "export-g-" + gi;
-      var selG = uiState.sel[g.name] || {};
+    picker.groups.forEach(function (g, gi) {
+      var gid = "exg-" + picker.ids.list + "-" + gi;
+      var selG = picker.sel[g.name] || {};
       var picked = g.entries.filter(function (e) { return selG[e.name]; }).length;
       var gChecked = picked === g.entries.length && g.entries.length > 0;
       var gPartial = picked > 0 && !gChecked;
 
-      html += '<div style="border-bottom:1px solid #f1f5f9;">';
-      // 分组行：点击整行 = 展开/收起；左侧勾选框 = 整组选择
-      html += '<div style="display:flex; align-items:center; gap:8px; padding:9px 6px;">' +
-        '<input type="checkbox" data-export-group="' + uiEsc(g.name) + '" ' + (gChecked ? "checked" : "") +
-        ' style="width:16px; height:16px; flex-shrink:0;' + (gPartial ? 'opacity:.5;' : '') + '">' +
-        '<div data-export-toggle="' + gid + '" style="flex:1; display:flex; align-items:center; justify-content:space-between; cursor:pointer; min-width:0;">' +
-        '  <span style="font-size:12.5px; font-weight:700; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + uiEsc(g.name) + '</span>' +
-        '  <span style="font-size:10.5px; color:var(--text-secondary); flex-shrink:0; margin-left:6px;">' +
-        picked + '/' + g.entries.length +
-        ' <span data-export-arrow="' + gid + '" style="display:inline-block; transition:transform .15s;">▸</span></span>' +
-        '</div></div>';
-      // 条目列表（默认收起）
-      html += '<div id="' + gid + '" style="display:none; padding:0 0 8px 30px;">';
-      g.entries.forEach(function (e, ei) {
-        html += '<label style="display:flex; align-items:center; gap:7px; padding:6px 4px; cursor:pointer;">' +
-          '<input type="checkbox" data-export-entry="' + uiEsc(g.name) + '\u0001' + uiEsc(e.name) + '" ' +
-          (selG[e.name] ? "checked" : "") + ' style="width:15px; height:15px; flex-shrink:0;">' +
-          '<span style="font-size:12px; color:var(--text-primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' +
-          uiEsc(e.name) + '</span></label>';
-      });
-      html += '</div></div>';
+      html += '<div style="border-bottom:1px solid #f1f5f9;">' +
+        '<div style="display:flex; align-items:center; gap:8px; padding:8px 6px;">' +
+          // ① 整组勾选（点它不会展开/收起）
+          '<input type="checkbox" data-ex-group="' + pkEsc(g.name) + '" ' + (gChecked ? "checked" : "") +
+            ' style="width:16px; height:16px; flex-shrink:0;' + (gPartial ? 'opacity:.55;' : '') + '">' +
+          // ② 标题区：点它只展开/收起
+          '<div data-ex-toggle="' + gid + '" style="flex:1; display:flex; align-items:center; justify-content:space-between; cursor:pointer; min-width:0; gap:6px;">' +
+            '<span style="font-size:12.5px; font-weight:700; color:#1e293b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + pkEsc(g.name) + '</span>' +
+            '<span style="font-size:10.5px; color:#94a3b8; flex-shrink:0;">' + picked + '/' + g.entries.length + '</span>' +
+          '</div>' +
+          // ③ 明确的展开/收起按钮
+          '<button type="button" data-ex-toggle-btn="' + gid + '" title="展开 / 收起" ' +
+            'style="flex-shrink:0; width:24px; height:24px; line-height:1; border-radius:7px; border:1.5px solid #dbe3ec; background:#f8fafc; color:#64748b; font-size:11px; font-weight:800; cursor:pointer; font-family:inherit;">' +
+            '<span data-ex-arrow="' + gid + '">▸</span></button>' +
+        '</div>' +
+        '<div id="' + gid + '" style="display:none; padding:0 0 8px 30px;">' +
+          g.entries.map(function (e) {
+            return '<label style="display:flex; align-items:center; gap:7px; padding:6px 4px; cursor:pointer;">' +
+              '<input type="checkbox" data-ex-entry="' + pkEsc(g.name) + '\u0001' + pkEsc(e.name) + '" ' +
+              (selG[e.name] ? "checked" : "") + ' style="width:15px; height:15px; flex-shrink:0;">' +
+              '<span style="font-size:12px; color:#334155; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + pkEsc(e.name) + '</span>' +
+            '</label>';
+          }).join("") +
+        '</div>' +
+      '</div>';
     });
     host.innerHTML = html;
 
-    // 展开/收起
-    host.querySelectorAll("[data-export-toggle]").forEach(function (el) {
-      el.onclick = function () {
-        var id = el.getAttribute("data-export-toggle");
-        var box = document.getElementById(id);
-        var arrow = host.querySelector('[data-export-arrow="' + id + '"]');
-        if (!box) return;
-        var open = box.style.display !== "none";
-        box.style.display = open ? "none" : "block";
-        if (arrow) arrow.style.transform = open ? "" : "rotate(90deg)";
+    // 展开/收起：标题区与按钮都只做这一件事
+    host.querySelectorAll("[data-ex-toggle]").forEach(function (el) {
+      el.onclick = function () { togglePickerGroup(el.getAttribute("data-ex-toggle")); };
+    });
+    host.querySelectorAll("[data-ex-toggle-btn]").forEach(function (el) {
+      el.onclick = function (ev) {
+        ev.stopPropagation();
+        togglePickerGroup(el.getAttribute("data-ex-toggle-btn"));
       };
     });
     // 整组勾选
-    host.querySelectorAll("[data-export-group]").forEach(function (el) {
+    host.querySelectorAll("[data-ex-group]").forEach(function (el) {
       el.onchange = function () {
-        var gname = el.getAttribute("data-export-group");
-        var grp = uiState.groups.find(function (x) { return x.name === gname; });
+        var gname = el.getAttribute("data-ex-group");
+        var grp = picker.groups.find(function (x) { return x.name === gname; });
         if (!grp) return;
-        uiState.sel[gname] = uiState.sel[gname] || {};
-        grp.entries.forEach(function (e) { uiState.sel[gname][e.name] = el.checked; });
-        renderList();
+        picker.sel[gname] = picker.sel[gname] || {};
+        grp.entries.forEach(function (e) { picker.sel[gname][e.name] = el.checked; });
+        // 注意：只更新勾选状态，保持当前展开状态不变（上一版会顺手收起，很反直觉）
+        var selG = picker.sel[gname];
+        renderPickerListKeepOpen(gname);
       };
     });
     // 单条勾选
-    host.querySelectorAll("[data-export-entry]").forEach(function (el) {
+    host.querySelectorAll("[data-ex-entry]").forEach(function (el) {
       el.onchange = function () {
-        var parts = el.getAttribute("data-export-entry").split("\u0001");
-        var gname = parts[0], ename = parts[1];
-        uiState.sel[gname] = uiState.sel[gname] || {};
-        uiState.sel[gname][ename] = el.checked;
-        renderList();
+        var parts = el.getAttribute("data-ex-entry").split("\u0001");
+        picker.sel[parts[0]] = picker.sel[parts[0]] || {};
+        picker.sel[parts[0]][parts[1]] = el.checked;
+        updatePickerCount();
+        var total = document.getElementById(picker.ids.count);
+        // 只更新计数与「整组勾选框」的三态，不整表重绘（避免展开状态被重置）
+        syncGroupCheckbox(parts[0]);
       };
     });
 
-    updateCount();
+    updatePickerCount();
   }
 
-  function updateCount() {
-    var el = document.getElementById("export-center-count");
-    if (el) el.innerText = "已选 " + selectedCount() + " 项";
+  /** 重绘但保持某分组展开（用于整组勾选后） */
+  function renderPickerListKeepOpen(openGroupName) {
+    renderPickerList();
+    // 重新展开刚才那个分组（默认都是收起的）
+    var idx = picker.groups.findIndex(function (g) { return g.name === openGroupName; });
+    if (idx >= 0) togglePickerGroup("exg-" + picker.ids.list + "-" + idx);
   }
 
-  /**
-   * 打开导出面板。
-   *
-   * @param opts.kind      'archive' | 'world_book'
-   * @param opts.title     面板标题与默认文件名
-   * @param opts.provider  async () => [{ name, entries:[{name, payload}] }]
-   *                       由各应用提供「分组 + 条目」数据（payload 是原始字段）
-   */
-  async function openExportPanel(opts) {
-    uiState.kind = opts.kind;
-    uiState.title = opts.title || (KIND_LABEL[opts.kind] || "导出");
-    uiState.provider = opts.provider;
-    uiState.sel = {};
-
-    ensureUiDom();
-    var titleEl = document.getElementById("export-center-title");
-    if (titleEl) titleEl.innerText = "导出「" + uiState.title + "」";
-    setFmt(uiState.fmt);
-    var list = document.getElementById("export-center-list");
-    if (list) list.innerHTML = '<div style="padding:22px 10px; text-align:center; font-size:12px; color:var(--text-secondary);">正在读取数据…</div>';
-
-    var overlay = document.getElementById("export-center-overlay");
-    if (overlay) overlay.classList.add("active");
-
-    try {
-      var groups = await opts.provider();
-      // 过滤掉空分组，并按名称排序（列表稳定，用户好找）
-      groups = (groups || []).filter(function (g) { return g.entries && g.entries.length; });
-      groups.sort(function (a, b) { return String(a.name).localeCompare(String(b.name), "zh"); });
-      uiState.groups = groups;
-      // 默认全选：多数场景是「全部导出」，少选比多选麻烦
-      groups.forEach(function (g) {
-        uiState.sel[g.name] = {};
-        g.entries.forEach(function (e) { uiState.sel[g.name][e.name] = true; });
-      });
-      renderList();
-    } catch (e) {
-      if (list) list.innerHTML = '<div style="padding:22px 10px; text-align:center; font-size:12px; color:#dc2626;">读取失败：' + uiEsc(e && e.message || e) + '</div>';
+  /** 同步某个分组的「整组勾选框」状态（含半选视觉） */
+  function syncGroupCheckbox(gname) {
+    if (!picker.ids) return;
+    var host = document.getElementById(picker.ids.list);
+    if (!host) return;
+    var grp = picker.groups.find(function (x) { return x.name === gname; });
+    if (!grp) return;
+    var selG = picker.sel[gname] || {};
+    var picked = grp.entries.filter(function (e) { return selG[e.name]; }).length;
+    var box = host.querySelector('[data-ex-group="' + gname.replace(/"/g, '\\"') + '"]');
+    if (box) {
+      box.checked = (picked === grp.entries.length && grp.entries.length > 0);
+      box.style.opacity = (picked > 0 && picked < grp.entries.length) ? "0.55" : "";
+    }
+    // 顺带更新该分组行的 x/y 计数
+    var toggles = host.querySelectorAll('[data-ex-toggle]');
+    for (var i = 0; i < toggles.length; i++) {
+      var t = toggles[i];
+      var nameSpan = t.querySelector("span");
+      if (nameSpan && nameSpan.innerText === gname) {
+        var cnt = t.querySelectorAll("span")[1];
+        if (cnt) cnt.innerText = picked + "/" + grp.entries.length;
+        break;
+      }
     }
   }
 
-  function closeExportPanel() {
-    var overlay = document.getElementById("export-center-overlay");
-    if (overlay) overlay.classList.remove("active");
-    uiState.open = false;
-  }
-
-  async function doExport() {
-    var btn = document.getElementById("export-center-go");
+  async function doPickerExport() {
+    if (picker.busy) return;
+    var ids = picker.ids;
+    var btn = ids ? document.getElementById(ids.go) : null;
     try {
       var picked = [];
-      uiState.groups.forEach(function (g) {
-        var selG = uiState.sel[g.name] || {};
+      picker.groups.forEach(function (g) {
+        var selG = picker.sel[g.name] || {};
         var entries = g.entries.filter(function (e) { return selG[e.name]; });
         if (entries.length) picked.push({ name: g.name, entries: entries });
       });
-
       if (!picked.length) {
         if (typeof showToast === "function") showToast("请至少勾选一个条目");
         return;
       }
-
+      picker.busy = true;
       if (btn) { btn.disabled = true; btn.innerText = "正在生成…"; }
 
-      var doc = build(uiState.kind, picked, { title: uiState.title });
-      var res = await deliver(doc, uiState.fmt);
+      var doc = build(picker.kind, picked, { title: picker.title });
+      var res = await deliver(doc, picker.fmt);
 
       if (res && res.ok) {
         if (typeof showToast === "function") {
@@ -791,13 +818,18 @@
             ? ("已生成 " + doc.entryCount + " 条，请在分享面板里选择去向")
             : ("已导出 " + res.fileName));
         }
-        closeExportPanel();
+        // 关闭整个「导入 / 导出」卡片
+        var ov = document.getElementById("archive-import-choice-overlay");
+        var ov2 = document.getElementById("wb-io-overlay");
+        if (ov) ov.classList.remove("active");
+        if (ov2) ov2.classList.remove("active");
       } else {
         if (typeof showToast === "function") showToast("导出失败：" + ((res && res.error) || "未知原因"));
       }
     } catch (e) {
       if (typeof showToast === "function") showToast("导出失败：" + (e && e.message || e));
     } finally {
+      picker.busy = false;
       if (btn) { btn.disabled = false; btn.innerText = "导出并分享"; }
     }
   }

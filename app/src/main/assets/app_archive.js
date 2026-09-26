@@ -617,16 +617,7 @@ function initArchiveImport() {
       };
     }
 
-    // 导出面板：把人设卡片导出为文件并拉起分享
-    const btnExport = document.getElementById("btn-choice-export-archive");
-    if (btnExport) {
-      btnExport.onclick = () => {
-        choiceOverlay.classList.remove("active");
-        openArchiveExportPanel();
-      };
-    }
-
-    // 面板切换 / 取消
+    // 面板切换 / 取消。切到「导出」时把分组选择器挂载到导出页内部
     const tabImport = document.getElementById("archive-io-tab-import");
     const tabExport = document.getElementById("archive-io-tab-export");
     if (tabImport) tabImport.onclick = () => switchArchiveIoTab("import");
@@ -771,7 +762,7 @@ function initArchiveImport() {
 // 档案库 · 导入 / 导出 面板（v1.5.64）
 // ============================================================================
 
-/** 在「导入 / 导出」两个面板之间切换 */
+/** 在「导入 / 导出」两个面板之间切换；每次切到导出都重新挂载选择器（数据可能变了） */
 function switchArchiveIoTab(which) {
   const pImport = document.getElementById("archive-io-panel-import");
   const pExport = document.getElementById("archive-io-panel-export");
@@ -784,21 +775,22 @@ function switchArchiveIoTab(which) {
   if (pExport) pExport.style.display = isExport ? "block" : "none";
   if (tImport) tImport.style.cssText = isExport ? off : on;
   if (tExport) tExport.style.cssText = isExport ? on : off;
+  if (isExport) mountArchiveExportPicker();
 }
 
 /**
- * 打开档案库导出面板。
+ * 把分组选择器挂载到「导出」页内部（v1.5.66 起不再是独立浮层）。
  *
  * 数据源：db.archives 里除支线快照（isSnapshot）以外的全部角色档案。
  * 导出内容刻意**不含头像二进制**：一来 txt/word 装不下图片，二来头像动辄几十 KB 的
  * Base64 会把文件撑得没人愿意打开。回导时头像留空，用户自己在 App 里补。
  */
-async function openArchiveExportPanel() {
-  if (typeof exportCenter === "undefined") {
+function mountArchiveExportPicker() {
+  if (typeof exportCenter === "undefined" || typeof exportCenter.mountExportPicker !== "function") {
     showToast("导出模块未加载，请更新到最新版 APK");
     return;
   }
-  await exportCenter.openExportPanel({
+  exportCenter.mountExportPicker("ar", {
     kind: "archive",
     title: "人设卡片",
     provider: async () => {
