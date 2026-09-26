@@ -307,6 +307,9 @@ function initSettingsApp() {
   const btnManageImages = document.getElementById("btn-manage-images");
   if (btnManageImages) btnManageImages.onclick = openImageManager;
 
+  const btnStorageDoctor = document.getElementById("btn-storage-doctor");
+  if (btnStorageDoctor) btnStorageDoctor.onclick = openStorageDoctor;
+
   // 绑定：数据管理 (7块隔离导出/导入功能)
   document.getElementById("btn-export-beautify").onclick = exportBeautifyPack;
   document.getElementById("btn-import-beautify").onclick = () => document.getElementById("file-import-beautify").click();
@@ -1715,6 +1718,95 @@ function copyWidgetPromptToClipboard() {
 }
 
 // ==========================================
+// ==========================================
+// 存储占用诊断（localStorage 5MB 墙）
+//   Android WebView 的 localStorage 全站共享约 5MB。本 App 有一批 base64 图片
+//   直接存在里面，塞满之后连写一个 token 都会抛 QuotaExceededError ——
+//   表现就是「数据一大就没法保存配置/自动备份」。
+//   这里把占用逐项摊开，并能一键清掉「IndexedDB 里已有正本」的冗余副本。
+// ==========================================
+async function openStorageDoctor() {
+  if (typeof window.storageCenter === "undefined") {
+    showToast("存储诊断模块未加载，请更新到最新版 APK");
+    return;
+  }
+  const SC = window.storageCenter;
+  const diag = SC.diagnose();
+  const pct = Math.min(100, Math.round(diag.ratio * 100));
+
+  // 能写测试：直接试探当前还剩多少配额
+  const canWrite1k = SC.canWrite(1024);
+  const canWrite64k = SC.canWrite(64 * 1024);
+
+  const mask = document.createElement("div");
+  mask.className = "imgmgr-mask";
+  mask.style.cssText = "position:fixed;inset:0;z-index:100960;background:rgba(15,23,42,.46);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);display:flex;align-items:flex-end;justify-content:center;";
+
+  const barColor = pct >= 90 ? "#ef4444" : (pct >= 70 ? "#f59e0b" : "#10b981");
+  const itemsHtml = diag.items.slice(0, 40).map((it) => {
+    const tag = it.kind === "image" ? "图片" : (it.kind === "font" ? "字体" : (it.kind === "json" ? "配置" : "文本"));
+    const tagColor = it.kind === "image" ? "#7c3aed" : (it.kind === "font" ? "#0ea5e9" : "#64748b");
+    return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #f1f5f9;">' +
+      '<span style="flex-shrink:0;font-size:9.5px;font-weight:800;color:' + tagColor + ';background:' + tagColor + '1a;border-radius:5px;padding:2px 6px;">' + tag + '</span>' +
+      '<div style="flex:1;min-width:0;">' +
+        '<div style="font-size:11.5px;font-weight:700;color:#334155;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + String(it.key).replace(/</g, "&lt;") + '</div>' +
+        (it.note ? '<div style="font-size:10px;color:#94a3b8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + it.note + '</div>' : '') +
+      '</div>' +
+      '<span style="flex-shrink:0;font-size:11px;font-weight:800;color:#475569;">' + SC.human(it.bytes) + '</span>' +
+    '</div>';
+  }).join("");
+
+  mask.innerHTML =
+    '<div style="width:100%;max-width:460px;max-height:88vh;background:#fff;border-radius:22px 22px 0 0;display:flex;flex-direction:column;overflow:hidden;">' +
+      '<div style="padding:14px 16px 10px;border-bottom:1px solid #eef2f7;">' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+          '<div style="flex:1;font-size:15px;font-weight:800;color:#1e293b;">存储占用诊断</div>' +
+          '<button id="stor-close" style="border:none;background:#f1f5f9;border-radius:9px;padding:6px 10px;color:#64748b;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;">关闭</button>' +
+        '</div>' +
+        '<div style="margin-top:10px;height:8px;background:#f1f5f9;border-radius:5px;overflow:hidden;">' +
+          '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';"></div>' +
+        '</div>' +
+        '<div style="font-size:11.5px;color:#64748b;margin-top:6px;">' +
+          'localStorage 已用 <b style="color:' + barColor + ';">' + SC.human(diag.totalBytes) + '</b> / 约 ' + SC.human(diag.quotaBytes) +
+          '（' + pct + '%），共 ' + diag.itemCount + ' 项' +
+        '</div>' +
+        '<div style="font-size:11px;margin-top:4px;color:' + (canWrite1k ? "#059669" : "#dc2626") + ';">' +
+          (canWrite1k ? (canWrite64k ? "✓ 还能正常写入（含较大配置）" : "⚠ 只能写入很小的数据了，快满了") : "✗ 已经写不进去了（这就是「存不下 token」的原因）") +
+        '</div>' +
+      '</div>' +
+      '<div style="flex:1;overflow-y:auto;padding:4px 16px 8px;">' +
+        (itemsHtml || '<div style="padding:20px;text-align:center;color:#94a3b8;font-size:12px;">localStorage 是空的</div>') +
+      '</div>' +
+      '<div style="padding:10px 14px calc(14px + env(safe-area-inset-bottom,0px));border-top:1px solid #eef2f7;display:flex;flex-direction:column;gap:8px;">' +
+        '<button id="stor-clean" style="width:100%;padding:11px;border:none;background:#f59e0b;border-radius:11px;font-size:12.5px;font-weight:800;color:#fff;cursor:pointer;font-family:inherit;">一键清理冗余副本（IndexedDB 已有正本的项）</button>' +
+        '<div style="font-size:10.5px;color:#94a3b8;line-height:1.6;">' +
+          '只清理「IndexedDB 里确实已有正本」的项，绝不会删掉唯一的一份。' +
+          '组件图（顶部照片条 / 拍立得 / 对话头像）没有 IndexedDB 正本，如需释放空间请到「图片管理」里手动删除。' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(mask);
+
+  const render = () => { };
+  mask.querySelector("#stor-close").onclick = () => mask.remove();  mask.onclick = (e) => { if (e.target === mask) mask.remove(); };
+  mask.querySelector("#stor-clean").onclick = async () => {
+    const btn = mask.querySelector("#stor-clean");
+    btn.disabled = true;
+    btn.innerText = "正在清理…";
+    try {
+      const r = await SC.cleanup();
+      const msg = (r.actions && r.actions.length) ? r.actions.join("\n") : "没有找到可安全清理的项。";
+      alert("清理完成，共释放 " + SC.human(r.freedBytes) + "\n\n" + msg);
+      mask.remove();
+      openStorageDoctor();   // 重新打开看效果
+    } catch (e) {
+      alert("清理失败：" + (e && e.message || e));
+      btn.disabled = false;
+      btn.innerText = "一键清理冗余副本（IndexedDB 已有正本的项）";
+    }
+  };
+}
+
 // 5. 数据管理高级备份 (7块分区隔离导入导出)
 // ==========================================
 async function clearAllAppData() {
@@ -2977,7 +3069,7 @@ async function openImageManager() {
         '</div>' +
         '<div id="imgmgr-summary" style="font-size:11.5px;color:#64748b;margin-top:6px;">正在统计…</div>' +
       '</div>' +
-      '<div id="imgmgr-list" style="flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;"></div>' +
+      '<div id="imgmgr-list" style="flex:1;overflow-y:auto;padding:12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:start;"></div>' +
       '<div style="padding:10px 14px calc(14px + env(safe-area-inset-bottom,0px));border-top:1px solid #eef2f7;display:flex;gap:8px;align-items:center;">' +
         '<button id="imgmgr-all" style="padding:10px 14px;border:1.5px solid #e2e8f0;background:#fff;border-radius:11px;font-size:12px;font-weight:800;color:#475569;cursor:pointer;font-family:inherit;">全选</button>' +
         '<div style="flex:1;font-size:11.5px;color:#94a3b8;" id="imgmgr-sel">未选中</div>' +
@@ -3001,10 +3093,14 @@ async function openImageManager() {
     selEl.textContent = n ? "已选 " + n + " 张 · " + humanSize(size) : "未选中";
   };
   const render = () => {
+    // 缩略图高度写成**确定像素**（IMG_THUMB_H），不用 aspect-ratio：
+    // 网格单元一旦没有明确高度，里面的 img{height:100%} 就失去参照、塌成一条细缝，
+    // 图片一多就互相叠在一起 —— 这正是真机上反馈的现象。
+    const IMG_THUMB_H = 104;
     listEl.innerHTML = items.map((it, i) => {
       const on = selected.has(i);
       return '<div class="imgmgr-item" data-i="' + i + '" style="position:relative;border-radius:12px;overflow:hidden;background:#f8fafc;border:1.5px solid ' + (on ? "#7c3aed" : "#eef2f7") + ';cursor:pointer;box-sizing:border-box;">' +
-        '<div style="width:100%;aspect-ratio:1/1;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;">' +
+        '<div style="width:100%;height:' + IMG_THUMB_H + 'px;overflow:hidden;background:#f1f5f9;display:flex;align-items:center;justify-content:center;">' +
           '<img src="' + it.data + '" style="width:100%;height:100%;object-fit:cover;display:block;">' +
         '</div>' +
         '<div style="padding:5px 6px;">' +

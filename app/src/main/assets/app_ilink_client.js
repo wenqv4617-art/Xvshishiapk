@@ -127,6 +127,14 @@
   function getUserId() { try { return localStorage.getItem(LS.userId) || ""; } catch (e) { return ""; } }
   function isLoggedIn() { return !!getToken(); }
 
+  /**
+   * 保存登录凭据。
+   *
+   * ⚠ 这里必须**把失败报出来**。localStorage 在 Android WebView 里是全站共享的约 5MB，
+   *   一旦被 base64 图片塞满，写 token 就会抛 QuotaExceededError。
+   *   旧实现是 catch 住只写一条日志 —— 用户扫码后看起来「登录成功」，
+   *   下次打开却发现没登录，非常难查。现在返回是否真的存下，并让 UI 明确提示。
+   */
   function saveLogin(token, baseurl, botId, userId) {
     try {
       localStorage.setItem(LS.token, token || "");
@@ -134,7 +142,19 @@
       localStorage.setItem(LS.botId, botId || "");
       localStorage.setItem(LS.userId, userId || "");
       localStorage.setItem(LS.boundAt, String(nowMs()));
-    } catch (e) { log("保存登录态失败", e); }
+      return { ok: true };
+    } catch (e) {
+      var quota = (e && (e.name === "QuotaExceededError" ||
+        /quota/i.test(String(e.name || "")) || /quota/i.test(String(e.message || ""))));
+      log(quota
+        ? "本机存储空间已满，登录凭据没能保存（本次会话仍可用，但重启后需要重新扫码）"
+        : "保存登录态失败", e);
+      return {
+        ok: false,
+        quota: !!quota,
+        error: quota ? "存储空间已满" : String((e && e.message) || e)
+      };
+    }
   }
 
   function clearLogin() {
@@ -403,12 +423,21 @@
 
     if (st === "confirmed") {
       if (!j.ilink_bot_id) return { status: "error", error: "登录已确认但缺少账号标识（ilink_bot_id）" };
-      saveLogin(j.bot_token || "", j.baseurl || FIXED_HOST, j.ilink_bot_id, j.ilink_user_id || "");
+      var saved = saveLogin(j.bot_token || "", j.baseurl || FIXED_HOST, j.ilink_bot_id, j.ilink_user_id || "");
       // 换账号后旧游标不可复用
       try { localStorage.removeItem(LS.cursor); localStorage.removeItem(LS.cursorOwner); } catch (e) { }
       state.verifyCode = null;
       pushEvent("登录成功，账号 " + String(j.ilink_bot_id).slice(0, 12), "ok");
-      return { status: "confirmed", done: true, botId: j.ilink_bot_id, baseurl: j.baseurl || "" };
+      if (!saved.ok) {
+        // 本次会话照常可用（token 已在内存），但必须让用户知道存不下来
+        pushEvent(saved.quota
+          ? "但登录凭据没能保存：本机存储已满。请到「设置 → 数据管理 → 存储占用诊断」清理后重新扫码。"
+          : ("但登录凭据保存失败：" + (saved.error || "未知原因")), "warn");
+      }
+      return {
+        status: "confirmed", done: true, botId: j.ilink_bot_id,
+        baseurl: j.baseurl || "", persisted: saved.ok, persistError: saved.ok ? "" : (saved.error || "")
+      };
     }
 
     if (st === "scaned") {

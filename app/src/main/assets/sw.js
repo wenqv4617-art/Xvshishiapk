@@ -1,4 +1,15 @@
-const CACHE_NAME = 'story-phone-v143';
+const CACHE_NAME = 'story-phone-v144';
+// v144: ①修「导出/导入面板在档案库层级之下」——浮层原本写在 .app-window 内部，被窗口的
+//       层叠上下文困住（窗口 position:relative + z-index:101 建立上下文），后面那些更高
+//       z-index 的非活动窗口把它整个盖住；已移到 body 直属并提到 z-index 99000。
+//       ②修「图片管理图片挤成一条」——网格单元无确定高度使 img{height:100%} 失去参照。
+//       ③修「本地部署整页死掉」——面板模板多一个 </div>，导致脚本列表空白、按钮全失效；
+//       并给模块加初始化闸门，单个字段坏掉不再拖垮整页。
+//       ④清理 localStorage 里已下线内置脚本（微信 claw 接入）的幽灵条目。
+//       ⑤新增「存储占用诊断」：逐项列出 localStorage 占用 + 实测能否继续写入 +
+//       一键清理「IndexedDB 已有正本」的冗余副本（localStorage 只有约 5MB 全站共享，
+//       被 base64 图片塞满后连写一个 token 都会失败）。
+//       ⑥更新日志把 v4.63~v4.75 合并为一条（去掉其中加了又删的两个方案）；v1.5.65
 // v143: ①人设卡片 / 世界书 新增导出与回导：导出 .txt / .docx（可选），文件带识别指纹，
 //       导回时按分组完整重建条目；分组可用「可展开多选器」勾选（整组或单条）；
 //       导出后可拉起系统分享面板；导入/导出合并到同一个按钮的两个面板里。
@@ -91,6 +102,8 @@ const ASSETS = [
   './app_settings.js',
   './app_archive.js',
   './app_world_book.js',
+  './app_changelog.js',
+  './app_storage_center.js', // 存储占用诊断（localStorage 5MB 墙，v1.5.65）
   './app_export_center.js', // 人设卡片 / 世界书 导出与回导（带指纹识别，v1.5.64）
   './app_chat.js',
   './app_wallet.js',
